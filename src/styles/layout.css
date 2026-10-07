@@ -1,0 +1,289 @@
+/* App shell layout.
+   Desktop (≥1100px): full sidebar — staff operations.
+   Tablet (720–1099px): icon rail sidebar — order entry at the counter.
+   Mobile (<720px): top bar + slide-in drawer — owners monitoring. */
+
+.shell {
+  display: grid;
+  grid-template-columns: var(--sidebar-width) 1fr;
+  min-height: 100vh;
+}
+
+/* ---------- Sidebar ---------- */
+
+.sidebar {
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--luna-night);
+  color: var(--text-on-dark);
+  overflow-y: auto;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  height: var(--topbar-height);
+  padding: 0 var(--space-5);
+  color: #fff;
+  font-weight: 700;
+  font-size: var(--text-md);
+  letter-spacing: 0.01em;
+}
+
+.brand-mark {
+  flex: none;
+  width: 28px;
+  height: 28px;
+}
+
+.brand-sub {
+  font-weight: 500;
+  font-size: var(--text-xs);
+  color: var(--text-on-dark-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.business-switch {
+  margin: 0 var(--space-3) var(--space-3);
+  padding: var(--space-3);
+  border-radius: var(--radius);
+  background: var(--luna-night-2);
+}
+
+.business-name {
+  font-weight: 600;
+  color: #fff;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.business-plan {
+  font-size: var(--text-xs);
+  color: var(--text-on-dark-muted);
+}
+
+.nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 0 var(--space-3);
+}
+
+.nav-link {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  min-height: 40px;
+  border-radius: var(--radius-sm);
+  color: var(--text-on-dark-muted);
+  font-weight: 500;
+}
+
+.nav-link svg {
+  flex: none;
+  width: 20px;
+  height: 20px;
+}
+
+.nav-link:hover {
+  background: var(--luna-night-2);
+  color: #fff;
+}
+
+.nav-link.is-active {
+  background: var(--luna-night-2);
+  color: #fff;
+  box-shadow: inset 3px 0 0 var(--luna-moon);
+}
+
+.sidebar-footer {
+  margin-top: auto;
+  padding: var(--space-4) var(--space-5);
+  font-size: var(--text-xs);
+  color: var(--text-on-dark-muted);
+}
+
+/* ---------- Main column ---------- */
+
+.main-col {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  height: var(--topbar-height);
+  padding: 0 var(--space-6);
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+
+.menu-btn {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+}
+
+.menu-btn svg {
+  width: 22px;
+  height: 22px;
+}
+
+.topbar-title {
+  font-weight: 600;
+  font-size: var(--text-md);
+}
+
+.topbar-spacer {
+  flex: 1;
+}
+
+.account {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.account-name {
+  font-weight: 600;
+  font-size: var(--text-sm);
+}
+
+.account-role {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+}
+
+.avatar {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: var(--luna-primary-soft);
+  color: var(--luna-primary);
+  font-weight: 700;
+  font-size: var(--text-sm);
+}
+
+.banners:empty {
+  display: none;
+}
+
+.content {
+  width: 100%;
+  max-width: var(--content-max);
+  margin: 0 auto;
+  padding: var(--space-6);
+}
+
+.scrim {
+  display: none;
+}
+
+/* ---------- Tablet: icon rail ---------- */
+
+@media (max-width: 1099px) {
+  .shell {
+    grid-template-columns: var(--sidebar-rail) 1fr;
+  }
+
+  .brand-text,
+  .business-switch,
+  .nav-label,
+  .sidebar-footer {
+    display: none;
+  }
+
+  .brand {
+    justify-content: center;
+    padding: 0;
+  }
+
+  .nav-link {
+    justify-content: center;
+    padding: var(--space-3);
+    min-height: 48px; /* comfortable touch target */
+  }
+}
+
+/* ---------- Mobile: drawer ---------- */
+
+@media (max-width: 719px) {
+  .shell {
+    grid-template-columns: 1fr;
+  }
+
+  .sidebar {
+    position: fixed;
+    inset: 0 auto 0 0;
+    z-index: 40;
+    width: min(var(--sidebar-width), 85vw);
+    transform: translateX(-100%);
+    transition: transform 0.2s ease;
+  }
+
+  .shell.nav-open .sidebar {
+    transform: none;
+  }
+
+  .shell.nav-open .scrim {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 30;
+    background: rgba(16, 24, 40, 0.45);
+  }
+
+  /* Drawer shows full labels again */
+  .brand-text,
+  .business-switch,
+  .nav-label,
+  .sidebar-footer {
+    display: revert;
+  }
+
+  .brand {
+    justify-content: flex-start;
+    padding: 0 var(--space-5);
+  }
+
+  .nav-link {
+    justify-content: flex-start;
+    padding: var(--space-3);
+  }
+
+  .menu-btn {
+    display: inline-flex;
+  }
+
+  .topbar {
+    padding: 0 var(--space-3);
+  }
+
+  .account-text {
+    display: none;
+  }
+
+  .content {
+    padding: var(--space-4);
+  }
+}

@@ -1,0 +1,11 @@
+rules_version = '2';
+
+// Phase 1: deny everything. Tenant-scoped paths (tenants/{bid}/...) and
+// membership checks arrive in Phase 3. Nothing in Luna is public-read.
+service firebase.storage {
+  match /b/{bucket}/o {
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "name": "luna-business-os",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Luna Business Operations Platform — multi-tenant operations app (Vite + Firebase + Netlify Functions)",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "emulators": "firebase emulators:start --project demo-luna",
+    "netlify:dev": "netlify dev"
+  },
+  "dependencies": {
+    "firebase": "^12.19.0",
+    "firebase-admin": "^14.5.0"
+  },
+  "devDependencies": {
+    "jsdom": "^29.1.1",
+    "vite": "^8.3.3",
+    "vitest": "^5.0.3"
+  }
+}
