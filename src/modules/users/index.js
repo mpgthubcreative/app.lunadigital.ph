@@ -1,6 +1,6 @@
-// Users — Phase 2 adds real members and invitations. Phase 1 shows the role
-// templates straight from shared/permissions.js to make the model visible:
-// a role is only a named bundle of permissions.
+// Users — shows the permission templates from shared/permissions.js (a
+// role is only a named bundle of permissions). Members are provisioned
+// with scripts/add-member.js for now; in-app team management comes later.
 
 import { ROLE_TEMPLATES, PERMISSION_KEYS } from "@shared/index.js";
 import { html, render } from "../../lib/html.js";
@@ -11,7 +11,7 @@ export function mount(container) {
   render(
     container,
     html`
-      ${pageHeader({ title: "Users", subtitle: "Team members and what they can access. Invitations arrive in Phase 2." })}
+      ${pageHeader({ title: "Users", subtitle: "Team members and what they can access. In-app invitations arrive in a later phase." })}
       ${card({
         title: "Role templates",
         body: html`

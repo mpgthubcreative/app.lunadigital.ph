@@ -1,11 +1,17 @@
-// Lazy Firebase Web SDK initialization — the SDK is only downloaded when a
-// screen actually needs it, keeping the initial shell bundle small.
-// Configuration comes from VITE_FIREBASE_* environment variables (see
-// .env.example); nothing project-specific is hard-coded.
+// Lazy Firebase Web SDK initialization — SDK pieces are only downloaded
+// when needed. Configuration comes from VITE_FIREBASE_* environment
+// variables (see .env.example); nothing project-specific is hard-coded,
+// so the same build logic works for any environment.
 //
-// Phase 1: defined but not yet called. Phase 2 (auth) is the first user.
+// Phase 2 uses Auth only (all tenant data flows through /api/*).
+// getFirestoreDb() exists for later phases' direct, rules-protected reads
+// and is a separate chunk so sign-in never downloads the Firestore SDK.
 
-let instancePromise = null;
+let appPromise = null;
+let authPromise = null;
+let firestorePromise = null;
+
+const useEmulators = () => import.meta.env.VITE_USE_EMULATORS === "true";
 
 function readConfig() {
   const env = import.meta.env;
@@ -21,32 +27,40 @@ function readConfig() {
 
 export function isFirebaseConfigured() {
   const config = readConfig();
-  return Boolean(config.apiKey && config.projectId && config.appId);
+  return Boolean(config.apiKey && config.projectId && config.appId && config.authDomain);
+}
+
+function getApp() {
+  if (!appPromise) {
+    appPromise = (async () => {
+      if (!isFirebaseConfigured()) throw new Error("Firebase is not configured for this environment.");
+      const { initializeApp } = await import("firebase/app");
+      return initializeApp(readConfig());
+    })();
+  }
+  return appPromise;
 }
 
 export function getFirebase() {
-  if (!instancePromise) {
-    instancePromise = (async () => {
-      if (!isFirebaseConfigured()) {
-        throw new Error("Firebase is not configured for this environment.");
-      }
-      const [{ initializeApp }, authMod, firestoreMod] = await Promise.all([
-        import("firebase/app"),
-        import("firebase/auth"),
-        import("firebase/firestore"),
-      ]);
-
-      const app = initializeApp(readConfig());
+  if (!authPromise) {
+    authPromise = (async () => {
+      const [app, authMod] = await Promise.all([getApp(), import("firebase/auth")]);
       const auth = authMod.getAuth(app);
-      const db = firestoreMod.getFirestore(app);
-
-      if (import.meta.env.VITE_USE_EMULATORS === "true") {
-        authMod.connectAuthEmulator(auth, "http://127.0.0.1:9099", { disableWarnings: true });
-        firestoreMod.connectFirestoreEmulator(db, "127.0.0.1", 8080);
-      }
-
-      return { app, auth, db };
+      if (useEmulators()) authMod.connectAuthEmulator(auth, "http://127.0.0.1:9099", { disableWarnings: true });
+      return { app, auth };
     })();
   }
-  return instancePromise;
+  return authPromise;
+}
+
+export function getFirestoreDb() {
+  if (!firestorePromise) {
+    firestorePromise = (async () => {
+      const [app, firestoreMod] = await Promise.all([getApp(), import("firebase/firestore")]);
+      const db = firestoreMod.getFirestore(app);
+      if (useEmulators()) firestoreMod.connectFirestoreEmulator(db, "127.0.0.1", 8080);
+      return db;
+    })();
+  }
+  return firestorePromise;
 }

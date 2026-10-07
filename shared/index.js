@@ -9,3 +9,5 @@ export * from "./modules.js";
 export * from "./plans.seed.js";
 export * from "./subscription.js";
 export * from "./entitlements.js";
+export * from "./tenancy.js";
+export * from "./environment.js";

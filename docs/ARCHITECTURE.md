@@ -25,6 +25,20 @@ deliberately, in the same commit as the code that changes the design.
 - **Data:** a single Firebase project for Luna (Auth, Firestore, Storage). It is separate from Hayst Kopi.
 - **Shared code:** the `shared/` folder holds pure ESM imported by both the browser and the functions. It is the single definition of permissions, modules, plans, entitlements and subscription policy.
 
+## Environments
+
+| Environment | Firebase project | CLI alias | Firestore | Functions | Data |
+|---|---|---|---|---|---|
+| Local / emulator | `demo-luna` (offline) | `default` | emulator | `netlify dev` | throwaway |
+| **Staging / prototype** | `luna-business-os` | `staging` | `us-east5` (Columbus) | Netlify `cmh` (Ohio) | **fake demo data only** |
+| Production | *not created yet* | — | decided at production-readiness review | — | real clients |
+
+- The staging environment must never hold real paying-client data.
+- A plain `firebase deploy` targets the offline `demo-luna` project. Cloud deploys must name the alias (`--project staging`). No `prod` alias exists until production is created.
+- Before Client #1, a production-readiness review chooses between (A) keeping production in Ohio and (B) a new Singapore production project, with Netlify Pro and functions in `sin`.
+- **Portability:** project IDs, URLs, the environment name and credentials all come from environment variables (`.env.example`). Business logic never assumes a region, so moving environments is a configuration change.
+- On Netlify's Free plan, environment variables can't be scoped, so server secrets are also visible to the build step. This is acceptable because Vite only bundles `VITE_*` variables. Scope them to functions only once on Pro.
+
 ## Tenancy
 
 Every tenant record lives under `businesses/{businessId}/...`. Server code
@@ -46,6 +60,22 @@ businesses/{bid}                  profile, timezone, orderPrefix, subscription{p
   counters/{name}  metrics/{YYYY-MM-DD}  usage/{YYYY-MM}
   imports/{id}/rows/{n}  auditLog/{id}  settings/{section}  integrations/{provider}
 ```
+
+## Session and tenant resolution (Phase 2)
+
+1. The browser signs in with Firebase Auth (email and password) and sends its ID token to `GET /api/session`. Optionally it adds `X-Luna-Business-Id` to choose a business.
+2. The server verifies the token, checking for revocation, so a disabled account is refused immediately.
+3. The server picks a business:
+   - If one was requested, it uses that business only and never falls back to another.
+   - Otherwise it uses the user's `defaultBusinessId`, then their other `businessIds`.
+4. Access requires an **active** `businesses/{bid}/members/{uid}` document. The `users/{uid}.businessIds` list is only an index and is never trusted on its own. "Not a member" and "no such business" return the same 403, so business IDs can't be discovered by probing.
+5. The subscription policy is applied:
+   - An unknown status is refused.
+   - Suspended accounts are read-only.
+   - Cancelled accounts admit the account owner only, with export-only permissions.
+6. The server returns the permissions stored on the member record, filtered to known keys set to `true`, plus the entitlements snapshot and usage summary.
+
+Every future endpoint repeats this through `requireTenant(event, { permission, module, write })`, so a browser's earlier session response is never reused for authorization.
 
 ## Identity, roles and permissions
 

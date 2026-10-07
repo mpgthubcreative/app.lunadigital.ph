@@ -14,7 +14,14 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "emulators": "firebase emulators:start --project demo-luna",
-    "netlify:dev": "netlify dev"
+    "netlify:dev": "netlify dev",
+    "deploy:rules:staging": "firebase deploy --only firestore:rules,firestore:indexes --project staging",
+    "seed:plans": "node --env-file=.env.local scripts/seed-plans.js",
+    "seed:demo": "node --env-file=.env.local scripts/seed-demo.js",
+    "create-business": "node --env-file=.env.local scripts/create-business.js",
+    "add-member": "node --env-file=.env.local scripts/add-member.js",
+    "set-member-status": "node --env-file=.env.local scripts/set-member-status.js",
+    "smoke:staging": "node --env-file=.env.local scripts/smoke-session.js"
   },
   "dependencies": {
     "firebase": "^12.19.0",

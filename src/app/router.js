@@ -30,14 +30,22 @@ export function createRouter({ routes, onRoute, notFound, base = "" }) {
   }
 
   // Same-origin links marked data-link navigate without a full reload.
-  document.addEventListener("click", (event) => {
+  const onClick = (event) => {
     const link = event.target.closest("a[data-link]");
     if (!link || event.metaKey || event.ctrlKey || event.shiftKey || event.button !== 0) return;
     event.preventDefault();
     navigate(link.getAttribute("href").slice(base.length) || "/");
-  });
+  };
 
+  document.addEventListener("click", onClick);
   window.addEventListener("popstate", resolve);
 
-  return { start: resolve, navigate };
+  // Removes listeners — call before creating a new router (e.g. after
+  // switching business) so handlers never stack up.
+  function stop() {
+    document.removeEventListener("click", onClick);
+    window.removeEventListener("popstate", resolve);
+  }
+
+  return { start: resolve, navigate, stop };
 }

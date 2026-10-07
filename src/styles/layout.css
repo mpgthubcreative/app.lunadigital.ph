@@ -287,3 +287,79 @@
     padding: var(--space-4);
   }
 }
+
+/* ---------- Auth / access screens (outside the shell) ---------- */
+
+.auth-page {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: var(--space-4);
+  background: radial-gradient(circle at 20% 0%, #1d2945 0, var(--luna-night) 55%);
+}
+
+.auth-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  width: min(400px, 100%);
+  padding: var(--space-8);
+  box-shadow: var(--shadow-lg);
+}
+
+.auth-brand {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  font-weight: 700;
+  font-size: var(--text-lg);
+}
+
+.auth-title {
+  font-size: var(--text-xl);
+}
+
+.auth-subtitle {
+  color: var(--text-muted);
+  margin-top: calc(-1 * var(--space-2));
+}
+
+.auth-meta {
+  font-size: var(--text-sm);
+  color: var(--text-faint);
+}
+
+.auth-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+/* ---------- Shell additions: business switcher, env tag, logout ---------- */
+
+.business-select {
+  width: 100%;
+  margin-top: var(--space-2);
+  min-height: 36px;
+  padding: 0 var(--space-2);
+  border: 1px solid #33415f;
+  border-radius: var(--radius-sm);
+  background: var(--luna-night);
+  color: var(--text-on-dark);
+  font-size: var(--text-sm);
+}
+
+.logout-btn {
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  border-radius: var(--radius-sm);
+  min-height: 36px;
+  padding: 0 var(--space-3);
+  font-weight: 600;
+  font-size: var(--text-sm);
+}
+
+.logout-btn:hover {
+  background: var(--surface-muted);
+}

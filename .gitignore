@@ -7,6 +7,8 @@ dist/
 .env.local
 .env.*.local
 *service-account*.json
+*.local.md
+.demo-credentials*
 
 # Firebase / Netlify local state
 .firebase/

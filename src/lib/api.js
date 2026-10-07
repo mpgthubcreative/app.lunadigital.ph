@@ -1,14 +1,21 @@
 // Client for Luna's server API (Netlify Functions behind /api/*).
 //
-// Phase 2 will attach the signed-in user's Firebase ID token via
-// setTokenProvider(). The server never trusts anything this client claims
-// about tenant, role or permissions — it re-derives all of that from the
-// verified token on every request.
+// Attaches the signed-in user's Firebase ID token and the selected
+// business id. The business id is a SELECTOR only: the server re-derives
+// tenant access, permissions and subscription from the verified token and
+// membership records on every request and never trusts this client.
+
+import { BUSINESS_SELECTOR_HEADER } from "@shared/tenancy.js";
 
 let tokenProvider = null;
+let businessSelector = () => null;
 
 export function setTokenProvider(fn) {
   tokenProvider = fn;
+}
+
+export function setBusinessSelector(fn) {
+  businessSelector = fn;
 }
 
 export class ApiError extends Error {
@@ -27,6 +34,8 @@ export async function api(path, { method = "GET", body } = {}) {
     const token = await tokenProvider();
     if (token) headers.Authorization = `Bearer ${token}`;
   }
+  const businessId = businessSelector();
+  if (businessId) headers[BUSINESS_SELECTOR_HEADER] = businessId;
 
   let response;
   try {

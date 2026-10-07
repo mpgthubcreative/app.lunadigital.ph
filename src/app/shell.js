@@ -2,7 +2,7 @@
 // Navigation comes from resolveNavigation(): plan/override entitlements ×
 // the user's permissions. No role names or plan ids are checked here.
 
-import { resolveNavigation, accessPolicy } from "@shared/index.js";
+import { resolveNavigation, accessPolicy, ENVIRONMENT_LABELS, normalizeEnvironment } from "@shared/index.js";
 import { html, render } from "../lib/html.js";
 import { icon, lunaMark } from "../components/icons.js";
 import { initials } from "../lib/format.js";
@@ -13,9 +13,24 @@ const SUBSCRIPTION_MESSAGES = {
   cancelled: "This account is cancelled. Only the owner can sign in to export data.",
 };
 
-export function renderShell(root, session) {
+function businessSwitcher(session) {
+  const memberships = session.memberships || [];
+  if (memberships.length < 2) return "";
+  return html`
+    <label class="visually-hidden" for="businessSelect">Switch business</label>
+    <select class="business-select" id="businessSelect">
+      ${memberships.map(
+        (m) => html`<option value="${m.businessId}" ${m.businessId === session.business.id ? "selected" : ""}>${m.businessName} · ${m.roleLabel}</option>`
+      )}
+    </select>
+  `;
+}
+
+// handlers: { onSignOut(), onSwitchBusiness(businessId) }
+export function renderShell(root, session, handlers = {}) {
   const nav = resolveNavigation({ entitlements: session.entitlements, permissions: session.member.permissions });
   const policy = accessPolicy(session.subscription.status);
+  const envLabel = ENVIRONMENT_LABELS[normalizeEnvironment(session.environment)];
 
   render(
     root,
@@ -26,6 +41,7 @@ export function renderShell(root, session) {
           <div class="business-switch">
             <div class="business-name">${session.business.name}</div>
             <div class="business-plan">${session.plan.name} plan</div>
+            ${businessSwitcher(session)}
           </div>
           <nav class="nav">
             ${nav.map(
@@ -49,17 +65,16 @@ export function renderShell(root, session) {
             <div class="topbar-spacer"></div>
             <div class="account">
               <div class="account-text">
-                <div class="account-name">${session.user.name}</div>
+                <div class="account-name">${session.user.name || session.user.email}</div>
                 <div class="account-role">${session.member.roleLabel}</div>
               </div>
-              <div class="avatar" aria-hidden="true">${initials(session.user.name)}</div>
+              <div class="avatar" aria-hidden="true">${initials(session.user.name || session.user.email)}</div>
+              <button type="button" class="logout-btn" id="logoutBtn">Sign out</button>
             </div>
           </header>
 
           <div class="banners">
-            ${session.preview
-              ? html`<div class="banner banner-info" role="note">Foundation preview — no sign-in and no business data yet. Authentication arrives in Phase 2.</div>`
-              : ""}
+            ${envLabel ? html`<div class="banner banner-info" role="note">${envLabel}</div>` : ""}
             ${policy.banner && SUBSCRIPTION_MESSAGES[session.subscription.status]
               ? html`<div class="banner banner-${policy.banner}" role="alert">${SUBSCRIPTION_MESSAGES[session.subscription.status]}</div>`
               : ""}
@@ -79,6 +94,12 @@ export function renderShell(root, session) {
   };
   menuBtn.addEventListener("click", () => setNavOpen(!shell.classList.contains("nav-open")));
   root.querySelector("#scrim").addEventListener("click", () => setNavOpen(false));
+
+  root.querySelector("#logoutBtn").addEventListener("click", () => handlers.onSignOut && handlers.onSignOut());
+  const switcher = root.querySelector("#businessSelect");
+  if (switcher) {
+    switcher.addEventListener("change", () => handlers.onSwitchBusiness && handlers.onSwitchBusiness(switcher.value));
+  }
 
   return {
     nav,

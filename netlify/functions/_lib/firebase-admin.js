@@ -1,10 +1,12 @@
 // Centralized, lazy Firebase Admin initialization for all Netlify
-// Functions. Credentials come ONLY from server environment variables —
-// never commit a service account file, never import this from browser code.
+// Functions and operator scripts. Credentials come ONLY from server
+// environment variables — never commit a service account file, never
+// import this from browser code. Nothing project-specific is hard-coded:
+// the same code serves any environment (staging, production, emulator).
 //
 // Lazy on purpose: a function that doesn't touch Firebase (e.g. health)
 // must not fail because credentials are missing, and a misconfiguration
-// surfaces as a clean 503 from getAdmin() rather than a crash at import.
+// surfaces as a clean 503 rather than a crash at import.
 
 import { RequestError } from "./http.js";
 
@@ -19,6 +21,8 @@ export function isFirebaseConfigured() {
   return Boolean(process.env.FIREBASE_PROJECT_ID && process.env.FIREBASE_CLIENT_EMAIL && process.env.FIREBASE_PRIVATE_KEY);
 }
 
+// Returns { db, auth, admin } where admin.firestore.FieldValue is provided
+// for code written against the namespaced API shape (and test fakes).
 export async function getAdmin() {
   if (cached) return cached;
 
@@ -26,23 +30,27 @@ export async function getAdmin() {
     throw new RequestError("server-misconfigured", "This service is temporarily unavailable.", 503);
   }
 
-  const { default: admin } = await import("firebase-admin");
+  const [{ initializeApp, getApps, cert }, { getFirestore, FieldValue }, { getAuth }] = await Promise.all([
+    import("firebase-admin/app"),
+    import("firebase-admin/firestore"),
+    import("firebase-admin/auth"),
+  ]);
 
-  if (!admin.apps.length) {
-    const options = {
-      projectId: process.env.FIREBASE_PROJECT_ID,
-      storageBucket: process.env.FIREBASE_STORAGE_BUCKET,
-    };
+  let app = getApps()[0];
+  if (!app) {
+    const options = { projectId: process.env.FIREBASE_PROJECT_ID };
+    // Optional: Storage isn't provisioned until a later phase.
+    if (process.env.FIREBASE_STORAGE_BUCKET) options.storageBucket = process.env.FIREBASE_STORAGE_BUCKET;
     if (!usingEmulators()) {
-      options.credential = admin.credential.cert({
+      options.credential = cert({
         projectId: process.env.FIREBASE_PROJECT_ID,
         clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
         privateKey: (process.env.FIREBASE_PRIVATE_KEY || "").replace(/\\n/g, "\n"),
       });
     }
-    admin.initializeApp(options);
+    app = initializeApp(options);
   }
 
-  cached = { admin, db: admin.firestore(), auth: admin.auth() };
+  cached = { db: getFirestore(app), auth: getAuth(app), admin: { firestore: { FieldValue } } };
   return cached;
 }
