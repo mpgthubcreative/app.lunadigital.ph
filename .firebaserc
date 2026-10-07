@@ -1,5 +1,6 @@
 {
   "projects": {
-    "default": "demo-luna"
+    "default": "demo-luna",
+    "prod": "luna-business-os"
   }
 }
