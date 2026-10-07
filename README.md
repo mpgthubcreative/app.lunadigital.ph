@@ -22,9 +22,11 @@ Architecture and environments: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 | `npm run dev` | Vite dev server (UI only) on :5173 |
 | `npm run netlify:dev` | UI + Netlify Functions + `/api/*` on :8888 (reads `.env.local`) |
 | `npm test` | Unit and DOM tests (Vitest) |
+| `npm run test:rules` | Tenant-isolation security suite on the Firestore + Storage emulators (needs Java 21+) |
+| `npm run test:all` | Both of the above |
 | `npm run build` | Production build to `dist/` |
 | `npm run emulators` | Firebase emulators (offline `demo-luna` project) |
-| `npm run deploy:rules:staging` | Deploy Firestore rules and indexes to **staging** |
+| `npm run deploy:rules:staging` | Run the security suite, then deploy Firestore rules and indexes to **staging** |
 
 ### Operator scripts
 
@@ -50,5 +52,5 @@ src/lib/          html templating, api client, firebase, formatting
 shared/           permissions, modules, plans, entitlements, subscription, tenancy, environment
 netlify/functions/ session.js, health.js; _lib/ = auth, tenant, tenant-db, provisioning, usage
 scripts/          operator CLI (provisioning, demo seed, smoke test)
-tests/            Vitest suites (+ in-memory Firebase fakes until Phase 3's emulator tests)
+tests/            Vitest suites; tests/rules/ = emulator security suite (vitest.rules.config.js)
 ```

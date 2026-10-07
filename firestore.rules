@@ -1,11 +1,126 @@
 rules_version = '2';
 
-// Phase 1: deny everything. Tenant-scoped rules (businesses/{bid}/...,
-// membership + permission checks) arrive in Phase 3 together with the
-// automated tenant-isolation test suite. Until then no client can read or
-// write anything.
+// Luna tenant-isolation rules (Phase 3).
+//
+// Model
+// - Every tenant record lives under businesses/{bid}/...
+// - Access is granted ONLY by the caller's own membership document,
+//   businesses/{bid}/members/{request.auth.uid}, which must be active.
+//   users/{uid}.businessIds, custom claims, role names, URLs, headers and
+//   anything else the browser controls are never consulted.
+// - What a member may read comes from the server-written permission map
+//   on that document (permissions.{key} == true). roleTemplate is a label.
+// - Subscription policy mirrors shared/subscription.js + effectivePermissions
+//   in shared/tenancy.js: active / past_due / suspended read normally,
+//   cancelled = account owner only with export-only permissions,
+//   anything else (missing, unknown) = deny.
+//
+// Writes: there is NO `allow write` / create / update / delete anywhere in
+// this file. Every write goes through Netlify Functions (Admin SDK), which
+// enforce login, membership, permission, module, subscription and limits.
+//
+// Not matched here (and therefore denied): plans, users, platformAudit,
+// collection-group queries, and the server-only tenant collections
+// paymentRefs, counters, usage, auditLog, integrations, members/*/inbox.
 service cloud.firestore {
   match /databases/{database}/documents {
+
+    // ---------- Identity ----------
+
+    function signedIn() {
+      return request.auth != null && request.auth.uid is string;
+    }
+
+    // Same format as shared/tenancy.js isValidBusinessId. Hygiene only:
+    // a well-formed id still needs a membership.
+    function validBusinessId(bid) {
+      return bid is string && bid.matches('^[A-Za-z0-9][A-Za-z0-9_-]{2,63}$');
+    }
+
+    // ---------- Membership ----------
+
+    function memberPath(bid) {
+      return /databases/$(database)/documents/businesses/$(bid)/members/$(request.auth.uid);
+    }
+
+    function businessPath(bid) {
+      return /databases/$(database)/documents/businesses/$(bid);
+    }
+
+    function activeMember(bid) {
+      return signedIn()
+        && validBusinessId(bid)
+        && exists(memberPath(bid))
+        && get(memberPath(bid)).data.get('status', null) == 'active';
+    }
+
+    function member(bid) {
+      return get(memberPath(bid)).data;
+    }
+
+    // Owner protection is the isAccountOwner flag, never the role name.
+    function isAccountOwner(bid) {
+      return member(bid).get('isAccountOwner', false) == true;
+    }
+
+    // ---------- Subscription ----------
+
+    function subscriptionStatus(bid) {
+      return exists(businessPath(bid))
+        ? get(businessPath(bid)).data.get('subscription', {}).get('status', null)
+        : null;
+    }
+
+    // Permissions a cancelled (export-only) account keeps. Must match
+    // EXPORT_ONLY_PERMISSIONS in shared/tenancy.js.
+    function exportOnlyPermission(key) {
+      return key in ['dashboard.view', 'reports.view', 'reports.export', 'billing.view', 'settings.view'];
+    }
+
+    // Can this caller see this business at all?
+    function tenantReadable(bid) {
+      return activeMember(bid)
+        && (subscriptionStatus(bid) in ['active', 'past_due', 'suspended']
+            || (subscriptionStatus(bid) == 'cancelled' && isAccountOwner(bid)));
+    }
+
+    // Can this caller read data guarded by permission `key` in this business?
+    function can(bid, key) {
+      return tenantReadable(bid)
+        && member(bid).get('permissions', {}).get(key, false) == true
+        && (subscriptionStatus(bid) != 'cancelled' || exportOnlyPermission(key));
+    }
+
+    // ---------- Tenant data ----------
+
+    match /businesses/{bid} {
+      // Profile, subscription and entitlements snapshot. No list: nobody
+      // can enumerate businesses.
+      allow get: if tenantReadable(bid);
+
+      match /members/{uid} {
+        allow get: if (signedIn() && uid == request.auth.uid && tenantReadable(bid))
+          || can(bid, 'users.view');
+        allow list: if can(bid, 'users.view');
+      }
+
+      match /products/{id}              { allow read: if can(bid, 'inventory.view'); }
+      match /inventoryTransactions/{id} { allow read: if can(bid, 'inventory.view'); }
+      match /customers/{id}             { allow read: if can(bid, 'customers.view'); }
+      match /orders/{id}                { allow read: if can(bid, 'orders.view'); }
+      match /payments/{id}              { allow read: if can(bid, 'payments.view'); }
+      match /metrics/{day}              { allow read: if can(bid, 'dashboard.view'); }
+      match /reports/{id}               { allow read: if can(bid, 'reports.view'); }
+      match /settings/{section}         { allow read: if can(bid, 'settings.view'); }
+
+      match /imports/{id} {
+        allow read: if can(bid, 'imports.run');
+        match /rows/{n} { allow read: if can(bid, 'imports.run'); }
+      }
+    }
+
+    // Explicit default. Rules are allow-only, so this documents intent; it
+    // can't revoke anything granted above.
     match /{document=**} {
       allow read, write: if false;
     }

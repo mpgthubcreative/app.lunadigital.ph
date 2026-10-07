@@ -1,9 +1,75 @@
 rules_version = '2';
 
-// Phase 1: deny everything. Tenant-scoped paths (tenants/{bid}/...) and
-// membership checks arrive in Phase 3. Nothing in Luna is public-read.
+// Luna tenant-scoped Storage rules (Phase 3). Not deployed yet: staging
+// has no Storage bucket. Verified against the emulator.
+//
+// Layout: tenants/{bid}/{area}/...  (area = products | payments | imports | exports)
+//
+// Access mirrors firestore.rules exactly. It is read from the caller's own
+// Firestore membership document (cross-service rules), the server-written
+// permission map, and the business's subscription status. Nothing is
+// public, nothing outside tenants/ is reachable, and there is no browser
+// write: uploads will go through server-issued, tenant-checked paths
+// when a feature needs them.
 service firebase.storage {
   match /b/{bucket}/o {
+
+    function signedIn() {
+      return request.auth != null && request.auth.uid is string;
+    }
+
+    function validBusinessId(bid) {
+      return bid is string && bid.matches('^[A-Za-z0-9][A-Za-z0-9_-]{2,63}$');
+    }
+
+    function memberPath(bid) {
+      return /databases/(default)/documents/businesses/$(bid)/members/$(request.auth.uid);
+    }
+
+    function businessPath(bid) {
+      return /databases/(default)/documents/businesses/$(bid);
+    }
+
+    function activeMember(bid) {
+      return signedIn()
+        && validBusinessId(bid)
+        && firestore.exists(memberPath(bid))
+        && firestore.get(memberPath(bid)).data.get('status', null) == 'active';
+    }
+
+    function member(bid) {
+      return firestore.get(memberPath(bid)).data;
+    }
+
+    function subscriptionStatus(bid) {
+      return firestore.exists(businessPath(bid))
+        ? firestore.get(businessPath(bid)).data.get('subscription', {}).get('status', null)
+        : null;
+    }
+
+    function exportOnlyPermission(key) {
+      return key in ['dashboard.view', 'reports.view', 'reports.export', 'billing.view', 'settings.view'];
+    }
+
+    function tenantReadable(bid) {
+      return activeMember(bid)
+        && (subscriptionStatus(bid) in ['active', 'past_due', 'suspended']
+            || (subscriptionStatus(bid) == 'cancelled' && member(bid).get('isAccountOwner', false) == true));
+    }
+
+    function can(bid, key) {
+      return tenantReadable(bid)
+        && member(bid).get('permissions', {}).get(key, false) == true
+        && (subscriptionStatus(bid) != 'cancelled' || exportOnlyPermission(key));
+    }
+
+    match /tenants/{bid} {
+      match /products/{path=**} { allow read: if can(bid, 'inventory.view'); }
+      match /payments/{path=**} { allow read: if can(bid, 'payments.view'); }
+      match /imports/{path=**}  { allow read: if can(bid, 'imports.run'); }
+      match /exports/{path=**}  { allow read: if can(bid, 'reports.export'); }
+    }
+
     match /{allPaths=**} {
       allow read, write: if false;
     }

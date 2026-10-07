@@ -58,6 +58,7 @@ businesses/{bid}                  profile, timezone, orderPrefix, subscription{p
   inventoryTransactions/{id}      append-only stock movements
   customers/{id}  orders/{id}  payments/{id}  paymentRefs/{method_ref}
   counters/{name}  metrics/{YYYY-MM-DD}  usage/{YYYY-MM}
+  reports/{id}                    server-generated report snapshots (added Phase 3)
   imports/{id}/rows/{n}  auditLog/{id}  settings/{section}  integrations/{provider}
 ```
 
@@ -76,6 +77,38 @@ businesses/{bid}                  profile, timezone, orderPrefix, subscription{p
 6. The server returns the permissions stored on the member record, filtered to known keys set to `true`, plus the entitlements snapshot and usage summary.
 
 Every future endpoint repeats this through `requireTenant(event, { permission, module, write })`, so a browser's earlier session response is never reused for authorization.
+
+## Security rules and tenant isolation (Phase 3)
+
+`firestore.rules` and `storage.rules` share one model:
+
+- A browser read is allowed only when `businesses/{bid}/members/{request.auth.uid}` exists with `status == "active"`. The member document's ID must be the caller's uid; a `uid` field inside the data doesn't count. `users/{uid}.businessIds`, custom claims, `roleTemplate`, URLs and headers are never consulted.
+- Each collection needs one permission key, which must be `=== true` in the stored `permissions` map. Truthy non-booleans, non-map permission values and unknown keys grant nothing.
+- The subscription rule mirrors `accessPolicy` + `effectivePermissions`:
+  - active, past_due and suspended read normally;
+  - cancelled lets the `isAccountOwner` member read with the export-only permissions;
+  - any other value (missing, unknown, wrong case, non-string) is refused.
+- Business IDs must match the `isValidBusinessId` format. This is defense in depth, because the server never creates other IDs.
+- There is no browser write anywhere (Firestore or Storage).
+
+| Browser-readable | Permission |
+|---|---|
+| `businesses/{bid}` (get only, no list) | active membership |
+| `members/{uid}` | self, or `users.view` (list needs `users.view`) |
+| `products`, `inventoryTransactions` | `inventory.view` |
+| `customers` | `customers.view` |
+| `orders` | `orders.view` |
+| `payments` | `payments.view` |
+| `metrics` | `dashboard.view` |
+| `reports` | `reports.view` |
+| `settings` | `settings.view` |
+| `imports`, `imports/*/rows` | `imports.run` |
+
+Server-only, never readable from the browser: `users`, `plans`, `platformAudit`, `paymentRefs`, `counters`, `usage`, `auditLog`, `integrations`, `members/*/inbox`, and every collection-group query. The inbox `readAt` write is deferred to Phase 12.
+
+In Storage, `tenants/{bid}/{products|payments|imports|exports}/**` is readable with `inventory.view`, `payments.view`, `imports.run` and `reports.export` respectively, using the same membership and subscription checks through cross-service Firestore reads. Everything else is denied, and there are no browser uploads. Staging has no bucket yet, so these rules are emulator-verified but not deployed.
+
+The proof is `npm run test:rules`: `tests/rules/` runs on the real emulators with `@firebase/rules-unit-testing`. It runs in CI (`.github/workflows/ci.yml`) and before every `deploy:rules:staging`.
 
 ## Identity, roles and permissions
 
@@ -134,8 +167,8 @@ Every change writes an append-only `inventoryTransactions` record inside the sam
 ## Build phases
 
 1. Foundation ✅
-2. Auth and multi-tenant business/user model
-3. Rules and tenant-isolation tests
+2. Auth and multi-tenant business/user model ✅
+3. Rules and tenant-isolation tests ✅
 4. Plans, modules, permissions
 5. Dashboard and metrics
 6. Products and inventory

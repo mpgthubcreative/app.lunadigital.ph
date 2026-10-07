@@ -27,5 +27,7 @@ export default defineConfig({
   },
   test: {
     include: ["tests/**/*.test.js"],
+    // Emulator security suite has its own config (vitest.rules.config.js).
+    exclude: ["tests/rules/**", "node_modules/**"],
   },
 });

@@ -1,0 +1,50 @@
+# Unit tests, build, and the Firestore/Storage tenant-isolation suite
+# against the real Firebase emulators. Runs offline against the demo-luna
+# project: no secrets, no cloud access.
+#
+# To make this a merge gate, require the "ci / test" check in GitHub branch
+# protection for main.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Cache Firebase emulator binaries
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/firebase/emulators
+          key: firebase-emulators-${{ runner.os }}-15
+
+      - run: npm ci
+      - run: npm install -g firebase-tools@15
+
+      - name: Unit and DOM tests
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+      - name: Tenant-isolation security suite (emulators)
+        run: npm run test:rules
