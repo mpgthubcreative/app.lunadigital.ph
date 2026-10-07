@@ -35,7 +35,7 @@ function businessesView() {
             <thead><tr><th>Business</th><th>Plan</th><th class="num">Users</th><th>Status</th><th>Renewal</th><th>Usage</th></tr></thead>
           </table>
         </div>
-        ${emptyState({ iconName: "businesses", title: "No businesses yet", body: "Businesses are created with the onboarding script in Phase 2 and managed here in Phase 13." })}
+        ${emptyState({ iconName: "businesses", title: "No businesses yet", body: "Businesses are created with scripts/create-business.js for now and will be managed here in Phase 13." })}
       `,
     })}
   `;
@@ -105,7 +105,7 @@ function boot() {
             <div class="topbar-title" id="topbarTitle"></div>
           </header>
           <div class="banners">
-            <div class="banner banner-info" role="note">Foundation preview — Super Admin sign-in arrives in Phase 2; management features in Phase 13.</div>
+            <div class="banner banner-info" role="note">Static preview — no sign-in and no tenant data. Super Admin sign-in (platformAdmin claim) and management arrive in Phase 13.</div>
           </div>
           <main class="content" id="content" tabindex="-1"></main>
         </div>
