@@ -196,7 +196,7 @@ const checks = [
   }],
   ["A, B, C snapshots: every unbuilt module is false (planned, not enabled)", async () => {
     const rows = await Promise.all([session({ as: "owner.a" }), session({ as: "owner.b" }), session({ as: "owner.c" })]);
-    return rows.every((r) => r.status === 200 && ["imports", "suppliers", "production", "returns"].every((k) => r.body.entitlements.modules[k] === false));
+    return rows.every((r) => r.status === 200 && ["suppliers", "production", "returns"].every((k) => r.body.entitlements.modules[k] === false));
   }],
   ["GET /api/reports: owner.a selecting B → 403", async () => (await get("reports", { as: "owner.a", businessId: B })).status === 403],
   // Phase 5: dashboard summary documents through the deployed Firestore rules.
@@ -265,9 +265,9 @@ const checks = [
     (await fsQuery("staff.a", `businesses/${A}`, "paymentRefs")) === 403 &&
     (await fsQuery("owner.a", `businesses/${B}`, "payments")) === 403],
   // Phase 9: customers (refusals and reads only; no customers are created here).
-  ["A, B, C have Customers, Expenses and Reports on (distributor v4)", async () => {
+  ["A, B, C have Customers, Expenses, Reports and Imports on (distributor v5)", async () => {
     const rows = await Promise.all([session({ as: "owner.a" }), session({ as: "owner.b" }), session({ as: "owner.c" })]);
-    return rows.every((r) => r.status === 200 && r.body.entitlements.modules.customers === true && r.body.entitlements.modules.expenses === true && r.body.entitlements.modules.reports === true && r.body.workspace?.templateVersion === 4);
+    return rows.every((r) => r.status === 200 && ["customers", "expenses", "reports", "imports"].every((k) => r.body.entitlements.modules[k] === true) && r.body.workspace?.templateVersion === 5);
   }],
   ["POST /api/customers without a token → 401", async () => (await post("customers", { action: "create" })).status === 401],
   ["customer statistics can't be sent from the browser (400)", async () => (await post("customers", { action: "create", customer: { name: "Smoke", stats: { outstandingBalance: 0 } } }, { as: "staff.a" })).status === 400],
@@ -282,6 +282,20 @@ const checks = [
   ["owner.a selecting B can't write B's expenses (403)", async () => (await post("expenses", { action: "create", expense: { date: "2026-10-01", category: "rent", amount: 100, method: "cash" } }, { as: "owner.a", businessId: B })).body.error === "business-access-denied"],
   ["manager.a lists expenses; B's expenses refused", async () =>
     (await fsQuery("manager.a", `businesses/${A}`, "expenses")) === 200 && (await fsQuery("owner.a", `businesses/${B}`, "expenses")) === 403],
+  // Phase 12: imports (refusals and reads only; nothing is imported here).
+  ["POST /api/imports without a token → 401", async () => (await post("imports", { action: "preview" })).status === 401],
+  ["staff.a (no imports.run) can't preview an import (403)", async () =>
+    (await post("imports", { action: "preview", type: "products", fileName: "p.csv", rows: [{ n: 2, values: { sku: "SMOKE-I", name: "x", unit: "pcs", sellingPrice: "1" } }] }, { as: "staff.a" })).status === 403],
+  ["owner.a selecting B can't import into B (403)", async () =>
+    (await post("imports", { action: "preview", type: "products", fileName: "p.csv", rows: [] }, { as: "owner.a", businessId: B })).body.error === "business-access-denied"],
+  ["unknown import actions and smuggled fields are refused (400)", async () =>
+    (await post("imports", { action: "update", jobId: "aaaaaaaaaaaaaaaaaaaa" }, { as: "owner.a" })).status === 400 &&
+    (await post("imports", { action: "commit", jobId: "aaaaaaaaaaaaaaaaaaaa", rows: [] }, { as: "owner.a" })).status === 400],
+  ["a missing import job is 404", async () => (await post("imports", { action: "commit", jobId: "aaaaaaaaaaaaaaaaaaaa" }, { as: "owner.a" })).status === 404],
+  ["manager.a reads Import History; staff.a and B refused", async () =>
+    (await fsQuery("manager.a", `businesses/${A}`, "imports")) === 200 &&
+    (await fsQuery("staff.a", `businesses/${A}`, "imports")) === 403 &&
+    (await fsQuery("owner.a", `businesses/${B}`, "imports")) === 403],
 ];
 
 console.log(`Smoke-testing ${baseUrl}\n`);

@@ -57,7 +57,7 @@ export const TENANT_COLLECTIONS = Object.freeze({
   reports: "reports.view", // built in Phase 11 (the page reads GET /api/reports)
   reportRollups: null, // server-only report breakdowns
   settings: "settings.view",
-  imports: null,
+  imports: "imports.run", // built in Phase 12
   paymentRefs: null,
   counters: null,
   usage: null,
@@ -73,7 +73,7 @@ export const COLLECTION_NAMES = Object.freeze([...Object.keys(TENANT_COLLECTIONS
 export const STORAGE_AREAS = Object.freeze({
   products: "inventory.view",
   payments: "payments.view",
-  imports: null, // Imports unbuilt (Phase 8.5 cleanup)
+  imports: "imports.run", // Imports built in Phase 12
   exports: "reports.export", // Reports built in Phase 11
 });
 

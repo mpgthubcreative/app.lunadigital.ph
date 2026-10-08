@@ -597,6 +597,75 @@ So a customer's `outstandingBalance` always equals the sum of its non-cancelled 
 
 Old v1 snapshots never enabled Customers by themselves.
 
+## Luna-wide product requirements (recorded after Phase 11)
+
+These apply to every phase from Phase 12 on. Each module adopts them when it's built or next touched; they are not all implemented yet.
+
+**1. Filter → View → Download.**
+- Wherever Luna shows meaningful tabular or operational data, the active filters decide both what is displayed and what is exported. For example, Orders filtered to Oct 1–31, Paid, Fulfilled → Download Excel exports exactly those records.
+- "Export all", if ever offered, is a separate, explicit choice.
+
+**2. Excel (.xlsx) is Luna's business export format**, across every workspace template. Existing CSV (Reports) stays.
+- There is one shared, controlled implementation (`shared/xlsx.js`, Phase 12), not a per-module one.
+- An export respects tenant isolation, workspace template, module entitlement, user permissions, financial visibility, active filters and an explicit field selection.
+- A workbook never contains a field the user couldn't receive through the app or API. Restricted data is never fetched and then hidden in the workbook.
+- Every cell is written as a plain value, never a formula. Text that looks like a formula (`= + - @`, tab, CR) is neutralised.
+- Small filtered results may be generated in the browser from rows the API already returned. Larger exports use protected server retrieval, paginated or chunked, with row limits. Asynchronous export jobs come only if volumes require them.
+
+**3. Distributor Excel downloads (planned):** Products, Inventory, Orders, Payments, Customers, Expenses and Reports (Reports keeps CSV and gains .xlsx), plus Import History where useful.
+
+**4. Distributor Dashboard date filter (planned):**
+- Presets: Today, Yesterday, This week, This month, Last month, Custom. They use the business timezone, the same presets as Reports (`reportPresets`).
+- The filter drives period metrics (net sales, COGS, gross profit, operating expenses, estimated operating profit, payments received, orders, period activity) through the same summary documents and `financialSummary`, with no new formulas.
+
+**5. Period metrics vs current-state metrics.** A date filter never pretends Luna stores historical snapshots it doesn't have.
+- **Selected period:** sales, COGS, gross profit, expenses, estimated operating profit, payments received, orders in the period.
+- **Current operations** (always "now", labelled so): low stock, available inventory, unpaid balance, orders awaiting fulfilment.
+- Dashboard and Reports keep these two groups visually separate.
+
+**6. Distributor module filters (target):** only filters an index serves; no unbounded scans.
+
+| Module | Filters |
+|---|---|
+| Products | search, category, active/inactive |
+| Inventory | search, category, low-stock/status |
+| Orders | date range, payment status, fulfilment status, customer, source |
+| Payments | date range, method, verification/payment status, customer/order/reference search |
+| Customers | search, active/inactive, balance state (later, if efficient) |
+| Expenses | date range, category, method, payee/reference search |
+| Reports | the Phase 11 business-local ranges |
+
+**7. Distributor Dashboard Excel download (planned):** reflects the selected range. Possible sheets are Summary, Sales, Products, Customers, Payments and Expenses, including only the sheets and fields the user may access. A Staff user without financial permission never gets sales, COGS, profit or expense amounts through an export.
+
+**8–15. Household / Kasambahay payroll (future workspace; nothing built yet).**
+- **Modules:** Dashboard, Household Staff, Attendance, Payroll, Salary Payments, Employee Receipt Confirmation, Advances, Deductions, Payroll History, Reports, Excel Downloads.
+- **Filtered Excel exports** of each. Example: Employee = Maria, Period = Oct 1–15 → her attendance and payroll for that period.
+- **Daily attendance line items:** `Date | Day | Status | Daily Wage | Payable Amount | Notes`. Statuses are Present, Absent and Official Leave.
+  - Present and Official Leave are payable; Absent is not.
+  - Payable Days = Present + Official Leave. Base Pay = Daily Wage × Payable Days (₱600 × 12 = ₱7,200).
+  - Luna calculates these; users never type Base Pay.
+- **Inline attendance:** where permitted, status is changed inline (Present ▾ → Absent). Luna recalculates payable days, base pay and the payroll total, and records previous status → new status, actor and time.
+- **Payroll summary:** Employee, Period, Daily Wage, Present / Official Leave / Absent / Payable Days, Base Pay, Advances / Deductions, (other adjustments later), Net Pay, Salary Payment Status, Employee Receipt Confirmation. Example: Maria, ₱600/day, 10 / 2 / 3 → 12 payable days → ₱7,200 base − ₱500 = ₱6,700 net.
+- **Advances:** `Date | Employee | Description | Amount | Status | Paid Date | View Details`. The status is a controlled value, Not Yet Paid or Paid, never free text. Marking Paid records amount, release date, actor, and method/reference where useful.
+  - **Advance release ≠ advance repayment.** "Was it released to the employee?" is separate from "has it been deducted / repaid?" Outstanding balance and settlement come later.
+- **Salary paid ≠ receipt confirmed.** The flow is payroll calculated → salary released / paid → the employee confirms receipt, as three separate states. "Paid Oct 15 6:10 PM, Receipt: Awaiting Confirmation", then "Confirmed Oct 15 6:18 PM".
+- **Possible dashboard widgets:** Payroll This Period, Present / Absent / On Leave Today, Salary Due, Salary Paid, Awaiting Receipt Confirmation, Outstanding Advances.
+
+**16. Bridal (future; nothing built yet):** filters plus Excel for each list, with active filters flowing into the export.
+
+| List | Columns | Filters |
+|---|---|---|
+| Budget | Category, Budget, Actual, Paid, Balance | — |
+| Suppliers | Supplier, Category, Contract Amount, Paid, Balance, Next Due | category, paid/unpaid, outstanding balance |
+| To-Do | Task, Category, Assigned To, Due Date, Priority, Status | status, due date, assignee, category, priority |
+| Guests / RSVP | Guest, Group, Party Size, Invitation Status, RSVP, Confirmed Guests, Table | Confirmed / Declined / Awaiting, side or group, table |
+
+**17. Baby tracker (future; nothing built yet):** filtered .xlsx for Budget, Expenses, Categories, Providers / Vendors and Payment Schedules (for example Category = Medical, Period = First Trimester). The exact pregnancy/baby periods are designed in that phase.
+
+**18. Never** generate a workbook by dumping a Firestore collection into the browser.
+
+**Production-readiness item (from Phase 11):** `rebuild-report-rollups` needs the business to be quiet, because an event during a rebuild could be overwritten. Before production, make rebuild/backfill concurrency-safe, for example by versioned rollups written aside and then swapped, or by a maintenance flag that pauses writers.
+
 ## Dashboard and metrics (Phase 5)
 
 **Summary documents, not scans.** The dashboard never downloads orders, payments, inventory or expenses to add them up. It reads a few tenant-scoped summary documents, which server functions update with `FieldValue.increment` inside the same transaction as the business event (`netlify/functions/_lib/metrics.js`):
@@ -750,6 +819,55 @@ Without `dashboard.financials` the server never reads `financialMetrics` and ret
 
 **Scale note:** `reportRollups/{day}` is written by every fulfilment, payment and expense that day, like `financialMetrics/{day}`. That's fine for SMB volumes, and the documents stay small (one entry per product or customer active that day).
 
+## Imports (Phase 12, Distributor)
+
+Imports let a distributor bring in its existing **Products** and **Customers** from Excel (.xlsx) or .csv, with a preview and a confirmation before anything is saved. Historical Orders, Payments, Expenses, inventory transactions and sales/COGS are **not** importable: they drive metrics, stock and money and are only created through their own flows. There is no Google Sheets sync.
+
+**Flow:** choose type → choose file → map columns → preview → confirm → import → Import History.
+- **The browser only parses** (`shared/xlsx.js`, `shared/csv.js`): the first sheet, the first non-empty row is the header, and blank rows are dropped but row numbers are kept. Columns are auto-mapped from synonyms (e.g. "Item Code" → SKU, "SRP" → Selling price), and the user can change any mapping. Downloadable templates (.xlsx) use Luna's field names.
+- **The server validates everything** (`POST /api/imports`, `preview`): every mapped row goes through the same `validateProductInput` / `validateCustomerInput` as manual entry, then duplicate checks. The job is stored server-side as `imports/{jobId}` plus `imports/{jobId}/rows/{NNN}` (200 rows per chunk).
+- **Row statuses:** **Ready** (will be created), **Warning** (a possible problem; imported only if the user ticks "Include warning rows"), **Error** (never imported; the message says why). Rows already in Luna are Warnings with action "skip".
+- **Duplicates, tenant-scoped and bounded:**
+  - Products: the same SKU twice in the file is an Error; a SKU that already exists (`skuIndex`, at most one read per row) is skipped.
+  - Customers: the same name + phone twice in the file is skipped. An existing customer with the same name + phone (`in` queries of 30) is skipped. The same phone or the same name alone is a "possible duplicate" Warning.
+- **Existing records are never updated.** A match is always skipped.
+- **Preview screen:** Ready / Warning / Error filter cards, 50 rows per page, and **Download these rows (.xlsx)** for the current filter (Filter → View → Download).
+
+**Commit** (`commit`, call again until `{ done: true }`):
+- It imports the **stored preview**; rows are never re-sent. Work happens in time-boxed batches (6 s per call, inside Netlify's synchronous limit), and the screen shows progress.
+- **Idempotent per row:** each product or customer is created in ONE transaction together with its `results.{i}` marker (`createProduct` / `createCustomer` hooks). Retries, double clicks and concurrent commits never create a row twice. ALREADY_EXISTS from a racing commit resolves to done or skipped.
+- At commit time a SKU or customer added since the preview is skipped, not duplicated. An imported product is created exactly like a manual one: stock 0, no inventory transaction or sales/COGS; only the low-stock gauge moves. Opening stock goes through Inventory receipts or Adjust.
+- **Plan limit:** `importsPerMonth` is checked and counted (`usage/{month}.excelImports`) **once per job**, in the transaction that starts the commit, so racing jobs can't exceed it.
+- Previews **expire after 24 hours**. A previewed job can be cancelled. Completion writes `auditLog` `import.completed` with the result `{ created, skipped, failed, notImported }`.
+
+**Access:**
+- **Server:** Imports module + `imports.run` + write access, plus the target data's own module and manage permission (Products: Inventory + `products.manage`; Customers: Customers + `customers.manage`). The type picker only offers what the user may import.
+- **Rules:** `imports/{id}` and `rows/{n}` are readable with Imports + `imports.run` and are never writable from the browser. Owner and Manager hold `imports.run`; Staff don't.
+- Other workspaces (Bridal, Baby, Payroll) never have Imports.
+
+**Import History:** one compact row per import (Type, File, Rows, Created, Skipped, Failed, Status, By, Date), 25 per page. **View details** shows every row with its outcome, an outcome filter, and an .xlsx download.
+
+**Limits:**
+
+| Limit | Value |
+|---|---|
+| File size | 5 MB |
+| Unzipped size | 40 MB (zip-bomb guard) |
+| Rows per import | 2,000 |
+| Columns | 60 |
+| Characters per cell | 500 |
+| Request body | 3 MB |
+
+**Shared XLSX capability (for future exports):**
+- `shared/xlsx.js`: `readXlsx` / `writeXlsx` on `fflate` (pinned 0.8.3) with a minimal own XML reader/writer, so there's no heavy spreadsheet dependency.
+  - Formulas are never evaluated (the cached value is read).
+  - Written cells are inline strings or numbers.
+  - Every text cell passes `safeCellText`, which prefixes `'` to `= + - @ tab CR` to prevent formula injection.
+- `shared/csv.js` mirrors it for CSV.
+- Future module and Dashboard downloads reuse these helpers. Data is still fetched under the Filter → View → Download and server-pagination rules above, never by dumping collections.
+
+**Activation:** Imports was marked built; the Distributor template went v4 → v5 (`upgradingFrom: [4]` during the window, rules `[4, 5]`), then recompute, then strict `[5]`.
+
 ## Performance
 
 - The dashboard reads at most four summary documents (see above), plus small limited list queries once Orders and Inventory exist.
@@ -807,7 +925,7 @@ On Orders, Reference and Proof show "—" until Payments (Phase 8) fills them in
 9. Customers ✅
 10. Expenses ✅
 11. Reports (incl. operating P&L) ✅
-12. Imports
+12. Imports ✅
 13. Notifications
 14. Super Admin console
 15. Usage metering views

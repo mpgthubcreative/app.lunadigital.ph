@@ -16,7 +16,7 @@ describe("app shell", () => {
     const root = document.getElementById("app");
     const shell = renderShell(root, sessionFixture());
     expect([...root.querySelectorAll(".nav-link")].map((a) => a.getAttribute("href"))).toEqual([
-      "/", "/orders", "/payments", "/inventory", "/customers", "/expenses", "/reports", "/users", "/settings",
+      "/", "/orders", "/payments", "/inventory", "/customers", "/expenses", "/reports", "/imports", "/users", "/settings",
     ]);
     expect(root.querySelector(".banner-info").textContent).toMatch(/Staging/);
 
@@ -34,7 +34,7 @@ describe("app shell", () => {
     renderShell(document.getElementById("app"), sessionFixture({ roleTemplate: "staff" }));
     expect(navLabels()).toEqual(["Dashboard", "Orders", "Payments", "Inventory", "Customers"]);
     renderShell(document.getElementById("app"), sessionFixture({ roleTemplate: "manager" }));
-    expect(navLabels()).toEqual(["Dashboard", "Orders", "Payments", "Inventory", "Customers", "Operating Expenses", "Reports", "Users", "Settings"]);
+    expect(navLabels()).toEqual(["Dashboard", "Orders", "Payments", "Inventory", "Customers", "Operating Expenses", "Reports", "Imports", "Users", "Settings"]);
   });
 
   it("shows a read-only banner for suspended businesses", () => {

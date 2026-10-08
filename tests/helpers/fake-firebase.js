@@ -116,8 +116,9 @@ class Query {
     this.max = max;
   }
   where(field, op, value) {
-    if (op !== "==") throw new Error(`fake: unsupported operator ${op}`);
-    return new Query(this.store, this.path, [...this.filters, { field, value }], this.max);
+    if (op !== "==" && op !== "in") throw new Error(`fake: unsupported operator ${op}`);
+    if (op === "in" && (!Array.isArray(value) || value.length > 30)) throw new Error("fake: 'in' needs an array of at most 30 values");
+    return new Query(this.store, this.path, [...this.filters, { field, op, value }], this.max);
   }
   limit(n) {
     return new Query(this.store, this.path, this.filters, n);
@@ -127,7 +128,7 @@ class Query {
     const out = [];
     for (const [path, data] of this.store.docs) {
       if (!path.startsWith(prefix) || path.slice(prefix.length).includes("/")) continue;
-      if (this.filters.every((f) => data[f.field] === f.value)) out.push(new DocSnap(new DocRef(this.store, path), clone(data)));
+      if (this.filters.every((f) => (f.op === "in" ? f.value.includes(data[f.field]) : data[f.field] === f.value))) out.push(new DocSnap(new DocRef(this.store, path), clone(data)));
     }
     return this.max === null ? out : out.slice(0, this.max);
   }

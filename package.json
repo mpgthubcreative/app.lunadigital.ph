@@ -34,6 +34,7 @@
     "rebuild-report-rollups": "node --env-file=.env.local scripts/rebuild-report-rollups.js"
   },
   "dependencies": {
+    "fflate": "0.8.3",
     "firebase": "^12.19.0",
     "firebase-admin": "^14.5.0"
   },

@@ -78,7 +78,7 @@ const BROKEN = Object.freeze({
   "schemaVersion 3 (future)": (b) => (b.entitlements.schemaVersion = 3),
   "workspace version stale": (b) => (b.entitlements.workspaceTemplateVersion = 0),
   "workspace missing from snapshot": (b) => delete b.entitlements.workspaceTemplateId,
-  "unbuilt module enabled (imports = true)": (b) => (b.entitlements.modules.imports = true),
+  "unbuilt module enabled (suppliers = true)": (b) => (b.entitlements.modules.suppliers = true),
   "modules not a map": (b) => (b.entitlements.modules = ["orders", "reports"]),
   "reports = 'true' (string)": (b) => (b.entitlements.modules.reports = "true"),
   "orders = 1": (b) => (b.entitlements.modules.orders = 1),
@@ -147,9 +147,10 @@ describe("THE scenario: staff with payments.view, Payments disabled for the busi
   });
 });
 
-describe("unbuilt modules (Imports) are denied on every package", () => {
-  it("even the owner of a Pro business, even with every permission", async () => {
-    for (const c of ["imports"]) await assertFails(dbAs(env, uidOf("owner", "ent-pro")).doc(`businesses/ent-pro/${c}/${DOC}`).get());
+describe("Imports (built in Phase 12) follows plan + permission", () => {
+  it("the owner of a Pro business reads import jobs and rows", async () => {
+    await assertSucceeds(dbAs(env, uidOf("owner", "ent-pro")).doc(`businesses/ent-pro/imports/${DOC}`).get());
+    await assertSucceeds(dbAs(env, uidOf("owner", "ent-pro")).collection(`businesses/ent-pro/imports/${DOC}/rows`).get());
   });
 });
 

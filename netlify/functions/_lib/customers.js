@@ -39,13 +39,15 @@ async function possibleDuplicate(tenant, key, exceptId = null) {
 
 // ---------- Contact records (customers.manage) ----------
 
-export async function createCustomer({ db, tenant, FieldValue, input, actor }) {
+// hooks (imports): { read(tx) before any write, may throw; write(tx, customerId) }.
+export async function createCustomer({ db, tenant, FieldValue, input, actor, hooks = null }) {
   const data = validateCustomerInput(input);
   const ref = tenant.collection("customers").doc();
   const stamp = FieldValue.serverTimestamp();
   const key = phoneKey(data.phone);
   const duplicate = await possibleDuplicate(tenant, key);
   await db.runTransaction(async (tx) => {
+    if (hooks && hooks.read) await hooks.read(tx);
     tx.create(ref, {
       schemaVersion: CUSTOMER_SCHEMA_VERSION,
       name: data.name,
@@ -65,6 +67,7 @@ export async function createCustomer({ db, tenant, FieldValue, input, actor }) {
       updatedBy: actor,
       updatedAt: stamp,
     });
+    if (hooks && hooks.write) hooks.write(tx, ref.id);
   }, TX_OPTIONS);
   return { customerId: ref.id, possibleDuplicate: duplicate };
 }

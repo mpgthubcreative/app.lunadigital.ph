@@ -14,8 +14,7 @@ let env;
 
 const PACKAGES = Object.freeze({
   "st-growth": { planId: "growth" },
-  // Phase 4 used Reports/exports; Reports and Imports are unbuilt since the
-  // Phase 8.5 cleanup, so the scenario uses Payments (payments area).
+  // Phase 4 used Reports/exports; the scenario uses Payments (payments area).
   "st-no-payments": { planId: "growth", overrides: { modules: { payments: false } } },
   "st-lite": { planId: "lite-test" },
   "st-lite-plus": { planId: "lite-test", overrides: { modules: { payments: true } } },
@@ -28,7 +27,7 @@ const BROKEN = Object.freeze({
   "st-bad-stale": (b) => (b.subscription.planId = "pro"),
   "st-bad-limits": (b) => (b.entitlements.limits.users = "5"),
   "st-bad-feature": (b) => (b.entitlements.features.support = "gold"),
-  "st-bad-unbuilt-on": (b) => (b.entitlements.modules.imports = true),
+  "st-bad-unbuilt-on": (b) => (b.entitlements.modules.suppliers = true),
 });
 
 const ROLES = Object.freeze({
@@ -73,8 +72,9 @@ describe("THE scenario in Storage: payments.view, Payments off", () => {
     await assertSucceeds(storageAs(uidOf("staff", "st-growth")).ref(file("st-growth", "payments")).getMetadata());
   });
 
-  it("the unbuilt Imports area is refused even with the permission; exports (Reports, Phase 11) follow reports.export", async () => {
-    await assertFails(storageAs(uidOf("owner", "st-growth")).ref(file("st-growth", "imports")).getMetadata());
+  it("imports (Phase 12) follow imports.run; exports (Reports, Phase 11) follow reports.export", async () => {
+    await assertSucceeds(storageAs(uidOf("owner", "st-growth")).ref(file("st-growth", "imports")).getMetadata());
+    await assertFails(storageAs(uidOf("staff", "st-growth")).ref(file("st-growth", "imports")).getMetadata());
     await assertSucceeds(storageAs(uidOf("exportStaff", "st-growth")).ref(file("st-growth", "exports")).getMetadata());
     await assertFails(storageAs(uidOf("staff", "st-growth")).ref(file("st-growth", "exports")).getMetadata());
   });

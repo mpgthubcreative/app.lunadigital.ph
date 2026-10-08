@@ -19,7 +19,9 @@
 //   labels         plain-text display names by module id; ids, permission
 //                  keys and security rules never depend on these
 //   settings       default workspace settings (plain JSON values)
-//   plannedModules roadmap metadata ONLY: no route, no permission, no
+//   plannedModules roadmap metadata ONLY (Luna-wide requirements such as
+//                  filtered Excel downloads apply to each when it's built;
+//                  see docs/ARCHITECTURE.md): no route, no permission, no
 //                  entitlement, never shown as navigation. An entry may
 //                  name a registered-but-unbuilt module (e.g. customers)
 //                  or a future domain capability (e.g. wedding-tasks).
@@ -68,14 +70,15 @@ const TEMPLATES = [
   {
     id: "distributor",
     // v2 (Phase 9): Customers became operational. v3 (Phase 10): Expenses.
-    // v4 (Phase 11): Reports. (Older snapshots were accepted via
-    // upgradingFrom only until every business was recomputed.)
-    version: 4,
+    // v4 (Phase 11): Reports. v5 (Phase 12): Imports. (Older snapshots are
+    // accepted via upgradingFrom only until every business is recomputed.)
+    version: 5,
+    upgradingFrom: [4],
     name: "Distributor Operations",
     description: "Orders, payments, products and inventory for distributors and wholesalers.",
     status: "live",
-    modules: [...CORE, "orders", "payments", "inventory", "customers", "expenses", "reports"],
-    navigation: ["dashboard", "orders", "payments", "inventory", "customers", "expenses", "reports", "users", "settings"],
+    modules: [...CORE, "orders", "payments", "inventory", "customers", "expenses", "reports", "imports"],
+    navigation: ["dashboard", "orders", "payments", "inventory", "customers", "expenses", "reports", "imports", "users", "settings"],
     dashboard: {
       widgets: ["netSales", "grossProfit", "operatingExpenses", "estimatedOperatingProfit", "paymentsReceived", "receivablesOutstanding", "ordersToday", "unpaidOrders", "pendingFulfillment", "lowStock", "recentOrders", "lowStockItems", "recentActivity"],
       empty: { title: "Nothing to show yet", body: "Your dashboard fills in as your business uses Luna." },
@@ -83,7 +86,6 @@ const TEMPLATES = [
     labels: { modules: { expenses: "Operating Expenses" } },
     settings: { orderPrefix: "ORD" },
     plannedModules: [
-      { id: "imports", name: "Imports" },
       { id: "suppliers", name: "Suppliers" },
       { id: "production", name: "Production" },
       { id: "returns", name: "Returns" },
@@ -103,6 +105,7 @@ const TEMPLATES = [
     settings: {},
     plannedModules: [
       { id: "household-staff", name: "Household Staff" },
+      { id: "attendance", name: "Attendance" },
       { id: "payroll", name: "Payroll" },
       { id: "salary-payments", name: "Salary Payments" },
       { id: "receipt-confirmation", name: "Employee Receipt Confirmation" },
@@ -129,6 +132,7 @@ const TEMPLATES = [
       { id: "expense-categories", name: "Categories" },
       { id: "providers", name: "Vendors / Providers" },
       { id: "baby-payments", name: "Payments" },
+      { id: "payment-schedules", name: "Payment Schedules" },
       { id: "due-dates", name: "Due Dates" },
       { id: "milestones", name: "Milestones" },
       { id: "baby-reports", name: "Reports" },

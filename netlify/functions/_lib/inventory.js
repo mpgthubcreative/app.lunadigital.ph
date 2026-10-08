@@ -56,7 +56,9 @@ function audit(tx, tenant, FieldValue, entry) {
 
 // ---------- Products ----------
 
-export async function createProduct({ db, tenant, FieldValue, input, actor }) {
+// hooks (imports): { read(tx) before any write, may throw; write(tx, productId) }
+// let an import mark its row done in the SAME transaction (idempotent).
+export async function createProduct({ db, tenant, FieldValue, input, actor, hooks = null }) {
   const data = validateProductInput(input);
   const productRef = tenant.collection("products").doc();
   const skuRef = tenant.doc("skuIndex", data.sku);
@@ -64,6 +66,7 @@ export async function createProduct({ db, tenant, FieldValue, input, actor }) {
   return db.runTransaction(async (tx) => {
     const skuSnap = await tx.get(skuRef);
     if (skuSnap.exists) throw new InventoryError("duplicate-sku", `SKU ${data.sku} is already used by another product`);
+    if (hooks && hooks.read) await hooks.read(tx);
 
     const now = FieldValue.serverTimestamp();
     const product = {
@@ -88,6 +91,7 @@ export async function createProduct({ db, tenant, FieldValue, input, actor }) {
     tx.create(tenant.doc("productCosts", productRef.id), { schemaVersion: PRODUCT_SCHEMA_VERSION, productId: productRef.id, avgCostUnits: null, lastReceiptUnitCost: null, inventoryValue: 0, updatedAt: now });
     gaugeWrites(tx, { tenant, FieldValue, lowStockDelta: product.isLowStock ? 1 : 0 });
     audit(tx, tenant, FieldValue, { type: "product.created", productId: productRef.id, actor, after: data });
+    if (hooks && hooks.write) hooks.write(tx, productRef.id);
     return { productId: productRef.id, product: { ...product, createdAt: null, updatedAt: null } };
   }, TX_OPTIONS);
 }

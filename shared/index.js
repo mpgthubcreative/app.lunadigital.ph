@@ -22,3 +22,7 @@ export * from "./orders.js";
 export * from "./payments.js";
 export * from "./customers.js";
 export * from "./reports.js";
+// Phase 12 import definitions. (shared/xlsx.js and shared/csv.js are NOT
+// re-exported here: they pull in fflate, so only the screens that read or
+// write spreadsheets import them directly, in their own lazy chunk.)
+export * from "./imports.js";
