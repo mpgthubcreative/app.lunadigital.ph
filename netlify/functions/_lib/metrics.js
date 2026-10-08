@@ -24,6 +24,7 @@ import {
   OPERATIONAL_GAUGES,
   FINANCIAL_GAUGES,
   businessDate,
+  isDayId,
 } from "../../../shared/metrics.js";
 
 function deltas(values, definitions, label) {
@@ -40,9 +41,12 @@ function incrementAll(FieldValue, values) {
   return Object.fromEntries(Object.entries(values).map(([key, n]) => [key, FieldValue.increment(n)]));
 }
 
-// Flows for the business-local day of `at` (+ its month rollup).
-export function recordDailyMetrics({ tx, tenant, FieldValue, timezone, at, operational = null, financial = null }) {
-  const day = businessDate(timezone, at); // throws on a bad timezone
+// Flows for the business-local day of `at` (+ its month rollup). `day`
+// targets an explicit past day instead, e.g. a correction to a sale
+// recognized on its original fulfillment day.
+export function recordDailyMetrics({ tx, tenant, FieldValue, timezone, at, day: explicitDay = null, operational = null, financial = null }) {
+  if (explicitDay !== null && !isDayId(explicitDay)) throw new Error("metrics: invalid explicit day");
+  const day = explicitDay ?? businessDate(timezone, at); // throws on a bad timezone
   const month = day.slice(0, 7);
   const meta = (period, id) => ({ schemaVersion: METRICS_SCHEMA_VERSION, period, id, timezone, updatedAt: FieldValue.serverTimestamp() });
 

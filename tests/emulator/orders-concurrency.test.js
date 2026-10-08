@@ -175,3 +175,68 @@ describe("submission and numbering races", () => {
     expect((await t.collection("orders").get()).size).toBe(usage);
   });
 });
+
+describe("Phase 7.1 correction races", () => {
+  const correct = (t, orderId, pid, qty, reason = "concurrency correction") =>
+    orders.updateOrder({ db, tenant: t, FieldValue, business: BUSINESS, orderId, input: { customer: { name: "Racer" }, source: "phone", items: [{ productId: pid, quantity: Q(qty) }] }, actor, canDiscount: false, canCorrect: true, reason });
+
+  async function fulfilledOrder(t, pid, qty) {
+    const { orderId } = await create(t, [{ productId: pid, quantity: Q(qty) }]);
+    await orders.fulfillOrder({ db, tenant: t, FieldValue, business: BUSINESS, orderId, actor, now: NOW });
+    return orderId;
+  }
+
+  async function consistent(t, pid, orderId, startStock) {
+    const order = (await t.doc("orders", orderId).get()).data();
+    const costs = (await t.doc("orderCosts", orderId).get()).data();
+    const fin = (await t.doc("financialMetrics", "2026-10-08").get()).data();
+    const p = await product(t, pid);
+    const q = order.items[0].quantity;
+    // Stock, order, cost record and the day's metrics all agree on the final quantity.
+    expect(p.onHand).toBe(Q(startStock) - q);
+    expect(costs.lines[0].quantity).toBe(q);
+    expect(costs.cogs).toBe((q / QTY_SCALE) * 5000);
+    expect(fin.cogs).toBe(costs.cogs);
+    expect(fin.grossSales).toBe(order.subtotal);
+    return q;
+  }
+
+  it("two identical simultaneous corrections 10 -> 8 restore +2 exactly once", async () => {
+    const t = freshTenant();
+    const pid = await stocked(t, { qty: 100, cost: 5000 });
+    const orderId = await fulfilledOrder(t, pid, 10);
+    const results = await settle([correct(t, orderId, pid, 8), correct(t, orderId, pid, 8)]);
+    expectExplicit(results);
+    expect(ok(results).length).toBeGreaterThan(0);
+    expect(await consistent(t, pid, orderId, 100)).toBe(Q(8));
+    expect((await product(t, pid)).onHand).toBe(Q(92));
+  });
+
+  it("10 -> 8 racing 10 -> 12: whichever lands last wins, nothing double-adjusts", async () => {
+    const t = freshTenant();
+    const pid = await stocked(t, { qty: 100, cost: 5000 });
+    const orderId = await fulfilledOrder(t, pid, 10);
+    const results = await settle([correct(t, orderId, pid, 8), correct(t, orderId, pid, 12)]);
+    expectExplicit(results);
+    const q = await consistent(t, pid, orderId, 100);
+    expect([Q(8), Q(12)]).toContain(q);
+    const corrections = (await t.doc("orderCosts", orderId).get()).data().corrections;
+    expect(corrections.length).toBe(ok(results).length);
+  });
+
+  it("deleting an open order while it's being fulfilled: one outcome only", async () => {
+    const t = freshTenant();
+    const pid = await stocked(t, { qty: 10 });
+    const { orderId } = await create(t, [{ productId: pid, quantity: Q(3) }]);
+    const results = await settle([
+      orders.deleteOrder({ db, tenant: t, FieldValue, orderId, actor }),
+      orders.fulfillOrder({ db, tenant: t, FieldValue, business: BUSINESS, orderId, actor, now: NOW }),
+    ]);
+    expectExplicit(results, ["not-deletable", "not-found", "not-pending"]);
+    expect(ok(results)).toHaveLength(1);
+    const p = await product(t, pid);
+    expect(p.reserved).toBe(0);
+    const exists = (await t.doc("orders", orderId).get()).exists;
+    expect(p.onHand).toBe(exists ? Q(7) : Q(10));
+  });
+});

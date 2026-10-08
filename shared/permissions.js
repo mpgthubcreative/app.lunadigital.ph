@@ -25,7 +25,9 @@ export const PERMISSIONS = Object.freeze({
   "orders.create": { module: "orders", group: "Orders", label: "Create orders" },
   "orders.update": { module: "orders", group: "Orders", label: "Edit pending orders" },
   "orders.fulfill": { module: "orders", group: "Orders", label: "Fulfill orders" },
-  "orders.cancel": { module: "orders", group: "Orders", label: "Cancel orders" },
+  "orders.cancel": { module: "orders", group: "Orders", label: "Cancel or delete open orders" },
+  // Editing a FULFILLED order changes stock, sales and COGS after the fact.
+  "orders.correct": { module: "orders", group: "Orders", label: "Correct fulfilled orders" },
   // Discounts change profitability; staff who enter orders don't get them by default.
   "orders.discount": { module: "orders", group: "Orders", label: "Give order discounts" },
 

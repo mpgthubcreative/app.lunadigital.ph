@@ -19,6 +19,10 @@
 //   release      -reserved only            (Phase 7 cancellations)
 //   fulfillment  -onHand and -reserved; returns the cost consumed at the
 //                current average: the COGS snapshot for Phase 7
+//   correction_in   +onHand at a KNOWN total cost (a fulfilled order corrected
+//                   down: units return at their original cost snapshot)
+//   correction_out  -onHand from unreserved stock at the current average
+//                   (a fulfilled order corrected up); returns cost consumed
 // No movement may oversell: there is no backorder policy yet.
 
 import {
@@ -27,6 +31,7 @@ import {
   isQuantity,
   isCentavos,
   movingAverage,
+  movingAverageByValue,
   costOfQuantity,
   inventoryValue,
   centavosToCostUnits,
@@ -43,6 +48,8 @@ export const MOVEMENT_TYPES = Object.freeze({
   reservation: { label: "Reserved", sign: 0, needsCost: false },
   release: { label: "Reservation released", sign: 0, needsCost: false },
   fulfillment: { label: "Fulfilled", sign: -1, needsCost: false },
+  correction_in: { label: "Order correction", sign: +1, needsCost: false },
+  correction_out: { label: "Order correction", sign: -1, needsCost: false },
 });
 
 // Movements a browser may request through /api/inventory. Reservation,
@@ -195,6 +202,16 @@ export function planMovement(state, movement) {
     case "release":
       if (reserved < quantity) throw new InventoryError("insufficient-reserved", "Can't release more than is reserved");
       nextReserved = reserved - quantity;
+      break;
+    case "correction_in":
+      if (!isCentavos(movement.value)) throw new InventoryError("invalid-cost", "Correction value must be whole centavos");
+      nextOnHand = onHand + quantity;
+      nextAvg = movingAverageByValue({ onHand, avgCostUnits: state.avgCostUnits ?? 0, qty: quantity, valueCentavos: movement.value });
+      break;
+    case "correction_out":
+      if (onHand - quantity < reserved) throw new InventoryError("insufficient-stock", "Not enough unreserved stock for this correction");
+      nextOnHand = onHand - quantity;
+      costConsumed = costOfQuantity(quantity, state.avgCostUnits ?? 0);
       break;
     case "fulfillment":
       if (reserved < quantity || onHand < quantity) throw new InventoryError("insufficient-reserved", "Can't fulfill more than is reserved and on hand");

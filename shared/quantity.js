@@ -157,3 +157,21 @@ export function inventoryValue(onHand, avgCostUnits) {
 export function lineAmount(quantity, unitPriceCentavos) {
   return toSafe(divRound(big(quantity) * big(unitPriceCentavos), big(QTY_SCALE)));
 }
+
+// Moving average when stock comes back at a KNOWN total cost (e.g. an order
+// correction returning units at their original cost snapshot) instead of a
+// per-unit purchase price. valueCentavos is the total cost of `qty`.
+export function movingAverageByValue({ onHand, avgCostUnits, qty, valueCentavos }) {
+  const total = big(onHand) + big(qty);
+  if (total === 0n) throw new QuantityError("Nothing on hand after the movement");
+  const existing = onHand > 0 ? big(onHand) * big(avgCostUnits || 0) : 0n;
+  const incoming = big(valueCentavos) * big(COST_SCALE) * big(QTY_SCALE);
+  return toSafe(divRound(existing + incoming, total));
+}
+
+// Share of an amount for part of a quantity: amount x part / whole, half-up.
+// Used to split a line's snapshotted cost when its quantity is corrected.
+export function prorate(amount, part, whole) {
+  if (whole <= 0) throw new QuantityError("prorate: whole must be positive");
+  return toSafe(divRound(big(amount) * big(part), big(whole)));
+}

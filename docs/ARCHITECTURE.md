@@ -337,6 +337,20 @@ Each checks sign-in, membership, permission, the Inventory module, subscription 
 
 **Dashboard:** orders today, unpaid orders, for fulfilment, unpaid balance, net sales and gross profit are live, and recent orders is a live list. Widgets whose data producer doesn't exist yet stay "No data yet": operating expenses, estimated operating profit and paid today (`LIVE_DATA_SOURCES`).
 
+**Corrections and accidental orders (Phase 7.1).** Users see a single **Edit → Save** for every order; the server decides what Save means:
+- **Open orders:** pending now, and preparing/ready later, since `FULFILLMENT_STATUSES[...].open` covers them. This is the existing edit path (`orders.update`).
+- **Fulfilled orders:** a correction, which needs the new `orders.correct` permission (Owner and Manager templates; not Staff). A reason is required only when quantities, products or the discount change.
+  - Units removed or reduced come back through a `correction_in` movement at the line's **original cost snapshot**, so COGS falls by exactly what was booked, even if the product's average cost has moved since. The returned units enter the moving average at that cost.
+  - Units added or increased leave stock through a `correction_out` movement at today's average.
+  - Line prices keep their snapshot; added products use today's price.
+  - The changes in sales, discount and COGS post to the order's **original fulfilment day** (and its month), so that day's figures become correct.
+  - History is appended, never rewritten. The order's `statusHistory` gets a `corrected` entry (who, when, reason, quantity before → after, the inventory effect, sales before → after; no cost figures, since Staff can read it). `orderCosts.corrections` records COGS and net sales before → after for financial users.
+  - The original fulfilment and inventory movements stay as they were.
+- **Cancelled orders:** not editable.
+- **Delete** (in ⋯ More, needs `orders.cancel`): only for open, unpaid, never-fulfilled orders. It releases reservations, removes the order from its day's `orderCount` and from the open/unpaid exposure, and writes an `auditLog` entry (`order.deleted`) with a full snapshot. Plan usage keeps counting it. Fulfilled orders can never be deleted.
+- **Corrections are not returns.** A correction is for "we typed 10, it was 8". "Received 10, returned 2" belongs to the future Returns module.
+- **Screen:** cancel and delete live under ⋯ More. The activity log reads "time • person • Qty changed 10 → 8", followed by "Inventory corrected +2" and "Sales adjusted ₱750.00 → ₱600.00".
+
 **Scale note:** the counter, usage and `metrics/current` documents are shared by every order in a business. That's fine for SMB volumes; sharding is needed if a tenant sustains more than about one order per second.
 
 ## Dashboard and metrics (Phase 5)

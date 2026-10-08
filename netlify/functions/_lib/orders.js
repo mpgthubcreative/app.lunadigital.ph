@@ -9,7 +9,14 @@
 //   create   reserve + count the order (metrics/{day}.orderCount, usage) - no sales, no COGS
 //   fulfill  consume stock, snapshot cost per line (orderCosts), and record
 //            grossSales / discounts / cogs on the business-local FULFILLMENT day
-//   cancel   release reservations (pending only) - no sales, no COGS
+//   cancel   release reservations (open orders only) - no sales, no COGS
+//   correct  edit a FULFILLED order (orders.correct): units that come back
+//            return at their ORIGINAL cost snapshot, extra units are consumed
+//            at today's average, and the sales / discount / COGS deltas post
+//            to the original fulfillment day. History is appended, never
+//            rewritten.
+//   delete   remove an accidental OPEN, unpaid order: release reservations,
+//            audit snapshot; plan usage keeps counting it
 //
 // Documents (businesses/{bid}/...):
 //   orders/{orderId}                order, line snapshots, statusHistory      (orders.view)
@@ -30,7 +37,10 @@ import {
   isValidOrderId,
   isValidIdempotencyKey,
   paymentStatusFor,
+  isOpenFulfillment,
+  isMaterialChange,
 } from "../../../shared/orders.js";
+import { prorate } from "../../../shared/quantity.js";
 import { businessDate } from "../../../shared/metrics.js";
 import { prepareMovements } from "./inventory.js";
 import { recordDailyMetrics, adjustCurrentMetrics } from "./metrics.js";
@@ -169,12 +179,15 @@ export async function createOrder({ db, tenant, FieldValue, business, entitlemen
   }
 }
 
-// ---------- Edit (pending only) ----------
+// ---------- Edit (open orders) and correction (fulfilled orders) ----------
 
-// Existing lines keep their price/name snapshot; new products are priced
-// from the product now; removed products are released. Only the
-// reservation DIFFERENCE moves: 20 -> 15 releases 5, 20 -> 30 reserves 10.
-export async function updateOrder({ db, tenant, FieldValue, orderId, input, expectedRevision = null, actor, canDiscount }) {
+// One "Edit -> Save" for the user; the server decides what it means.
+//   open order       existing lines keep their price/name snapshot; new
+//                    products are priced now; only the reservation
+//                    DIFFERENCE moves (20 -> 15 releases 5, 20 -> 30 reserves 10)
+//   fulfilled order  a correction (orders.correct), see correctFulfilled()
+//   cancelled order  not editable
+export async function updateOrder({ db, tenant, FieldValue, business = null, orderId, input, expectedRevision = null, actor, canDiscount, canCorrect = false, reason = null }) {
   const ref = orderRef(tenant, orderId);
   const data = validateOrderInput(input);
 
@@ -182,8 +195,14 @@ export async function updateOrder({ db, tenant, FieldValue, orderId, input, expe
     const snap = await tx.get(ref);
     if (!snap.exists) throw new OrderError("not-found", "Order not found");
     const order = snap.data();
-    if (order.fulfillmentStatus !== "pending") throw new OrderError("not-pending", `A ${order.fulfillmentStatus} order can't be edited`);
     if (expectedRevision !== null && expectedRevision !== order.revision) throw new OrderError("stale-order", "This order was changed by someone else. Reload and try again");
+    if (order.fulfillmentStatus === "fulfilled") {
+      // Same answer as Phase 7 for anyone without orders.correct: a fulfilled
+      // order isn't editable for them.
+      if (!canCorrect) throw new OrderError("not-pending", "This order is fulfilled. Only authorized users can correct it");
+      return correctFulfilled(tx, { tenant, FieldValue, business, ref, orderId, order, data, actor, canDiscount, reason });
+    }
+    if (!isOpenFulfillment(order.fulfillmentStatus)) throw new OrderError("not-pending", `A ${order.fulfillmentStatus} order can't be edited`);
     if (data.discount !== order.discount && !canDiscount) throw new OrderError("discount-not-allowed", "You don't have permission to change the discount");
 
     const oldLines = new Map(order.items.map((l) => [l.productId, l]));
@@ -223,8 +242,8 @@ export async function updateOrder({ db, tenant, FieldValue, orderId, input, expe
 
     const customerChanged = JSON.stringify(order.customer) !== JSON.stringify(data.customer);
     const entry = historyEntry("edited", actor, {
-      from: "pending",
-      to: "pending",
+      from: order.fulfillmentStatus,
+      to: order.fulfillmentStatus,
       changes: {
         lines: changes,
         ...(data.discount !== order.discount ? { discount: { from: order.discount, to: data.discount } } : {}),
@@ -259,6 +278,172 @@ export async function updateOrder({ db, tenant, FieldValue, orderId, input, expe
   }, TX_OPTIONS);
 }
 
+// A fulfilled order corrected after the fact ("we typed 10, it was 8").
+// Not a return: the customer never received the difference.
+//   decrease  units come back at the line's ORIGINAL cost snapshot
+//             (correction_in), so COGS drops by exactly what was booked
+//   increase  extra units leave stock at today's average (correction_out)
+//   removed / added products: the same, for the whole line
+// Prices on existing lines keep their snapshot. Sales, discount and COGS
+// deltas post to the ORIGINAL fulfillment day so that day becomes right.
+// Inventory history gets new correction movements; nothing is deleted.
+async function correctFulfilled(tx, { tenant, FieldValue, business, ref, orderId, order, data, actor, canDiscount, reason }) {
+  if (data.discount !== order.discount && !canDiscount) throw new OrderError("discount-not-allowed", "You don't have permission to change the discount");
+  const material = isMaterialChange({ before: order, after: data });
+  const why = typeof reason === "string" ? reason.trim().replace(/\s+/g, " ") : "";
+  if (material && (why.length < 3 || why.length > 300)) throw new OrderError("reason-required", "Say why this fulfilled order is being corrected (3-300 characters)");
+
+  const costsRef = tenant.doc("orderCosts", orderId);
+  const costsSnap = await tx.get(costsRef);
+  if (!costsSnap.exists) throw new OrderError("business-misconfigured", "This order's cost record is missing");
+  const costs = costsSnap.data();
+  const costByLine = new Map((costs.lines || []).map((l) => [l.lineId, l.costConsumed]));
+
+  const oldLines = new Map(order.items.map((l) => [l.productId, l]));
+  const newQty = new Map(data.items.map((i) => [i.productId, i.quantity]));
+  const moves = [];
+  const changes = [];
+  const keptCost = new Map(); // productId -> cost kept from the original snapshot
+  const mv = (type, quantity, extra = {}) => ({ type, quantity, referenceType: "order", referenceId: orderId, note: order.orderNumber, reason: "order_corrected", ...extra });
+
+  for (const [productId, quantity] of newQty) {
+    const before = oldLines.get(productId);
+    const oldQ = before ? before.quantity : 0;
+    const delta = quantity - oldQ;
+    if (before) {
+      const oldCost = costByLine.get(before.lineId) ?? 0;
+      if (delta < 0) {
+        const keep = prorate(oldCost, quantity, oldQ);
+        keptCost.set(productId, keep);
+        moves.push({ productId, movement: mv("correction_in", -delta, { value: oldCost - keep }) });
+      } else {
+        keptCost.set(productId, oldCost);
+        if (delta > 0) moves.push({ productId, movement: mv("correction_out", delta) });
+      }
+    } else {
+      keptCost.set(productId, 0);
+      moves.push({ productId, movement: mv("correction_out", quantity) });
+    }
+    if (delta !== 0) changes.push({ productId, sku: before ? before.sku : null, from: oldQ, to: quantity, inventory: -delta });
+  }
+  for (const [productId, line] of oldLines) {
+    if (!newQty.has(productId)) {
+      moves.push({ productId, movement: mv("correction_in", line.quantity, { value: costByLine.get(line.lineId) ?? 0 }) });
+      changes.push({ productId, sku: line.sku, from: line.quantity, to: 0, inventory: line.quantity });
+    }
+  }
+
+  const plan = moves.length ? await prepareMovements(tx, { tenant, items: moves }) : null;
+  const results = new Map(plan ? plan.results.map((r) => [r.productId, r]) : []);
+  let n = order.items.length;
+  const lines = data.items.map((i) => {
+    const prior = oldLines.get(i.productId);
+    if (prior) return { lineId: prior.lineId, productId: prior.productId, sku: prior.sku, name: prior.name, unit: prior.unit, quantity: i.quantity, unitPrice: prior.unitPrice };
+    const p = results.get(i.productId)?.product;
+    if (!p || p.status !== "active") throw new OrderError("product-inactive", "A new product on the order is unavailable");
+    n += 1;
+    for (const c of changes) if (c.productId === i.productId) c.sku = p.sku;
+    return { lineId: `L${n}`, productId: i.productId, sku: p.sku, name: p.name, unit: p.unit, quantity: i.quantity, unitPrice: p.sellingPrice };
+  });
+  const totals = computeTotals(lines, data.discount);
+  const amountPaid = order.amountPaid || 0;
+  if (totals.total < amountPaid) throw new OrderError("below-paid", "The new total would be less than what's already been paid");
+
+  const costLines = totals.lines.map((l) => {
+    // kept original cost + whatever extra units cost today (correction_out)
+    const extra = results.get(l.productId)?.costConsumed ?? 0;
+    return { lineId: l.lineId, productId: l.productId, quantity: l.quantity, lineSubtotal: l.lineSubtotal, costConsumed: keptCost.get(l.productId) + extra };
+  });
+  const cogs = costLines.reduce((s, l) => s + l.costConsumed, 0);
+  const delta = { grossSales: totals.subtotal - order.subtotal, discounts: totals.discount - order.discount, cogs: cogs - costs.cogs };
+
+  const customerChanged = JSON.stringify(order.customer) !== JSON.stringify(data.customer);
+  // Visible to everyone with orders.view: no cost figures here (they're in orderCosts).
+  const entry = historyEntry("corrected", actor, {
+    from: "fulfilled",
+    to: "fulfilled",
+    ...(why ? { reason: why } : {}),
+    changes: {
+      lines: changes,
+      ...(data.discount !== order.discount ? { discount: { from: order.discount, to: data.discount } } : {}),
+      ...(totals.total !== order.total ? { sales: { from: order.total, to: totals.total } } : {}),
+      ...(customerChanged ? { customer: true } : {}),
+      ...(data.source !== order.source ? { source: { from: order.source, to: data.source } } : {}),
+    },
+  });
+  const stamp = FieldValue.serverTimestamp();
+  tx.update(ref, {
+    customer: data.customer,
+    customerNameLower: data.customer.name.toLocaleLowerCase("en"),
+    source: data.source,
+    sourceNote: data.sourceNote || null,
+    notes: data.notes || null,
+    items: totals.lines,
+    itemCount: totals.lines.length,
+    subtotal: totals.subtotal,
+    discount: totals.discount,
+    total: totals.total,
+    balance: totals.total - amountPaid,
+    paymentStatus: paymentStatusFor({ total: totals.total, amountPaid }),
+    statusHistory: appendHistory(order, entry),
+    revision: order.revision + 1,
+    updatedBy: actor,
+    updatedAt: stamp,
+  });
+  if (material) {
+    const corrections = Array.isArray(costs.corrections) ? costs.corrections : [];
+    tx.update(costsRef, {
+      lines: costLines,
+      grossSales: totals.subtotal,
+      discount: totals.discount,
+      netSales: totals.total,
+      cogs,
+      grossProfit: totals.total - cogs,
+      corrections: [...corrections, { at: new Date(), actor, reason: why, before: { grossSales: costs.grossSales, discount: costs.discount, netSales: costs.netSales, cogs: costs.cogs }, after: { grossSales: totals.subtotal, discount: totals.discount, netSales: totals.total, cogs } }],
+    });
+    if (delta.grossSales || delta.discounts || delta.cogs) {
+      recordDailyMetrics({ tx, tenant, FieldValue, timezone: business?.timezone ?? null, day: order.fulfilledDay, financial: delta });
+    }
+  }
+  const totalDelta = totals.total - order.total;
+  if (totalDelta) adjustCurrentMetrics({ tx, tenant, FieldValue, financial: { receivablesOutstanding: totalDelta } });
+  if (plan) plan.commit({ actor, FieldValue });
+  return { orderId, revision: order.revision + 1, total: totals.total, corrected: true, delta };
+}
+
+// ---------- Delete an accidental open order ----------
+
+export async function deleteOrder({ db, tenant, FieldValue, orderId, reason = null, actor }) {
+  const ref = orderRef(tenant, orderId);
+  const why = typeof reason === "string" && reason.trim() ? reason.trim().replace(/\s+/g, " ").slice(0, 300) : "Removed accidental order";
+
+  return db.runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    if (!snap.exists) throw new OrderError("not-found", "Order not found");
+    const order = snap.data();
+    if (!isOpenFulfillment(order.fulfillmentStatus)) throw new OrderError("not-deletable", "Only open orders can be deleted; fulfilled orders stay in history");
+    if ((order.amountPaid || 0) > 0) throw new OrderError("not-deletable", "An order with payments can't be deleted");
+    const plan = await prepareMovements(tx, { tenant, items: movementsFor(order.items, "release", orderId, order.orderNumber, "order_deleted") });
+
+    tx.delete(ref);
+    tx.set(tenant.collection("auditLog").doc(), {
+      type: "order.deleted",
+      orderId,
+      orderNumber: order.orderNumber,
+      actor,
+      reason: why,
+      snapshot: { customer: order.customer, source: order.source, items: order.items, subtotal: order.subtotal, discount: order.discount, total: order.total, orderDate: order.orderDate, fulfillmentStatus: order.fulfillmentStatus, statusHistory: order.statusHistory, createdBy: order.createdBy },
+      at: FieldValue.serverTimestamp(),
+    });
+    // It never was a real order: off the day's order count and the open /
+    // unpaid exposure. Plan usage still counts it (no create/delete gaming).
+    recordDailyMetrics({ tx, tenant, FieldValue, timezone: null, day: order.orderDate, operational: { orderCount: -1 } });
+    adjustCurrentMetrics({ tx, tenant, FieldValue, operational: { pendingFulfillment: -1, unpaidOrders: -1 }, financial: { receivablesOutstanding: -(order.balance || 0) } });
+    plan.commit({ actor, FieldValue });
+    return { orderId, deleted: true };
+  }, TX_OPTIONS);
+}
+
 // ---------- Fulfill ----------
 
 export async function fulfillOrder({ db, tenant, FieldValue, business, orderId, actor, now = new Date() }) {
@@ -269,7 +454,7 @@ export async function fulfillOrder({ db, tenant, FieldValue, business, orderId, 
     const snap = await tx.get(ref);
     if (!snap.exists) throw new OrderError("not-found", "Order not found");
     const order = snap.data();
-    if (order.fulfillmentStatus !== "pending") throw new OrderError("not-pending", `This order is already ${order.fulfillmentStatus}`);
+    if (!isOpenFulfillment(order.fulfillmentStatus)) throw new OrderError("not-pending", `This order is already ${order.fulfillmentStatus}`);
 
     const plan = await prepareMovements(tx, { tenant, items: movementsFor(order.items, "fulfillment", orderId, order.orderNumber, "order_fulfilled") });
     const consumed = new Map(plan.results.map((r) => [r.productId, r.costConsumed]));
@@ -282,7 +467,7 @@ export async function fulfillOrder({ db, tenant, FieldValue, business, orderId, 
       fulfilledBy: actor,
       fulfilledAt: stamp,
       fulfilledDay: day,
-      statusHistory: appendHistory(order, historyEntry("fulfilled", actor, { from: "pending", to: "fulfilled" })),
+      statusHistory: appendHistory(order, historyEntry("fulfilled", actor, { from: order.fulfillmentStatus, to: "fulfilled" })),
       revision: order.revision + 1,
       updatedBy: actor,
       updatedAt: stamp,
@@ -319,7 +504,7 @@ export async function cancelOrder({ db, tenant, FieldValue, business, orderId, r
     const snap = await tx.get(ref);
     if (!snap.exists) throw new OrderError("not-found", "Order not found");
     const order = snap.data();
-    if (order.fulfillmentStatus !== "pending") {
+    if (!isOpenFulfillment(order.fulfillmentStatus)) {
       throw new OrderError("not-pending", order.fulfillmentStatus === "fulfilled" ? "A fulfilled order can't be cancelled (returns will handle reversals)" : "This order is already cancelled");
     }
     const plan = await prepareMovements(tx, { tenant, items: movementsFor(order.items, "release", orderId, order.orderNumber, "order_cancelled") });
@@ -331,7 +516,7 @@ export async function cancelOrder({ db, tenant, FieldValue, business, orderId, r
       cancelledAt: stamp,
       cancellationReason: why,
       balance: 0,
-      statusHistory: appendHistory(order, historyEntry("cancelled", actor, { from: "pending", to: "cancelled", reason: why })),
+      statusHistory: appendHistory(order, historyEntry("cancelled", actor, { from: order.fulfillmentStatus, to: "cancelled", reason: why })),
       revision: order.revision + 1,
       updatedBy: actor,
       updatedAt: stamp,

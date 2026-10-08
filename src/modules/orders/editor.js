@@ -17,13 +17,17 @@ export function openOrderEditor({ session, deps, order = null }) {
   const canDiscount = perms["orders.discount"] === true;
   const currency = session.business.currency || "PHP";
   const idempotencyKey = newKey();
+  // Editing a fulfilled order is a correction: same screen, plus a reason.
+  const correcting = order?.fulfillmentStatus === "fulfilled";
   const state = {
     customer: { name: order?.customer?.name ?? "", phone: order?.customer?.phone ?? "", notes: order?.customer?.notes ?? "" },
     source: order?.source ?? "messenger",
     sourceNote: order?.sourceNote ?? "",
     notes: order?.notes ?? "",
+    reason: "",
     discountText: order ? (order.discount / 100).toFixed(2) : "0",
-    lines: (order?.items || []).map((l) => ({ productId: l.productId, sku: l.sku, name: l.name, unit: l.unit, unitPrice: l.unitPrice, quantityText: formatQuantity(l.quantity), reservedHere: l.quantity, available: null })),
+    // Open orders hold their quantity in reserve; a fulfilled order holds none.
+    lines: (order?.items || []).map((l) => ({ productId: l.productId, sku: l.sku, name: l.name, unit: l.unit, unitPrice: l.unitPrice, quantityText: formatQuantity(l.quantity), reservedHere: correcting ? 0 : l.quantity, available: null })),
     results: [],
     error: "",
     busy: false,
@@ -83,6 +87,7 @@ export function openOrderEditor({ session, deps, order = null }) {
       html`<form class="modal modal-wide form" role="dialog" aria-modal="true" aria-labelledby="oe-title" novalidate>
         <div class="modal-header"><h2 class="card-title" id="oe-title">${order ? `Edit ${order.orderNumber}` : "New order"}</h2></div>
         <div class="modal-body">
+          ${correcting ? html`<p class="form-notice" data-role="correcting">This order is fulfilled. Saving corrects stock, sales and COGS automatically and keeps the original in the activity log.</p>` : ""}
           <div class="stat-grid">
             <div class="field"><label for="oeName">Customer name *</label><input class="input" id="oeName" name="name" value="${state.customer.name}" autocomplete="off" /></div>
             <div class="field"><label for="oePhone">Phone</label><input class="input" id="oePhone" name="phone" value="${state.customer.phone}" inputmode="tel" autocomplete="off" /></div>
@@ -97,6 +102,7 @@ export function openOrderEditor({ session, deps, order = null }) {
           <div class="stat-grid">
             ${canDiscount ? html`<div class="field"><label for="oeDiscount">Discount (${currency})</label><input class="input" id="oeDiscount" name="discount" value="${state.discountText}" inputmode="decimal" autocomplete="off" /></div>` : ""}
             <div class="field"><label for="oeNotes">Order notes</label><textarea class="input" id="oeNotes" name="notes" rows="2" maxlength="500">${state.notes}</textarea></div>
+            ${correcting ? html`<div class="field"><label for="oeReason">Reason for the change</label><textarea class="input" id="oeReason" name="reason" rows="2" maxlength="300" placeholder="e.g. Encoded 10 by mistake, customer ordered 8"></textarea><div class="stat-hint">Needed when quantities, products or the discount change.</div></div>` : ""}
           </div>
           <dl class="dl" data-role="totals"></dl>
           <p class="form-error" data-role="error" role="alert" hidden></p>
@@ -179,6 +185,7 @@ export function openOrderEditor({ session, deps, order = null }) {
       else if (t.name === "sourceNote") state.sourceNote = t.value;
       else if (t.name === "notes") state.notes = t.value;
       else if (t.name === "discount") state.discountText = t.value;
+      else if (t.name === "reason") state.reason = t.value;
       paintTotals();
     });
     form.addEventListener("change", (e) => {
@@ -230,7 +237,9 @@ export function openOrderEditor({ session, deps, order = null }) {
         };
         state.busy = true;
         submitBtn.disabled = true;
-        const body = order ? { action: "update", orderId: order.id, expectedRevision: order.revision, order: payload } : { action: "create", idempotencyKey, order: payload };
+        const body = order
+          ? { action: "update", orderId: order.id, expectedRevision: order.revision, order: payload, ...(correcting && state.reason.trim() ? { reason: state.reason.trim() } : {}) }
+          : { action: "create", idempotencyKey, order: payload };
         close(await deps.api("orders", { method: "POST", body }));
       } catch (err) {
         state.busy = false;

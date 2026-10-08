@@ -3,6 +3,9 @@
 //   { action: "update", orderId, expectedRevision?, order: { ...same shape } }                                                     orders.update
 //   { action: "fulfill", orderId }                                                                                                 orders.fulfill
 //   { action: "cancel", orderId, reason }                                                                                          orders.cancel
+//   { action: "delete", orderId, reason? }   accidental open, unpaid order                                                       orders.cancel
+// update on a FULFILLED order is a correction: also needs orders.correct, and
+// a reason when quantities, products or the discount change.
 // A non-zero discount (or changing it) also needs orders.discount.
 // Prices, names, totals, stock and costs are never accepted from the
 // browser; the server computes them from trusted documents.
@@ -10,7 +13,7 @@
 import { respond, withErrorHandling, requireMethod, parseJsonBody, RequestError } from "./_lib/http.js";
 import { getAdmin } from "./_lib/firebase-admin.js";
 import { requireTenant } from "./_lib/tenant.js";
-import { createOrder, updateOrder, fulfillOrder, cancelOrder } from "./_lib/orders.js";
+import { createOrder, updateOrder, fulfillOrder, cancelOrder, deleteOrder } from "./_lib/orders.js";
 import { actorOf, only } from "./_lib/inventory-http.js";
 import { OrderError } from "../../shared/orders.js";
 import { InventoryError } from "../../shared/inventory.js";
@@ -18,7 +21,9 @@ import { QuantityError } from "../../shared/quantity.js";
 
 const ACTIONS = {
   create: { permission: "orders.create", fields: ["action", "idempotencyKey", "order"] },
-  update: { permission: "orders.update", fields: ["action", "orderId", "expectedRevision", "order"] },
+  // Editing a fulfilled order additionally needs orders.correct (checked in the service).
+  update: { permission: "orders.update", fields: ["action", "orderId", "expectedRevision", "order", "reason"] },
+  delete: { permission: "orders.cancel", fields: ["action", "orderId", "reason"] },
   fulfill: { permission: "orders.fulfill", fields: ["action", "orderId"] },
   cancel: { permission: "orders.cancel", fields: ["action", "orderId", "reason"] },
 };
@@ -33,6 +38,8 @@ const STATUS = {
   "product-inactive": 409,
   "below-paid": 409,
   "history-full": 409,
+  "not-deletable": 409,
+  "reason-required": 400,
   "order-limit-reached": 403,
   "discount-not-allowed": 403,
   "business-misconfigured": 503,
@@ -75,7 +82,9 @@ export function createOrdersHandler({ getAdmin: loadAdmin, now = () => new Date(
           return createOrder({ ...common, business: ctx.business, entitlements: ctx.entitlements, input: body.order, idempotencyKey: body.idempotencyKey, canDiscount, now: now() });
         case "update":
           if (body.expectedRevision !== undefined && !Number.isSafeInteger(body.expectedRevision)) throw new RequestError("invalid-request", "Invalid revision.", 400);
-          return updateOrder({ ...common, orderId: body.orderId, input: body.order, expectedRevision: body.expectedRevision ?? null, canDiscount });
+          return updateOrder({ ...common, business: ctx.business, orderId: body.orderId, input: body.order, expectedRevision: body.expectedRevision ?? null, canDiscount, canCorrect: ctx.permissions["orders.correct"] === true, reason: body.reason ?? null });
+        case "delete":
+          return deleteOrder({ ...common, orderId: body.orderId, reason: body.reason ?? null });
         case "fulfill":
           return fulfillOrder({ ...common, business: ctx.business, orderId: body.orderId, now: now() });
         default:
@@ -84,11 +93,13 @@ export function createOrdersHandler({ getAdmin: loadAdmin, now = () => new Date(
     });
 
     const seesFinancials = ctx.permissions["dashboard.financials"] === true;
-    const { order, cogs, grossSales, discount, netSales, ...rest } = result;
+    // Correction deltas include COGS: only for dashboard.financials.
+    const { order, cogs, grossSales, discount, netSales, delta, ...rest } = result;
     return respond(body.action === "create" && !result.replayed ? 201 : 200, {
       success: true,
       ...rest,
       ...(body.action === "fulfill" && seesFinancials ? { financials: { grossSales, discount, netSales, cogs, grossProfit: netSales - cogs } } : {}),
+      ...(delta && seesFinancials ? { correction: delta } : {}),
     });
   });
 }

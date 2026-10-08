@@ -25,11 +25,18 @@ export const ORDER_SOURCES = Object.freeze({
 });
 export const ORDER_SOURCE_IDS = Object.freeze(Object.keys(ORDER_SOURCES));
 
+// "open" stages hold reserved stock and can still be edited, fulfilled or
+// cancelled; preparing / ready are operational stages for the Phase 8 row
+// dropdown (no transition action yet). fulfilled and cancelled are final.
 export const FULFILLMENT_STATUSES = Object.freeze({
-  pending: { label: "Pending" },
-  fulfilled: { label: "Fulfilled" },
-  cancelled: { label: "Cancelled" },
+  pending: { label: "Pending", open: true },
+  preparing: { label: "Preparing", open: true },
+  ready: { label: "Ready", open: true },
+  fulfilled: { label: "Fulfilled", open: false },
+  cancelled: { label: "Cancelled", open: false },
 });
+
+export const isOpenFulfillment = (status) => FULFILLMENT_STATUSES[status]?.open === true;
 
 export const PAYMENT_STATUSES = Object.freeze({
   unpaid: { label: "Unpaid" },
@@ -122,6 +129,12 @@ export function computeTotals(lines, discount = 0) {
   if (discount > subtotal) throw new OrderError("invalid-discount", "Discount can't be more than the subtotal");
   const total = subtotal - discount;
   return { lines: priced, subtotal, discount, total };
+}
+
+// A fulfilled-order correction needs a reason when it changes stock or money.
+export function isMaterialChange({ before, after }) {
+  const qty = (items) => JSON.stringify([...items].map((i) => [i.productId, i.quantity]).sort());
+  return qty(before.items) !== qty(after.items) || before.discount !== after.discount;
 }
 
 export function paymentStatusFor({ total, amountPaid }) {

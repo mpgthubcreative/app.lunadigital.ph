@@ -11,10 +11,10 @@ import { formDialog } from "../../components/form-dialog.js";
 import { confirmDialog, toast as defaultToast } from "../../components/feedback.js";
 import { api as defaultApi } from "../../lib/api.js";
 import { formatCentavos } from "../../lib/format.js";
-import { ORDER_SOURCES, ORDER_SOURCE_IDS, FULFILLMENT_STATUSES, PAYMENT_STATUSES, isDayId } from "@shared/index.js";
+import { ORDER_SOURCES, ORDER_SOURCE_IDS, FULFILLMENT_STATUSES, PAYMENT_STATUSES, isDayId, isOpenFulfillment } from "@shared/index.js";
 import * as ordersData from "./data.js";
 import { listProducts } from "../inventory/data.js";
-import { orderRow, historyRows, qtyText, sourceLabel, fulfillmentLabel, paymentLabel, FULFILLMENT_TONE, PAYMENT_TONE } from "./view.js";
+import { orderRow, historyRows, costCorrectionRows, qtyText, sourceLabel, fulfillmentLabel, paymentLabel, FULFILLMENT_TONE, PAYMENT_TONE } from "./view.js";
 import { openOrderEditor } from "./editor.js";
 
 const defaultDeps = {
@@ -29,6 +29,7 @@ export function mount(container, session, { data = defaultDeps.data, searchProdu
     update: perms["orders.update"] === true,
     fulfill: perms["orders.fulfill"] === true,
     cancel: perms["orders.cancel"] === true,
+    correct: perms["orders.correct"] === true,
     financials: perms["dashboard.financials"] === true,
   };
   const businessId = session.business.id;
@@ -119,7 +120,14 @@ export function mount(container, session, { data = defaultDeps.data, searchProdu
     backdrop.className = "modal-backdrop";
     document.body.appendChild(backdrop);
     const close = () => backdrop.remove();
-    const pending = order.fulfillmentStatus === "pending";
+    const open = isOpenFulfillment(order.fulfillmentStatus);
+    const fulfilled = order.fulfillmentStatus === "fulfilled";
+    const canEdit = can.update && (open || (fulfilled && can.correct));
+    const canDelete = can.cancel && open && !(order.amountPaid > 0);
+    const more = [
+      ...(open && can.cancel ? [html`<button type="button" class="menu-item" data-act="cancel">Cancel order</button>`] : []),
+      ...(canDelete ? [html`<button type="button" class="menu-item menu-danger" data-act="delete">Delete order</button>`] : []),
+    ];
     const costByLine = new Map((costs?.lines || []).map((l) => [l.lineId, l.costConsumed]));
     render(
       backdrop,
@@ -146,13 +154,16 @@ export function mount(container, session, { data = defaultDeps.data, searchProdu
             <dt>Balance</dt><dd>${formatCentavos(order.balance, currency)}</dd>
             ${costs ? html`<dt>COGS</dt><dd data-role="cogs">${formatCentavos(costs.cogs, currency)}</dd><dt>Gross profit</dt><dd data-role="profit">${formatCentavos(costs.grossProfit, currency)}</dd>` : ""}
           </dl>
-          <h3 class="section-title">History</h3>
-          <ul class="list" data-role="history">${historyRows(order, { currency, timezone }).map((h) => html`<li><strong>${h.label}</strong> <span class="stat-hint">${h.when} · ${h.actor}</span>${h.details ? html`<div class="stat-hint">${h.details}</div>` : ""}</li>`)}</ul>
+          <h3 class="section-title">Activity</h3>
+          <ul class="list activity" data-role="history">${historyRows(order, { currency, timezone }).map(
+            (h) => html`<li data-type="${h.type}"><span>${h.headline}</span>${h.effects.map((e) => html`<div class="stat-hint">${e}</div>`)}</li>`
+          )}</ul>
+          ${costs && costs.corrections?.length ? html`<ul class="list activity" data-role="cost-corrections">${costCorrectionRows(costs, { currency, timezone }).map((c) => html`<li><span class="stat-hint">${c.headline}</span><div class="stat-hint">${c.text}</div></li>`)}</ul>` : ""}
         </div>
         <div class="modal-footer">
-          ${pending && can.update ? html`<button type="button" class="btn" data-act="edit">Edit</button>` : ""}
-          ${pending && can.cancel ? html`<button type="button" class="btn btn-danger" data-act="cancel">Cancel order</button>` : ""}
-          ${pending && can.fulfill ? html`<button type="button" class="btn btn-primary" data-act="fulfill">Mark fulfilled</button>` : ""}
+          ${more.length ? html`<div class="menu-wrap"><button type="button" class="btn" data-act="more" aria-haspopup="true" aria-expanded="false">⋯ More</button><div class="menu" data-role="more-menu" hidden>${more}</div></div>` : ""}
+          ${canEdit ? html`<button type="button" class="btn" data-act="edit">Edit</button>` : ""}
+          ${open && can.fulfill ? html`<button type="button" class="btn btn-primary" data-act="fulfill">Mark fulfilled</button>` : ""}
           <button type="button" class="btn" data-act="close">Close</button>
         </div>
       </div>`
@@ -160,6 +171,27 @@ export function mount(container, session, { data = defaultDeps.data, searchProdu
     backdrop.addEventListener("click", async (e) => {
       const act = e.target.closest("[data-act]")?.dataset.act;
       if (e.target === backdrop || act === "close") return close();
+      if (act === "more") {
+        const menu = backdrop.querySelector('[data-role="more-menu"]');
+        menu.hidden = !menu.hidden;
+        e.target.closest("[data-act]").setAttribute("aria-expanded", String(!menu.hidden));
+        return;
+      }
+      if (act === "delete") {
+        const result = await formDialog({
+          title: `Delete ${order.orderNumber}?`,
+          intro: "For orders entered by mistake. Reserved stock is released and a record of the deletion is kept. Fulfilled orders can't be deleted.",
+          fields: [{ name: "reason", label: "Reason (optional)", type: "textarea" }],
+          submitLabel: "Delete order",
+          onSubmit: (v) => api("orders", { method: "POST", body: { action: "delete", orderId: order.id, ...(v.reason ? { reason: v.reason } : {}) } }),
+        });
+        if (result) {
+          close();
+          toast("Order deleted", "success");
+          load();
+        }
+        return;
+      }
       if (act === "edit") {
         close();
         const result = await openOrderEditor({ session, deps: editorDeps, order });
