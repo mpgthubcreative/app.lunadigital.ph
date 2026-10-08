@@ -57,10 +57,19 @@ export function mount(container, session, { fetchDocuments = fetchMetricDocument
   const loading = Object.fromEntries(plan.documents.map((d) => [d.source, { status: "loading" }]));
   renderView(container, session, plan.day, buildDashboardView({ session, widgets: plan.widgets, docs: loading }));
 
-  fetchDocuments(session.business.id, plan.documents).then((docs) => {
-    if (cancelled) return;
-    renderView(container, session, plan.day, buildDashboardView({ session, widgets: plan.widgets, docs }));
-  });
+  const failed = () => Object.fromEntries(plan.documents.map((d) => [d.source, { status: "error" }]));
+  Promise.resolve()
+    .then(() => fetchDocuments(session.business.id, plan.documents))
+    .catch((err) => {
+      // e.g. Firebase not configured / SDK failed to load: every card says
+      // "Couldn't load" rather than leaving a rejected promise behind.
+      console.error("dashboard: loading metrics failed:", err && (err.code || err.message));
+      return failed();
+    })
+    .then((docs) => {
+      if (cancelled) return;
+      renderView(container, session, plan.day, buildDashboardView({ session, widgets: plan.widgets, docs }));
+    });
 
   return () => {
     cancelled = true;
