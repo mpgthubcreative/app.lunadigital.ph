@@ -33,6 +33,7 @@ const DIST_VARIANTS = {
   // Phase 9 / 10: distributor moved to v2 then v3; older snapshots are stale.
   "ws-dist-v1-stale": (d) => ((d.entitlements.workspaceTemplateVersion = 1), d),
   "ws-dist-v2-stale": (d) => ((d.entitlements.workspaceTemplateVersion = 2), d),
+  "ws-dist-v3-stale": (d) => ((d.entitlements.workspaceTemplateVersion = 3), d),
   "ws-legacy": (d) => legacy(d),
   "ws-legacy-assigned": (d) => ((legacy(d).workspaceTemplateId = "distributor"), d),
   "ws-legacy-forged": (d) => ((legacy(d).entitlements.workspaceTemplateId = "distributor"), d),
@@ -108,7 +109,7 @@ describe("stale / unknown / mismatched / malformed workspace: every module read 
 
 describe("template versions", () => {
   it("distributor snapshots still at v1 or v2 (before the Phase 9 / 10 recomputes) are denied now", async () => {
-    for (const bid of ["ws-dist-v1-stale", "ws-dist-v2-stale"]) {
+    for (const bid of ["ws-dist-v1-stale", "ws-dist-v2-stale", "ws-dist-v3-stale"]) {
       await assertFails(get(`owner@${bid}`, `businesses/${bid}/orders/${DOC}`));
       await assertFails(get(`owner@${bid}`, `businesses/${bid}/expenses/${DOC}`));
     }
