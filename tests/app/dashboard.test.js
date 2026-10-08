@@ -69,11 +69,10 @@ describe("values come from the documents through shared/finance.js", () => {
     });
     expect(value("netSales")).toBe("₱12,000.00");
     expect(value("grossProfit")).toBe("₱5,000.00");
-    // Expenses and Payments don't feed metrics yet: their figures (and the
-    // profit that needs expenses) stay "No data yet" even though the
-    // document holds numbers, rather than implying ₱0 of expenses.
-    expect(value("operatingExpenses")).toBe("No data yet");
-    expect(value("estimatedOperatingProfit")).toBe("No data yet");
+    // Expenses feed metrics since Phase 10: Operating expenses and the
+    // Estimated operating profit (gross profit − expenses) are real.
+    expect(value("operatingExpenses")).toBe("₱1,500.00");
+    expect(value("estimatedOperatingProfit")).toBe("₱3,500.00");
     // Payments feed metrics since Phase 8: "Paid today" is real.
     expect(value("paymentsReceived")).toBe("₱9,000.00");
     expect(value("receivablesOutstanding")).toBe("₱3,000.00");
@@ -129,11 +128,12 @@ describe("who sees what", () => {
     expect(card("netSales")).not.toBeNull();
   });
 
-  it("cards of a module the workspace only PLANS (Expenses) stay as No data yet, without enabling it", async () => {
+  it("Distributor: Expenses is operational (v3); a day with activity but no expenses shows ₱0, not 'No data yet'", async () => {
     const s = sessionFixture();
-    expect(s.entitlements.modules.expenses).toBe(false);
-    await show(s);
-    expect(card("operatingExpenses").textContent).toMatch(/No data yet/);
+    expect(s.entitlements.modules.expenses).toBe(true);
+    await show(s, { "financialMetrics/2026-10-08": { grossSales: 1000000, discounts: 0, returns: 0, cogs: 600000, operatingExpenses: 0, paymentsReceived: 0 } });
+    expect(value("operatingExpenses")).toBe("₱0.00");
+    expect(value("estimatedOperatingProfit")).toBe("₱4,000.00");
   });
 
   it("the owner's dashboard reads exactly four documents", async () => {
@@ -168,8 +168,14 @@ describe("business timezone", () => {
   });
 });
 
-describe("Expenses has no page yet", () => {
-  it("no /expenses route even for an owner entitled to it", () => {
-    expect(buildRoutes(sessionFixture()).map((r) => r.path)).not.toContain("/expenses");
+describe("Expenses page (Phase 10)", () => {
+  it("owner and manager get the route; staff (no expenses.view) don't", () => {
+    expect(buildRoutes(sessionFixture()).map((r) => r.path)).toContain("/expenses");
+    expect(buildRoutes(sessionFixture({ roleTemplate: "manager" })).map((r) => r.path)).toContain("/expenses");
+    expect(buildRoutes(sessionFixture({ roleTemplate: "staff" })).map((r) => r.path)).not.toContain("/expenses");
+  });
+
+  it("bridal / baby workspaces never get it (planned there), even with the permission", () => {
+    for (const t of ["bridal-expense", "baby-expense"]) expect(buildRoutes(sessionFixture({ workspaceTemplateId: t })).map((r) => r.path)).not.toContain("/expenses");
   });
 });

@@ -63,7 +63,7 @@ export const TENANT_COLLECTIONS = Object.freeze({
   auditLog: null,
   integrations: null,
   // Module approved (Phase 5) but not built: no rule, so nobody reads it.
-  expenses: null,
+  expenses: "expenses.view", // built in Phase 10
 });
 
 export const COLLECTION_NAMES = Object.freeze([...Object.keys(TENANT_COLLECTIONS), "members", "rows", "inbox"]);

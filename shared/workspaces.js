@@ -28,9 +28,10 @@
 // shared/modules.js, move it from plannedModules to modules in each
 // template that should get it, bump those templates' versions, then
 // recompute snapshots through the staged rollout. Shipping module code
-// alone activates nothing: old snapshots hold false for unbuilt modules,
-// and the registry tests fail if a built module is still "planned" or an
-// unbuilt one is listed as operational.
+// alone activates nothing: a module is operational only in the templates
+// whose `modules` list it (a built module can stay planned elsewhere),
+// old snapshots hold false for it, and the registry tests fail if an
+// unbuilt module is listed as operational.
 //
 // No executable code, HTML, CSS, collection names or routes come from a
 // template or a tenant. firestore.rules / storage.rules keep a copy of
@@ -66,23 +67,24 @@ function deepFreeze(value) {
 const TEMPLATES = [
   {
     id: "distributor",
-    // v2 (Phase 9): Customers became operational. (v1 snapshots were
-    // accepted via upgradingFrom only until every business was recomputed.)
-    version: 2,
+    // v2 (Phase 9): Customers became operational. v3 (Phase 10): Expenses.
+    // (Older snapshots are accepted via upgradingFrom only until every
+    // business is recomputed.)
+    version: 3,
+    upgradingFrom: [2],
     name: "Distributor Operations",
     description: "Orders, payments, products and inventory for distributors and wholesalers.",
     status: "live",
-    modules: [...CORE, "orders", "payments", "inventory", "customers"],
-    navigation: ["dashboard", "orders", "payments", "inventory", "customers", "users", "settings"],
+    modules: [...CORE, "orders", "payments", "inventory", "customers", "expenses"],
+    navigation: ["dashboard", "orders", "payments", "inventory", "customers", "expenses", "users", "settings"],
     dashboard: {
       widgets: ["netSales", "grossProfit", "operatingExpenses", "estimatedOperatingProfit", "paymentsReceived", "receivablesOutstanding", "ordersToday", "unpaidOrders", "pendingFulfillment", "lowStock", "recentOrders", "lowStockItems", "recentActivity"],
       empty: { title: "Nothing to show yet", body: "Your dashboard fills in as your business uses Luna." },
     },
-    labels: { modules: {} },
+    labels: { modules: { expenses: "Operating Expenses" } },
     settings: { orderPrefix: "ORD" },
     plannedModules: [
       { id: "reports", name: "Reports" },
-      { id: "expenses", name: "Operating Expenses" },
       { id: "imports", name: "Imports" },
       { id: "suppliers", name: "Suppliers" },
       { id: "production", name: "Production" },
@@ -263,9 +265,10 @@ export function validateWorkspaceTemplate(t, { moduleIds, coreModuleIds, availab
     if (new Set(ids).size !== ids.length) problems.push("duplicate planned module");
     for (const p of t.plannedModules) {
       if (!isObj(p) || typeof p.id !== "string" || !WORKSPACE_TEMPLATE_ID_PATTERN.test(p.id) || !isSafeLabel(p.name) || Object.keys(p).some((k) => !["id", "name"].includes(k))) problems.push(`invalid planned module ${JSON.stringify(p)}`);
-      // Roadmap only: a planned id is either a registered module that isn't
-      // built yet, or a future capability id that isn't registered at all.
-      else if (availableModuleIds.includes(p.id)) problems.push(`planned module ${p.id} is already built: move it to modules (and bump the version)`);
+      // Roadmap only: a planned id is a registered module this template
+      // hasn't activated (built or not: Expenses is built for Distributor
+      // but still planned for Baby and Bridal), or a future capability id
+      // that isn't registered at all. Never both planned and operational.
       else if (mods.includes(p.id)) problems.push(`planned module ${p.id} is also listed as operational`);
     }
   }

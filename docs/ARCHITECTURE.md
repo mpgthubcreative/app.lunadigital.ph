@@ -337,7 +337,7 @@ Each checks sign-in, membership, permission, the Inventory module, subscription 
 - New and edit dialog with product search, availability, a live preview of totals, and one idempotency key per dialog.
 - Detail view with history; COGS and gross profit appear only for `dashboard.financials`.
 
-**Dashboard:** orders today, unpaid orders, for fulfilment, unpaid balance, net sales and gross profit are live, and recent orders is a live list. Since Phase 8, paid today is live too. Operating expenses and estimated operating profit stay "No data yet" until Expenses (`LIVE_DATA_SOURCES`).
+**Dashboard:** orders today, unpaid orders, for fulfilment, unpaid balance, net sales and gross profit are live, and recent orders is a live list. Since Phase 8, paid today is live too, and since Phase 10 operating expenses and estimated operating profit (`LIVE_DATA_SOURCES`).
 
 **Corrections and accidental orders (Phase 7.1).** Users see a single **Edit → Save** for every order; the server decides what Save means:
 - **Open orders:** pending now, and preparing/ready later, since `FULFILLMENT_STATUSES[...].open` covers them. This is the existing edit path (`orders.update`).
@@ -449,7 +449,7 @@ There are no combined ids such as `distributor-growth`. Every plan works with ev
 
 | Template | Status | Allows (besides Dashboard, Users, Settings) | Planned (metadata only) |
 |---|---|---|---|
-| `distributor` (v2) | live | orders, payments, inventory, customers (Phase 9) | reports, expenses, imports, suppliers, production, returns, notifications |
+| `distributor` (v3) | live | orders, payments, inventory, customers (Phase 9), expenses (Phase 10, "Operating Expenses") | reports, imports, suppliers, production, returns, notifications |
 | `household-payroll` | planned | — | household staff, payroll, salary payments, receipt confirmation, advances, deductions, payroll history, reports |
 | `baby-expense` | planned | — | expenses ("Baby Expenses"), budget, categories, providers, payments, due dates, milestones, reports |
 | `bridal-expense` | planned | — | expenses ("Wedding Expenses"), budget, suppliers, supplier payments and balances, payment due dates, wedding tasks, guests, RSVP, reports |
@@ -650,22 +650,56 @@ The reads use Firestore Lite (one-shot over REST, about 32 KB gzipped, measured)
 
 **Lists.** Recent orders (`orders` ordered by `createdAt`, limit 5), low-stock products (`isLowStock == true`, limit 5) and recent activity stay empty states with no queries until their phases set `ready: true`.
 
-## Expenses (module approved in Phase 5, built in Phase 10)
+## Expenses (Phase 10)
 
-Expenses exist so an owner can answer "Magkano talaga kinita namin?", not to turn Luna into accounting software.
+Expenses exist so an owner can answer "Magkano talaga kinita namin?". This is a simple operating-expense tracker, not accounting software. There are no payables, ledger, chart of accounts, tax or VAT, no recurring generation, no reconciliation, and no receipts yet.
 
-- **Registry:** `id: "expenses"`, sellable, `available: false` until Phase 10. That means no route, no browser-readable collection, and every access denied, even when entitled. It is on in every seeded plan, like the other operational modules.
-- **Permissions:** `expenses.view`, `expenses.create`, `expenses.update` and `expenses.delete`. These are named `update`, not `edit`, to match `orders.update`. Owner and Manager templates have them; Staff does not.
-- **Same access model as every module:** tenant isolation, membership, entitlement, permission and subscription.
-- **Planned record** at `expenses/{id}` (`shared/expenses.js`):
-  - core fields: `date` (business-local), `categoryId`, `amount` (centavos), `payee`
-  - payment details: `paymentMethod`, `referenceNumber`
-  - optional: `notes`, `recurring`, `receipt` (later)
-  - `status`: `recorded` or `voided`. Delete means void, so the record stays for audit.
-  - `createdBy`, `createdAt`, `updatedBy`, `updatedAt`
-- **Metrics:** every change adjusts `financialMetrics/{date}.operatingExpenses` in the same transaction.
-- **Categories:** configurable per business at `settings/expenseCategories`, seeded from `DEFAULT_EXPENSE_CATEGORIES`, with stable ids.
-- **Not in scope:** receipts, tax, payroll and bank reconciliation are not planned for Phase 10.
+**Record** at `expenses/{id}` (`shared/expenses.js`):
+- `date`: business-local `YYYY-MM-DD`, and `month`.
+- `category`: a stable id from `DEFAULT_EXPENSE_CATEGORIES` (Rent, Utilities, Transportation / Delivery, Salaries / Labor, Marketing / Advertising, Supplies, Packaging, Repairs / Maintenance, Fees, Miscellaneous). A tenant-defined list can come later under the same stable-id rule, with no migration.
+- `amount`: integer centavos, > 0, at most ₱100M per expense.
+- `payee` (+ `payeeLower`), `method` (Cash, GCash, Maya, Bank Transfer, Card, Other), `reference`, `notes`.
+- `recurring`: a yes/no flag only.
+- `status`: active or removed; plus `history[]`, `revision`, and created/updated/removed by and at.
+
+There is no customer link and no template-specific fields.
+
+**References:** there is no uniqueness rule. An expense is not an order payment, and the Phase 8 order-payment service is not used.
+
+**Recognition:** the amount is an **Operating Expense on its business-local date**, with no accrual. Future dates are refused; back-dated expenses are allowed and land on their own day and month.
+
+**Every write is one transaction:**
+
+| Action | Operating Expenses metrics |
+|---|---|
+| create | + amount on its day and month |
+| edit amount | + (new − old) on its day and month |
+| edit date | − old on the old day and month, + new on the new day and month |
+| edit category, payee, method, reference or notes | no change |
+| remove (⋯ More, reason required) | − amount; the record stays with `status: removed` |
+
+The metrics are `FieldValue.increment` writes to `financialMetrics/{day}` and `/{month}`, with no read. Expenses on different days never contend, and there's no business-wide hot document. Sales, COGS, payments, inventory and customers are never touched.
+
+The activity log reads "Added Packaging expense ₱2,000", "Amount changed ₱2,000 → ₱1,500", "Category changed Packaging → Supplies" and "Removed expense ₱2,000 · Reason: Duplicate entry".
+
+**Dashboard:** `LIVE_DATA_SOURCES.expenses = true`. Operating expenses and Estimated operating profit (= Gross Profit − Operating Expenses, from `shared/finance.js`) are live:
+- A day with any activity shows real figures, including ₱0 of expenses. Every metrics write fills all financial counters.
+- A day with no activity still says "No data yet".
+- It's still called *Estimated* Operating Profit, never net income.
+
+**API:** `POST /api/expenses` with actions `create` (`expenses.create`), `update` (`expenses.update`, optional `expectedRevision`) and `remove` (`expenses.delete`). It checks sign-in first, the Expenses module, write access and a strict payload. The server sets createdBy, timestamps and metrics; the browser can't.
+
+**Reads** come from Firestore with `expenses.view`. Owner and Manager templates hold all four `expenses.*` permissions; Staff hold none, so Staff see no expenses or financial figures unless explicitly granted. The page queries are paginated (25) and filtered by date range, category, method, and a payee prefix or exact reference. Indexes: `(status, date↓)`, `(status, category, date↓)`, `(status, method, date↓)`, `(status, category, method, date↓)` and `(status, payeeLower)`.
+
+**Screen:**
+- **Table:** `Date | Category | Vendor / Payee | Method | Reference | Amount | Recurring | View details`.
+- **Add expense:** one form whose date defaults to the business's today.
+- **View details:** every field, who and when, and the activity log. Edit → Save; ⋯ More → Remove expense.
+- **Title:** for Distributor the page and its navigation item are titled "Operating Expenses" (template label).
+
+**Templates:**
+- Activated for **Distributor only**: template v2 → v3, with `upgradingFrom: [2]` during the rollout, then recompute, then strict.
+- Baby and Bridal keep `expenses` in `plannedModules` (labelled "Baby Expenses" / "Wedding Expenses"). A planned module may be built: the template's `modules` list alone decides where it's operational, and a forged snapshot can't lift that ceiling in the server, browser or rules.
 
 **Profit and loss (Phase 11 Reports).** Revenue − COGS = Gross Profit − Operating Expenses = Estimated Operating Profit. Filters: today, week, month, custom range, expense category, and product/category where appropriate. It is read from the month and day rollups.
 
@@ -724,7 +758,7 @@ On Orders, Reference and Proof show "—" until Payments (Phase 8) fills them in
 8. Payments ✅
 8.5. Workspace templates ✅
 9. Customers ✅
-10. Expenses
+10. Expenses ✅
 11. Reports (incl. operating P&L)
 12. Imports
 13. Notifications

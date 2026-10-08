@@ -21,6 +21,9 @@ function fieldMarkup(f, id) {
   if (f.type === "textarea") {
     return html`<textarea class="input" id="${common.id}" name="${common.name}" rows="2" maxlength="300">${f.value ?? ""}</textarea>`;
   }
+  if (f.type === "date") {
+    return html`<input class="input" type="date" id="${common.id}" name="${common.name}" value="${f.value ?? ""}" ${f.max ? html`max="${f.max}"` : ""} ${f.disabled ? "disabled" : ""} />`;
+  }
   return html`<input class="input" id="${common.id}" name="${common.name}" value="${f.value ?? ""}" ${f.inputmode ? html`inputmode="${f.inputmode}"` : ""} ${f.disabled ? "disabled" : ""} autocomplete="off" />`;
 }
 

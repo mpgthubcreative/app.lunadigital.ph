@@ -12,7 +12,7 @@ describe("resolveNavigation", () => {
 
   it("shows the owner every enabled, built module", () => {
     expect(ids(resolveNavigation({ entitlements, permissions: resolvePermissions("owner") }))).toEqual([
-      "dashboard", "orders", "payments", "inventory", "customers", "users", "settings",
+      "dashboard", "orders", "payments", "inventory", "customers", "expenses", "users", "settings",
     ]);
   });
 

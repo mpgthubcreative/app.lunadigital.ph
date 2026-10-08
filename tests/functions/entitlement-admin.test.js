@@ -31,7 +31,7 @@ describe("assignPlan", () => {
     const result = await assignPlan({ ...world, ...op, businessId: "biz-b", planId: "pro" });
     expect(result.planId).toBe("pro");
     expect(biz("biz-b").subscription.planId).toBe("pro");
-    expect(biz("biz-b").entitlements).toMatchObject({ schemaVersion: 2, planId: "pro", planName: "Pro", workspaceTemplateId: "distributor", workspaceTemplateVersion: 2, limits: PLAN_SEED.pro.limits });
+    expect(biz("biz-b").entitlements).toMatchObject({ schemaVersion: 2, planId: "pro", planName: "Pro", workspaceTemplateId: "distributor", workspaceTemplateVersion: 3, limits: PLAN_SEED.pro.limits });
     expect(validateEntitlementsSnapshot(biz("biz-b").entitlements, "pro", "distributor").ok).toBe(true);
   });
 

@@ -81,13 +81,13 @@ describe("cross tenant", () => {
   }
 });
 
-describe("Expenses (approved, not built)", () => {
-  it("nobody reads expenses, even the owner with the module entitled", async () => {
-    for (const uid of ["ownerA", "managerA", "finStaffA", "staffA"]) {
+describe("Expenses (built in Phase 10)", () => {
+  it("owner and manager read expenses; staff (even with dashboard.financials) don't", async () => {
+    for (const uid of ["ownerA", "managerA"]) await assertSucceeds(dbAs(env, uid).doc(`businesses/${A}/expenses/rent-oct`).get());
+    for (const uid of ["finStaffA", "staffA"]) {
       const db = dbAs(env, uid);
       await assertFails(db.doc(`businesses/${A}/expenses/rent-oct`).get());
       await assertFails(db.collection(`businesses/${A}/expenses`).get());
-      await assertFails(db.collection(`businesses/${A}/expenses`).where("categoryId", "==", "rent").get());
     }
   });
 

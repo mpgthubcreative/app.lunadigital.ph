@@ -10,6 +10,7 @@ export const MODULE_LOADERS = {
   payments: () => import("./payments/index.js"),
   inventory: () => import("./inventory/index.js"),
   customers: () => import("./customers/index.js"),
+  expenses: () => import("./expenses/index.js"),
   reports: () => import("./reports/index.js"),
   imports: () => import("./imports/index.js"),
   users: () => import("./users/index.js"),

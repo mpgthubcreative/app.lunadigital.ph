@@ -42,12 +42,10 @@ describe("dashboard.financials separates profitability from operations", () => {
 
   it("widgets disappear when a module they depend on isn't entitled", () => {
     const owner = resolvePermissions("owner");
-    // Expenses is planned (unbuilt): its cards stay as "No data yet" without
-    // the module being enabled.
-    const planned = ids(resolveDashboard({ entitlements: growth(), permissions: owner }));
-    expect(growth().modules.expenses).toBe(false);
-    expect(planned).toContain("operatingExpenses");
-    expect(planned).toContain("netSales");
+    const noExpenses = ids(resolveDashboard({ entitlements: growth({ modules: { expenses: false } }), permissions: owner }));
+    expect(noExpenses).not.toContain("operatingExpenses");
+    expect(noExpenses).not.toContain("estimatedOperatingProfit");
+    expect(noExpenses).toContain("netSales");
     const noInventory = ids(resolveDashboard({ entitlements: growth({ modules: { inventory: false } }), permissions: owner }));
     expect(noInventory).not.toContain("grossProfit");
     expect(noInventory).not.toContain("lowStock");
@@ -82,12 +80,12 @@ describe("dashboardDocuments: a fixed, tiny read set", () => {
 });
 
 describe("Expenses module registration", () => {
-  it("is registered, sellable, and not built yet", () => {
+  it("is registered, sellable and built (Phase 10); it owns the expenses collection", () => {
     const mod = getModule("expenses");
-    expect(mod).toMatchObject({ id: "expenses", permission: "expenses.view", available: false, path: "/expenses" });
+    expect(mod).toMatchObject({ id: "expenses", permission: "expenses.view", available: true, path: "/expenses" });
     expect(MODULE_IDS).toContain("expenses");
     expect(SELLABLE_MODULE_IDS).toContain("expenses");
-    expect(mod.collections).toEqual({});
+    expect(mod.collections).toEqual({ expenses: "expenses.view" });
   });
 
   it("owns expenses.view / create / update / delete", () => {
@@ -108,12 +106,18 @@ describe("Expenses module registration", () => {
     }
   });
 
-  it("an unbuilt module is never enabled, usable or navigable, whatever the plan says", () => {
+  it("Distributor: enabled, usable and navigable for owners; never for staff", () => {
     const access = { entitlements: growth(), permissions: resolvePermissions("owner") };
-    expect(access.entitlements.modules.expenses).toBe(false);
-    expect(isModuleEnabled(access.entitlements, "expenses")).toBe(false);
-    expect(canUseModule(access, "expenses")).toBe(false);
-    expect(resolveNavigation(access).map((m) => m.id)).not.toContain("expenses");
+    expect(access.entitlements.modules.expenses).toBe(true);
+    expect(canUseModule(access, "expenses")).toBe(true);
+    expect(resolveNavigation(access).find((m) => m.id === "expenses").label).toBe("Operating Expenses");
+    expect(canUseModule({ entitlements: growth(), permissions: resolvePermissions("staff") }, "expenses")).toBe(false);
+  });
+
+  it("an unbuilt module (Reports) is never enabled, usable or navigable, whatever the plan says", () => {
+    const access = { entitlements: growth(), permissions: resolvePermissions("owner") };
+    expect(access.entitlements.modules.reports).toBe(false);
+    expect(canUseModule(access, "reports")).toBe(false);
   });
 
   it("a snapshot computed before Expenses existed is rejected until recomputed", () => {
@@ -125,6 +129,6 @@ describe("Expenses module registration", () => {
   it("default categories have stable ids", () => {
     const catIds = DEFAULT_EXPENSE_CATEGORIES.map((c) => c.id);
     expect(new Set(catIds).size).toBe(catIds.length);
-    expect(catIds).toEqual(expect.arrayContaining(["rent", "utilities", "salaries", "delivery", "fuel", "packaging", "marketing", "supplies", "repairs", "software", "misc"]));
+    expect(catIds).toEqual(["rent", "utilities", "delivery", "salaries", "marketing", "supplies", "packaging", "repairs", "fees", "misc"]);
   });
 });

@@ -42,7 +42,7 @@ export const DASHBOARD_WIDGETS = Object.freeze([
 // field reads 0, e.g. "Paid today" before Payments, or an estimated profit
 // that would silently treat unrecorded expenses as zero. Each phase that
 // starts feeding metrics flips its entry.
-export const LIVE_DATA_SOURCES = Object.freeze({ orders: true, inventory: true, payments: true, expenses: false });
+export const LIVE_DATA_SOURCES = Object.freeze({ orders: true, inventory: true, payments: true, expenses: true });
 
 export function isWidgetLive(widget) {
   return (widget.dataFrom || []).every((id) => LIVE_DATA_SOURCES[id] === true);

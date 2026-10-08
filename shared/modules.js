@@ -35,10 +35,9 @@ export const MODULES = Object.freeze([
   // becoming available is an explicit release (registry flag + template
   // modules + template version + recompute).
   { id: "reports", label: "Reports", path: "/reports", icon: "reports", permission: "reports.view", available: false, collections: { reports: "reports.view" }, storage: { exports: "reports.export" } },
-  // Approved Phase 5, built in Phase 10. Not available yet: no route, no
-  // browser-readable collection, every access denied. The expenses
-  // collection gets its rule when the module is built.
-  { id: "expenses", label: "Expenses", path: "/expenses", icon: "expenses", permission: "expenses.view", available: false, collections: {}, storage: {} },
+  // Built in Phase 10 (operating expenses). Operational only where a
+  // workspace template lists it (Distributor v3); others keep it planned.
+  { id: "expenses", label: "Expenses", path: "/expenses", icon: "expenses", permission: "expenses.view", available: true, collections: { expenses: "expenses.view" }, storage: {} },
   { id: "imports", label: "Imports", path: "/imports", icon: "imports", permission: "imports.run", available: false, collections: { imports: "imports.run" }, storage: { imports: "imports.run" } },
   { id: "users", label: "Users", path: "/users", icon: "users", permission: "users.view", available: true, core: true, collections: { members: "users.view" }, storage: {} },
   { id: "settings", label: "Settings", path: "/settings", icon: "settings", permission: "settings.view", available: true, core: true, collections: { settings: "settings.view" }, storage: {} },

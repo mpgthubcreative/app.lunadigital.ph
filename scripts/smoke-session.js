@@ -209,7 +209,8 @@ const checks = [
     return [200, 404].includes(await fsGet("staff.a", `businesses/${A}/metrics/current`)) && (await fsGet("staff.a", `businesses/${A}/financialMetrics/${day}`)) === 403;
   }],
   ["owner.a is refused B's financialMetrics", async () => (await fsGet("owner.a", `businesses/${B}/financialMetrics/current`)) === 403],
-  ["Expenses (not built) is refused even to owner.a", async () => (await fsGet("owner.a", `businesses/${A}/expenses/any`)) === 403],
+  // Phase 10: Expenses is built; Owner/Manager read it, Staff (no expenses.*) don't.
+  ["Expenses: owner.a reads (404 for a missing doc, not 403); staff.a is refused", async () => (await fsGet("owner.a", `businesses/${A}/expenses/any`)) === 404 && (await fsGet("staff.a", `businesses/${A}/expenses/any`)) === 403],
   // Phase 6: products + inventory (no data is created by these checks).
   ["POST /api/inventory without a token → 401", async () => (await post("inventory", { action: "receipt" })).status === 401],
   ["staff.a can't create products or receive stock (403)", async () => {
@@ -257,15 +258,23 @@ const checks = [
     (await fsQuery("staff.a", `businesses/${A}`, "paymentRefs")) === 403 &&
     (await fsQuery("owner.a", `businesses/${B}`, "payments")) === 403],
   // Phase 9: customers (refusals and reads only; no customers are created here).
-  ["A, B, C have Customers on (distributor v2)", async () => {
+  ["A, B, C have Customers and Expenses on (distributor v3)", async () => {
     const rows = await Promise.all([session({ as: "owner.a" }), session({ as: "owner.b" }), session({ as: "owner.c" })]);
-    return rows.every((r) => r.status === 200 && r.body.entitlements.modules.customers === true && r.body.workspace?.templateVersion === 2);
+    return rows.every((r) => r.status === 200 && r.body.entitlements.modules.customers === true && r.body.entitlements.modules.expenses === true && r.body.workspace?.templateVersion === 3);
   }],
   ["POST /api/customers without a token → 401", async () => (await post("customers", { action: "create" })).status === 401],
   ["customer statistics can't be sent from the browser (400)", async () => (await post("customers", { action: "create", customer: { name: "Smoke", stats: { outstandingBalance: 0 } } }, { as: "staff.a" })).status === 400],
   ["owner.a selecting B can't write B's customers (403)", async () => (await post("customers", { action: "create", customer: { name: "Smoke" } }, { as: "owner.a", businessId: B })).body.error === "business-access-denied"],
   ["staff.a lists customers; B's customers refused", async () =>
     (await fsQuery("staff.a", `businesses/${A}`, "customers")) === 200 && (await fsQuery("owner.a", `businesses/${B}`, "customers")) === 403],
+  // Phase 10: expenses (refusals and reads only; no expenses are created here).
+  ["POST /api/expenses without a token → 401", async () => (await post("expenses", { action: "create" })).status === 401],
+  ["staff.a can't record expenses (403)", async () => (await post("expenses", { action: "create", expense: { date: "2026-10-01", category: "rent", amount: 100, method: "cash" } }, { as: "staff.a" })).status === 403],
+  ["forged expense metrics are refused (400)", async () => (await post("expenses", { action: "create", expense: { date: "2026-10-01", category: "rent", amount: 100, method: "cash", operatingExpenses: 0 } }, { as: "owner.a" })).status === 400],
+  ["a ₱0 expense is refused (400)", async () => (await post("expenses", { action: "create", expense: { date: "2026-10-01", category: "rent", amount: 0, method: "cash" } }, { as: "owner.a" })).status === 400],
+  ["owner.a selecting B can't write B's expenses (403)", async () => (await post("expenses", { action: "create", expense: { date: "2026-10-01", category: "rent", amount: 100, method: "cash" } }, { as: "owner.a", businessId: B })).body.error === "business-access-denied"],
+  ["manager.a lists expenses; B's expenses refused", async () =>
+    (await fsQuery("manager.a", `businesses/${A}`, "expenses")) === 200 && (await fsQuery("owner.a", `businesses/${B}`, "expenses")) === 403],
 ];
 
 console.log(`Smoke-testing ${baseUrl}\n`);
