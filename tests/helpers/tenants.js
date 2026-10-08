@@ -9,10 +9,10 @@ export async function buildWorld() {
   const { db, admin, auth } = env;
   await seedPlans({ db, admin });
 
-  await createBusiness({ db, admin, name: "Biz A", planId: "growth", businessId: "biz-a" });
-  await createBusiness({ db, admin, name: "Biz B", planId: "starter", businessId: "biz-b" });
-  await createBusiness({ db, admin, name: "Biz S", planId: "starter", businessId: "biz-s", subscriptionStatus: "suspended" });
-  await createBusiness({ db, admin, name: "Biz X", planId: "starter", businessId: "biz-x", subscriptionStatus: "cancelled" });
+  await createBusiness({ db, admin, name: "Biz A", planId: "growth", workspaceTemplateId: "distributor", businessId: "biz-a" });
+  await createBusiness({ db, admin, name: "Biz B", planId: "starter", workspaceTemplateId: "distributor", businessId: "biz-b" });
+  await createBusiness({ db, admin, name: "Biz S", planId: "starter", workspaceTemplateId: "distributor", businessId: "biz-s", subscriptionStatus: "suspended" });
+  await createBusiness({ db, admin, name: "Biz X", planId: "starter", workspaceTemplateId: "distributor", businessId: "biz-x", subscriptionStatus: "cancelled" });
 
   const uids = {};
   const add = async (key, businessId, roleTemplate, extra = {}) => {

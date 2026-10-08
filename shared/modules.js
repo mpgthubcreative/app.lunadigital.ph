@@ -6,7 +6,12 @@
 // A user may use a module only when ALL of these hold (canUseModule):
 //   1. the module is available (built) in this version of Luna
 //   2. the business's effective entitlements say modules[id] === true
-//   3. the user holds the module's permission (=== true)
+//      (plan/override within the workspace template, shared/entitlements.js)
+//   3. the snapshot's workspace template allows the module (checked again
+//      here, so a snapshot can never carry a module past its template)
+//   4. the user holds the module's permission (=== true)
+// Workspace templates (shared/workspaces.js) also order and label the
+// navigation; labels are display text only.
 // The server applies the same test in requireTenant(), and the Firestore /
 // Storage rules apply it to the module's `collections` / `storage` areas.
 // tests/shared/rules-registry.test.js fails if the rules drift from this file.
@@ -15,6 +20,8 @@
 // computeEntitlements always sets them true and overrides can't remove
 // them. They are still checked like any other module, so a missing or
 // malformed snapshot fails closed for them too.
+
+import { snapshotWorkspaceTemplateId, workspaceAllowsModule, getWorkspaceTemplate, workspaceModuleLabel } from "./workspaces.js";
 
 export const MODULES = Object.freeze([
   { id: "dashboard", label: "Dashboard", path: "/", icon: "dashboard", permission: "dashboard.view", available: true, core: true, collections: { metrics: "dashboard.view", financialMetrics: "dashboard.financials", orderCosts: "dashboard.financials" }, storage: {} },
@@ -47,13 +54,15 @@ export function getModule(id) {
   return MODULES.find((m) => m.id === id) || null;
 }
 
-// Is the module built AND switched on in this entitlement snapshot?
-// Exact `true` only: "true", 1 or a missing key all mean off.
+// Is the module built, allowed by the snapshot's workspace template AND
+// switched on in it? Exact `true` only: "true", 1 or a missing key all
+// mean off; an unknown or missing workspace means off.
 export function isModuleEnabled(entitlements, moduleId) {
   const mod = getModule(moduleId);
   if (!mod || !mod.available) return false;
   const modules = entitlements && entitlements.modules;
-  return Boolean(modules) && typeof modules === "object" && modules[moduleId] === true;
+  if (!modules || typeof modules !== "object" || modules[moduleId] !== true) return false;
+  return workspaceAllowsModule(snapshotWorkspaceTemplateId(entitlements), moduleId);
 }
 
 // Entitled module + the module's permission.
@@ -62,6 +71,15 @@ export function canUseModule({ entitlements, permissions }, moduleId) {
   return Boolean(mod) && isModuleEnabled(entitlements, moduleId) && Boolean(permissions) && permissions[mod.permission] === true;
 }
 
+// Usable modules in the workspace's navigation order, with its labels.
 export function resolveNavigation({ entitlements, permissions }) {
-  return MODULES.filter((mod) => canUseModule({ entitlements, permissions }, mod.id));
+  const templateId = snapshotWorkspaceTemplateId(entitlements);
+  const template = getWorkspaceTemplate(templateId);
+  if (!template) return [];
+  return template.navigation
+    .filter((id) => canUseModule({ entitlements, permissions }, id))
+    .map((id) => {
+      const mod = getModule(id);
+      return { ...mod, label: workspaceModuleLabel(templateId, id, mod.label) };
+    });
 }

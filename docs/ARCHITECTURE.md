@@ -166,10 +166,11 @@ Dashboard, Users and Settings are core: part of every package, always `true` in 
 
 Every plan is validated by `validatePlan` against `LIMIT_DEFINITIONS` and `FEATURE_DEFINITIONS`. Today all three plans include every built module and differ in limits and features only.
 
-**Effective entitlements** = the plan + per-business `moduleOverrides`, `limitOverrides` and `featureOverrides`, computed by `computeEntitlements`. Overrides are strict: exact booleans, non-negative integers, values from the feature definitions, and no unknown keys or core modules. The snapshot is stored at `businesses/{bid}.entitlements`:
+**Effective entitlements** = the plan + per-business `moduleOverrides`, `limitOverrides` and `featureOverrides`, within the business's workspace template (Phase 8.5, see Workspace templates), computed by `computeEntitlements`. Overrides are strict: exact booleans, non-negative integers, values from the feature definitions, and no unknown keys or core modules. The snapshot is stored at `businesses/{bid}.entitlements`:
 
 ```
-{ schemaVersion: 1, planId, planName,
+{ schemaVersion: 2, planId, planName,
+  workspaceTemplateId, workspaceTemplateVersion,   (Phase 8.5)
   modules  { every MODULE_ID: boolean },
   limits   { users, ordersPerMonth, storageBytes, importsPerMonth: int >= 0 },
   features { reportsLevel, inAppNotifications, pushNotifications, googleSheets,
@@ -180,7 +181,8 @@ Every plan is validated by `validatePlan` against `LIMIT_DEFINITIONS` and `FEATU
 **Fail closed.** `validateEntitlementsSnapshot` on the server and the same checks in the rules reject the snapshot when:
 
 - it is missing
-- `schemaVersion` is anything other than 1
+- `schemaVersion` is anything other than 2 (1 only during the Phase 8.5 migration window)
+- its workspace template is missing, unknown, not the business's, or not the current version (Phase 8.5)
 - it was computed for a different plan than `subscription.planId` (stale)
 - the plan document no longer exists
 - any module, limit or feature is missing, unknown or mistyped
@@ -416,6 +418,113 @@ It checks sign-in first, then the Payments and Orders modules and a strict paylo
 
 **Not built (by design):** OCR, automatic verification, bank or e-wallet APIs, refunds, returns, customer credit, reconciliation.
 
+## Workspace templates (Phase 8.5)
+
+**Model.** Luna Core → Workspace Template → Enabled Modules → Tenant Configuration. One codebase, one auth system, one tenant and security model, one permission model, one subscription and entitlement system, one design system. Luna is not a no-code builder: templates are data that Luna controls, and tenants can't supply code, HTML, CSS, collection names or routes.
+
+**Template vs plan.** These are independent dimensions:
+- `businesses/{bid}.workspaceTemplateId` says what kind of workspace the business runs.
+- `subscription.planId` sets price, limits and plan features.
+
+There are no combined ids such as `distributor-growth`. Every plan works with every template, and Starter/Growth/Pro prices and limits are unchanged.
+
+**Registry** (`shared/workspaces.js`, frozen and versioned). Each template defines:
+
+| Field | Meaning |
+|---|---|
+| `id`, `version`, `name`, `description`, `status` | stable id; integer version; `live` or `planned` |
+| `modules` | every module the template **allows**, using existing module ids (core included). This is a ceiling. |
+| `navigation` | module ids in display order |
+| `dashboard.widgets`, `dashboard.empty` | registered widget ids in order, and the empty state |
+| `labels.modules` | plain-text display names (for example `expenses` → "Wedding Expenses"). Ids, permission keys and rules never depend on labels. |
+| `settings` | default workspace settings (plain values) |
+| `plannedModules` | roadmap metadata only: never a route, a permission, an entitlement or a navigation item |
+
+`validateWorkspaceTemplate` (run by the tests) rejects unknown keys, unknown modules or widgets, widgets needing modules the template doesn't allow, unsafe labels (markup, over 40 characters), non-plain settings, and planned ids that collide with real modules.
+
+| Template | Status | Allows (besides Dashboard, Users, Settings) | Planned (metadata only) |
+|---|---|---|---|
+| `distributor` | live | orders, payments, inventory, customers, reports, expenses, imports, suppliers, production, returns | notifications |
+| `household-payroll` | planned | — | household staff, payroll, salary payments, receipt confirmation, advances, deductions, payroll history, reports |
+| `baby-expense` | planned | expenses (not built yet, so inactive) | budget, categories, providers, payments, due dates, milestones, reports |
+| `bridal-expense` | planned | expenses (not built yet, so inactive) | budget, suppliers, supplier payments and balances, payment due dates, wedding tasks, guests, RSVP, reports |
+
+**Effective modules** (`computeEntitlements(plan, overrides, workspaceTemplateId)`, which has no default template):
+
+- Core modules are always on.
+- Any other module must be allowed by the template (a hard ceiling). It is then the operator override if one is set, otherwise the plan default.
+- An override may switch a module off. It may also grant a plan add-on, a Phase 4 behaviour that is kept, but only within the template.
+- An override for a module the template doesn't allow is refused, never silently dropped. So is one for an unknown module.
+- An unbuilt module can sit in a snapshot but is never usable (`available: false`).
+
+**Snapshot schemaVersion 2** adds `workspaceTemplateId` and `workspaceTemplateVersion`. It is rejected (server 503 `business-misconfigured`, rules deny) when:
+- the template is missing, malformed or unknown
+- it differs from the business's `workspaceTemplateId` (the template changed without a recompute)
+- its version isn't the registry's current version (stale)
+- it has a module on that the template doesn't allow
+
+Module access also re-checks the template in `isModuleEnabled` (server and browser) and in `moduleEnabled` / `canAccessModule` (Firestore and Storage rules). A forged snapshot can't carry Orders into a bridal workspace. The rules keep a copy of each template's version and allowed modules, which `tests/shared/rules-registry.test.js` compares with the registry. No extra document reads were added anywhere.
+
+**Access** = active membership AND exact permission AND valid subscription AND plan entitlement AND the workspace allows the module AND no disabling override. A permission never implies a module (Orders permission + bridal workspace = no Orders), and a module never implies a permission (Staff still lacks `inventory.adjust`). Owner, Manager and Staff behave exactly as before.
+
+**Browser.**
+- Navigation follows the template's order and labels; Distributor's is unchanged.
+- A disabled route shows the generic "Page not available" and never loads the module or its data.
+- The dashboard asks the template which widgets exist. A non-Distributor workspace lists none, so no metric document or list is fetched, and it shows the template's own empty state ("Your wedding workspace is being prepared"). Nothing fabricates a 0.
+
+**Operator tooling** (server-side; nothing customer-facing):
+- `create-business --template <id>` (required).
+- `set-template --business --template --reason [--change-template]`. Assigning a first template needs a reason. Changing one also needs `--change-template`; modules the new template doesn't allow switch off, data is kept, and overrides the new template doesn't allow are refused until cleared.
+- `migrate-workspaces` (one-off).
+
+Every assignment or change runs through `changeEntitlements`: one transaction that recomputes the snapshot and writes an append-only audit record to the tenant `auditLog` and `platformAudit`. The record holds the type (`workspace.template-assigned` / `workspace.template-changed`), a summary such as "Workspace template changed: distributor → bridal-expense", the actor, the time, the reason, and before/after values.
+
+**Zero-downtime rollout (staging).** The Phase 5 outage happened because snapshots became invalid before everything accepted them. Phase 8.5 used three steps:
+1. **Compatible:**
+   - Rules first, then code.
+   - Both accept the old `schemaVersion 1` (no workspace; read as distributor) and the new 2.
+   - `LEGACY_SNAPSHOTS_ACCEPTED = true`.
+2. **Migrate:** `migrate-workspaces --template distributor` gives every business an explicit template and a v2 snapshot, then re-validates them all.
+3. **Enforce:**
+   - `LEGACY_SNAPSHOTS_ACCEPTED = false`, and the rules' legacy branch is removed (rules first, then code).
+   - From then on a missing template fails closed; there is no permanent "missing = distributor".
+
+Future template changes follow the same order: deploy rules and code that accept the new version, run `recompute-entitlements --all`, then remove the old version.
+
+**Reuse infrastructure, not business meaning.** These are shared:
+- auth, tenancy, permissions and entitlements
+- audit logs, file storage and attachments
+- compact tables, modals, pagination, dates
+- notifications and exports
+
+Domain records stay separate wherever their behaviour differs:
+- A wedding guest is not a Customer.
+- A wedding task is not an Order.
+- A salary payment is not an Order Payment.
+- Salary receipt confirmation is not payment verification.
+
+The Phase 8 Payments module stays an **order-payment** domain: it depends on order totals, balances, the order lifecycle and unpaid-order metrics, so no other template enables it. A shared payment primitive can be extracted later if several domains prove they need the same one.
+
+**Future domain notes** (design room only; nothing is built):
+
+- **Household / Kasambahay payroll.**
+  - Three distinct facts, never merged: *payroll calculated* → *payment released* → *employee confirmed receipt*.
+  - Example: "Maria Santos · Oct 1–15 · Net ₱7,500 · Released Oct 15 6:15 PM · Confirmed Oct 15 6:18 PM".
+  - A confirmation record needs room for: payroll/payment id, employee id, amount acknowledged, release date, confirmation status, confirmed at, method, actor, notes, and immutable history.
+  - The confirmation must be attributable to the employee. Possible methods: tap to confirm, secure link, PIN, signature. A manual owner acknowledgement is allowed only as an exception, with a reason. The method is not decided yet.
+  - Possible states: not released / released, awaiting confirmation / confirmed received. Labels are not locked.
+- **Baby expense tracker.**
+  - A budget-and-expense workspace: budget, spent, remaining, upcoming payments, by category.
+  - It reuses the `expenses` module id, labelled "Baby Expenses".
+- **Bridal / wedding command center.**
+  - Budget, suppliers, supplier payments and balances, due dates, tasks, guests and RSVP; later perhaps seating, timeline and contracts.
+  - **Tasks:** title, category, due date, priority, status, assignee, notes, related supplier, completion date. Categories are tenant data, not hard-coded.
+  - **Guests:** guest or household, group/side, contact, invitation status, RSVP status, party size, confirmed count, notes, table later, sent and RSVP dates.
+  - Statuses use stable internal ids (`invited`, `attending`, `declined`, `awaiting`) with configurable display labels; no logic depends on display text.
+  - Compact row: Guest | Group | Invited | Party Size | RSVP | Confirmed | Table | View.
+
+**Not built in 8.5:** payroll, employees, release or confirmation flows, baby or bridal screens, suppliers, tasks, guests, RSVP, seating, generic contacts, accounting, payments, custom fields, tables or forms, page or workflow builders, custom code or themes, tenant label overrides (`isSafeLabel` exists for when they come), and Customers (Phase 9).
+
 ## Dashboard and metrics (Phase 5)
 
 **Summary documents, not scans.** The dashboard never downloads orders, payments, inventory or expenses to add them up. It reads a few tenant-scoped summary documents, which server functions update with `FieldValue.increment` inside the same transaction as the business event (`netlify/functions/_lib/metrics.js`):
@@ -541,6 +650,7 @@ On Orders, Reference and Proof show "—" until Payments (Phase 8) fills them in
 6. Products and inventory ✅
 7. Orders ✅
 8. Payments ✅
+8.5. Workspace templates ✅
 9. Customers
 10. Expenses
 11. Reports (incl. operating P&L)

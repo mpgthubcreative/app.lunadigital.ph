@@ -109,7 +109,7 @@ export function parseOverrideArgs(args) {
 export function printEntitlements(entitlements, label = "Effective entitlements") {
   const on = Object.entries(entitlements.modules).filter(([, v]) => v === true).map(([k]) => k);
   const off = Object.entries(entitlements.modules).filter(([, v]) => v !== true).map(([k]) => k);
-  console.log(`${label} (plan ${entitlements.planId}, schema v${entitlements.schemaVersion}):`);
+  console.log(`${label} (plan ${entitlements.planId}, workspace ${entitlements.workspaceTemplateId ?? "none"} v${entitlements.workspaceTemplateVersion ?? "-"}, schema v${entitlements.schemaVersion}):`);
   console.log(`  modules on : ${on.join(", ") || "—"}`);
   console.log(`  modules off: ${off.join(", ") || "—"}`);
   console.log(`  limits     : ${Object.entries(entitlements.limits).map(([k, v]) => `${k}=${v}`).join(", ")}`);

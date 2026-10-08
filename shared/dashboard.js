@@ -14,6 +14,7 @@
 //   list   a small limited query, only once `ready` (its module's data exists)
 
 import { ESTIMATED_PROFIT_NOTE } from "./finance.js";
+import { snapshotWorkspaceTemplateId, getWorkspaceTemplate } from "./workspaces.js";
 
 export const DASHBOARD_WIDGETS = Object.freeze([
   // ---- Financial (dashboard.financials) ----
@@ -53,11 +54,23 @@ export const DASHBOARD_SECTIONS = Object.freeze([
   { id: "lists", label: null },
 ]);
 
+// The workspace template picks WHICH widgets exist and their order (a
+// template without Orders never lists an orders widget, so nothing is
+// fetched for it); permissions and entitled modules then filter as before.
+// Unknown/missing workspace: no widgets.
 export function resolveDashboard({ entitlements, permissions }) {
   const modules = (entitlements && entitlements.modules) || {};
-  return DASHBOARD_WIDGETS.filter(
-    (w) => Boolean(permissions) && permissions[w.permission] === true && w.modules.every((id) => modules[id] === true)
-  );
+  const template = getWorkspaceTemplate(snapshotWorkspaceTemplateId(entitlements));
+  if (!template) return [];
+  return template.dashboard.widgets
+    .map((id) => DASHBOARD_WIDGETS.find((w) => w.id === id))
+    .filter((w) => w && Boolean(permissions) && permissions[w.permission] === true && w.modules.every((id) => modules[id] === true && template.modules.includes(id)));
+}
+
+// What the dashboard says when a workspace has no widgets to show yet.
+export function dashboardEmptyState(entitlements) {
+  const template = getWorkspaceTemplate(snapshotWorkspaceTemplateId(entitlements));
+  return template ? template.dashboard.empty : { title: "Nothing to show yet", body: "Your dashboard fills in as your business uses Luna." };
 }
 
 const SOURCE_DOCS = {

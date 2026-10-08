@@ -35,7 +35,9 @@ Every script prints its target and refuses to write without `--confirm <projectI
 | Command | What it does |
 |---|---|
 | `npm run seed:plans -- --confirm <projectId>` | Seed `plans/` from `shared/plans.seed.js` (keeps edited plans) |
-| `npm run create-business -- --name "…" --plan growth --owner-email … --owner-name "…" --confirm <projectId>` | Onboard a business and its owner (prints a password-setup link) |
+| `npm run create-business -- --name "…" --plan growth --template distributor --owner-email … --owner-name "…" --confirm <projectId>` | Onboard a business and its owner (prints a password-setup link). `--template` is required |
+| `npm run set-template -- --business <id> --template <id> --reason "…" [--change-template] --confirm <projectId>` | Assign a workspace template, or change one (needs `--change-template`); recomputes entitlements; audited |
+| `npm run migrate-workspaces -- --template distributor --reason "…" [--dry-run] --confirm <projectId>` | Phase 8.5 one-off: give every pre-8.5 business an explicit template, then verify all snapshots |
 | `npm run add-member -- --business <id> --email … --name "…" --role manager\|staff --confirm <projectId>` | Add a team member (enforces the plan's user limit) |
 | `npm run set-member-status -- --business <id> --email … --status active\|disabled --confirm <projectId>` | Enable or disable a membership (the owner is protected) |
 | `npm run set-plan -- --business <id> --plan starter\|growth\|pro --reason "…" --confirm <projectId>` | Assign or change a plan; recomputes entitlements; audited |

@@ -9,7 +9,7 @@ import { PLAN_SEED } from "../../shared/plans.seed.js";
 import { getModule, MODULE_IDS, SELLABLE_MODULE_IDS, resolveNavigation, canUseModule, isModuleEnabled } from "../../shared/modules.js";
 import { DEFAULT_EXPENSE_CATEGORIES } from "../../shared/expenses.js";
 
-const growth = (overrides) => computeEntitlements(PLAN_SEED.growth, overrides);
+const growth = (overrides) => computeEntitlements(PLAN_SEED.growth, overrides, "distributor");
 const ids = (widgets) => widgets.map((w) => w.id);
 const financial = (widgets) => widgets.filter((w) => w.section === "financial");
 
@@ -117,7 +117,7 @@ describe("Expenses module registration", () => {
   it("a snapshot computed before Expenses existed is rejected until recomputed", () => {
     const old = growth();
     delete old.modules.expenses;
-    expect(validateEntitlementsSnapshot(old, "growth").problems).toContain("modules.expenses must be a boolean");
+    expect(validateEntitlementsSnapshot(old, "growth", "distributor").problems).toContain("modules.expenses must be a boolean");
   });
 
   it("default categories have stable ids", () => {

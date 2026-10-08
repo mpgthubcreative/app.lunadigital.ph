@@ -1,0 +1,101 @@
+// @vitest-environment jsdom
+// Phase 8.5 in the browser: navigation and dashboard come from the
+// workspace template; a non-Distributor workspace never shows, routes to or
+// fetches Distributor modules; Distributor looks exactly as before.
+
+import { describe, it, expect, beforeEach, vi } from "vitest";
+import { renderShell } from "../../src/app/shell.js";
+import { buildRoutes, routeAllowed, renderPageNotAvailable } from "../../src/app/routes.js";
+import { createRouter } from "../../src/app/router.js";
+import { mount as mountDashboard } from "../../src/modules/dashboard/index.js";
+import { sessionFixture } from "../helpers/session-fixture.js";
+
+beforeEach(() => {
+  document.body.innerHTML = '<div id="app"></div><main id="content"></main>';
+  window.history.replaceState({}, "", "/");
+});
+
+const bridal = (role = "owner") => sessionFixture({ roleTemplate: role, planId: "pro", workspaceTemplateId: "bridal-expense" });
+const navOf = () => [...document.querySelectorAll(".nav-link")].map((a) => `${a.getAttribute("href")} ${a.textContent.trim()}`);
+
+// Same guard as main.js: a route is mounted only if routeAllowed.
+function visit(session, path) {
+  const content = document.getElementById("content");
+  const loader = vi.fn();
+  window.history.replaceState({}, "", path);
+  const router = createRouter({
+    routes: buildRoutes(session),
+    onRoute(route) {
+      if (!routeAllowed(session, route)) return renderPageNotAvailable(content);
+      return loader(route.moduleId);
+    },
+    notFound: () => renderPageNotAvailable(content),
+  });
+  router.start();
+  router.stop();
+  return { loader, text: content.textContent.replace(/\s+/g, " ").trim() };
+}
+
+describe("navigation", () => {
+  it("Distributor: unchanged", () => {
+    renderShell(document.getElementById("app"), sessionFixture());
+    expect(navOf()).toEqual(["/ Dashboard", "/orders Orders", "/payments Payments", "/inventory Inventory", "/customers Customers", "/reports Reports", "/imports Imports", "/users Users", "/settings Settings"]);
+  });
+
+  it("Bridal: its own dashboard name, no Orders / Inventory / Payments", () => {
+    renderShell(document.getElementById("app"), bridal());
+    expect(navOf()).toEqual(["/ Wedding Dashboard", "/users Users", "/settings Settings"]);
+  });
+
+  it("Bridal staff: roles still apply", () => {
+    renderShell(document.getElementById("app"), bridal("staff"));
+    expect(navOf()).toEqual(["/ Wedding Dashboard"]);
+  });
+});
+
+describe("typing a Distributor URL in a bridal workspace", () => {
+  for (const path of ["/orders", "/inventory", "/payments", "/customers", "/reports", "/imports"]) {
+    it(`${path}: Page not available, and the module is never loaded`, () => {
+      const r = visit(bridal(), path);
+      expect(r.loader).not.toHaveBeenCalled();
+      expect(r.text).toMatch(/Page not available/);
+    });
+  }
+
+  it("a forged session flag can't open Orders either (the workspace is re-checked)", () => {
+    const s = bridal();
+    s.entitlements.modules.orders = true;
+    const r = visit(s, "/orders");
+    expect(r.loader).not.toHaveBeenCalled();
+  });
+
+  it("Distributor still opens /orders", () => {
+    expect(visit(sessionFixture(), "/orders").loader).toHaveBeenCalledWith("orders");
+  });
+});
+
+describe("dashboard", () => {
+  const NOW = new Date("2026-10-08T04:00:00Z");
+
+  it("Bridal: no metric documents and no lists are requested; the workspace's own empty state", async () => {
+    const fetchDocuments = vi.fn(async () => ({}));
+    const fetchLists = vi.fn(async () => ({}));
+    const container = document.getElementById("content");
+    mountDashboard(container, bridal(), { fetchDocuments, fetchLists, now: NOW });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(fetchLists).not.toHaveBeenCalled();
+    for (const call of fetchDocuments.mock.calls) expect(call[1]).toEqual([]);
+    expect(container.querySelector("h1, .page-title")?.textContent).toMatch(/Wedding Dashboard/);
+    expect(container.querySelector('[data-role="workspace-empty"]').textContent).toMatch(/wedding workspace is being prepared/);
+    expect(container.textContent).not.toMatch(/Today's sales|Orders today|Low stock|Unpaid|₱/);
+  });
+
+  it("Distributor: still requests its metric documents and lists", async () => {
+    const fetchDocuments = vi.fn(async () => ({}));
+    const fetchLists = vi.fn(async () => ({}));
+    mountDashboard(document.getElementById("content"), sessionFixture(), { fetchDocuments, fetchLists, now: NOW });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(fetchDocuments.mock.calls[0][1].map((d) => d.collection)).toEqual(expect.arrayContaining(["metrics", "financialMetrics"]));
+    expect(fetchLists.mock.calls[0][1].map((w) => w.id)).toEqual(["recentOrders", "lowStockItems"]);
+  });
+});

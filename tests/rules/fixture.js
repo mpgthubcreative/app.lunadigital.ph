@@ -143,7 +143,7 @@ export const statusUid = (kind, bid) => `${kind}@${bid}`;
 
 // A business document as provisioning writes it: subscription + overrides
 // + the computed entitlement snapshot.
-export function businessDoc(name, status, { planId = "growth", overrides = {} } = {}) {
+export function businessDoc(name, status, { planId = "growth", overrides = {}, workspaceTemplateId = "distributor" } = {}) {
   const subscription = { planId, renewalAt: null, graceUntil: null };
   if (status !== undefined) subscription.status = status;
   return {
@@ -151,11 +151,12 @@ export function businessDoc(name, status, { planId = "growth", overrides = {} } 
     timezone: "Asia/Manila",
     currency: "PHP",
     isDemo: true,
+    workspaceTemplateId,
     subscription,
     moduleOverrides: overrides.modules || {},
     limitOverrides: overrides.limits || {},
     featureOverrides: overrides.features || {},
-    entitlements: { ...computeEntitlements(ALL_PLANS[planId], overrides), computedAt: new Date("2026-10-07T00:00:00Z") },
+    entitlements: { ...computeEntitlements(ALL_PLANS[planId], overrides, workspaceTemplateId), computedAt: new Date("2026-10-07T00:00:00Z") },
   };
 }
 

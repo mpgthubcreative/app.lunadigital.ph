@@ -73,7 +73,7 @@ describe("THE scenario in Storage: export permission, Reports off", () => {
 
 describe("package x role x area matrix", () => {
   for (const [bid, pkg] of Object.entries(PACKAGES)) {
-    const ent = computeEntitlements(ALL_PLANS[pkg.planId], pkg.overrides || {});
+    const ent = computeEntitlements(ALL_PLANS[pkg.planId], pkg.overrides || {}, "distributor");
     for (const [kind, spec] of Object.entries(ROLES)) {
       const perms = resolvePermissions(spec.role, spec.overrides || {});
       for (const [area, permission] of Object.entries(STORAGE_AREAS)) {

@@ -10,18 +10,29 @@
 // throw; validateEntitlementsSnapshot returns ok:false), never "repaired"
 // into something broader.
 //
-// Snapshot shape (schemaVersion 1):
-//   { schemaVersion, planId, planName, modules{every MODULE_ID: boolean},
+// Snapshot shape (schemaVersion 2, Phase 8.5):
+//   { schemaVersion, planId, planName,
+//     workspaceTemplateId, workspaceTemplateVersion,
+//     modules{every MODULE_ID: boolean},
 //     limits{every LIMIT_KEY: int >= 0}, features{every FEATURE_KEY: valid},
 //     computedAt (server timestamp, added by the writer) }
-// firestore.rules / storage.rules check schemaVersion, planId and the
-// modules / limits structure; tests/shared/rules-registry.test.js keeps
-// their copies of the key lists in sync with this file.
+// firestore.rules / storage.rules check schemaVersion, planId, the
+// workspace template (id, version, allowed modules) and the modules /
+// limits structure; tests/shared/rules-registry.test.js keeps their copies
+// of the key lists in sync with this file and shared/workspaces.js.
+//
+// Effective modules: core modules are always on; every other module must
+// be allowed by the workspace template (a hard ceiling no override can
+// lift), and is then the operator override if one is set, else the plan
+// default. An override may still grant a module the plan lacks (a Phase 4
+// add-on) as long as the template allows it. Unbuilt modules can sit in a
+// snapshot but never become usable (isModuleEnabled checks `available`).
 
 import { LIMIT_KEYS, FEATURE_KEYS, isValidFeatureValue } from "./plans.seed.js";
 import { MODULE_IDS, CORE_MODULE_IDS, SELLABLE_MODULE_IDS } from "./modules.js";
+import { getWorkspaceTemplate, LEGACY_SNAPSHOTS_ACCEPTED, ENTITLEMENTS_SCHEMA_VERSION, LEGACY_ENTITLEMENTS_SCHEMA_VERSION } from "./workspaces.js";
 
-export const ENTITLEMENTS_SCHEMA_VERSION = 1;
+export { ENTITLEMENTS_SCHEMA_VERSION, LEGACY_ENTITLEMENTS_SCHEMA_VERSION };
 
 export const PLAN_ID_PATTERN = /^[a-z][a-z0-9-]{1,31}$/;
 
@@ -127,13 +138,20 @@ export function validateOverrides(overrides = {}) {
 
 // ---------- Effective entitlements ----------
 
-export function computeEntitlements(plan, overrides = {}) {
+// workspaceTemplateId is required: there is no default workspace.
+export function computeEntitlements(plan, overrides, workspaceTemplateId) {
   validatePlan(plan);
-  const clean = validateOverrides(overrides);
+  const clean = validateOverrides(overrides ?? {});
+  const template = getWorkspaceTemplate(workspaceTemplateId);
+  if (!template) throw new EntitlementError(`Unknown workspace template ${JSON.stringify(workspaceTemplateId)}`);
+
+  const forbidden = Object.entries(clean.modules).filter(([id, on]) => on && !template.modules.includes(id)).map(([id]) => id);
+  if (forbidden.length) throw new EntitlementError("Invalid overrides", forbidden.map((id) => `module ${id} isn't allowed in the ${template.id} workspace`));
 
   const modules = {};
   for (const id of MODULE_IDS) {
     if (CORE_MODULE_IDS.includes(id)) modules[id] = true;
+    else if (!template.modules.includes(id)) modules[id] = false;
     else if (id in clean.modules) modules[id] = clean.modules[id];
     else modules[id] = plan.modules[id] === true;
   }
@@ -144,20 +162,36 @@ export function computeEntitlements(plan, overrides = {}) {
   const features = {};
   for (const key of FEATURE_KEYS) features[key] = key in clean.features ? clean.features[key] : plan.features[key];
 
-  return { schemaVersion: ENTITLEMENTS_SCHEMA_VERSION, planId: plan.id, planName: plan.name, modules, limits, features };
+  return { schemaVersion: ENTITLEMENTS_SCHEMA_VERSION, planId: plan.id, planName: plan.name, workspaceTemplateId: template.id, workspaceTemplateVersion: template.version, modules, limits, features };
 }
 
 // ---------- Stored snapshots ----------
 
 // Checks a stored businesses/{bid}.entitlements snapshot before it's used
-// for any decision. expectedPlanId is the business's subscription.planId;
-// a snapshot computed for another plan is stale and must be recomputed.
-// Returns { ok, problems }.
-export function validateEntitlementsSnapshot(snapshot, expectedPlanId) {
+// for any decision. expectedPlanId is the business's subscription.planId
+// and expectedTemplateId its workspaceTemplateId; a snapshot computed for
+// another plan, another template or another template version is stale and
+// must be recomputed. Returns { ok, problems }.
+export function validateEntitlementsSnapshot(snapshot, expectedPlanId, expectedTemplateId) {
   const problems = [];
   if (!isPlainObject(snapshot)) return { ok: false, problems: ["missing entitlements snapshot"] };
 
-  if (snapshot.schemaVersion !== ENTITLEMENTS_SCHEMA_VERSION) problems.push(`unsupported schemaVersion ${JSON.stringify(snapshot.schemaVersion)}`);
+  const legacy = LEGACY_SNAPSHOTS_ACCEPTED && snapshot.schemaVersion === LEGACY_ENTITLEMENTS_SCHEMA_VERSION;
+  if (snapshot.schemaVersion !== ENTITLEMENTS_SCHEMA_VERSION && !legacy) problems.push(`unsupported schemaVersion ${JSON.stringify(snapshot.schemaVersion)}`);
+  let template = null;
+  if (legacy) {
+    if (snapshot.workspaceTemplateId !== undefined || snapshot.workspaceTemplateVersion !== undefined) problems.push("legacy snapshot can't carry a workspace");
+    // A business already assigned a template must have a current snapshot.
+    if (expectedTemplateId !== undefined && expectedTemplateId !== null) problems.push("business has a workspace template but a legacy snapshot");
+  } else {
+    template = getWorkspaceTemplate(snapshot.workspaceTemplateId);
+    if (!template) problems.push(`unknown workspace template ${JSON.stringify(snapshot.workspaceTemplateId)}`);
+    else {
+      if (snapshot.workspaceTemplateVersion !== template.version) problems.push(`snapshot is for ${template.id} v${JSON.stringify(snapshot.workspaceTemplateVersion)}, current is v${template.version}`);
+      if (!getWorkspaceTemplate(expectedTemplateId)) problems.push("business has no valid workspaceTemplateId");
+      else if (snapshot.workspaceTemplateId !== expectedTemplateId) problems.push(`snapshot is for workspace ${JSON.stringify(snapshot.workspaceTemplateId)}, business is ${JSON.stringify(expectedTemplateId)}`);
+    }
+  }
   if (!isValidPlanId(snapshot.planId)) problems.push("invalid planId");
   if (!isValidPlanId(expectedPlanId)) problems.push("business has no valid subscription.planId");
   else if (snapshot.planId !== expectedPlanId) problems.push(`snapshot is for plan ${JSON.stringify(snapshot.planId)}, business is on ${JSON.stringify(expectedPlanId)}`);
@@ -167,6 +201,7 @@ export function validateEntitlementsSnapshot(snapshot, expectedPlanId) {
     for (const id of MODULE_IDS) if (typeof snapshot.modules[id] !== "boolean") problems.push(`modules.${id} must be a boolean`);
     for (const id of Object.keys(snapshot.modules)) if (!MODULE_IDS.includes(id)) problems.push(`unknown module ${id}`);
     for (const id of CORE_MODULE_IDS) if (snapshot.modules[id] !== true) problems.push(`core module ${id} must be enabled`);
+    if (template) for (const id of MODULE_IDS) if (snapshot.modules[id] === true && !template.modules.includes(id)) problems.push(`module ${id} isn't allowed in the ${template.id} workspace`);
   }
 
   if (!isPlainObject(snapshot.limits)) problems.push("limits must be an object");

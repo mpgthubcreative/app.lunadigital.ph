@@ -6,7 +6,7 @@ import { parseArgs, requireArgs, connectReadOnly, fail, printEntitlements } from
 import { describeEntitlements, ProvisioningError } from "../netlify/functions/_lib/provisioning.js";
 
 // Key-order-independent comparison of the parts a recompute produces.
-const FIELDS = ["schemaVersion", "planId", "planName", "modules", "limits", "features"];
+const FIELDS = ["schemaVersion", "planId", "planName", "workspaceTemplateId", "workspaceTemplateVersion", "modules", "limits", "features"];
 const canonical = (value) =>
   value && typeof value === "object" && !Array.isArray(value)
     ? Object.fromEntries(Object.keys(value).sort().map((k) => [k, canonical(value[k])]))

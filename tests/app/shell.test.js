@@ -81,7 +81,7 @@ describe("app shell", () => {
 
   it("every module loader mounts without throwing", async () => {
     const session = sessionFixture();
-    session.entitlements = computeEntitlements(PLAN_SEED.pro);
+    session.entitlements = computeEntitlements(PLAN_SEED.pro, {}, "distributor");
     for (const [id, load] of Object.entries(MODULE_LOADERS)) {
       const el = document.createElement("div");
       const mod = await load();

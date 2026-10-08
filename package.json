@@ -24,6 +24,8 @@
     "add-member": "node --env-file=.env.local scripts/add-member.js",
     "set-member-status": "node --env-file=.env.local scripts/set-member-status.js",
     "set-plan": "node --env-file=.env.local scripts/set-plan.js",
+    "set-template": "node --env-file=.env.local scripts/set-template.js",
+    "migrate-workspaces": "node --env-file=.env.local scripts/migrate-workspaces.js",
     "set-overrides": "node --env-file=.env.local scripts/set-overrides.js",
     "recompute-entitlements": "node --env-file=.env.local scripts/recompute-entitlements.js",
     "show-entitlements": "node --env-file=.env.local scripts/show-entitlements.js",

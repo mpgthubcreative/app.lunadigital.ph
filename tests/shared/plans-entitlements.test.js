@@ -37,7 +37,7 @@ describe("plan seed", () => {
 
 describe("computeEntitlements", () => {
   it("uses plan defaults when there are no overrides", () => {
-    const e = computeEntitlements(PLAN_SEED.starter);
+    const e = computeEntitlements(PLAN_SEED.starter, {}, "distributor");
     expect(e.planId).toBe("starter");
     expect(e.limits.ordersPerMonth).toBe(500);
     expect(e.modules.orders).toBe(true);
@@ -49,7 +49,7 @@ describe("computeEntitlements", () => {
       modules: { suppliers: true, imports: false },
       limits: { users: 3 },
       features: { pushNotifications: true },
-    });
+    }, "distributor");
     expect(e.modules.suppliers).toBe(true);
     expect(e.modules.imports).toBe(false);
     expect(e.limits.users).toBe(3);
@@ -58,15 +58,15 @@ describe("computeEntitlements", () => {
   });
 
   it("rejects unknown or invalid overrides", () => {
-    expect(() => computeEntitlements(PLAN_SEED.starter, { modules: { teleport: true } })).toThrow();
-    expect(() => computeEntitlements(PLAN_SEED.starter, { limits: { users: -1 } })).toThrow();
-    expect(() => computeEntitlements(PLAN_SEED.starter, { limits: { users: 2.5 } })).toThrow();
-    expect(() => computeEntitlements(PLAN_SEED.starter, { limits: { galaxies: 1 } })).toThrow();
+    expect(() => computeEntitlements(PLAN_SEED.starter, { modules: { teleport: true } }, "distributor")).toThrow();
+    expect(() => computeEntitlements(PLAN_SEED.starter, { limits: { users: -1 } }, "distributor")).toThrow();
+    expect(() => computeEntitlements(PLAN_SEED.starter, { limits: { users: 2.5 } }, "distributor")).toThrow();
+    expect(() => computeEntitlements(PLAN_SEED.starter, { limits: { galaxies: 1 } }, "distributor")).toThrow();
   });
 
   it("does not mutate the plan", () => {
     const before = JSON.stringify(PLAN_SEED.growth);
-    computeEntitlements(PLAN_SEED.growth, { limits: { users: 99 } });
+    computeEntitlements(PLAN_SEED.growth, { limits: { users: 99 } }, "distributor");
     expect(JSON.stringify(PLAN_SEED.growth)).toBe(before);
   });
 });

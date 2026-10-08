@@ -44,6 +44,7 @@ export function createSessionHandler({ getAdmin: loadAdmin }) {
       environment: normalizeEnvironment(process.env.LUNA_ENV),
       user: { uid: user.uid, email: user.email, name: user.name },
       business: context.business,
+      workspace: context.workspace,
       member: context.member,
       permissions: context.permissions,
       plan: seesPackage ? { id: context.entitlements.planId, name: context.entitlements.planName } : null,
@@ -58,6 +59,8 @@ export function createSessionHandler({ getAdmin: loadAdmin }) {
         },
       },
       entitlements: {
+        workspaceTemplateId: context.workspace.templateId,
+        workspaceTemplateVersion: context.workspace.templateVersion,
         modules: context.entitlements.modules,
         features: context.entitlements.features,
         limits: seesPackage ? context.entitlements.limits : null,

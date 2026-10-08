@@ -11,6 +11,7 @@ import { LIMIT_KEYS, FEATURE_KEYS, FEATURE_DEFINITIONS } from "../../shared/plan
 import { EXPORT_ONLY_PERMISSIONS } from "../../shared/tenancy.js";
 import { PLAN_ID_PATTERN } from "../../shared/entitlements.js";
 import { PERMISSIONS, moduleForPermission } from "../../shared/permissions.js";
+import { WORKSPACE_TEMPLATES, WORKSPACE_TEMPLATE_IDS, LEGACY_SNAPSHOTS_ACCEPTED } from "../../shared/workspaces.js";
 
 const root = resolve(import.meta.dirname, "../..");
 const firestoreRules = readFileSync(resolve(root, "firestore.rules"), "utf8");
@@ -66,8 +67,29 @@ function snapshotChecks(name, text) {
     });
 
     it("schemaVersion and plan id are checked", () => {
-      expect(src).toContain("ent.get('schemaVersion', 0) == 1");
+      expect(src).toContain("ent.get('schemaVersion', 0) == 2 && workspaceValid(business, ent)");
       expect(src).toContain("ent.get('planId', null) == planId");
+    });
+
+    it("the legacy (schemaVersion 1) arm exists only while the registry accepts it", () => {
+      expect(src.includes("legacySnapshot(business, ent) ||")).toBe(LEGACY_SNAPSHOTS_ACCEPTED);
+    });
+
+    // Rules copy of shared/workspaces.js: id -> version, id -> allowed modules.
+    it("workspace template versions and allowed modules match the registry", () => {
+      const versions = /function workspaceTemplateVersions\(\)\s*\{\s*return \{([^}]*)\}/.exec(src);
+      expect(versions, "workspaceTemplateVersions()").not.toBeNull();
+      const parsedVersions = Object.fromEntries([...versions[1].matchAll(/'([a-z0-9-]+)':\s*(\d+)/g)].map((m) => [m[1], Number(m[2])]));
+      expect(parsedVersions).toEqual(Object.fromEntries(WORKSPACE_TEMPLATE_IDS.map((id) => [id, WORKSPACE_TEMPLATES[id].version])));
+
+      const mods = /function workspaceTemplateModules\(\)\s*\{\s*return \{([\s\S]*?)\};\s*\}/.exec(src);
+      expect(mods, "workspaceTemplateModules()").not.toBeNull();
+      const parsedModules = Object.fromEntries([...mods[1].matchAll(/'([a-z0-9-]+)':\s*\[([^\]]*)\]/g)].map((m) => [m[1], m[2].split(",").map((x) => x.trim().replace(/^'|'$/g, "")).filter(Boolean)]));
+      expect(parsedModules).toEqual(Object.fromEntries(WORKSPACE_TEMPLATE_IDS.map((id) => [id, [...WORKSPACE_TEMPLATES[id].modules]])));
+    });
+
+    it("module access also requires the workspace to allow the module", () => {
+      expect(src).toContain("workspaceAllows(business, business.entitlements, moduleId)");
     });
   });
 }

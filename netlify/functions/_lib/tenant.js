@@ -8,8 +8,12 @@
 // for authorization: the stored, server-written permission map is.
 //
 // Module access needs the business's stored entitlement snapshot to be
-// valid for its current plan (validateEntitlementsSnapshot) and the plan
-// to still exist; anything else fails closed with 503 business-misconfigured.
+// valid for its current plan AND workspace template (id and version,
+// validateEntitlementsSnapshot) and the plan to still exist; anything else
+// fails closed with 503 business-misconfigured. The workspace template is
+// baked into the snapshot's modules and checked again by isModuleEnabled,
+// so a module the workspace doesn't allow is refused like any other
+// disabled module, with no extra reads.
 
 import { RequestError } from "./http.js";
 import { authenticate } from "./auth.js";
@@ -18,6 +22,7 @@ import { accessPolicy } from "../../../shared/subscription.js";
 import { isModuleEnabled, getModule } from "../../../shared/modules.js";
 import { ROLE_TEMPLATES, isPermissionKey, moduleForPermission } from "../../../shared/permissions.js";
 import { validateEntitlementsSnapshot } from "../../../shared/entitlements.js";
+import { snapshotWorkspaceTemplateId, getWorkspaceTemplate } from "../../../shared/workspaces.js";
 import { isValidBusinessId, effectivePermissions, BUSINESS_SELECTOR_HEADER } from "../../../shared/tenancy.js";
 
 // One message for "doesn't exist" and "not a member" so a caller can't
@@ -66,7 +71,7 @@ async function evaluateCandidate(db, uid, businessId) {
     return { ok: false, error: new RequestError("account-cancelled", "This business account has been cancelled. Only the owner can sign in to export data.", 403) };
   }
 
-  const check = validateEntitlementsSnapshot(business.entitlements, subscription.planId);
+  const check = validateEntitlementsSnapshot(business.entitlements, subscription.planId, business.workspaceTemplateId);
   if (!check.ok) {
     console.error(`resolveTenantContext: business ${businessId} entitlements rejected: ${check.problems.join("; ")}`);
     return { ok: false, error: MISCONFIGURED() };
@@ -78,6 +83,11 @@ async function evaluateCandidate(db, uid, businessId) {
   }
 
   const roleTemplate = member.roleTemplate || null;
+  const workspace = getWorkspaceTemplate(snapshotWorkspaceTemplateId(business.entitlements));
+  if (!workspace) {
+    console.error(`resolveTenantContext: business ${businessId} has no usable workspace template`);
+    return { ok: false, error: MISCONFIGURED() };
+  }
   return {
     ok: true,
     context: {
@@ -91,6 +101,7 @@ async function evaluateCandidate(db, uid, businessId) {
         currency: business.currency || "PHP",
         orderPrefix: business.orderPrefix || null,
       },
+      workspace: { templateId: workspace.id, templateVersion: workspace.version, name: workspace.name },
       member: {
         roleTemplate,
         // Display only — authorization uses `permissions` below.

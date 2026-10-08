@@ -17,18 +17,18 @@ describe("createBusiness", () => {
   });
 
   it("never overwrites an existing business", async () => {
-    await expect(createBusiness({ ...world, name: "Imposter", planId: "pro", businessId: "biz-a" })).rejects.toMatchObject({ code: "business-exists" });
+    await expect(createBusiness({ ...world, name: "Imposter", planId: "pro", workspaceTemplateId: "distributor", businessId: "biz-a" })).rejects.toMatchObject({ code: "business-exists" });
     expect(world.db.docs.get("businesses/biz-a").name).toBe("Biz A");
   });
 
   it("rejects unknown plans, statuses and timezones", async () => {
-    await expect(createBusiness({ ...world, name: "X", planId: "platinum" })).rejects.toBeInstanceOf(ProvisioningError);
-    await expect(createBusiness({ ...world, name: "X", planId: "growth", subscriptionStatus: "vip" })).rejects.toBeInstanceOf(ProvisioningError);
-    await expect(createBusiness({ ...world, name: "X", planId: "growth", timezone: "Mars/Olympus" })).rejects.toBeInstanceOf(ProvisioningError);
+    await expect(createBusiness({ ...world, name: "X", planId: "platinum", workspaceTemplateId: "distributor" })).rejects.toBeInstanceOf(ProvisioningError);
+    await expect(createBusiness({ ...world, name: "X", planId: "growth", workspaceTemplateId: "distributor", subscriptionStatus: "vip" })).rejects.toBeInstanceOf(ProvisioningError);
+    await expect(createBusiness({ ...world, name: "X", planId: "growth", workspaceTemplateId: "distributor", timezone: "Mars/Olympus" })).rejects.toBeInstanceOf(ProvisioningError);
   });
 
   it("generates an id when none is given", async () => {
-    const { businessId } = await createBusiness({ ...world, name: "Auto", planId: "starter" });
+    const { businessId } = await createBusiness({ ...world, name: "Auto", planId: "starter", workspaceTemplateId: "distributor" });
     expect(world.db.docs.has(`businesses/${businessId}`)).toBe(true);
   });
 });

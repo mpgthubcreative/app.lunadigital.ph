@@ -4,10 +4,11 @@
 // every invariant (valid plan, user limit, owner protection) is enforced
 // right here.
 //
-// Plans, overrides and entitlement snapshots change ONLY through
-// changeEntitlements() (assignPlan / updateOverrides / refreshEntitlements):
-// one transaction that validates, recomputes the snapshot and writes an
-// audit record to businesses/{bid}/auditLog and platformAudit.
+// Plans, overrides, workspace templates and entitlement snapshots change
+// ONLY through changeEntitlements() (assignPlan / updateOverrides /
+// assignWorkspaceTemplate / refreshEntitlements): one transaction that
+// validates, recomputes the snapshot and writes an audit record to
+// businesses/{bid}/auditLog and platformAudit.
 
 import { PLAN_SEED } from "../../../shared/plans.seed.js";
 import { computeEntitlements, validatePlan, validateEntitlementsSnapshot, isValidPlanId, EntitlementError } from "../../../shared/entitlements.js";
@@ -15,6 +16,7 @@ import { resolvePermissions, ROLE_TEMPLATES } from "../../../shared/permissions.
 import { SUBSCRIPTION_STATUSES } from "../../../shared/subscription.js";
 import { MEMBER_STATUSES, isValidBusinessId } from "../../../shared/tenancy.js";
 import { tenantDb } from "./tenant-db.js";
+import { getWorkspaceTemplate, WORKSPACE_TEMPLATE_IDS } from "../../../shared/workspaces.js";
 
 export class ProvisioningError extends Error {
   constructor(code, message) {
@@ -77,13 +79,20 @@ export async function loadPlan(db, planId) {
 }
 
 // computeEntitlements, with validation errors mapped to ProvisioningError.
-export function buildEntitlementsSnapshot(plan, overrides = {}) {
+export function buildEntitlementsSnapshot(plan, overrides, workspaceTemplateId) {
   try {
-    return computeEntitlements(plan, overrides);
+    return computeEntitlements(plan, overrides, workspaceTemplateId);
   } catch (err) {
     if (err instanceof EntitlementError) throw new ProvisioningError("invalid-input", err.message);
     throw err;
   }
+}
+
+// A registered workspace template, or a clear error. There is no default.
+function requireTemplate(id) {
+  const template = getWorkspaceTemplate(id);
+  if (!template) throw new ProvisioningError("unknown-template", `Unknown workspace template ${JSON.stringify(id)}. Use one of: ${WORKSPACE_TEMPLATE_IDS.join(", ")}.`);
+  return template;
 }
 
 // ---------- Businesses ----------
@@ -93,6 +102,7 @@ export async function createBusiness({
   admin,
   name,
   planId,
+  workspaceTemplateId,
   timezone = "Asia/Manila",
   currency = "PHP",
   subscriptionStatus = "active",
@@ -109,6 +119,7 @@ export async function createBusiness({
     throw new ProvisioningError("invalid-input", `Invalid business id: ${businessId}`);
   }
 
+  const template = requireTemplate(workspaceTemplateId);
   const plan = await loadPlan(db, planId);
   const ref = businessId ? db.collection("businesses").doc(businessId) : db.collection("businesses").doc();
   const now = admin.firestore.FieldValue.serverTimestamp();
@@ -121,11 +132,12 @@ export async function createBusiness({
       timezone,
       currency,
       isDemo: Boolean(isDemo),
+      workspaceTemplateId: template.id,
       subscription: { planId: plan.id, status: subscriptionStatus, renewalAt: null, graceUntil: null },
       moduleOverrides: {},
       limitOverrides: {},
       featureOverrides: {},
-      entitlements: { ...buildEntitlementsSnapshot(plan), computedAt: now },
+      entitlements: { ...buildEntitlementsSnapshot(plan, {}, template.id), computedAt: now },
       createdAt: now,
       updatedAt: now,
       createdBy,
@@ -154,11 +166,13 @@ function overridesOf(business) {
 
 function summarize(entitlements) {
   if (!entitlements || typeof entitlements !== "object") return null;
-  return { planId: entitlements.planId ?? null, modules: entitlements.modules ?? null, limits: entitlements.limits ?? null, features: entitlements.features ?? null };
+  return { planId: entitlements.planId ?? null, workspaceTemplateId: entitlements.workspaceTemplateId ?? null, workspaceTemplateVersion: entitlements.workspaceTemplateVersion ?? null, modules: entitlements.modules ?? null, limits: entitlements.limits ?? null, features: entitlements.features ?? null };
 }
 
-// The one write path for a business's plan / overrides / snapshot.
-// mutate({ planId, overrides }) returns the next { planId, overrides }.
+// The one write path for a business's plan / overrides / workspace
+// template / snapshot. mutate({ planId, overrides, templateId }) returns
+// the next state. A business without a workspace template (pre-8.5) can
+// only be given one (assignWorkspaceTemplate); nothing else recomputes it.
 async function changeEntitlements({ db, admin, businessId, actor, reason, action, mutate }) {
   const why = typeof reason === "string" ? reason.trim() : "";
   if (why.length < 3) throw new ProvisioningError("invalid-input", "A reason is required for every plan or entitlement change.");
@@ -171,19 +185,23 @@ async function changeEntitlements({ db, admin, businessId, actor, reason, action
     const snap = await tx.get(tenant.ref);
     if (!snap.exists) throw new ProvisioningError("not-found", `Business ${businessId} not found.`);
     const business = snap.data();
-    const current = { planId: business.subscription?.planId ?? null, overrides: overridesOf(business) };
+    const current = { planId: business.subscription?.planId ?? null, overrides: overridesOf(business), templateId: business.workspaceTemplateId ?? null };
     const next = mutate(structuredClone(current));
 
     if (!isValidPlanId(next.planId)) throw new ProvisioningError("unknown-plan", `Invalid plan id: ${next.planId}`);
+    if (next.templateId === null) throw new ProvisioningError("no-template", `Business ${businessId} has no workspace template yet. Assign one first (set-template).`);
+    const template = requireTemplate(next.templateId);
     const plan = planFromSnap(await tx.get(db.collection("plans").doc(next.planId)), next.planId);
-    // Validates the plan and the overrides; throws on anything unknown.
-    const entitlements = buildEntitlementsSnapshot(plan, next.overrides);
+    // Validates the plan, the overrides and the template ceiling; throws on
+    // anything unknown or not allowed.
+    const entitlements = buildEntitlementsSnapshot(plan, next.overrides, template.id);
     const overrides = { modules: { ...next.overrides.modules }, limits: { ...next.overrides.limits }, features: { ...next.overrides.features } };
     const activeMembers = (await tx.get(tenant.collection("members").where("status", "==", "active"))).size;
 
     const now = FieldValue.serverTimestamp();
     tx.update(tenant.ref, {
       "subscription.planId": plan.id,
+      workspaceTemplateId: template.id,
       moduleOverrides: overrides.modules,
       limitOverrides: overrides.limits,
       featureOverrides: overrides.features,
@@ -191,13 +209,16 @@ async function changeEntitlements({ db, admin, businessId, actor, reason, action
       updatedAt: now,
     });
 
+    // Template moves get their own audit type and a plain-language summary.
+    const templateMoved = current.templateId !== template.id;
     const audit = {
-      type: `entitlements.${action}`,
+      type: !templateMoved ? `entitlements.${action}` : current.templateId === null ? "workspace.template-assigned" : "workspace.template-changed",
+      ...(templateMoved ? { summary: current.templateId === null ? `Workspace template assigned: ${template.id}` : `Workspace template changed: ${current.templateId} → ${template.id}` } : {}),
       businessId,
       actor: who,
       reason: why,
-      before: { planId: current.planId, overrides: current.overrides, entitlements: summarize(business.entitlements) },
-      after: { planId: plan.id, overrides, entitlements: summarize(entitlements) },
+      before: { planId: current.planId, workspaceTemplateId: current.templateId, overrides: current.overrides, entitlements: summarize(business.entitlements) },
+      after: { planId: plan.id, workspaceTemplateId: template.id, overrides, entitlements: summarize(entitlements) },
       at: now,
     };
     tx.set(tenant.collection("auditLog").doc(), audit);
@@ -207,7 +228,7 @@ async function changeEntitlements({ db, admin, businessId, actor, reason, action
     if (activeMembers > entitlements.limits.users) {
       warnings.push(`${activeMembers} active users exceed the new limit of ${entitlements.limits.users}. Nobody is removed; adding or re-enabling members is blocked until it's back under the limit.`);
     }
-    return { businessId, planId: plan.id, overrides, entitlements, warnings };
+    return { businessId, planId: plan.id, workspaceTemplateId: template.id, previousWorkspaceTemplateId: current.templateId, overrides, entitlements, warnings };
   });
 }
 
@@ -240,6 +261,29 @@ export async function updateOverrides({ db, admin, businessId, set = {}, clear =
   });
 }
 
+// Gives a business its workspace template (the Phase 8.5 migration of an
+// existing tenant), or CHANGES it, which needs allowChange: true on top of
+// the reason. Same transaction, recompute and audit as every other change;
+// the audit says "Workspace template changed: a -> b". Overrides the new
+// template doesn't allow are refused, never silently dropped.
+export async function assignWorkspaceTemplate({ db, admin, businessId, templateId, allowChange = false, actor, reason }) {
+  const template = requireTemplate(templateId);
+  return changeEntitlements({
+    db,
+    admin,
+    businessId,
+    actor,
+    reason,
+    action: "workspace-assigned",
+    mutate: (state) => {
+      if (state.templateId !== null && state.templateId !== template.id && allowChange !== true) {
+        throw new ProvisioningError("template-change-unconfirmed", `Business ${businessId} is a ${state.templateId} workspace. Changing it to ${template.id} needs explicit confirmation.`);
+      }
+      return { ...state, templateId: template.id };
+    },
+  });
+}
+
 // Recomputes the snapshot from the stored plan + overrides (after a plan
 // definition was edited, or to repair a stale snapshot).
 export async function refreshEntitlements({ db, admin, businessId, actor = "cli", reason = "recompute entitlements" }) {
@@ -254,15 +298,16 @@ export async function describeEntitlements({ db, businessId }) {
   const business = snap.data();
   const planId = business.subscription?.planId ?? null;
   const stored = business.entitlements ?? null;
-  const check = validateEntitlementsSnapshot(stored, planId);
+  const templateId = business.workspaceTemplateId ?? null;
+  const check = validateEntitlementsSnapshot(stored, planId, templateId);
   let recomputed = null;
   let recomputeError = null;
   try {
-    recomputed = buildEntitlementsSnapshot(await loadPlan(db, planId), overridesOf(business));
+    recomputed = buildEntitlementsSnapshot(await loadPlan(db, planId), overridesOf(business), requireTemplate(templateId).id);
   } catch (err) {
     recomputeError = err.message;
   }
-  return { businessId, planId, subscriptionStatus: business.subscription?.status ?? null, overrides: overridesOf(business), stored, valid: check.ok, problems: check.problems, recomputed, recomputeError };
+  return { businessId, planId, workspaceTemplateId: templateId, subscriptionStatus: business.subscription?.status ?? null, overrides: overridesOf(business), stored, valid: check.ok, problems: check.problems, recomputed, recomputeError };
 }
 
 // ---------- Users & memberships ----------
@@ -271,7 +316,7 @@ export async function describeEntitlements({ db, businessId }) {
 // malformed snapshot refuses the change instead of skipping the limit.
 function userLimit(businessSnap, businessId) {
   const business = businessSnap.data();
-  const check = validateEntitlementsSnapshot(business.entitlements, business.subscription?.planId);
+  const check = validateEntitlementsSnapshot(business.entitlements, business.subscription?.planId, business.workspaceTemplateId);
   if (!check.ok) {
     throw new ProvisioningError("business-misconfigured", `Business ${businessId} entitlements are invalid (${check.problems.join("; ")}). Run recompute-entitlements.`);
   }

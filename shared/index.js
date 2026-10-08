@@ -5,6 +5,7 @@
 // process.env.
 
 export * from "./permissions.js";
+export * from "./workspaces.js";
 export * from "./modules.js";
 export * from "./plans.seed.js";
 export * from "./subscription.js";

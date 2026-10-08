@@ -166,10 +166,15 @@ const checks = [
   ["usage counts active members only (A: owner, manager, staff, multi = 4)", async () => (await session({ as: "owner.a" })).body.usage.users === 4],
   ["environment reported as staging", async () => (await session({ as: "owner.a" })).body.environment === "staging"],
   // Phase 4: entitlements + package visibility
-  ["owner.a session has a schemaVersion-1 package with core modules on", async () => {
+  ["owner.a session has a package with core modules on", async () => {
     const r = await session({ as: "owner.a" });
     const m = r.body.entitlements.modules;
     return r.status === 200 && m.dashboard === true && m.users === true && m.settings === true && typeof m.reports === "boolean" && r.body.plan.id === "growth";
+  }],
+  // Phase 8.5: every demo tenant is an explicit distributor workspace with the Distributor modules
+  ["A, B and C are distributor workspaces with Orders, Payments and Inventory", async () => {
+    const rows = await Promise.all([session({ as: "owner.a" }), session({ as: "owner.b" }), session({ as: "owner.c" })]);
+    return rows.every((r) => r.status === 200 && r.body.workspace?.templateId === "distributor" && r.body.entitlements.workspaceTemplateId === "distributor" && ["orders", "payments", "inventory"].every((k) => r.body.entitlements.modules[k] === true));
   }],
   ["staff.a session hides plan, limits and usage", async () => {
     const r = await session({ as: "staff.a" });

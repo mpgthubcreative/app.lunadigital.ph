@@ -51,7 +51,7 @@ function expectedAccess(kind, pkg, collection) {
   const permission = TENANT_COLLECTIONS[collection];
   if (!permission || spec.status === "disabled") return false;
   const perms = resolvePermissions(spec.role, spec.overrides || {});
-  const ent = computeEntitlements(ALL_PLANS[pkg.planId], pkg.overrides || {});
+  const ent = computeEntitlements(ALL_PLANS[pkg.planId], pkg.overrides || {}, "distributor");
   return perms[permission] === true && ent.modules[MODULE_OF[collection].id] === true;
 }
 
@@ -70,7 +70,9 @@ const BROKEN = Object.freeze({
     b.entitlements.planId = "Growth";
   },
   "schemaVersion missing": (b) => delete b.entitlements.schemaVersion,
-  "schemaVersion 2": (b) => (b.entitlements.schemaVersion = 2),
+  "schemaVersion 3 (future)": (b) => (b.entitlements.schemaVersion = 3),
+  "workspace version stale": (b) => (b.entitlements.workspaceTemplateVersion = 0),
+  "workspace missing from snapshot": (b) => delete b.entitlements.workspaceTemplateId,
   "modules not a map": (b) => (b.entitlements.modules = ["orders", "reports"]),
   "reports = 'true' (string)": (b) => (b.entitlements.modules.reports = "true"),
   "orders = 1": (b) => (b.entitlements.modules.orders = 1),

@@ -31,8 +31,8 @@ describe("assignPlan", () => {
     const result = await assignPlan({ ...world, ...op, businessId: "biz-b", planId: "pro" });
     expect(result.planId).toBe("pro");
     expect(biz("biz-b").subscription.planId).toBe("pro");
-    expect(biz("biz-b").entitlements).toMatchObject({ schemaVersion: 1, planId: "pro", planName: "Pro", limits: PLAN_SEED.pro.limits });
-    expect(validateEntitlementsSnapshot(biz("biz-b").entitlements, "pro").ok).toBe(true);
+    expect(biz("biz-b").entitlements).toMatchObject({ schemaVersion: 2, planId: "pro", planName: "Pro", workspaceTemplateId: "distributor", workspaceTemplateVersion: 1, limits: PLAN_SEED.pro.limits });
+    expect(validateEntitlementsSnapshot(biz("biz-b").entitlements, "pro", "distributor").ok).toBe(true);
   });
 
   it("writes the same audit record to the tenant auditLog and platformAudit", async () => {

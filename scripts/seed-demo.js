@@ -11,7 +11,7 @@
 import { randomBytes } from "node:crypto";
 import { writeFileSync } from "node:fs";
 import { parseArgs, connect } from "./_cli.js";
-import { seedPlans, createBusiness, ensureAuthUser, addMember, assignPlan, ProvisioningError } from "../netlify/functions/_lib/provisioning.js";
+import { seedPlans, createBusiness, ensureAuthUser, addMember, assignPlan, assignWorkspaceTemplate, ProvisioningError } from "../netlify/functions/_lib/provisioning.js";
 
 const DEMO_DOMAIN = "luna.test"; // reserved TLD — can never be a real mailbox
 
@@ -56,11 +56,13 @@ for (const r of await seedPlans({ db, admin })) console.log(`  ${r.id}: ${r.acti
 console.log("Businesses:");
 for (const b of BUSINESSES) {
   try {
-    await createBusiness({ db, admin, name: b.name, planId: b.plan, subscriptionStatus: b.status, businessId: b.id, isDemo: true, createdBy: "seed-demo" });
+    await createBusiness({ db, admin, name: b.name, planId: b.plan, workspaceTemplateId: "distributor", subscriptionStatus: b.status, businessId: b.id, isDemo: true, createdBy: "seed-demo" });
     console.log(`  ${b.id}: created (${b.plan}, ${b.status})`);
   } catch (err) {
     if (!(err instanceof ProvisioningError && err.code === "business-exists")) throw err;
     await db.collection("businesses").doc(b.id).update({ "subscription.status": b.status });
+    // Demo tenants are distributor workspaces (this never changes one).
+    await assignWorkspaceTemplate({ db, admin, businessId: b.id, templateId: "distributor", actor: "seed-demo", reason: "seed-demo re-apply" });
     await assignPlan({ db, admin, businessId: b.id, planId: b.plan, actor: "seed-demo", reason: "seed-demo re-apply" });
     console.log(`  ${b.id}: exists — status/plan/entitlements re-applied`);
   }

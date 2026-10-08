@@ -170,16 +170,64 @@ service cloud.firestore {
         && f.support in ['standard', 'priority'];
     }
 
-    // The stored snapshot is well-formed, current (schemaVersion 1), was
-    // computed for the business's current plan, and that plan exists.
-    // Anything else (missing, stale, unknown plan, wrong types) denies.
-    // Only called after tenantReadable(), so the business doc exists.
+
+    // ---------- Workspace templates (Phase 8.5) ----------
+    // Copy of shared/workspaces.js: each template's current version and the
+    // modules it allows (core included). tests/shared/rules-registry.test.js
+    // fails if these drift from the registry.
+    function workspaceTemplateVersions() {
+      return {'distributor': 1, 'household-payroll': 1, 'baby-expense': 1, 'bridal-expense': 1};
+    }
+
+    function workspaceTemplateModules() {
+      return {
+        'distributor': ['dashboard', 'users', 'settings', 'orders', 'payments', 'inventory', 'customers', 'reports', 'expenses', 'imports', 'suppliers', 'production', 'returns'],
+        'household-payroll': ['dashboard', 'users', 'settings'],
+        'baby-expense': ['dashboard', 'users', 'settings', 'expenses'],
+        'bridal-expense': ['dashboard', 'users', 'settings', 'expenses']
+      };
+    }
+
+    // The snapshot was computed for the business's own, registered
+    // template at its current version. Unknown, malformed, mismatched or
+    // stale -> false.
+    function workspaceValid(business, ent) {
+      let t = business.get('workspaceTemplateId', null);
+      return t is string
+        && t in workspaceTemplateVersions()
+        && ent.get('workspaceTemplateId', null) == t
+        && ent.get('workspaceTemplateVersion', 0) == workspaceTemplateVersions()[t];
+    }
+
+    // MIGRATION WINDOW (Phase 8.5 stage 1): a schemaVersion-1 snapshot
+    // (no workspace, pre-8.5 distributor) is still accepted. Removed in
+    // the enforcement step.
+    function legacySnapshot(business, ent) {
+      return ent.get('schemaVersion', 0) == 1
+        && !('workspaceTemplateId' in ent)
+        && !('workspaceTemplateId' in business);
+    }
+
+    // Is the module allowed by the snapshot's workspace? Legacy snapshots
+    // were all distributor.
+    function workspaceAllows(business, ent, moduleId) {
+      return legacySnapshot(business, ent)
+        ? moduleId in workspaceTemplateModules()['distributor']
+        : moduleId in workspaceTemplateModules()[ent.workspaceTemplateId];
+    }
+
+    // The stored snapshot is well-formed, current (schemaVersion 2 with a
+    // valid workspace; or a legacy 1 during the migration window), was
+    // computed for the business's current plan and workspace template, and
+    // that plan exists. Anything else (missing, stale, unknown plan or
+    // template, wrong types) denies. Only called after tenantReadable(), so
+    // the business doc exists.
     function entitlementsValid(bid) {
       let business = get(businessPath(bid)).data;
       let ent = business.get('entitlements', null);
       let planId = business.get('subscription', {}).get('planId', null);
       return ent is map
-        && ent.get('schemaVersion', 0) == 1
+        && (legacySnapshot(business, ent) || (ent.get('schemaVersion', 0) == 2 && workspaceValid(business, ent)))
         && planId is string
         && planId.matches('^[a-z][a-z0-9-]{1,31}$')
         && ent.get('planId', null) == planId
@@ -189,9 +237,11 @@ service cloud.firestore {
         && validFeatures(ent.get('features', null));
     }
 
-    // Exact boolean true only.
+    // Exact boolean true only, and allowed by the workspace template.
     function moduleEnabled(bid, moduleId) {
-      return get(businessPath(bid)).data.entitlements.modules.get(moduleId, false) == true;
+      let business = get(businessPath(bid)).data;
+      return business.entitlements.modules.get(moduleId, false) == true
+        && workspaceAllows(business, business.entitlements, moduleId);
     }
 
     // THE module gate: active membership (+ subscription) AND the exact

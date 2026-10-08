@@ -79,7 +79,7 @@ describe("validateOverrides", () => {
 
 describe("computeEntitlements (snapshot shape)", () => {
   it("produces a complete schemaVersion 1 snapshot", () => {
-    const e = computeEntitlements(PLAN_SEED.starter);
+    const e = computeEntitlements(PLAN_SEED.starter, {}, "distributor");
     expect(e.schemaVersion).toBe(ENTITLEMENTS_SCHEMA_VERSION);
     expect(e).toMatchObject({ planId: "starter", planName: "Starter" });
     expect(Object.keys(e.modules).sort()).toEqual([...MODULE_IDS].sort());
@@ -90,25 +90,25 @@ describe("computeEntitlements (snapshot shape)", () => {
 
   it("plan disables a module, override enables it (and the reverse)", () => {
     const lite = { ...growth(), id: "lite", name: "Lite", modules: { ...growth().modules, reports: false } };
-    expect(computeEntitlements(lite).modules.reports).toBe(false);
-    expect(computeEntitlements(lite, { modules: { reports: true } }).modules.reports).toBe(true);
-    expect(computeEntitlements(PLAN_SEED.growth, { modules: { reports: false } }).modules.reports).toBe(false);
+    expect(computeEntitlements(lite, {}, "distributor").modules.reports).toBe(false);
+    expect(computeEntitlements(lite, { modules: { reports: true } }, "distributor").modules.reports).toBe(true);
+    expect(computeEntitlements(PLAN_SEED.growth, { modules: { reports: false } }, "distributor").modules.reports).toBe(false);
   });
 
   it("Founding Client style overrides: more orders, an extra user, extra imports", () => {
-    const e = computeEntitlements(PLAN_SEED.starter, { limits: { ordersPerMonth: 800, users: 3, importsPerMonth: 4 } });
+    const e = computeEntitlements(PLAN_SEED.starter, { limits: { ordersPerMonth: 800, users: 3, importsPerMonth: 4 } }, "distributor");
     expect(e.limits).toEqual({ users: 3, ordersPerMonth: 800, storageBytes: PLAN_SEED.starter.limits.storageBytes, importsPerMonth: 4 });
   });
 
   it("every computed snapshot passes validation for its plan", () => {
     for (const plan of Object.values(PLAN_SEED)) {
-      expect(validateEntitlementsSnapshot(computeEntitlements(plan), plan.id)).toEqual({ ok: true, problems: [] });
+      expect(validateEntitlementsSnapshot(computeEntitlements(plan, {}, "distributor"), plan.id, "distributor")).toEqual({ ok: true, problems: [] });
     }
   });
 });
 
 describe("real plan differences (seeded definitions)", () => {
-  const [starter, growthE, pro] = ["starter", "growth", "pro"].map((id) => computeEntitlements(PLAN_SEED[id]));
+  const [starter, growthE, pro] = ["starter", "growth", "pro"].map((id) => computeEntitlements(PLAN_SEED[id], {}, "distributor"));
 
   it("limits grow Starter < Growth < Pro", () => {
     for (const key of LIMIT_KEYS) {
@@ -149,7 +149,7 @@ describe("validateEntitlementsSnapshot fails closed", () => {
     ["null snapshot", () => null],
     ["array snapshot", () => []],
     ["no schemaVersion", edit((s) => delete s.schemaVersion)],
-    ["future schemaVersion", edit((s) => (s.schemaVersion = 2))],
+    ["future schemaVersion", edit((s) => (s.schemaVersion = 3))],
     ["stale plan (snapshot for pro)", edit((s) => (s.planId = "pro"))],
     ["invalid planId", edit((s) => (s.planId = "Growth!"))],
     ["modules not a map", edit((s) => (s.modules = ["reports"]))],
@@ -167,12 +167,12 @@ describe("validateEntitlementsSnapshot fails closed", () => {
     ["invalid feature value", edit((s) => (s.features.support = "platinum"))],
     ["unknown feature", edit((s) => (s.features.teleport = true))],
   ])("%s", (_label, breakIt) => {
-    expect(validateEntitlementsSnapshot(breakIt(computeEntitlements(PLAN_SEED.growth)), "growth").ok).toBe(false);
+    expect(validateEntitlementsSnapshot(breakIt(computeEntitlements(PLAN_SEED.growth, {}, "distributor")), "growth", "distributor").ok).toBe(false);
   });
 
   it("a business with no valid subscription.planId", () => {
-    const s = computeEntitlements(PLAN_SEED.growth);
-    expect(validateEntitlementsSnapshot(s, undefined).ok).toBe(false);
-    expect(validateEntitlementsSnapshot(s, "").ok).toBe(false);
+    const s = computeEntitlements(PLAN_SEED.growth, {}, "distributor");
+    expect(validateEntitlementsSnapshot(s, undefined, "distributor").ok).toBe(false);
+    expect(validateEntitlementsSnapshot(s, "", "distributor").ok).toBe(false);
   });
 });

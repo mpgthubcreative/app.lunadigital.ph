@@ -8,7 +8,7 @@ import { PLAN_SEED } from "../../shared/plans.seed.js";
 const ids = (nav) => nav.map((m) => m.id);
 
 describe("resolveNavigation", () => {
-  const entitlements = computeEntitlements(PLAN_SEED.growth);
+  const entitlements = computeEntitlements(PLAN_SEED.growth, {}, "distributor");
 
   it("shows the owner every enabled, built module", () => {
     expect(ids(resolveNavigation({ entitlements, permissions: resolvePermissions("owner") }))).toEqual([
@@ -25,12 +25,12 @@ describe("resolveNavigation", () => {
   });
 
   it("hides modules the business is not entitled to", () => {
-    const limited = computeEntitlements(PLAN_SEED.growth, { modules: { inventory: false } });
+    const limited = computeEntitlements(PLAN_SEED.growth, { modules: { inventory: false } }, "distributor");
     expect(ids(resolveNavigation({ entitlements: limited, permissions: resolvePermissions("owner") }))).not.toContain("inventory");
   });
 
   it("never shows unbuilt modules even when entitled", () => {
-    const e = computeEntitlements(PLAN_SEED.pro, { modules: { suppliers: true } });
+    const e = computeEntitlements(PLAN_SEED.pro, { modules: { suppliers: true } }, "distributor");
     expect(isModuleEnabled(e, "suppliers")).toBe(false);
   });
 

@@ -7,7 +7,7 @@
 import { html, render } from "../../lib/html.js";
 import { pageHeader, statCard, card, emptyState } from "../../components/ui.js";
 import { formatDayId } from "../../lib/format.js";
-import { DASHBOARD_SECTIONS } from "@shared/index.js";
+import { DASHBOARD_SECTIONS, dashboardEmptyState, workspaceModuleLabel, snapshotWorkspaceTemplateId } from "@shared/index.js";
 import { dashboardPlan, buildDashboardView } from "./view.js";
 import { fetchMetricDocuments, fetchDashboardLists } from "./data.js";
 
@@ -18,7 +18,12 @@ function listBody(l) {
   return html`<ul class="list" data-role="rows">${l.rows.map((r) => html`<li><strong>${r.title}</strong><div class="stat-hint">${r.detail}</div></li>`)}</ul>`;
 }
 
+// The workspace names its own dashboard ("Wedding Dashboard"); Distributor
+// keeps "Dashboard".
+const titleOf = (session) => workspaceModuleLabel(snapshotWorkspaceTemplateId(session.entitlements), "dashboard", "Dashboard");
+
 function renderView(container, session, day, view) {
+  const empty = dashboardEmptyState(session.entitlements);
   const sections = DASHBOARD_SECTIONS.filter((s) => s.id !== "lists")
     .map((s) => ({ ...s, cards: view.cards.filter((c) => c.section === s.id) }))
     .filter((s) => s.cards.length);
@@ -26,7 +31,7 @@ function renderView(container, session, day, view) {
   render(
     container,
     html`
-      ${pageHeader({ title: "Dashboard", subtitle: `Today, ${formatDayId(day)} · ${session.business.name}` })}
+      ${pageHeader({ title: titleOf(session), subtitle: `Today, ${formatDayId(day)} · ${session.business.name}` })}
       ${sections.map(
         (s) => html`
           <section class="section" data-section="${s.id}">
@@ -43,7 +48,7 @@ function renderView(container, session, day, view) {
           </div>`
         : ""}
       ${!sections.length && !view.lists.length
-        ? card({ body: emptyState({ title: "Nothing to show yet", body: "Your dashboard fills in as your business uses Luna." }) })
+        ? html`<div data-role="workspace-empty">${card({ body: emptyState({ title: empty.title, body: empty.body }) })}</div>`
         : ""}
     `
   );
@@ -57,7 +62,7 @@ export function mount(container, session, { fetchDocuments = fetchMetricDocument
     plan = dashboardPlan(session, now);
   } catch (err) {
     console.error("dashboard: can't determine the business date:", err);
-    render(container, html`${pageHeader({ title: "Dashboard" })}${card({ body: emptyState({ title: "Dashboard unavailable", body: "This business's timezone isn't set up correctly. Please contact Luna support." }) })}`);
+    render(container, html`${pageHeader({ title: titleOf(session) })}${card({ body: emptyState({ title: "Dashboard unavailable", body: "This business's timezone isn't set up correctly. Please contact Luna support." }) })}`);
     return () => {};
   }
 
