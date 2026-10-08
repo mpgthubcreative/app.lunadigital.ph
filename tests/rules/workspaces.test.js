@@ -30,8 +30,9 @@ const VARIANTS = {
   "ws-malformed": (d) => ((d.workspaceTemplateId = ["bridal-expense"]), d),
 };
 const DIST_VARIANTS = {
-  // Phase 9: distributor moved to v2; a v1 snapshot is stale now.
+  // Phase 9 / 10: distributor moved to v2 then v3; older snapshots are stale.
   "ws-dist-v1-stale": (d) => ((d.entitlements.workspaceTemplateVersion = 1), d),
+  "ws-dist-v2-stale": (d) => ((d.entitlements.workspaceTemplateVersion = 2), d),
   "ws-legacy": (d) => legacy(d),
   "ws-legacy-assigned": (d) => ((legacy(d).workspaceTemplateId = "distributor"), d),
   "ws-legacy-forged": (d) => ((legacy(d).entitlements.workspaceTemplateId = "distributor"), d),
@@ -106,9 +107,11 @@ describe("stale / unknown / mismatched / malformed workspace: every module read 
 });
 
 describe("template versions", () => {
-  it("a distributor snapshot still at v1 (before the Phase 9 recompute) is denied now", async () => {
-    await assertFails(get("owner@ws-dist-v1-stale", `businesses/ws-dist-v1-stale/orders/${DOC}`));
-    await assertFails(get("owner@ws-dist-v1-stale", `businesses/ws-dist-v1-stale/customers/${DOC}`));
+  it("distributor snapshots still at v1 or v2 (before the Phase 9 / 10 recomputes) are denied now", async () => {
+    for (const bid of ["ws-dist-v1-stale", "ws-dist-v2-stale"]) {
+      await assertFails(get(`owner@${bid}`, `businesses/${bid}/orders/${DOC}`));
+      await assertFails(get(`owner@${bid}`, `businesses/${bid}/expenses/${DOC}`));
+    }
   });
 });
 

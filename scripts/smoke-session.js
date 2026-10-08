@@ -189,7 +189,7 @@ const checks = [
   }],
   ["A, B, C snapshots: every unbuilt module is false (planned, not enabled)", async () => {
     const rows = await Promise.all([session({ as: "owner.a" }), session({ as: "owner.b" }), session({ as: "owner.c" })]);
-    return rows.every((r) => r.status === 200 && ["reports", "imports", "expenses", "suppliers", "production", "returns"].every((k) => r.body.entitlements.modules[k] === false));
+    return rows.every((r) => r.status === 200 && ["reports", "imports", "suppliers", "production", "returns"].every((k) => r.body.entitlements.modules[k] === false));
   }],
   ["GET /api/reports: owner.a selecting B → 403", async () => (await get("reports", { as: "owner.a", businessId: B })).status === 403],
   // Phase 5: dashboard summary documents through the deployed Firestore rules.

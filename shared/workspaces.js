@@ -68,10 +68,9 @@ const TEMPLATES = [
   {
     id: "distributor",
     // v2 (Phase 9): Customers became operational. v3 (Phase 10): Expenses.
-    // (Older snapshots are accepted via upgradingFrom only until every
-    // business is recomputed.)
+    // (Older snapshots were accepted via upgradingFrom only until every
+    // business was recomputed.)
     version: 3,
-    upgradingFrom: [2],
     name: "Distributor Operations",
     description: "Orders, payments, products and inventory for distributors and wholesalers.",
     status: "live",
