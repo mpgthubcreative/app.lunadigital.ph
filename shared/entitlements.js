@@ -30,9 +30,9 @@
 
 import { LIMIT_KEYS, FEATURE_KEYS, isValidFeatureValue } from "./plans.seed.js";
 import { MODULE_IDS, CORE_MODULE_IDS, SELLABLE_MODULE_IDS } from "./modules.js";
-import { getWorkspaceTemplate, LEGACY_SNAPSHOTS_ACCEPTED, ENTITLEMENTS_SCHEMA_VERSION, LEGACY_ENTITLEMENTS_SCHEMA_VERSION } from "./workspaces.js";
+import { getWorkspaceTemplate, ENTITLEMENTS_SCHEMA_VERSION } from "./workspaces.js";
 
-export { ENTITLEMENTS_SCHEMA_VERSION, LEGACY_ENTITLEMENTS_SCHEMA_VERSION };
+export { ENTITLEMENTS_SCHEMA_VERSION };
 
 export const PLAN_ID_PATTERN = /^[a-z][a-z0-9-]{1,31}$/;
 
@@ -176,21 +176,13 @@ export function validateEntitlementsSnapshot(snapshot, expectedPlanId, expectedT
   const problems = [];
   if (!isPlainObject(snapshot)) return { ok: false, problems: ["missing entitlements snapshot"] };
 
-  const legacy = LEGACY_SNAPSHOTS_ACCEPTED && snapshot.schemaVersion === LEGACY_ENTITLEMENTS_SCHEMA_VERSION;
-  if (snapshot.schemaVersion !== ENTITLEMENTS_SCHEMA_VERSION && !legacy) problems.push(`unsupported schemaVersion ${JSON.stringify(snapshot.schemaVersion)}`);
-  let template = null;
-  if (legacy) {
-    if (snapshot.workspaceTemplateId !== undefined || snapshot.workspaceTemplateVersion !== undefined) problems.push("legacy snapshot can't carry a workspace");
-    // A business already assigned a template must have a current snapshot.
-    if (expectedTemplateId !== undefined && expectedTemplateId !== null) problems.push("business has a workspace template but a legacy snapshot");
-  } else {
-    template = getWorkspaceTemplate(snapshot.workspaceTemplateId);
-    if (!template) problems.push(`unknown workspace template ${JSON.stringify(snapshot.workspaceTemplateId)}`);
-    else {
-      if (snapshot.workspaceTemplateVersion !== template.version) problems.push(`snapshot is for ${template.id} v${JSON.stringify(snapshot.workspaceTemplateVersion)}, current is v${template.version}`);
-      if (!getWorkspaceTemplate(expectedTemplateId)) problems.push("business has no valid workspaceTemplateId");
-      else if (snapshot.workspaceTemplateId !== expectedTemplateId) problems.push(`snapshot is for workspace ${JSON.stringify(snapshot.workspaceTemplateId)}, business is ${JSON.stringify(expectedTemplateId)}`);
-    }
+  if (snapshot.schemaVersion !== ENTITLEMENTS_SCHEMA_VERSION) problems.push(`unsupported schemaVersion ${JSON.stringify(snapshot.schemaVersion)}`);
+  const template = getWorkspaceTemplate(snapshot.workspaceTemplateId);
+  if (!template) problems.push(`unknown workspace template ${JSON.stringify(snapshot.workspaceTemplateId)}`);
+  else {
+    if (snapshot.workspaceTemplateVersion !== template.version) problems.push(`snapshot is for ${template.id} v${JSON.stringify(snapshot.workspaceTemplateVersion)}, current is v${template.version}`);
+    if (!getWorkspaceTemplate(expectedTemplateId)) problems.push("business has no valid workspaceTemplateId");
+    else if (snapshot.workspaceTemplateId !== expectedTemplateId) problems.push(`snapshot is for workspace ${JSON.stringify(snapshot.workspaceTemplateId)}, business is ${JSON.stringify(expectedTemplateId)}`);
   }
   if (!isValidPlanId(snapshot.planId)) problems.push("invalid planId");
   if (!isValidPlanId(expectedPlanId)) problems.push("business has no valid subscription.planId");

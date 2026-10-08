@@ -11,7 +11,6 @@ import {
   workspaceAllowsModule,
   snapshotWorkspaceTemplateId,
   isSafeLabel,
-  LEGACY_SNAPSHOTS_ACCEPTED,
 } from "../../shared/workspaces.js";
 import { MODULE_IDS, CORE_MODULE_IDS, getModule, isModuleEnabled, canUseModule, resolveNavigation } from "../../shared/modules.js";
 import { computeEntitlements, validateEntitlementsSnapshot, ENTITLEMENTS_SCHEMA_VERSION } from "../../shared/entitlements.js";
@@ -211,15 +210,22 @@ describe("stored snapshot validation fails closed", () => {
     });
   }
 
-  it("legacy schemaVersion 1 (pre-8.5) is accepted only in the migration window, and only for an unassigned business", () => {
+  it("a distributor snapshot that lost only its template id is not read as distributor", () => {
+    const s = ent("distributor", "growth");
+    delete s.workspaceTemplateId; // version 1 and schemaVersion 2 intact
+    expect(v(s, "growth", "distributor").ok).toBe(false);
+    expect(v({ ...s, workspaceTemplateId: null }, "growth", "distributor").ok).toBe(false);
+  });
+
+  it("legacy schemaVersion 1 (pre-8.5) is rejected now that the migration is done", () => {
     const legacy = ent("distributor", "growth");
     legacy.schemaVersion = 1;
     delete legacy.workspaceTemplateId;
     delete legacy.workspaceTemplateVersion;
-    expect(v(legacy, "growth", undefined).ok).toBe(LEGACY_SNAPSHOTS_ACCEPTED);
+    expect(v(legacy, "growth", undefined).ok).toBe(false);
     expect(v(legacy, "growth", "distributor").ok).toBe(false); // assigned business must be current
     expect(v({ ...legacy, workspaceTemplateId: "distributor" }, "growth", undefined).ok).toBe(false);
-    expect(snapshotWorkspaceTemplateId(legacy)).toBe(LEGACY_SNAPSHOTS_ACCEPTED ? "distributor" : null);
+    expect(snapshotWorkspaceTemplateId(legacy)).toBeNull();
   });
 });
 

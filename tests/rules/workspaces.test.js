@@ -7,7 +7,6 @@
 import { afterAll, beforeAll, describe, it } from "vitest";
 import { assertFails, assertSucceeds } from "@firebase/rules-unit-testing";
 import { A, DOC, businessDoc, createEnv, dbAs, seedMember, seedTenant } from "./fixture.js";
-import { LEGACY_SNAPSHOTS_ACCEPTED } from "../../shared/workspaces.js";
 
 let env;
 const W = "ws-bridal";
@@ -105,10 +104,10 @@ describe("stale / unknown / mismatched / malformed workspace: every module read 
 });
 
 describe("legacy (pre-8.5) snapshots", () => {
-  it(`unassigned legacy distributor is ${LEGACY_SNAPSHOTS_ACCEPTED ? "accepted during the migration window" : "denied after enforcement"}`, async () => {
-    const check = LEGACY_SNAPSHOTS_ACCEPTED ? assertSucceeds : assertFails;
-    await check(get("owner@ws-legacy", `businesses/ws-legacy/orders/${DOC}`));
-    await check(storageGet("owner@ws-legacy", "tenants/ws-legacy/products/seed.txt"));
+  it("an unmigrated legacy distributor is denied (no 'missing = distributor')", async () => {
+    await assertFails(get("owner@ws-legacy", `businesses/ws-legacy/orders/${DOC}`));
+    await assertFails(get("owner@ws-legacy", `businesses/ws-legacy/metrics/${DOC}`));
+    await assertFails(storageGet("owner@ws-legacy", "tenants/ws-legacy/products/seed.txt"));
   });
 
   it("legacy snapshot on a business that already has a template: denied", async () => {

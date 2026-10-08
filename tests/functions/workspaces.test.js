@@ -13,7 +13,6 @@ import { createPaymentsHandler } from "../../netlify/functions/payments.js";
 import { createReportsHandler } from "../../netlify/functions/reports.js";
 import { createSessionHandler } from "../../netlify/functions/session.js";
 import { createBusiness, addMember, ensureAuthUser, assignWorkspaceTemplate, refreshEntitlements, updateOverrides, assignPlan, describeEntitlements } from "../../netlify/functions/_lib/provisioning.js";
-import { LEGACY_SNAPSHOTS_ACCEPTED } from "../../shared/workspaces.js";
 import { buildWorld, request } from "../helpers/tenants.js";
 
 let world;
@@ -179,15 +178,7 @@ describe("migrating a pre-8.5 tenant", () => {
     delete b.entitlements.workspaceTemplateVersion;
   };
 
-  it.runIf(LEGACY_SNAPSHOTS_ACCEPTED)("during the migration window a legacy tenant keeps working as distributor", async () => {
-    makeLegacy("biz-a");
-    const s = await session(world.uids.ownera, "biz-a");
-    expect(s.status).toBe(200);
-    expect(s.body.workspace.templateId).toBe("distributor");
-    expect(s.body.entitlements.modules.orders).toBe(true);
-  });
-
-  it.runIf(!LEGACY_SNAPSHOTS_ACCEPTED)("after enforcement a legacy tenant fails closed", async () => {
+  it("an unmigrated (legacy) tenant fails closed: there is no 'missing = distributor'", async () => {
     makeLegacy("biz-a");
     expect((await session(world.uids.ownera, "biz-a")).status).toBe(503);
   });

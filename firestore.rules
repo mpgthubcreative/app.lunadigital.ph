@@ -199,25 +199,13 @@ service cloud.firestore {
         && ent.get('workspaceTemplateVersion', 0) == workspaceTemplateVersions()[t];
     }
 
-    // MIGRATION WINDOW (Phase 8.5 stage 1): a schemaVersion-1 snapshot
-    // (no workspace, pre-8.5 distributor) is still accepted. Removed in
-    // the enforcement step.
-    function legacySnapshot(business, ent) {
-      return ent.get('schemaVersion', 0) == 1
-        && !('workspaceTemplateId' in ent)
-        && !('workspaceTemplateId' in business);
-    }
-
-    // Is the module allowed by the snapshot's workspace? Legacy snapshots
-    // were all distributor.
+    // Is the module allowed by the snapshot's (already validated) workspace?
     function workspaceAllows(business, ent, moduleId) {
-      return legacySnapshot(business, ent)
-        ? moduleId in workspaceTemplateModules()['distributor']
-        : moduleId in workspaceTemplateModules()[ent.workspaceTemplateId];
+      return moduleId in workspaceTemplateModules()[ent.workspaceTemplateId];
     }
 
     // The stored snapshot is well-formed, current (schemaVersion 2 with a
-    // valid workspace; or a legacy 1 during the migration window), was
+    // valid workspace; no legacy shape is accepted), was
     // computed for the business's current plan and workspace template, and
     // that plan exists. Anything else (missing, stale, unknown plan or
     // template, wrong types) denies. Only called after tenantReadable(), so
@@ -227,7 +215,7 @@ service cloud.firestore {
       let ent = business.get('entitlements', null);
       let planId = business.get('subscription', {}).get('planId', null);
       return ent is map
-        && (legacySnapshot(business, ent) || (ent.get('schemaVersion', 0) == 2 && workspaceValid(business, ent)))
+        && ent.get('schemaVersion', 0) == 2 && workspaceValid(business, ent)
         && planId is string
         && planId.matches('^[a-z][a-z0-9-]{1,31}$')
         && ent.get('planId', null) == planId

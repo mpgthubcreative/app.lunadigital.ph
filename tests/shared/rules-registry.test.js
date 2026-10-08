@@ -11,7 +11,7 @@ import { LIMIT_KEYS, FEATURE_KEYS, FEATURE_DEFINITIONS } from "../../shared/plan
 import { EXPORT_ONLY_PERMISSIONS } from "../../shared/tenancy.js";
 import { PLAN_ID_PATTERN } from "../../shared/entitlements.js";
 import { PERMISSIONS, moduleForPermission } from "../../shared/permissions.js";
-import { WORKSPACE_TEMPLATES, WORKSPACE_TEMPLATE_IDS, LEGACY_SNAPSHOTS_ACCEPTED } from "../../shared/workspaces.js";
+import { WORKSPACE_TEMPLATES, WORKSPACE_TEMPLATE_IDS } from "../../shared/workspaces.js";
 
 const root = resolve(import.meta.dirname, "../..");
 const firestoreRules = readFileSync(resolve(root, "firestore.rules"), "utf8");
@@ -71,8 +71,8 @@ function snapshotChecks(name, text) {
       expect(src).toContain("ent.get('planId', null) == planId");
     });
 
-    it("the legacy (schemaVersion 1) arm exists only while the registry accepts it", () => {
-      expect(src.includes("legacySnapshot(business, ent) ||")).toBe(LEGACY_SNAPSHOTS_ACCEPTED);
+    it("no legacy (schemaVersion 1) arm remains after the Phase 8.5 migration", () => {
+      expect(src).not.toMatch(/legacySnapshot|schemaVersion', 0\) == 1/);
     });
 
     // Rules copy of shared/workspaces.js: id -> version, id -> allowed modules.

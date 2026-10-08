@@ -33,15 +33,11 @@
 //
 // This file deliberately imports nothing (shared/modules.js imports it).
 
-// Entitlement snapshot versions (shared/entitlements.js re-exports them).
-// 2 carries the workspace; 1 is the Phase 4-8 shape without one.
+// Entitlement snapshot version (shared/entitlements.js re-exports it).
+// 2 carries the workspace. The Phase 4-8 shape (1, no workspace) was
+// accepted only during the Phase 8.5 migration and is now rejected: there
+// is no "missing workspace = distributor".
 export const ENTITLEMENTS_SCHEMA_VERSION = 2;
-export const LEGACY_ENTITLEMENTS_SCHEMA_VERSION = 1;
-
-// Phase 8.5 migration window: schemaVersion-1 snapshots (no workspace) are
-// still accepted and read as distributor. Becomes false, with the legacy
-// branches removed, once every business is migrated (enforcement step).
-export const LEGACY_SNAPSHOTS_ACCEPTED = true;
 
 export const WORKSPACE_TEMPLATE_ID_PATTERN = /^[a-z][a-z0-9-]{1,31}$/;
 const CORE = ["dashboard", "users", "settings"];
@@ -149,15 +145,12 @@ export function getWorkspaceTemplate(id) {
   return WORKSPACE_TEMPLATES[id];
 }
 
-// The workspace a snapshot was computed for, or null. Works on the full
-// stored snapshot and on the session copy the browser receives. A legacy
-// (schemaVersion 1) snapshot predates workspaces: during the migration
-// window only, it is read as the distributor workspace it was built for.
+// The workspace a snapshot was computed for, or null (missing, malformed
+// or unknown). Works on the full stored snapshot and on the session copy
+// the browser receives.
 export function snapshotWorkspaceTemplateId(snapshot) {
   if (!snapshot || typeof snapshot !== "object") return null;
-  if (snapshot.workspaceTemplateId !== undefined) return getWorkspaceTemplate(snapshot.workspaceTemplateId) ? snapshot.workspaceTemplateId : null;
-  if (LEGACY_SNAPSHOTS_ACCEPTED && snapshot.schemaVersion === LEGACY_ENTITLEMENTS_SCHEMA_VERSION) return "distributor";
-  return null;
+  return getWorkspaceTemplate(snapshot.workspaceTemplateId) ? snapshot.workspaceTemplateId : null;
 }
 
 export function isValidWorkspaceTemplateId(id) {
