@@ -38,6 +38,7 @@ Every script prints its target and refuses to write without `--confirm <projectI
 | `npm run create-business -- --name "…" --plan growth --template distributor --owner-email … --owner-name "…" --confirm <projectId>` | Onboard a business and its owner (prints a password-setup link). `--template` is required |
 | `npm run set-template -- --business <id> --template <id> --reason "…" [--change-template] --confirm <projectId>` | Assign a workspace template, or change one (needs `--change-template`); recomputes entitlements; audited |
 | `npm run migrate-workspaces -- --template distributor --reason "…" [--dry-run] --confirm <projectId>` | Phase 8.5 one-off: give every pre-8.5 business an explicit template, then verify all snapshots |
+| `npm run rebuild-report-rollups -- (--business <id> | --all) [--dry-run] --confirm <projectId>` | Recompute the server-only report breakdowns (products, customers, payment methods, expense categories) from source records; run while quiet |
 | `npm run add-member -- --business <id> --email … --name "…" --role manager\|staff --confirm <projectId>` | Add a team member (enforces the plan's user limit) |
 | `npm run set-member-status -- --business <id> --email … --status active\|disabled --confirm <projectId>` | Enable or disable a membership (the owner is protected) |
 | `npm run set-plan -- --business <id> --plan starter\|growth\|pro --reason "…" --confirm <projectId>` | Assign or change a plan; recomputes entitlements; audited |

@@ -73,9 +73,10 @@ describe("THE scenario in Storage: payments.view, Payments off", () => {
     await assertSucceeds(storageAs(uidOf("staff", "st-growth")).ref(file("st-growth", "payments")).getMetadata());
   });
 
-  it("unbuilt areas (exports = Reports, imports) are refused even with the permissions", async () => {
-    for (const area of ["exports", "imports"]) await assertFails(storageAs(uidOf("exportStaff", "st-growth")).ref(file("st-growth", area)).getMetadata());
-    for (const area of ["exports", "imports"]) await assertFails(storageAs(uidOf("owner", "st-growth")).ref(file("st-growth", area)).getMetadata());
+  it("the unbuilt Imports area is refused even with the permission; exports (Reports, Phase 11) follow reports.export", async () => {
+    await assertFails(storageAs(uidOf("owner", "st-growth")).ref(file("st-growth", "imports")).getMetadata());
+    await assertSucceeds(storageAs(uidOf("exportStaff", "st-growth")).ref(file("st-growth", "exports")).getMetadata());
+    await assertFails(storageAs(uidOf("staff", "st-growth")).ref(file("st-growth", "exports")).getMetadata());
   });
 });
 

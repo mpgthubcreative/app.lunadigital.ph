@@ -79,7 +79,6 @@ const BROKEN = Object.freeze({
   "workspace version stale": (b) => (b.entitlements.workspaceTemplateVersion = 0),
   "workspace missing from snapshot": (b) => delete b.entitlements.workspaceTemplateId,
   "unbuilt module enabled (imports = true)": (b) => (b.entitlements.modules.imports = true),
-  "unbuilt module enabled (reports = true, old snapshot)": (b) => (b.entitlements.modules.reports = true),
   "modules not a map": (b) => (b.entitlements.modules = ["orders", "reports"]),
   "reports = 'true' (string)": (b) => (b.entitlements.modules.reports = "true"),
   "orders = 1": (b) => (b.entitlements.modules.orders = 1),
@@ -148,9 +147,9 @@ describe("THE scenario: staff with payments.view, Payments disabled for the busi
   });
 });
 
-describe("unbuilt modules (Reports, Imports) are denied on every package", () => {
+describe("unbuilt modules (Imports) are denied on every package", () => {
   it("even the owner of a Pro business, even with every permission", async () => {
-    for (const c of ["reports", "imports"]) await assertFails(dbAs(env, uidOf("owner", "ent-pro")).doc(`businesses/ent-pro/${c}/${DOC}`).get());
+    for (const c of ["imports"]) await assertFails(dbAs(env, uidOf("owner", "ent-pro")).doc(`businesses/ent-pro/${c}/${DOC}`).get());
   });
 });
 

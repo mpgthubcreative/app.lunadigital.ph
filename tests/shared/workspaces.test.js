@@ -67,7 +67,7 @@ describe("registry", () => {
     expect(bad((t) => (t.dashboard.widgets = ["netSales"]))).not.toEqual([]); // needs orders, not allowed
     expect(bad((t) => (t.plannedModules = [{ id: "dashboard", name: "Dashboard" }]))).not.toEqual([]); // both planned and operational
     // unbuilt: can't be operational (even with a navigation slot)
-    expect(bad((t) => ((t.modules = [...t.modules, "reports"]), (t.navigation = [...t.navigation, "reports"])))).toEqual(["module reports isn't built: list it in plannedModules until it is"]);
+    expect(bad((t) => ((t.modules = [...t.modules, "imports"]), (t.navigation = [...t.navigation, "imports"])))).toEqual(["module imports isn't built: list it in plannedModules until it is"]);
     expect(bad((t) => (t.settings.render = () => 1))).not.toEqual([]);
     expect(bad((t) => (t.css = "body{display:none}"))).not.toEqual([]);
     expect(bad((t) => (t.modules = t.modules.filter((m) => m !== "users")))).not.toEqual([]);
@@ -113,8 +113,8 @@ describe("planned modules are roadmap metadata only", () => {
 
   it("shipping module code alone activates nothing: an old snapshot's true for an unbuilt module never grants access", () => {
     const e = ent("distributor", "pro");
-    const old = { ...e, modules: { ...e.modules, reports: true, imports: true } };
-    for (const m of ["reports", "imports"]) expect(isModuleEnabled(old, m), m).toBe(false);
+    const old = { ...e, modules: { ...e.modules, imports: true } };
+    expect(isModuleEnabled(old, "imports")).toBe(false);
     // Built, but planned (not activated) for bridal: a forged true grants nothing.
     const b = ent("bridal-expense", "pro");
     expect(isModuleEnabled({ ...b, modules: { ...b.modules, expenses: true } }, "expenses")).toBe(false);
@@ -158,7 +158,7 @@ describe("effective modules = core + (template allows ∩ (override ?? plan))", 
     for (const planId of Object.keys(PLAN_SEED)) {
       const e = ent("distributor", planId);
       for (const id of MODULE_IDS) expect(e.modules[id], `${planId}/${id}`).toBe(CORE_MODULE_IDS.includes(id) || (BUILT.includes(id) && PLAN_SEED[planId].modules[id] === true));
-      expect(Object.keys(e.modules).filter((k) => e.modules[k])).toEqual(["dashboard", "orders", "payments", "inventory", "customers", "expenses", "users", "settings"]);
+      expect(Object.keys(e.modules).filter((k) => e.modules[k])).toEqual(["dashboard", "orders", "payments", "inventory", "customers", "reports", "expenses", "users", "settings"]);
     }
   });
 
@@ -243,15 +243,15 @@ describe("stored snapshot validation fails closed", () => {
 
   it("an unbuilt module switched on is rejected for being unbuilt (not only by the template ceiling)", () => {
     const s = ent("distributor", "growth");
-    s.modules.reports = true;
-    expect(v(s, "growth", "distributor").problems).toContain("module reports isn't built and can't be enabled");
+    s.modules.imports = true;
+    expect(v(s, "growth", "distributor").problems).toContain("module imports isn't built and can't be enabled");
   });
 
-  it("a distributor v1 snapshot (pre-Phase 9) is stale; v2 only during the Phase 10 window", () => {
+  it("older distributor snapshots are stale; the previous version only during a rollout window", () => {
     const s = ent("distributor", "growth");
-    expect(s.workspaceTemplateVersion).toBe(3);
-    expect(v({ ...s, workspaceTemplateVersion: 1 }, "growth", "distributor").ok).toBe(false);
-    expect(v({ ...s, workspaceTemplateVersion: 2 }, "growth", "distributor").ok).toBe((WORKSPACE_TEMPLATES.distributor.upgradingFrom ?? []).includes(2));
+    expect(s.workspaceTemplateVersion).toBe(4);
+    for (const old of [1, 2]) expect(v({ ...s, workspaceTemplateVersion: old }, "growth", "distributor").ok).toBe(false);
+    expect(v({ ...s, workspaceTemplateVersion: 3 }, "growth", "distributor").ok).toBe((WORKSPACE_TEMPLATES.distributor.upgradingFrom ?? []).includes(3));
   });
 
   it("a distributor snapshot that lost only its template id is not read as distributor", () => {
@@ -306,9 +306,9 @@ describe("navigation", () => {
     // is back since Phase 9 (distributor v2).
     // Expenses (Phase 10) is labelled "Operating Expenses" for Distributor;
     // Staff hold no expenses.* permission, so they don't see it.
-    expect(nav("distributor", "owner")).toEqual(["/ Dashboard", "/orders Orders", "/payments Payments", "/inventory Inventory", "/customers Customers", "/expenses Operating Expenses", "/users Users", "/settings Settings"]);
+    expect(nav("distributor", "owner")).toEqual(["/ Dashboard", "/orders Orders", "/payments Payments", "/inventory Inventory", "/customers Customers", "/expenses Operating Expenses", "/reports Reports", "/users Users", "/settings Settings"]);
     expect(nav("distributor", "staff")).toEqual(["/ Dashboard", "/orders Orders", "/payments Payments", "/inventory Inventory", "/customers Customers"]);
-    expect(nav("distributor", "manager")).toEqual(["/ Dashboard", "/orders Orders", "/payments Payments", "/inventory Inventory", "/customers Customers", "/expenses Operating Expenses", "/users Users", "/settings Settings"]);
+    expect(nav("distributor", "manager")).toEqual(["/ Dashboard", "/orders Orders", "/payments Payments", "/inventory Inventory", "/customers Customers", "/expenses Operating Expenses", "/reports Reports", "/users Users", "/settings Settings"]);
   });
 
   it("non-Distributor workspaces get no Distributor navigation, and their own names", () => {

@@ -15,6 +15,7 @@
 //
 // Payments never touch Sales or COGS (those belong to fulfillment).
 
+import { applyRollup, paymentContribution, diffRollup } from "./reports.js";
 import { applyCustomerStats } from "./customers.js";
 import { randomUUID } from "node:crypto";
 import {
@@ -169,6 +170,7 @@ export async function recordPayment({ db, bucket, tenant, FieldValue, business, 
         updatedAt: stamp,
       });
       recordDailyMetrics({ tx, tenant, FieldValue, timezone: business.timezone, day, financial: { paymentsReceived: data.amount } });
+      applyRollup(tx, { tenant, FieldValue, day, delta: paymentContribution(data) });
       balanceGauges(tx, { tenant, FieldValue, before: order.total - (order.amountPaid || 0), after: fields.balance });
     applyCustomerStats(tx, { tenant, FieldValue, customerId: order.customerId, balance: fields.balance - (order.total - (order.amountPaid || 0)) });
       return { paymentId: paymentRef.id, orderId, state: payment.state, ...fields };
@@ -256,6 +258,8 @@ export async function updatePayment({ db, bucket, tenant, FieldValue, business, 
         updatedBy: actor,
         updatedAt: stamp,
       });
+      // Report rollups: method / amount changes restate the received day.
+      applyRollup(tx, { tenant, FieldValue, day: payment.receivedDay, delta: diffRollup(paymentContribution(merged), paymentContribution(payment)) });
       if (delta) {
         recordDailyMetrics({ tx, tenant, FieldValue, timezone: business.timezone, day: payment.receivedDay, financial: { paymentsReceived: delta } });
         balanceGauges(tx, { tenant, FieldValue, before: order.total - (order.amountPaid || 0), after: fields.balance });
@@ -321,6 +325,7 @@ export async function voidPayment({ db, tenant, FieldValue, business, paymentId,
       updatedAt: stamp,
     });
     recordDailyMetrics({ tx, tenant, FieldValue, timezone: business.timezone, day: payment.receivedDay, financial: { paymentsReceived: -payment.amount } });
+    applyRollup(tx, { tenant, FieldValue, day: payment.receivedDay, delta: diffRollup({}, paymentContribution(payment)) });
     balanceGauges(tx, { tenant, FieldValue, before: order.total - (order.amountPaid || 0), after: fields.balance });
     applyCustomerStats(tx, { tenant, FieldValue, customerId: order.customerId, balance: fields.balance - (order.total - (order.amountPaid || 0)) });
     return { paymentId, orderId: payment.orderId, voided: true, ...fields };

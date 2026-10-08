@@ -12,6 +12,7 @@
 // day's documents are only written, never read-modify-written here.
 // Sales, COGS, payments, inventory and customers are never touched.
 
+import { applyRollup, expenseContribution, diffRollup } from "./reports.js";
 import { validateExpenseInput, ExpenseError, EXPENSE_SCHEMA_VERSION, expenseCategoryLabel, EXPENSE_METHODS } from "../../../shared/expenses.js";
 import { businessDate } from "../../../shared/metrics.js";
 import { recordDailyMetrics } from "./metrics.js";
@@ -86,6 +87,7 @@ export async function createExpense({ db, tenant, FieldValue, business, input, a
       removalReason: null,
     });
     opex(tx, { tenant, FieldValue, timezone: business.timezone, day: data.date, delta: data.amount });
+    applyRollup(tx, { tenant, FieldValue, day: data.date, delta: expenseContribution(data) });
   }, TX_OPTIONS);
   return { expenseId: ref.id, date: data.date, amount: data.amount };
 }
@@ -121,6 +123,12 @@ export async function updateExpense({ db, tenant, FieldValue, business, expenseI
 
     const newDate = diff.date ?? e.date;
     const newAmount = diff.amount ?? e.amount;
+    // Report rollups (category / method): restate the old and new days.
+    const after = expenseContribution({ ...e, ...diff });
+    if (newDate !== e.date) {
+      applyRollup(tx, { tenant, FieldValue, day: e.date, delta: diffRollup({}, expenseContribution(e)) });
+      applyRollup(tx, { tenant, FieldValue, day: newDate, delta: after });
+    } else applyRollup(tx, { tenant, FieldValue, day: e.date, delta: diffRollup(after, expenseContribution(e)) });
     if (newDate !== e.date) {
       opex(tx, { tenant, FieldValue, timezone: business.timezone, day: e.date, delta: -e.amount });
       opex(tx, { tenant, FieldValue, timezone: business.timezone, day: newDate, delta: newAmount });
@@ -153,6 +161,7 @@ export async function removeExpense({ db, tenant, FieldValue, business, expenseI
       updatedAt: stamp,
     });
     opex(tx, { tenant, FieldValue, timezone: business.timezone, day: e.date, delta: -e.amount });
+    applyRollup(tx, { tenant, FieldValue, day: e.date, delta: diffRollup({}, expenseContribution(e)) });
     return { expenseId, removed: true };
   }, TX_OPTIONS);
 }

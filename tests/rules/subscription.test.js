@@ -97,7 +97,7 @@ describe("owner protection is the isAccountOwner flag, not the 'owner' template"
   it("cancelled: the real account owner keeps export-only reads", async () => {
     const db = dbAs(env, statusUid("owner", cancelled));
     await assertSucceeds(db.doc(`businesses/${cancelled}/metrics/${DOC}`).get()); // dashboard.view is export-only
-    await assertFails(db.doc(`businesses/${cancelled}/reports/${DOC}`).get()); // Reports unbuilt (Phase 8.5 cleanup)
+    await assertSucceeds(db.doc(`businesses/${cancelled}/reports/${DOC}`).get()); // reports.view is export-only (Reports built in Phase 11)
     await assertSucceeds(db.doc(`businesses/${cancelled}/settings/${DOC}`).get());
     await assertFails(db.doc(`businesses/${cancelled}/customers/${DOC}`).get());
     await assertFails(db.collection(`businesses/${cancelled}/members`).get()); // users.view is not export-only

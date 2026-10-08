@@ -99,7 +99,7 @@ service firebase.storage {
         && m.payments is bool
         && m.inventory is bool
         && m.customers is bool
-        && m.reports == false
+        && m.reports is bool
         && m.expenses is bool
         && m.imports == false
         && m.suppliers == false
@@ -141,12 +141,12 @@ service firebase.storage {
     // OPERATIONAL (built) modules it allows (core included). tests/shared/rules-registry.test.js
     // fails if these drift from the registry.
     function workspaceTemplateVersions() {
-      return {'distributor': [3], 'household-payroll': [1], 'baby-expense': [1], 'bridal-expense': [1]};
+      return {'distributor': [3, 4], 'household-payroll': [1], 'baby-expense': [1], 'bridal-expense': [1]};
     }
 
     function workspaceTemplateModules() {
       return {
-        'distributor': ['dashboard', 'users', 'settings', 'orders', 'payments', 'inventory', 'customers', 'expenses'],
+        'distributor': ['dashboard', 'users', 'settings', 'orders', 'payments', 'inventory', 'customers', 'expenses', 'reports'],
         'household-payroll': ['dashboard', 'users', 'settings'],
         'baby-expense': ['dashboard', 'users', 'settings'],
         'bridal-expense': ['dashboard', 'users', 'settings']

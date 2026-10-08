@@ -47,9 +47,10 @@ function visit(session, path) {
 }
 
 describe("THE scenario in the browser", () => {
-  it("Reports is unbuilt (Phase 8.5 cleanup): no route even for staff holding reports.view", () => {
-    expect(paths(reportStaff())).not.toContain("/reports");
-    expect(visit(reportStaff(), "/reports").notFound).toBe(true);
+  it("Reports (Phase 11): staff granted reports.view get the route; plain staff don't", () => {
+    expect(paths(reportStaff())).toContain("/reports");
+    expect(visit(reportStaff(), "/reports").route.moduleId).toBe("reports");
+    expect(paths(sessionFixture({ roleTemplate: "staff" }))).not.toContain("/reports");
   });
 
   it("a built module the business has: route; switched off: no route, Page not available", () => {

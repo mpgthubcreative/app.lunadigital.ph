@@ -47,6 +47,13 @@ export function estimatedOperatingProfit(components) {
   return minus(grossProfit(components), amount(components.operatingExpenses));
 }
 
+// Gross margin as a percentage of net sales, one decimal (e.g. 40.0).
+// null when either input is unknown or there are no net sales.
+export function grossMarginPct(summary) {
+  if (!summary || summary.grossProfit === null || summary.netSales === null || !summary.netSales) return null;
+  return Math.round((summary.grossProfit * 1000) / summary.netSales) / 10;
+}
+
 // Every figure from one (or a summed) set of financial counters + gauges.
 // Absent input -> every figure that needs it is null.
 export function financialSummary(counters = {}, gauges = {}) {

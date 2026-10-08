@@ -68,14 +68,15 @@ const TEMPLATES = [
   {
     id: "distributor",
     // v2 (Phase 9): Customers became operational. v3 (Phase 10): Expenses.
-    // (Older snapshots were accepted via upgradingFrom only until every
-    // business was recomputed.)
-    version: 3,
+    // v4 (Phase 11): Reports. (Older snapshots are accepted via
+    // upgradingFrom only until every business is recomputed.)
+    version: 4,
+    upgradingFrom: [3],
     name: "Distributor Operations",
     description: "Orders, payments, products and inventory for distributors and wholesalers.",
     status: "live",
-    modules: [...CORE, "orders", "payments", "inventory", "customers", "expenses"],
-    navigation: ["dashboard", "orders", "payments", "inventory", "customers", "expenses", "users", "settings"],
+    modules: [...CORE, "orders", "payments", "inventory", "customers", "expenses", "reports"],
+    navigation: ["dashboard", "orders", "payments", "inventory", "customers", "expenses", "reports", "users", "settings"],
     dashboard: {
       widgets: ["netSales", "grossProfit", "operatingExpenses", "estimatedOperatingProfit", "paymentsReceived", "receivablesOutstanding", "ordersToday", "unpaidOrders", "pendingFulfillment", "lowStock", "recentOrders", "lowStockItems", "recentActivity"],
       empty: { title: "Nothing to show yet", body: "Your dashboard fills in as your business uses Luna." },
@@ -83,7 +84,6 @@ const TEMPLATES = [
     labels: { modules: { expenses: "Operating Expenses" } },
     settings: { orderPrefix: "ORD" },
     plannedModules: [
-      { id: "reports", name: "Reports" },
       { id: "imports", name: "Imports" },
       { id: "suppliers", name: "Suppliers" },
       { id: "production", name: "Production" },

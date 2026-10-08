@@ -54,6 +54,15 @@ function getDotted(target, dottedKey) {
   return node;
 }
 
+function deepMerge(target, data) {
+  for (const [k, v] of Object.entries(data)) {
+    const plainMap = v && typeof v === "object" && !Array.isArray(v) && !(v instanceof Date) && !v[SERVER_TS] && !(INCREMENT in v) && !v[ARRAY_UNION];
+    if (plainMap && target[k] && typeof target[k] === "object" && !Array.isArray(target[k]) && !(target[k] instanceof Date)) target[k] = deepMerge(target[k], v);
+    else target[k] = resolveValue(v, target[k]);
+  }
+  return target;
+}
+
 const clone = (v) => (v === undefined ? undefined : structuredClone(v));
 
 class DocSnap {
@@ -150,8 +159,14 @@ export class FakeFirestore {
   }
   _set(path, data, options = {}) {
     const previous = this.docs.get(path);
-    const base = options.merge && previous ? previous : {};
-    this.docs.set(path, { ...base, ...resolveValue(data, base) });
+    if (!options.merge || !previous) {
+      this.docs.set(path, resolveValue(data, undefined));
+      return;
+    }
+    // Like Firestore set(..., { merge: true }): nested maps merge field by
+    // field (increments apply to the current nested value); other values
+    // replace.
+    this.docs.set(path, deepMerge(clone(previous), data));
   }
   _update(path, data) {
     const previous = this.docs.get(path);
@@ -161,6 +176,24 @@ export class FakeFirestore {
     // the (possibly dotted) path, not to zero.
     for (const [key, value] of Object.entries(data)) applyDotted(next, key, resolveValue(value, getDotted(next, key)));
     this.docs.set(path, next);
+  }
+  // Write batch: applied atomically on commit().
+  batch() {
+    const writes = [];
+    return {
+      set: (ref, data, options) => writes.push(() => this._set(ref.path, data, options)),
+      update: (ref, data) => writes.push(() => this._update(ref.path, data)),
+      delete: (ref) => writes.push(() => this.docs.delete(ref.path)),
+      commit: async () => {
+        const snapshot = new Map(this.docs);
+        try {
+          writes.forEach((w) => w());
+        } catch (err) {
+          this.docs = snapshot;
+          throw err;
+        }
+      },
+    };
   }
   async runTransaction(fn) {
     const writes = [];

@@ -197,7 +197,7 @@ On the server this returns 503 `business-misconfigured`. In the rules, every mod
 
 **Visibility.** `/api/session` returns the plan name, limits and usage only to members with `billing.view`. Everyone gets module switches and feature flags (for navigation). Settings shows the package only to `billing.view` holders.
 
-`GET /api/reports` is a guard-only endpoint that exercises the Reports gate. Since the Phase 8.5 cleanup Reports is unbuilt, so it answers 403 to everyone until Phase 11 builds and activates the module.
+`GET /api/reports` started as a guard-only endpoint exercising the Reports gate; since Phase 11 it serves the reports (see Reports).
 
 ## Subscription states
 
@@ -449,7 +449,7 @@ There are no combined ids such as `distributor-growth`. Every plan works with ev
 
 | Template | Status | Allows (besides Dashboard, Users, Settings) | Planned (metadata only) |
 |---|---|---|---|
-| `distributor` (v3) | live | orders, payments, inventory, customers (Phase 9), expenses (Phase 10, "Operating Expenses") | reports, imports, suppliers, production, returns, notifications |
+| `distributor` (v4) | live | orders, payments, inventory, customers (Phase 9), expenses (Phase 10, "Operating Expenses"), reports (Phase 11) | imports, suppliers, production, returns, notifications |
 | `household-payroll` | planned | — | household staff, payroll, salary payments, receipt confirmation, advances, deductions, payroll history, reports |
 | `baby-expense` | planned | — | expenses ("Baby Expenses"), budget, categories, providers, payments, due dates, milestones, reports |
 | `bridal-expense` | planned | — | expenses ("Wedding Expenses"), budget, suppliers, supplier payments and balances, payment due dates, wedding tasks, guests, RSVP, reports |
@@ -701,7 +701,54 @@ The activity log reads "Added Packaging expense ₱2,000", "Amount changed ₱2,
 - Activated for **Distributor only**: template v2 → v3, with `upgradingFrom: [2]` during the rollout, then recompute, then strict.
 - Baby and Bridal keep `expenses` in `plannedModules` (labelled "Baby Expenses" / "Wedding Expenses"). A planned module may be built: the template's `modules` list alone decides where it's operational, and a forged snapshot can't lift that ceiling in the server, browser or rules.
 
-**Profit and loss (Phase 11 Reports).** Revenue − COGS = Gross Profit − Operating Expenses = Estimated Operating Profit. Filters: today, week, month, custom range, expense category, and product/category where appropriate. It is read from the month and day rollups.
+## Reports (Phase 11, Distributor)
+
+Reports answer an owner's everyday questions: sold, collected, unpaid, gross profit, spent, estimated operating profit, top products and customers, low stock. It is not an accounting package or a BI tool: no ledger, balance sheet, tax, aging, custom builder, forecasting or AI.
+
+**One server endpoint:** `GET /api/reports?from=YYYY-MM-DD&to=YYYY-MM-DD` (Reports module + `reports.view`). It is read-only, so it also works while suspended.
+- **Range:** business-local days, **inclusive at both ends**, at most **366 days**, never past the business's today. Presets (Today, Yesterday, This week (Monday start), This month, Last month) come from the business-local today, never the device clock.
+- **Strict query:** `from` and `to` only. A `businessId`, cursor or any other parameter is a 400; the business is always the caller's resolved tenant.
+
+**Where the numbers come from** (no transaction lists are downloaded):
+- **Totals:** the same restated `financialMetrics` / `metrics` day and month documents the Dashboard reads, summed and passed through the same `financialSummary()`. Dashboard and Reports therefore can't disagree, and tests assert they match for the same day.
+- **Reads:** ranges ≤ 62 days read day documents (with a by-day series). Longer ranges read whole-month documents plus the partial edge days (a by-month series), at most about 72 per collection for a full year.
+- **Breakdowns:** `reportRollups/{day}` and `/{month}`, one small **server-only** document per business per period, new in Phase 11. It holds maps of `products` (qty, net sales, COGS, sku/name), `customers` (orders, net sales; walk-ins under `_walkin`), `paymentMethods` (count, amount), `expenseCategories` and `expenseMethods` (count, amount).
+  - It's updated by increments in the **same transaction** as fulfilment, fulfilled-order correction, payment record/edit/void, and expense create/edit/remove.
+  - It posts to the event's own day (fulfilment day, payment received day, expense date), so corrections restate history exactly like the metrics.
+  - The rollup is read only by the server (no browser rule), so money in it never reaches a user without `dashboard.financials`.
+- **Current gauges:** unpaid balance and unpaid orders "now", and low stock (bounded query, 50 rows).
+- **Rows:** rankings return the top 50 with a total count.
+
+**Definitions (shared/finance.js):** Net Sales = Gross Sales − Discounts − Returns; Gross Profit = Net Sales − COGS; Estimated Operating Profit = Gross Profit − Operating Expenses; Gross Margin % = Gross Profit ÷ Net Sales. It is never called net income or net profit.
+- **Sales vs Payments:** sales and COGS are recognised at fulfilment (Phase 7). Payments Received is money collected in the period. Paying before fulfilment moves payments, not sales.
+- **Products:** sales are **after order discounts**. Each order's discount is shared across its lines by subtotal (largest remainder), so product sales add up to Net Sales exactly. COGS is each line's cost snapshot from fulfilment, never today's cost.
+- **Customers:** fulfilled orders and net sales in the period (the same recognition as Sales), plus outstanding balance and last order from the Phase 9 customer record, labelled "now". Walk-ins are one separate row.
+- **Payments:** live payment records by method (voided ones never count), using the same rule as `paymentsReceived`.
+- **Expenses:** active expenses only, by category and by method.
+
+**No fabricated data:** a period with no summary document returns `null` ("No data yet"). A document that exists gives real values, including 0.
+
+**Permissions** (enforced in the server's response, not by hiding columns):
+
+| Section | Needs |
+|---|---|
+| Orders overview, series counts | `reports.view` |
+| Payments | Payments module + `payments.view` |
+| Products sold | Orders module + `orders.view` |
+| Customers | Customers and Orders modules + `customers.view` and `orders.view` |
+| Expenses | Expenses module + `expenses.view` |
+| Low stock | Inventory module + `inventory.view` |
+| Any money: sales, COGS, profit, margin, AOV, payment and unpaid amounts, per-product and per-customer money | additionally `dashboard.financials` |
+
+Without `dashboard.financials` the server never reads `financialMetrics` and returns counts and quantities only. Owner and Manager templates hold `reports.view` and `reports.export`; Staff hold neither.
+
+**Screen:** a date control (preset or custom), with Overview / Sales / Products / Customers / Payments / Expenses tabs. Tabs the user can't see are absent. Tables are compact, with no chart framework. Each table has **Download CSV** (`reports.export`), built client-side from the rows already returned. Cells that look like formulas (= + - @) are neutralised. No server export framework yet.
+
+**Activation and backfill:**
+- Reports was marked built; the Distributor template went v3 → v4 (`upgradingFrom: [3]` during the window), then recompute, then strict. Baby, Bridal and Payroll keep Reports off; forged snapshots fail closed in the server and rules.
+- `npm run rebuild-report-rollups` recomputes the rollups from fulfilled orders + `orderCosts`, live payments and active expenses. It covers history recorded before Phase 11, and the tests use it as an oracle: the incremental rollups must equal a rebuild, including under concurrency on the real emulator. Run it while the business is quiet.
+
+**Scale note:** `reportRollups/{day}` is written by every fulfilment, payment and expense that day, like `financialMetrics/{day}`. That's fine for SMB volumes, and the documents stay small (one entry per product or customer active that day).
 
 ## Performance
 
@@ -759,7 +806,7 @@ On Orders, Reference and Proof show "—" until Payments (Phase 8) fills them in
 8.5. Workspace templates ✅
 9. Customers ✅
 10. Expenses ✅
-11. Reports (incl. operating P&L)
+11. Reports (incl. operating P&L) ✅
 12. Imports
 13. Notifications
 14. Super Admin console

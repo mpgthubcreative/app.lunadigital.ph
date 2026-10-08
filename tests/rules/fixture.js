@@ -54,7 +54,8 @@ export const TENANT_COLLECTIONS = Object.freeze({
   metrics: "dashboard.view",
   financialMetrics: "dashboard.financials",
   orderCosts: "dashboard.financials",
-  reports: null,
+  reports: "reports.view", // built in Phase 11 (the page reads GET /api/reports)
+  reportRollups: null, // server-only report breakdowns
   settings: "settings.view",
   imports: null,
   paymentRefs: null,
@@ -73,7 +74,7 @@ export const STORAGE_AREAS = Object.freeze({
   products: "inventory.view",
   payments: "payments.view",
   imports: null, // Imports unbuilt (Phase 8.5 cleanup)
-  exports: null, // Reports unbuilt (Phase 8.5 cleanup)
+  exports: "reports.export", // Reports built in Phase 11
 });
 
 // Must match EXPORT_ONLY_PERMISSIONS in shared/tenancy.js.

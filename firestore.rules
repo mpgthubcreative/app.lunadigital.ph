@@ -32,7 +32,9 @@ rules_version = '2';
 // collection-group queries, and the server-only tenant collections
 // paymentRefs, counters, usage, auditLog, integrations, members/*/inbox,
 // skuIndex (per-business SKU uniqueness keys), idempotencyKeys (order create-once
-// guards). counters and usage hold order numbering and plan-limit counts.
+// guards), reportRollups (Phase 11 report breakdowns, read only by the
+// server's GET /api/reports so money stays behind dashboard.financials).
+// counters and usage hold order numbering and plan-limit counts.
 service cloud.firestore {
   match /databases/{database}/documents {
 
@@ -137,7 +139,7 @@ service cloud.firestore {
         && m.payments is bool
         && m.inventory is bool
         && m.customers is bool
-        && m.reports == false
+        && m.reports is bool
         && m.expenses is bool
         && m.imports == false
         && m.suppliers == false
@@ -179,12 +181,12 @@ service cloud.firestore {
     // OPERATIONAL (built) modules it allows (core included). tests/shared/rules-registry.test.js
     // fails if these drift from the registry.
     function workspaceTemplateVersions() {
-      return {'distributor': [3], 'household-payroll': [1], 'baby-expense': [1], 'bridal-expense': [1]};
+      return {'distributor': [3, 4], 'household-payroll': [1], 'baby-expense': [1], 'bridal-expense': [1]};
     }
 
     function workspaceTemplateModules() {
       return {
-        'distributor': ['dashboard', 'users', 'settings', 'orders', 'payments', 'inventory', 'customers', 'expenses'],
+        'distributor': ['dashboard', 'users', 'settings', 'orders', 'payments', 'inventory', 'customers', 'expenses', 'reports'],
         'household-payroll': ['dashboard', 'users', 'settings'],
         'baby-expense': ['dashboard', 'users', 'settings'],
         'bridal-expense': ['dashboard', 'users', 'settings']

@@ -96,8 +96,8 @@ describe("Distributor tenants are unchanged", () => {
   it("session reports the distributor workspace with its built modules (placeholders off)", async () => {
     const s = await session(world.uids.ownera, "biz-a");
     expect(s.body.workspace.templateId).toBe("distributor");
-    for (const m of ["orders", "payments", "inventory", "customers", "expenses"]) expect(s.body.entitlements.modules[m], m).toBe(true);
-    for (const m of ["reports", "imports"]) expect(s.body.entitlements.modules[m], m).toBe(false);
+    for (const m of ["orders", "payments", "inventory", "customers", "expenses", "reports"]) expect(s.body.entitlements.modules[m], m).toBe(true);
+    expect(s.body.entitlements.modules.imports).toBe(false);
   });
 
   it("orders, products and payments endpoints are reachable as before", async () => {
@@ -196,7 +196,7 @@ describe("migrating a pre-8.5 tenant", () => {
     makeLegacy("biz-a");
     const before = structuredClone(biz("biz-a").entitlements.modules);
     await assignWorkspaceTemplate({ ...world, businessId: "biz-a", templateId: "distributor", actor: "migration", reason: "Phase 8.5 migration" });
-    expect(biz("biz-a")).toMatchObject({ workspaceTemplateId: "distributor", entitlements: { schemaVersion: 2, workspaceTemplateId: "distributor", workspaceTemplateVersion: 3 } });
+    expect(biz("biz-a")).toMatchObject({ workspaceTemplateId: "distributor", entitlements: { schemaVersion: 2, workspaceTemplateId: "distributor", workspaceTemplateVersion: 4 } });
     expect(biz("biz-a").entitlements.modules).toEqual(before);
     expect(audits("biz-a").find((a) => a.type === "workspace.template-assigned")).toMatchObject({ summary: "Workspace template assigned: distributor", reason: "Phase 8.5 migration", before: { workspaceTemplateId: null } });
     expect((await describeEntitlements({ db: world.db, businessId: "biz-a" })).valid).toBe(true);

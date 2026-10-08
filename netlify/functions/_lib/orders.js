@@ -25,6 +25,7 @@
 //   idempotencyKeys/{key}           create-once guard                          (server only)
 //   usage/{YYYY-MM}.ordersCreated   plan limit counter (never decremented)     (server only)
 
+import { applyRollup, fulfilledOrderContribution, diffRollup } from "./reports.js";
 import { readCustomerForOrder, applyCustomerStats } from "./customers.js";
 import { customerSnapshot } from "../../../shared/customers.js";
 import { createHash } from "node:crypto";
@@ -458,6 +459,10 @@ async function correctFulfilled(tx, { tenant, FieldValue, business, ref, orderId
   }
   adjustBalanceGauges(tx, { tenant, FieldValue, order, newTotal: totals.total });
   moveCustomerStats(tx, { tenant, FieldValue, order, newCustomerId: link.data.customerId, newTotal: totals.total });
+  // Report rollups: restate the original fulfilment day (before -> after).
+  const rollupBefore = fulfilledOrderContribution(order, costs.lines);
+  const rollupAfter = fulfilledOrderContribution({ ...order, items: totals.lines, discount: totals.discount, customerId: link.data.customerId }, costLines);
+  applyRollup(tx, { tenant, FieldValue, day: order.fulfilledDay, delta: diffRollup(rollupAfter, rollupBefore) });
   if (plan) plan.commit({ actor, FieldValue });
   return { orderId, revision: order.revision + 1, total: totals.total, corrected: true, delta };
 }
@@ -564,6 +569,8 @@ export async function fulfillOrder({ db, tenant, FieldValue, business, orderId, 
       createdAt: stamp,
     });
     recordDailyMetrics({ tx, tenant, FieldValue, timezone: business.timezone, at: now, operational: { fulfilledOrders: 1 }, financial: { grossSales: order.subtotal, discounts: order.discount, cogs } });
+    // Report rollups (products / customer) on the same fulfilment day.
+    applyRollup(tx, { tenant, FieldValue, day, delta: fulfilledOrderContribution(order, costLines) });
     adjustCurrentMetrics({ tx, tenant, FieldValue, operational: { pendingFulfillment: -1 } });
     plan.commit({ actor, FieldValue });
     return { orderId, fulfilledDay: day, cogs, grossSales: order.subtotal, discount: order.discount, netSales: order.total };

@@ -114,10 +114,10 @@ describe("Expenses module registration", () => {
     expect(canUseModule({ entitlements: growth(), permissions: resolvePermissions("staff") }, "expenses")).toBe(false);
   });
 
-  it("an unbuilt module (Reports) is never enabled, usable or navigable, whatever the plan says", () => {
+  it("an unbuilt module (Imports) is never enabled, usable or navigable, whatever the plan says", () => {
     const access = { entitlements: growth(), permissions: resolvePermissions("owner") };
-    expect(access.entitlements.modules.reports).toBe(false);
-    expect(canUseModule(access, "reports")).toBe(false);
+    expect(access.entitlements.modules.imports).toBe(false);
+    expect(canUseModule(access, "imports")).toBe(false);
   });
 
   it("a snapshot computed before Expenses existed is rejected until recomputed", () => {

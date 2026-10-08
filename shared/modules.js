@@ -30,11 +30,12 @@ export const MODULES = Object.freeze([
   { id: "inventory", label: "Inventory", path: "/inventory", icon: "inventory", permission: "inventory.view", available: true, collections: { products: "inventory.view", inventoryTransactions: "inventory.view", productCosts: "inventory.costs", inventoryTransactionCosts: "inventory.costs" }, storage: { products: "inventory.view" } },
   // Built in Phase 9 (Distributor customers).
   { id: "customers", label: "Customers", path: "/customers", icon: "customers", permission: "customers.view", available: true, collections: { customers: "customers.view" }, storage: {} },
-  // Placeholders until built: reports (Phase 11), imports (12).
+  // Built in Phase 11 (Distributor reports; server-aggregated via
+  // GET /api/reports). Imports stays a placeholder until Phase 12:
   // available: false = never in an effective snapshot, never navigable;
   // becoming available is an explicit release (registry flag + template
   // modules + template version + recompute).
-  { id: "reports", label: "Reports", path: "/reports", icon: "reports", permission: "reports.view", available: false, collections: { reports: "reports.view" }, storage: { exports: "reports.export" } },
+  { id: "reports", label: "Reports", path: "/reports", icon: "reports", permission: "reports.view", available: true, collections: { reports: "reports.view" }, storage: { exports: "reports.export" } },
   // Built in Phase 10 (operating expenses). Operational only where a
   // workspace template lists it (Distributor v3); others keep it planned.
   { id: "expenses", label: "Expenses", path: "/expenses", icon: "expenses", permission: "expenses.view", available: true, collections: { expenses: "expenses.view" }, storage: {} },

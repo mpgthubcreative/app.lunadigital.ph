@@ -40,7 +40,7 @@ describe("navigation", () => {
   it("Distributor: unchanged", () => {
     renderShell(document.getElementById("app"), sessionFixture());
     // Customers is back (built in Phase 9); Reports / Imports return as each is built.
-    expect(navOf()).toEqual(["/ Dashboard", "/orders Orders", "/payments Payments", "/inventory Inventory", "/customers Customers", "/expenses Operating Expenses", "/users Users", "/settings Settings"]);
+    expect(navOf()).toEqual(["/ Dashboard", "/orders Orders", "/payments Payments", "/inventory Inventory", "/customers Customers", "/expenses Operating Expenses", "/reports Reports", "/users Users", "/settings Settings"]);
   });
 
   it("Bridal: its own dashboard name, no Orders / Inventory / Payments", () => {

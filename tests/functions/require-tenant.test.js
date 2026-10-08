@@ -61,16 +61,17 @@ describe("THE scenario: staff with inventory.view, Inventory disabled for the bu
   });
 });
 
-describe("unbuilt modules (Reports) are refused even with the permission", () => {
-  it("staff granted reports.view, and the owner, get 403 from requireTenant and GET /api/reports", async () => {
-    await expect(guard(reportStaff, "biz-a", { permission: "reports.view" })).rejects.toMatchObject({ reason: "module-disabled:reports" });
-    await expect(guard(world.uids.ownera, "biz-a", { permission: "reports.view" })).rejects.toMatchObject({ reason: "module-disabled:reports" });
-    expect((await callReports(reportStaff, "biz-a")).status).toBe(403);
-    expect((await callReports(world.uids.ownera, "biz-a")).status).toBe(403);
+describe("Reports (built in Phase 11): reports.view + the module", () => {
+  it("staff granted reports.view and the owner pass requireTenant; plain staff don't", async () => {
+    await expect(guard(reportStaff, "biz-a", { permission: "reports.view" })).resolves.toBeTruthy();
+    await expect(guard(world.uids.ownera, "biz-a", { permission: "reports.view" })).resolves.toBeTruthy();
+    await expect(guard(world.uids.staffa, "biz-a", { permission: "reports.view" })).rejects.toMatchObject({ reason: "missing-permission:reports.view" });
   });
 
-  it("the snapshot holds false for it whatever the plan says", () => {
-    expect(businessDoc("biz-a").entitlements.modules.reports).toBe(false);
+  it("an override switching Reports off refuses it, even for the owner", async () => {
+    await updateOverrides({ ...world, businessId: "biz-a", set: { modules: { reports: false } }, actor: "test", reason: "test: reports off" });
+    await expect(guard(world.uids.ownera, "biz-a", { permission: "reports.view" })).rejects.toMatchObject({ reason: "module-disabled:reports" });
+    expect((await callReports(world.uids.ownera, "biz-a")).status).toBe(403);
   });
 });
 
@@ -191,10 +192,9 @@ describe("GET /api/reports", () => {
     expect(res.statusCode).toBe(401);
   });
 
-  it("403 for everyone while Reports is unbuilt (manager holds reports.view)", async () => {
+  it("403 for staff without reports.view; a manager gets 400 until a valid range is given", async () => {
     expect((await callReports(world.uids.staffa, "biz-a")).status).toBe(403);
     const r = await callReports(world.uids.managera, "biz-a");
-    expect(r.status).toBe(403);
-    expect(r.body.error).toBe("forbidden");
+    expect(r).toMatchObject({ status: 400, body: { error: "invalid-range" } });
   });
 });

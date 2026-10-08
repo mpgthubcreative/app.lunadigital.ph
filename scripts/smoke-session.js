@@ -182,14 +182,21 @@ const checks = [
   }],
   ["GET /api/reports: no token → 401", async () => (await get("reports")).status === 401],
   ["GET /api/reports: staff.a (no reports.view) → 403", async () => (await get("reports", { as: "staff.a" })).status === 403],
-  // Phase 8.5 cleanup: Reports is unbuilt, so even reports.view holders are refused.
-  ["GET /api/reports: manager.a (holds reports.view; Reports unbuilt) → 403", async () => {
-    const r = await get("reports", { as: "manager.a" });
-    return r.status === 403 && r.body.error === "forbidden";
+  // Phase 11: Reports is built (Distributor v4).
+  ["GET /api/reports: manager.a, today's range → 200 with financial figures", async () => {
+    const day = businessDate((await session({ as: "manager.a" })).body.business.timezone);
+    const r = await get(`reports?from=${day}&to=${day}`, { as: "manager.a" });
+    return r.status === 200 && r.body.access?.financials === true && "netSales" in r.body.overview && Array.isArray(r.body.sections);
+  }],
+  ["GET /api/reports: a future or 367-day range → 400; unknown parameters (businessId) → 400", async () => {
+    const day = businessDate((await session({ as: "manager.a" })).body.business.timezone);
+    const future = await get(`reports?from=${day}&to=2099-01-01`, { as: "manager.a" });
+    const sneaky = await get(`reports?from=${day}&to=${day}&businessId=${B}`, { as: "manager.a" });
+    return future.status === 400 && sneaky.status === 400;
   }],
   ["A, B, C snapshots: every unbuilt module is false (planned, not enabled)", async () => {
     const rows = await Promise.all([session({ as: "owner.a" }), session({ as: "owner.b" }), session({ as: "owner.c" })]);
-    return rows.every((r) => r.status === 200 && ["reports", "imports", "suppliers", "production", "returns"].every((k) => r.body.entitlements.modules[k] === false));
+    return rows.every((r) => r.status === 200 && ["imports", "suppliers", "production", "returns"].every((k) => r.body.entitlements.modules[k] === false));
   }],
   ["GET /api/reports: owner.a selecting B → 403", async () => (await get("reports", { as: "owner.a", businessId: B })).status === 403],
   // Phase 5: dashboard summary documents through the deployed Firestore rules.
@@ -258,9 +265,9 @@ const checks = [
     (await fsQuery("staff.a", `businesses/${A}`, "paymentRefs")) === 403 &&
     (await fsQuery("owner.a", `businesses/${B}`, "payments")) === 403],
   // Phase 9: customers (refusals and reads only; no customers are created here).
-  ["A, B, C have Customers and Expenses on (distributor v3)", async () => {
+  ["A, B, C have Customers, Expenses and Reports on (distributor v4)", async () => {
     const rows = await Promise.all([session({ as: "owner.a" }), session({ as: "owner.b" }), session({ as: "owner.c" })]);
-    return rows.every((r) => r.status === 200 && r.body.entitlements.modules.customers === true && r.body.entitlements.modules.expenses === true && r.body.workspace?.templateVersion === 3);
+    return rows.every((r) => r.status === 200 && r.body.entitlements.modules.customers === true && r.body.entitlements.modules.expenses === true && r.body.entitlements.modules.reports === true && r.body.workspace?.templateVersion === 4);
   }],
   ["POST /api/customers without a token → 401", async () => (await post("customers", { action: "create" })).status === 401],
   ["customer statistics can't be sent from the browser (400)", async () => (await post("customers", { action: "create", customer: { name: "Smoke", stats: { outstandingBalance: 0 } } }, { as: "staff.a" })).status === 400],
