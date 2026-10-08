@@ -234,6 +234,18 @@ const checks = [
     (await fsQuery("owner.a", `businesses/${A}`, "orderCosts")) === 200 &&
     (await fsQuery("owner.a", `businesses/${B}`, "orders")) === 403 &&
     (await fsQuery("owner.a", `businesses/${B}`, "orderCosts")) === 403],
+  // Phase 8: payments (refusals and reads only; no payments are recorded here).
+  ["POST /api/payments without a token → 401", async () => (await post("payments", { action: "record" })).status === 401],
+  ["staff.a can't verify or remove payments (403)", async () =>
+    (await post("payments", { action: "verify", paymentId: "aaaaaaaaaaaaaaaaaaaa" }, { as: "staff.a" })).status === 403 &&
+    (await post("payments", { action: "void", paymentId: "aaaaaaaaaaaaaaaaaaaa", reason: "smoke test" }, { as: "staff.a" })).status === 403],
+  ["forged order totals in a payment are refused (400)", async () => (await post("payments", { action: "record", orderId: "aaaaaaaaaaaaaaaaaaaa", payment: { amount: 100, method: "cash" }, amountPaid: 1 }, { as: "owner.a" })).status === 400],
+  ["owner.a selecting B can't touch B's payments or proofs (403)", async () =>
+    (await post("payments", { action: "proof", paymentId: "aaaaaaaaaaaaaaaaaaaa" }, { as: "owner.a", businessId: B })).body.error === "business-access-denied"],
+  ["staff.a lists payments; the reference index is server-only; B's payments refused", async () =>
+    (await fsQuery("staff.a", `businesses/${A}`, "payments")) === 200 &&
+    (await fsQuery("staff.a", `businesses/${A}`, "paymentRefs")) === 403 &&
+    (await fsQuery("owner.a", `businesses/${B}`, "payments")) === 403],
 ];
 
 console.log(`Smoke-testing ${baseUrl}\n`);

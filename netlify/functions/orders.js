@@ -13,7 +13,7 @@
 import { respond, withErrorHandling, requireMethod, parseJsonBody, RequestError } from "./_lib/http.js";
 import { getAdmin } from "./_lib/firebase-admin.js";
 import { requireTenant } from "./_lib/tenant.js";
-import { createOrder, updateOrder, fulfillOrder, cancelOrder, deleteOrder } from "./_lib/orders.js";
+import { createOrder, updateOrder, fulfillOrder, cancelOrder, deleteOrder, setFulfillmentStage } from "./_lib/orders.js";
 import { actorOf, only } from "./_lib/inventory-http.js";
 import { OrderError } from "../../shared/orders.js";
 import { InventoryError } from "../../shared/inventory.js";
@@ -25,6 +25,7 @@ const ACTIONS = {
   update: { permission: "orders.update", fields: ["action", "orderId", "expectedRevision", "order", "reason"] },
   delete: { permission: "orders.cancel", fields: ["action", "orderId", "reason"] },
   fulfill: { permission: "orders.fulfill", fields: ["action", "orderId"] },
+  stage: { permission: "orders.fulfill", fields: ["action", "orderId", "stage"] },
   cancel: { permission: "orders.cancel", fields: ["action", "orderId", "reason"] },
 };
 
@@ -38,6 +39,8 @@ const STATUS = {
   "product-inactive": 409,
   "below-paid": 409,
   "history-full": 409,
+  "has-payments": 409,
+  "invalid-stage": 400,
   "not-deletable": 409,
   "reason-required": 400,
   "order-limit-reached": 403,
@@ -83,6 +86,8 @@ export function createOrdersHandler({ getAdmin: loadAdmin, now = () => new Date(
         case "update":
           if (body.expectedRevision !== undefined && !Number.isSafeInteger(body.expectedRevision)) throw new RequestError("invalid-request", "Invalid revision.", 400);
           return updateOrder({ ...common, business: ctx.business, orderId: body.orderId, input: body.order, expectedRevision: body.expectedRevision ?? null, canDiscount, canCorrect: ctx.permissions["orders.correct"] === true, reason: body.reason ?? null });
+        case "stage":
+          return setFulfillmentStage({ ...common, orderId: body.orderId, stage: body.stage });
         case "delete":
           return deleteOrder({ ...common, orderId: body.orderId, reason: body.reason ?? null });
         case "fulfill":

@@ -33,7 +33,8 @@ export const PERMISSIONS = Object.freeze({
 
   "payments.view": { module: "payments", group: "Payments", label: "View payments" },
   "payments.record": { module: "payments", group: "Payments", label: "Record payments" },
-  "payments.verify": { module: "payments", group: "Payments", label: "Verify payments" },
+  // Verifying, correcting and removing payments: sensitive, owner/manager by default.
+  "payments.verify": { module: "payments", group: "Payments", label: "Verify, correct and remove payments" },
 
   "inventory.view": { module: "inventory", group: "Inventory", label: "View inventory" },
   "inventory.receive": { module: "inventory", group: "Inventory", label: "Receive stock" },

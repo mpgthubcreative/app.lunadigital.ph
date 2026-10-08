@@ -25,13 +25,13 @@ export function when(at, timezone) {
   return d ? new Intl.DateTimeFormat("en-PH", { dateStyle: "medium", timeStyle: "short", timeZone: timezone || "Asia/Manila" }).format(d) : "";
 }
 
-// Payment reference / proof arrive with Payments (Phase 8): "—" until then.
 export function orderRow(o, { currency = "PHP", timezone } = {}) {
   return {
     id: o.id,
     number: o.orderNumber,
-    reference: o.paymentReference || "—",
-    proof: o.paymentProof ? "Attached" : "—",
+    // Latest reference, with "+N" when the order has more payments.
+    reference: o.lastPaymentRef ? `${o.lastPaymentRef}${o.paymentCount > 1 ? ` (+${o.paymentCount - 1})` : ""}` : o.paymentCount > 1 ? `${o.paymentCount} payments` : "—",
+    proofPaymentId: o.lastProofPaymentId || null,
     when: when(o.createdAt, timezone) || o.orderDate,
     customer: o.customer?.name ?? "",
     source: sourceLabel(o.source),

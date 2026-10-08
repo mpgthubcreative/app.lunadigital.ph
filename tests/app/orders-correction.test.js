@@ -76,7 +76,8 @@ const footer = (detail) => [...detail.querySelectorAll(".modal-footer > button, 
 describe("Edit -> Save on a fulfilled order", () => {
   it("owner: same Edit button; the editor explains and asks for a reason; Save sends update + reason", async () => {
     const { d, detail } = await openDetail(session("owner"), fulfilledOrder.id);
-    expect(footer(detail)).toEqual(["Edit", "Close"]);
+    // Phase 8 adds "Record payment" while a balance remains.
+    expect(footer(detail)).toEqual(["Record payment", "Edit", "Close"]);
     detail.querySelector('[data-act="edit"]').click();
     await flush();
     const form = document.querySelector(".modal-backdrop form");
@@ -92,13 +93,13 @@ describe("Edit -> Save on a fulfilled order", () => {
 
   it("staff (no orders.correct): no Edit on a fulfilled order", async () => {
     const { detail } = await openDetail(session("staff"), fulfilledOrder.id);
-    expect(footer(detail)).toEqual(["Close"]);
+    expect(footer(detail)).toEqual(["Record payment", "Close"]); // no Edit
   });
 
   it("no correction / reversal / COGS buttons exist anywhere", async () => {
     const { detail } = await openDetail(session("owner"), fulfilledOrder.id);
     expect(document.body.textContent).not.toMatch(/Fix Mistake|Reverse|Financial Correction|COGS Adjustment/i);
-    expect(detail.querySelectorAll(".modal-footer button").length).toBeLessThanOrEqual(3);
+    expect(detail.querySelectorAll(".modal-footer button").length).toBeLessThanOrEqual(4);
   });
 });
 
@@ -125,7 +126,7 @@ describe("activity log", () => {
 describe("⋯ More holds cancel and delete for open orders", () => {
   it("owner: More menu with Cancel order and Delete order; Delete sends action delete", async () => {
     const { d, detail } = await openDetail(session("owner"), pendingOrder.id);
-    expect(footer(detail)).toEqual(["⋯ More", "Edit", "Mark fulfilled", "Close"]);
+    expect(footer(detail)).toEqual(["⋯ More", "Record payment", "Edit", "Mark fulfilled", "Close"]);
     const menu = detail.querySelector('[data-role="more-menu"]');
     expect(menu.hidden).toBe(true);
     detail.querySelector('[data-act="more"]').click();

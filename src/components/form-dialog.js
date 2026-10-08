@@ -1,4 +1,4 @@
-// Modal form. fields: [{ name, label, type: "text"|"select"|"textarea",
+// Modal form. fields: [{ name, label, type: "text"|"select"|"textarea"|"file",
 // value?, options?: [{ value, label }], hint?, required?, disabled?, inputmode? }].
 // onSubmit(values) may throw; its message is shown in the dialog and the
 // dialog stays open. Resolves with onSubmit's result, or null if cancelled.
@@ -14,6 +14,9 @@ function fieldMarkup(f, id) {
     return html`<select class="select" id="${common.id}" name="${common.name}" ${f.disabled ? "disabled" : ""}>
       ${f.options.map((o) => html`<option value="${o.value}" ${String(o.value) === String(f.value ?? "") ? "selected" : ""}>${o.label}</option>`)}
     </select>`;
+  }
+  if (f.type === "file") {
+    return html`<input class="input" type="file" id="${common.id}" name="${common.name}" accept="${f.accept || ""}" />`;
   }
   if (f.type === "textarea") {
     return html`<textarea class="input" id="${common.id}" name="${common.name}" rows="2" maxlength="300">${f.value ?? ""}</textarea>`;
@@ -64,7 +67,8 @@ export function formDialog({ title, intro = "", fields, submitLabel = "Save", on
 
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
-      const values = Object.fromEntries(fields.map((f) => [f.name, form.elements[f.name].value]));
+      // File fields give the chosen File (or null); everything else its text.
+      const values = Object.fromEntries(fields.map((f) => [f.name, f.type === "file" ? form.elements[f.name].files?.[0] ?? null : form.elements[f.name].value]));
       errorEl.hidden = true;
       submitBtn.disabled = true;
       try {

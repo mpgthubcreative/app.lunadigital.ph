@@ -1,7 +1,7 @@
 rules_version = '2';
 
-// Luna tenant-scoped Storage rules (Phases 3-4). Not deployed yet: staging
-// has no Storage bucket. Verified against the emulator.
+// Luna tenant-scoped Storage rules (Phases 3-4). Deployed to staging in
+// Phase 8 (bucket in us-west1); verified against the emulator and live.
 //
 // Layout: tenants/{bid}/{area}/...  (area = products | payments | imports | exports)
 //

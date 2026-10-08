@@ -292,7 +292,7 @@ Each checks sign-in, membership, permission, the Inventory module, subscription 
 | Cancelled (pending only) | release every reservation | `cancelledOrders` +1 on the cancel day; pending −1, unpaid −1, receivables −= balance. Created and usage counts stay. **No sales, no COGS.** |
 
 - A fulfilled order can't be cancelled; reversals will be handled by Returns.
-- Fulfilment is not payment: a fulfilled order stays unpaid until Phase 8.
+- Fulfilment is not payment: a fulfilled order stays unpaid until its payments are recorded (Phase 8).
 - An order created yesterday and fulfilled today counts toward today's sales.
 
 **Model** (`orders/{id}`, `shared/orders.js`):
@@ -335,7 +335,7 @@ Each checks sign-in, membership, permission, the Inventory module, subscription 
 - New and edit dialog with product search, availability, a live preview of totals, and one idempotency key per dialog.
 - Detail view with history; COGS and gross profit appear only for `dashboard.financials`.
 
-**Dashboard:** orders today, unpaid orders, for fulfilment, unpaid balance, net sales and gross profit are live, and recent orders is a live list. Widgets whose data producer doesn't exist yet stay "No data yet": operating expenses, estimated operating profit and paid today (`LIVE_DATA_SOURCES`).
+**Dashboard:** orders today, unpaid orders, for fulfilment, unpaid balance, net sales and gross profit are live, and recent orders is a live list. Since Phase 8, paid today is live too. Operating expenses and estimated operating profit stay "No data yet" until Expenses (`LIVE_DATA_SOURCES`).
 
 **Corrections and accidental orders (Phase 7.1).** Users see a single **Edit → Save** for every order; the server decides what Save means:
 - **Open orders:** pending now, and preparing/ready later, since `FULFILLMENT_STATUSES[...].open` covers them. This is the existing edit path (`orders.update`).
@@ -352,6 +352,69 @@ Each checks sign-in, membership, permission, the Inventory module, subscription 
 - **Screen:** cancel and delete live under ⋯ More. The activity log reads "time • person • Qty changed 10 → 8", followed by "Inventory corrected +2" and "Sales adjusted ₱750.00 → ₱600.00".
 
 **Scale note:** the counter, usage and `metrics/current` documents are shared by every order in a business. That's fine for SMB volumes; sharding is needed if a tenant sustains more than about one order per second.
+
+**Fulfilment stages (Phase 8).** The Fulfillment ▾ dropdown offers Pending, Preparing, Ready, Fulfilled and Cancelled.
+- Moving between the open stages (pending, preparing, ready) is the `stage` action (`orders.fulfill`). It only adds a history entry and touches no stock or metrics.
+- Fulfilled always goes through the protected fulfil engine, and Cancelled through the protected cancel (reason required).
+
+## Payments (Phase 8)
+
+**Payment and fulfilment are separate.** An order has two independent states: Payment (Unpaid / For Verification / Partially Paid / Paid) and Fulfilment. Payments never create sales or COGS; those are still recognised at fulfilment only.
+
+**One order, many payments** (`payments/{id}`, `shared/payments.js`): `orderId`, `orderNumber`, `customerName`, `amount` (centavos), `method`, `reference` (normalized), `referenceKey`, `note`, `proof {path, contentType, size}`, `state` (for_verification, verified or voided), `receivedDay`, `history[]`, `revision`, and created/updated/verified/voided by and at.
+
+**The order carries only derived totals,** written in the same transaction as the payment: `verifiedPaid`, `pendingPaid`, `amountPaid` (= verified + pending), `balance` (= total − amountPaid), `paymentStatus`, `paymentCount`, `lastPaymentRef` and `lastProofPaymentId`. `amountPaid` is never set on its own. `paymentStatus` is derived on the server (`derivePaymentStatus`):
+
+| Condition | Status |
+|---|---|
+| nothing paid | Unpaid |
+| any payment awaiting verification | For Verification |
+| verified total < order total | Partially Paid |
+| verified total = order total | Paid |
+
+**Rules of a payment:**
+- **Methods:** Cash, GCash, Maya, Bank Transfer, COD and Other. GCash, Maya and Bank Transfer need a reference; Cash and COD don't.
+- **No overpayment:** live payments can never add up to more than the order total. Order corrections that would bring the total below what's been paid are refused (`below-paid`).
+- **Cancelled orders take no payments.** An order with live payments can't be cancelled or deleted; remove the payments first.
+- **Who verifies:** a payment from someone with `payments.verify` (Owner and Manager) is verified at once. A payment from someone with only `payments.record` (Staff) waits For Verification until a verifier marks it verified.
+
+**References and duplicates.**
+- References are normalized on the server: uppercase, with spaces and `- _ . / #` removed, 4–40 letters or digits. "abc-123" and "ABC 123" are the same reference.
+- `paymentRefs/{method_REFERENCE}` is a per-tenant uniqueness index. It's checked and created in the payment transaction, and `tx.create` fails if the entry already exists, so two simultaneous submissions can't both win. A second use gets "This payment reference has already been used."
+- The index is scoped to the business, so the same reference in another business is allowed, and a duplicate check never reveals anything about other tenants.
+- Removing a payment frees its reference; editing a reference moves the index entry.
+- `paymentRefs` is server-only (no rule).
+
+**Screenshots (proof of payment).**
+- Path: `tenants/{bid}/payments/proofs/{orderId}/{paymentId}-{random}.{ext}`, written only by the server through the Admin SDK. No download token is created, so there is no public URL.
+- The server checks: the caller's business, `payments.record`, a JPEG, PNG or WebP type found by its magic bytes (not the declared type), and at most 2.5 MB. The browser first shrinks the image (longest side 1600 px, JPEG).
+- If the payment fails, the uploaded file is deleted.
+- **View screenshot** calls `POST /api/payments {action: "proof"}` (`payments.view`). The server loads the payment from the caller's own tenant, checks the stored path is under that tenant's prefix, and returns the bytes. They're shown in place as a `data:` image.
+- `storage.rules` also allows reading the payments area with `payments.view` in the same business. Writes from the browser are denied.
+
+**Corrections, verification and removal** (`payments.verify`):
+- **Edit → Save** changes amount, method, reference, note or screenshot. The order's totals and the day's `paymentsReceived` move by the difference. The activity log shows "Reference changed X → Y" and "Payment amount changed ₱a → ₱b".
+- **Mark verified** moves the amount from pending to verified.
+- **⋯ More → Remove payment** (reason required): the payment becomes `voided`, stays in history, stops counting, and its reference is freed.
+
+**Metrics:**
+- `financialMetrics/{day,month}.paymentsReceived` counts the payment's received day, adjusted by edits and removals. This is "Paid today", and "Payments received" for the day and month.
+- `financialMetrics/current.receivablesOutstanding` is the unpaid balance.
+- `metrics/current.unpaidOrders` counts open-balance orders and changes only when a balance appears or disappears.
+- Sales and COGS are untouched.
+
+**Endpoint:** `POST /api/payments` with these actions:
+- `record` (`payments.record`)
+- `update`, `verify` and `void` (`payments.verify`)
+- `proof` (`payments.view`, read-only, so it works while suspended)
+
+It checks sign-in first, then the Payments and Orders modules and a strict payload (max 4.5 MB). Errors are explicit: `duplicate-reference` and `overpayment` are 409, `proof-too-large` is 413.
+
+**Screens:**
+- **Orders row:** `Order # | Time | Customer | Items | Total | Reference | Proof | Payment ▾ | Fulfillment ▾ | View details`. Picking Paid or Partially Paid opens one small popover (method, amount defaulting to the balance, reference, screenshot); Save returns to the list. Paid on a For Verification order verifies it. Without the permission, the cells are read-only badges.
+- **Payments page:** `Date/Time | Order # | Customer | Amount | Method | Reference | Proof | Status | View`, 25 per page, filterable by status and method (indexes `(state, createdAt desc)` and `(method, createdAt desc)`; an order's payments use `(orderId, createdAt asc)`).
+
+**Not built (by design):** OCR, automatic verification, bank or e-wallet APIs, refunds, returns, customer credit, reconciliation.
 
 ## Dashboard and metrics (Phase 5)
 
@@ -477,7 +540,7 @@ On Orders, Reference and Proof show "—" until Payments (Phase 8) fills them in
 5. Dashboard and metrics framework ✅
 6. Products and inventory ✅
 7. Orders ✅
-8. Payments
+8. Payments ✅
 9. Customers
 10. Expenses
 11. Reports (incl. operating P&L)

@@ -206,9 +206,40 @@ export class FakeAuth {
   }
 }
 
+// Minimal stand-in for an Admin SDK Storage bucket.
+export class FakeBucket {
+  constructor() {
+    this.files = new Map();
+  }
+  file(path) {
+    const files = this.files;
+    return {
+      name: path,
+      async save(data, options = {}) {
+        files.set(path, { data: Buffer.from(data), contentType: options.contentType, metadata: options.metadata?.metadata || {} });
+      },
+      async exists() {
+        return [files.has(path)];
+      },
+      async download() {
+        if (!files.has(path)) throw Object.assign(new Error("No such object"), { code: 404 });
+        return [files.get(path).data];
+      },
+      async getMetadata() {
+        const f = files.get(path);
+        return [{ contentType: f.contentType, size: String(f.data.length), metadata: f.metadata }];
+      },
+      async delete() {
+        files.delete(path);
+      },
+    };
+  }
+}
+
 export function fakeAdmin() {
   const db = new FakeFirestore();
   const auth = new FakeAuth();
   const admin = { firestore: { FieldValue } };
-  return { db, auth, admin };
+  const storage = new FakeBucket();
+  return { db, auth, admin, storage, bucket: async () => storage };
 }

@@ -11,6 +11,7 @@
 // Payment is separate from fulfillment (Phase 8): new orders are unpaid.
 
 import { isCentavos, lineAmount } from "./quantity.js";
+import { ORDER_PAYMENT_STATUSES, derivePaymentStatus } from "./payments.js";
 
 export const ORDER_SCHEMA_VERSION = 1;
 
@@ -38,11 +39,8 @@ export const FULFILLMENT_STATUSES = Object.freeze({
 
 export const isOpenFulfillment = (status) => FULFILLMENT_STATUSES[status]?.open === true;
 
-export const PAYMENT_STATUSES = Object.freeze({
-  unpaid: { label: "Unpaid" },
-  partial: { label: "Partially paid" }, // Phase 8
-  paid: { label: "Paid" }, // Phase 8
-});
+// Derived from payment records (shared/payments.js), never set directly.
+export const PAYMENT_STATUSES = ORDER_PAYMENT_STATUSES;
 
 export const MAX_ORDER_LINES = 50;
 export const MAX_HISTORY_ENTRIES = 60;
@@ -137,7 +135,6 @@ export function isMaterialChange({ before, after }) {
   return qty(before.items) !== qty(after.items) || before.discount !== after.discount;
 }
 
-export function paymentStatusFor({ total, amountPaid }) {
-  if (amountPaid <= 0) return "unpaid";
-  return amountPaid >= total ? "paid" : "partial";
+export function paymentStatusFor({ total, verifiedPaid = 0, pendingPaid = 0 }) {
+  return derivePaymentStatus({ total, verifiedPaid, pendingPaid });
 }

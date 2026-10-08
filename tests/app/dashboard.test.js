@@ -74,7 +74,8 @@ describe("values come from the documents through shared/finance.js", () => {
     // document holds numbers, rather than implying ₱0 of expenses.
     expect(value("operatingExpenses")).toBe("No data yet");
     expect(value("estimatedOperatingProfit")).toBe("No data yet");
-    expect(value("paymentsReceived")).toBe("No data yet");
+    // Payments feed metrics since Phase 8: "Paid today" is real.
+    expect(value("paymentsReceived")).toBe("₱9,000.00");
     expect(value("receivablesOutstanding")).toBe("₱3,000.00");
     expect(value("ordersToday")).toBe("12");
     expect(value("pendingFulfillment")).toBe("4");

@@ -63,6 +63,18 @@ function appendHistory(order, entry) {
   return [...history, entry];
 }
 
+// When an order's total changes, the receivables gauge follows the balance
+// and the unpaid-order count follows whether a balance remains.
+function adjustBalanceGauges(tx, { tenant, FieldValue, order, newTotal }) {
+  const paid = order.amountPaid || 0;
+  const before = order.total - paid;
+  const after = newTotal - paid;
+  const unpaid = (after > 0 ? 1 : 0) - (before > 0 ? 1 : 0);
+  if (after !== before || unpaid) {
+    adjustCurrentMetrics({ tx, tenant, FieldValue, ...(unpaid ? { operational: { unpaidOrders: unpaid } } : {}), ...(after !== before ? { financial: { receivablesOutstanding: after - before } } : {}) });
+  }
+}
+
 const hashRequest = (value) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 
 function movementsFor(lines, type, orderId, orderNumber, reason) {
@@ -148,6 +160,11 @@ export async function createOrder({ db, tenant, FieldValue, business, entitlemen
         discount: totals.discount,
         total: totals.total,
         amountPaid: 0,
+        verifiedPaid: 0,
+        pendingPaid: 0,
+        paymentCount: 0,
+        lastPaymentRef: null,
+        lastProofPaymentId: null,
         balance: totals.total,
         paymentStatus: "unpaid",
         fulfillmentStatus: "pending",
@@ -172,7 +189,7 @@ export async function createOrder({ db, tenant, FieldValue, business, entitlemen
       tx.set(counterRef, { next: seq + 1, day, updatedAt: stamp });
       tx.set(usageRef, { period: month, ordersCreated: FieldValue.increment(1), updatedAt: stamp }, { merge: true });
       recordDailyMetrics({ tx, tenant, FieldValue, timezone: business.timezone, at: now, operational: { orderCount: 1 } });
-      adjustCurrentMetrics({ tx, tenant, FieldValue, operational: { pendingFulfillment: 1, unpaidOrders: 1 }, financial: { receivablesOutstanding: totals.total } });
+      adjustCurrentMetrics({ tx, tenant, FieldValue, operational: { pendingFulfillment: 1, unpaidOrders: totals.total > 0 ? 1 : 0 }, financial: { receivablesOutstanding: totals.total } });
       plan.commit({ actor, FieldValue });
       return { orderId: ref.id, orderNumber, replayed: false, order: { ...order, createdAt: null, updatedAt: null } };
     }, TX_OPTIONS);
@@ -265,14 +282,13 @@ export async function updateOrder({ db, tenant, FieldValue, business = null, ord
       discount: totals.discount,
       total: totals.total,
       balance: totals.total - amountPaid,
-      paymentStatus: paymentStatusFor({ total: totals.total, amountPaid }),
+      paymentStatus: paymentStatusFor({ total: totals.total, verifiedPaid: order.verifiedPaid || 0, pendingPaid: order.pendingPaid || 0 }),
       statusHistory: appendHistory(order, entry),
       revision: order.revision + 1,
       updatedBy: actor,
       updatedAt: FieldValue.serverTimestamp(),
     });
-    const totalDelta = totals.total - order.total;
-    if (totalDelta) adjustCurrentMetrics({ tx, tenant, FieldValue, financial: { receivablesOutstanding: totalDelta } });
+    adjustBalanceGauges(tx, { tenant, FieldValue, order, newTotal: totals.total });
     if (plan) plan.commit({ actor, FieldValue });
     return { orderId, revision: order.revision + 1, total: totals.total };
   }, TX_OPTIONS);
@@ -384,7 +400,7 @@ async function correctFulfilled(tx, { tenant, FieldValue, business, ref, orderId
     discount: totals.discount,
     total: totals.total,
     balance: totals.total - amountPaid,
-    paymentStatus: paymentStatusFor({ total: totals.total, amountPaid }),
+    paymentStatus: paymentStatusFor({ total: totals.total, verifiedPaid: order.verifiedPaid || 0, pendingPaid: order.pendingPaid || 0 }),
     statusHistory: appendHistory(order, entry),
     revision: order.revision + 1,
     updatedBy: actor,
@@ -405,8 +421,7 @@ async function correctFulfilled(tx, { tenant, FieldValue, business, ref, orderId
       recordDailyMetrics({ tx, tenant, FieldValue, timezone: business?.timezone ?? null, day: order.fulfilledDay, financial: delta });
     }
   }
-  const totalDelta = totals.total - order.total;
-  if (totalDelta) adjustCurrentMetrics({ tx, tenant, FieldValue, financial: { receivablesOutstanding: totalDelta } });
+  adjustBalanceGauges(tx, { tenant, FieldValue, order, newTotal: totals.total });
   if (plan) plan.commit({ actor, FieldValue });
   return { orderId, revision: order.revision + 1, total: totals.total, corrected: true, delta };
 }
@@ -438,9 +453,34 @@ export async function deleteOrder({ db, tenant, FieldValue, orderId, reason = nu
     // It never was a real order: off the day's order count and the open /
     // unpaid exposure. Plan usage still counts it (no create/delete gaming).
     recordDailyMetrics({ tx, tenant, FieldValue, timezone: null, day: order.orderDate, operational: { orderCount: -1 } });
-    adjustCurrentMetrics({ tx, tenant, FieldValue, operational: { pendingFulfillment: -1, unpaidOrders: -1 }, financial: { receivablesOutstanding: -(order.balance || 0) } });
+    adjustCurrentMetrics({ tx, tenant, FieldValue, operational: { pendingFulfillment: -1, unpaidOrders: (order.balance || 0) > 0 ? -1 : 0 }, financial: { receivablesOutstanding: -(order.balance || 0) } });
     plan.commit({ actor, FieldValue });
     return { orderId, deleted: true };
+  }, TX_OPTIONS);
+}
+
+// ---------- Operational stage (pending / preparing / ready) ----------
+
+// The inline Fulfillment dropdown. Only moves between OPEN stages, in any
+// direction (a mistaken stage is easy to put back). Fulfilled and Cancelled
+// go through fulfillOrder / cancelOrder, never through here.
+export async function setFulfillmentStage({ db, tenant, FieldValue, orderId, stage, actor }) {
+  if (!isOpenFulfillment(stage)) throw new OrderError("invalid-stage", "Choose Pending, Preparing or Ready (Fulfilled and Cancelled have their own steps)");
+  const ref = orderRef(tenant, orderId);
+  return db.runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    if (!snap.exists) throw new OrderError("not-found", "Order not found");
+    const order = snap.data();
+    if (!isOpenFulfillment(order.fulfillmentStatus)) throw new OrderError("not-pending", `This order is already ${order.fulfillmentStatus}`);
+    if (order.fulfillmentStatus === stage) return { orderId, fulfillmentStatus: stage, unchanged: true };
+    tx.update(ref, {
+      fulfillmentStatus: stage,
+      statusHistory: appendHistory(order, historyEntry("stage", actor, { from: order.fulfillmentStatus, to: stage })),
+      revision: order.revision + 1,
+      updatedBy: actor,
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+    return { orderId, fulfillmentStatus: stage };
   }, TX_OPTIONS);
 }
 
@@ -507,6 +547,7 @@ export async function cancelOrder({ db, tenant, FieldValue, business, orderId, r
     if (!isOpenFulfillment(order.fulfillmentStatus)) {
       throw new OrderError("not-pending", order.fulfillmentStatus === "fulfilled" ? "A fulfilled order can't be cancelled (returns will handle reversals)" : "This order is already cancelled");
     }
+    if ((order.amountPaid || 0) > 0) throw new OrderError("has-payments", "This order has payments. Void them first, then cancel the order");
     const plan = await prepareMovements(tx, { tenant, items: movementsFor(order.items, "release", orderId, order.orderNumber, "order_cancelled") });
     const stamp = FieldValue.serverTimestamp();
 
@@ -528,7 +569,7 @@ export async function cancelOrder({ db, tenant, FieldValue, business, orderId, r
       tx,
       tenant,
       FieldValue,
-      operational: { pendingFulfillment: -1, ...(order.paymentStatus !== "paid" ? { unpaidOrders: -1 } : {}) },
+      operational: { pendingFulfillment: -1, ...((order.balance || 0) > 0 ? { unpaidOrders: -1 } : {}) },
       financial: { receivablesOutstanding: -(order.balance || 0) },
     });
     plan.commit({ actor, FieldValue });

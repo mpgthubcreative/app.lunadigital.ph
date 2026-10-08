@@ -21,7 +21,7 @@ export function isFirebaseConfigured() {
   return Boolean(process.env.FIREBASE_PROJECT_ID && process.env.FIREBASE_CLIENT_EMAIL && process.env.FIREBASE_PRIVATE_KEY);
 }
 
-// Returns { db, auth, admin } where admin.firestore.FieldValue is provided
+// Returns { db, auth, admin, bucket } where admin.firestore.FieldValue is provided
 // for code written against the namespaced API shape (and test fakes).
 export async function getAdmin() {
   if (cached) return cached;
@@ -51,6 +51,18 @@ export async function getAdmin() {
     app = initializeApp(options);
   }
 
-  cached = { db: getFirestore(app), auth: getAuth(app), admin: { firestore: { FieldValue } } };
+  // Storage is server-only in Luna (payment proofs): the browser never
+  // writes or reads objects directly. bucket() throws a clean 503 until
+  // FIREBASE_STORAGE_BUCKET is configured for the environment.
+  let storageBucket = null;
+  const bucket = async () => {
+    if (storageBucket) return storageBucket;
+    const name = process.env.FIREBASE_STORAGE_BUCKET;
+    if (!name) throw new RequestError("storage-unavailable", "File uploads aren't available yet.", 503);
+    const { getStorage } = await import("firebase-admin/storage");
+    storageBucket = getStorage(app).bucket(name);
+    return storageBucket;
+  };
+  cached = { db: getFirestore(app), auth: getAuth(app), admin: { firestore: { FieldValue } }, bucket };
   return cached;
 }
