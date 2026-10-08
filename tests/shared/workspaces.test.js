@@ -11,8 +11,9 @@ import {
   workspaceAllowsModule,
   snapshotWorkspaceTemplateId,
   isSafeLabel,
+  UNBUILT_TRUE_TOLERATED,
 } from "../../shared/workspaces.js";
-import { MODULE_IDS, CORE_MODULE_IDS, getModule, isModuleEnabled, canUseModule, resolveNavigation } from "../../shared/modules.js";
+import { MODULES, MODULE_IDS, CORE_MODULE_IDS, getModule, isModuleEnabled, canUseModule, resolveNavigation } from "../../shared/modules.js";
 import { computeEntitlements, validateEntitlementsSnapshot, ENTITLEMENTS_SCHEMA_VERSION } from "../../shared/entitlements.js";
 import { DASHBOARD_WIDGETS, resolveDashboard, dashboardDocuments, dashboardEmptyState } from "../../shared/dashboard.js";
 import { PLAN_SEED } from "../../shared/plans.seed.js";
@@ -20,6 +21,9 @@ import { PERMISSIONS, resolvePermissions } from "../../shared/permissions.js";
 
 const NON_DISTRIBUTOR = ["household-payroll", "baby-expense", "bridal-expense"];
 const DISTRIBUTOR_MODULES = ["orders", "payments", "inventory", "customers", "reports", "imports"];
+const BUILT = MODULES.filter((m) => m.available).map((m) => m.id);
+const UNBUILT = MODULES.filter((m) => !m.available).map((m) => m.id);
+const CTX = { moduleIds: MODULE_IDS, coreModuleIds: CORE_MODULE_IDS, availableModuleIds: BUILT, widgets: DASHBOARD_WIDGETS };
 const ent = (templateId, planId = "pro", overrides = {}) => computeEntitlements(PLAN_SEED[planId], overrides, templateId);
 const access = (templateId, role = "owner", planId = "pro") => ({ entitlements: ent(templateId, planId), permissions: resolvePermissions(role) });
 
@@ -27,7 +31,7 @@ describe("registry", () => {
   it("has exactly the four approved templates, each structurally valid", () => {
     expect(WORKSPACE_TEMPLATE_IDS).toEqual(["distributor", "household-payroll", "baby-expense", "bridal-expense"]);
     for (const id of WORKSPACE_TEMPLATE_IDS) {
-      expect(validateWorkspaceTemplate(WORKSPACE_TEMPLATES[id], { moduleIds: MODULE_IDS, coreModuleIds: CORE_MODULE_IDS, widgets: DASHBOARD_WIDGETS }), id).toEqual([]);
+      expect(validateWorkspaceTemplate(WORKSPACE_TEMPLATES[id], CTX), id).toEqual([]);
     }
   });
 
@@ -50,7 +54,7 @@ describe("registry", () => {
   });
 
   it("the validator rejects code, markup, unknown modules and planned ids that collide", () => {
-    const ctx = { moduleIds: MODULE_IDS, coreModuleIds: CORE_MODULE_IDS, widgets: DASHBOARD_WIDGETS };
+    const ctx = CTX;
     const base = structuredClone(WORKSPACE_TEMPLATES["bridal-expense"]);
     const bad = (mutate) => {
       const t = structuredClone(base);
@@ -62,7 +66,8 @@ describe("registry", () => {
     expect(bad((t) => (t.modules = [...t.modules, "teleport"]))).not.toEqual([]);
     expect(bad((t) => (t.navigation = [...t.navigation, "orders"]))).not.toEqual([]);
     expect(bad((t) => (t.dashboard.widgets = ["netSales"]))).not.toEqual([]); // needs orders, not allowed
-    expect(bad((t) => (t.plannedModules = [{ id: "orders", name: "Orders" }]))).not.toEqual([]);
+    expect(bad((t) => (t.plannedModules = [{ id: "orders", name: "Orders" }]))).not.toEqual([]); // built: must be operational, not planned
+    expect(bad((t) => (t.modules = [...t.modules, "expenses"]))).not.toEqual([]); // unbuilt: can't be operational
     expect(bad((t) => (t.settings.render = () => 1))).not.toEqual([]);
     expect(bad((t) => (t.css = "body{display:none}"))).not.toEqual([]);
     expect(bad((t) => (t.modules = t.modules.filter((m) => m !== "users")))).not.toEqual([]);
@@ -82,16 +87,32 @@ describe("registry", () => {
 
 describe("planned modules are roadmap metadata only", () => {
   const planned = Object.values(WORKSPACE_TEMPLATES).flatMap((t) => t.plannedModules.map((p) => p.id));
-  it("never registered modules, never permissions, never in navigation", () => {
+  it("are either unbuilt registered modules or unregistered future capabilities; never in navigation", () => {
     for (const id of planned) {
-      expect(MODULE_IDS, id).not.toContain(id);
-      expect(Object.keys(PERMISSIONS).some((k) => k.startsWith(`${id}.`)), id).toBe(false);
+      if (MODULE_IDS.includes(id)) expect(getModule(id).available, id).toBe(false);
+      else expect(Object.keys(PERMISSIONS).some((k) => k.startsWith(`${id}.`)), id).toBe(false);
     }
     for (const t of Object.values(WORKSPACE_TEMPLATES)) for (const p of t.plannedModules) expect(t.navigation).not.toContain(p.id);
   });
 
-  it("never appear in an entitlement snapshot", () => {
-    for (const id of WORKSPACE_TEMPLATE_IDS) for (const p of planned) expect(Object.keys(ent(id).modules)).not.toContain(p);
+  it("are never enabled in an entitlement snapshot, for any template, plan or add-on", () => {
+    for (const id of WORKSPACE_TEMPLATE_IDS) {
+      for (const planId of Object.keys(PLAN_SEED)) {
+        const e = ent(id, planId);
+        for (const p of planned) expect(e.modules[p] === true, `${id}/${planId}/${p}`).toBe(false);
+        for (const m of UNBUILT) expect(e.modules[m], `${id}/${planId}/${m}`).toBe(false);
+      }
+    }
+  });
+
+  it("an unbuilt module can't be switched on by an override (no add-on for planned modules)", () => {
+    for (const m of UNBUILT) expect(() => ent("distributor", "pro", { modules: { [m]: true } }), m).toThrow(/isn't allowed/);
+  });
+
+  it("shipping module code alone activates nothing: an old snapshot's true for an unbuilt module never grants access", () => {
+    const e = ent("distributor", "pro");
+    const old = { ...e, modules: { ...e.modules, customers: true, reports: true, expenses: true } };
+    for (const m of ["customers", "reports", "expenses"]) expect(isModuleEnabled(old, m), m).toBe(false);
   });
 
   it("the future domains are recorded (payroll receipt confirmation, wedding tasks, guests/RSVP)", () => {
@@ -128,10 +149,11 @@ describe("plans and templates are independent dimensions", () => {
 });
 
 describe("effective modules = core + (template allows ∩ (override ?? plan))", () => {
-  it("Distributor: exactly the Phase 4-8 snapshot (no regression)", () => {
+  it("Distributor: core + the built modules the plan includes; every unbuilt module false", () => {
     for (const planId of Object.keys(PLAN_SEED)) {
       const e = ent("distributor", planId);
-      for (const id of MODULE_IDS) expect(e.modules[id], `${planId}/${id}`).toBe(CORE_MODULE_IDS.includes(id) || PLAN_SEED[planId].modules[id] === true);
+      for (const id of MODULE_IDS) expect(e.modules[id], `${planId}/${id}`).toBe(CORE_MODULE_IDS.includes(id) || (BUILT.includes(id) && PLAN_SEED[planId].modules[id] === true));
+      expect(Object.keys(e.modules).filter((k) => e.modules[k])).toEqual(["dashboard", "orders", "payments", "inventory", "users", "settings"]);
     }
   });
 
@@ -163,14 +185,16 @@ describe("effective modules = core + (template allows ∩ (override ?? plan))", 
   });
 
   it("a plan add-on within the template still works (Phase 4 behaviour kept)", () => {
-    const lite = { ...structuredClone(PLAN_SEED.starter), id: "lite", modules: { ...PLAN_SEED.starter.modules, reports: false } };
-    expect(computeEntitlements(lite, { modules: { reports: true } }, "distributor").modules.reports).toBe(true);
+    const lite = { ...structuredClone(PLAN_SEED.starter), id: "lite", modules: { ...PLAN_SEED.starter.modules, payments: false } };
+    expect(computeEntitlements(lite, {}, "distributor").modules.payments).toBe(false);
+    expect(computeEntitlements(lite, { modules: { payments: true } }, "distributor").modules.payments).toBe(true);
   });
 
-  it("an unbuilt module can sit in a snapshot but is never usable", () => {
-    const e = ent("baby-expense", "pro");
-    expect(e.modules.expenses).toBe(true); // allowed by template + plan
-    expect(isModuleEnabled(e, "expenses")).toBe(false); // not built (available: false)
+  it("baby / bridal: Expenses is planned, so it's false in the snapshot (not merely unusable)", () => {
+    for (const t of ["baby-expense", "bridal-expense"]) {
+      expect(ent(t, "pro").modules.expenses).toBe(false);
+      expect(WORKSPACE_TEMPLATES[t].plannedModules.map((p) => p.id)).toContain("expenses");
+    }
   });
 
   it("there is no default template", () => {
@@ -201,6 +225,7 @@ describe("stored snapshot validation fails closed", () => {
     "future template version": [(s) => (s.workspaceTemplateVersion = 2), "bridal-expense"],
     "version as a string": [(s) => (s.workspaceTemplateVersion = "1"), "bridal-expense"],
     "module beyond the template (forged)": [(s) => (s.modules.orders = true), "bridal-expense"],
+    ...(UNBUILT_TRUE_TOLERATED ? {} : { "unbuilt module enabled (old snapshot or forged)": [(s) => (s.modules.customers = true), "bridal-expense"] }),
   };
   for (const [name, [mutate, businessTemplate]] of Object.entries(cases)) {
     it(name, () => {
@@ -258,9 +283,11 @@ describe("navigation", () => {
   const nav = (t, role) => resolveNavigation(access(t, role)).map((m) => `${m.path} ${m.label}`);
 
   it("Distributor: unchanged order and labels for every role", () => {
-    expect(nav("distributor", "owner")).toEqual(["/ Dashboard", "/orders Orders", "/payments Payments", "/inventory Inventory", "/customers Customers", "/reports Reports", "/imports Imports", "/users Users", "/settings Settings"]);
-    expect(nav("distributor", "staff")).toEqual(["/ Dashboard", "/orders Orders", "/payments Payments", "/inventory Inventory", "/customers Customers"]);
-    expect(nav("distributor", "manager")).toEqual(["/ Dashboard", "/orders Orders", "/payments Payments", "/inventory Inventory", "/customers Customers", "/reports Reports", "/imports Imports", "/users Users", "/settings Settings"]);
+    // Customers, Reports and Imports placeholders left the navigation in the
+    // Phase 8.5 cleanup; each returns when it's built.
+    expect(nav("distributor", "owner")).toEqual(["/ Dashboard", "/orders Orders", "/payments Payments", "/inventory Inventory", "/users Users", "/settings Settings"]);
+    expect(nav("distributor", "staff")).toEqual(["/ Dashboard", "/orders Orders", "/payments Payments", "/inventory Inventory"]);
+    expect(nav("distributor", "manager")).toEqual(["/ Dashboard", "/orders Orders", "/payments Payments", "/inventory Inventory", "/users Users", "/settings Settings"]);
   });
 
   it("non-Distributor workspaces get no Distributor navigation, and their own names", () => {
@@ -282,9 +309,8 @@ describe("navigation", () => {
 describe("dashboard", () => {
   const ids = (t, role = "owner") => resolveDashboard(access(t, role)).map((w) => w.id);
 
-  it("Distributor: the same widgets in the same order as before", () => {
-    const before = DASHBOARD_WIDGETS.filter((w) => resolvePermissions("owner")[w.permission] === true && w.modules.every((m) => ent("distributor").modules[m] === true)).map((w) => w.id);
-    expect(ids("distributor")).toEqual(before);
+  it("Distributor: the same widgets in the same order as before (planned-module cards stay as No data yet)", () => {
+    expect(ids("distributor")).toEqual(["netSales", "grossProfit", "operatingExpenses", "estimatedOperatingProfit", "paymentsReceived", "receivablesOutstanding", "ordersToday", "unpaidOrders", "pendingFulfillment", "lowStock", "recentOrders", "lowStockItems", "recentActivity"]);
     expect(ids("distributor", "staff")).toEqual(["ordersToday", "unpaidOrders", "pendingFulfillment", "lowStock", "recentOrders", "lowStockItems", "recentActivity"]);
   });
 

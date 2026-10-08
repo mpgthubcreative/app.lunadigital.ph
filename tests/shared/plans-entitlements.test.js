@@ -46,12 +46,12 @@ describe("computeEntitlements", () => {
 
   it("applies per-business module, limit and feature overrides", () => {
     const e = computeEntitlements(PLAN_SEED.starter, {
-      modules: { suppliers: true, imports: false },
+      modules: { inventory: false },
       limits: { users: 3 },
       features: { pushNotifications: true },
     }, "distributor");
-    expect(e.modules.suppliers).toBe(true);
-    expect(e.modules.imports).toBe(false);
+    expect(e.modules.inventory).toBe(false);
+    expect(e.modules.orders).toBe(true);
     expect(e.limits.users).toBe(3);
     expect(e.limits.ordersPerMonth).toBe(500);
     expect(e.features.pushNotifications).toBe(true);

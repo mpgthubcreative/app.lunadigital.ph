@@ -22,15 +22,16 @@
 // of the key lists in sync with this file and shared/workspaces.js.
 //
 // Effective modules: core modules are always on; every other module must
-// be allowed by the workspace template (a hard ceiling no override can
-// lift), and is then the operator override if one is set, else the plan
-// default. An override may still grant a module the plan lacks (a Phase 4
-// add-on) as long as the template allows it. Unbuilt modules can sit in a
-// snapshot but never become usable (isModuleEnabled checks `available`).
+// be BUILT (available in shared/modules.js) and allowed by the workspace
+// template (a hard ceiling no override can lift), and is then the operator
+// override if one is set, else the plan default. An override may still
+// grant a module the plan lacks (a Phase 4 add-on) as long as the template
+// allows it. An unbuilt module is always false: future capabilities live
+// in the template's plannedModules, never in a snapshot.
 
 import { LIMIT_KEYS, FEATURE_KEYS, isValidFeatureValue } from "./plans.seed.js";
-import { MODULE_IDS, CORE_MODULE_IDS, SELLABLE_MODULE_IDS } from "./modules.js";
-import { getWorkspaceTemplate, ENTITLEMENTS_SCHEMA_VERSION } from "./workspaces.js";
+import { MODULE_IDS, CORE_MODULE_IDS, SELLABLE_MODULE_IDS, getModule } from "./modules.js";
+import { getWorkspaceTemplate, ENTITLEMENTS_SCHEMA_VERSION, UNBUILT_TRUE_TOLERATED } from "./workspaces.js";
 
 export { ENTITLEMENTS_SCHEMA_VERSION };
 
@@ -151,7 +152,7 @@ export function computeEntitlements(plan, overrides, workspaceTemplateId) {
   const modules = {};
   for (const id of MODULE_IDS) {
     if (CORE_MODULE_IDS.includes(id)) modules[id] = true;
-    else if (!template.modules.includes(id)) modules[id] = false;
+    else if (!getModule(id).available || !template.modules.includes(id)) modules[id] = false;
     else if (id in clean.modules) modules[id] = clean.modules[id];
     else modules[id] = plan.modules[id] === true;
   }
@@ -193,7 +194,13 @@ export function validateEntitlementsSnapshot(snapshot, expectedPlanId, expectedT
     for (const id of MODULE_IDS) if (typeof snapshot.modules[id] !== "boolean") problems.push(`modules.${id} must be a boolean`);
     for (const id of Object.keys(snapshot.modules)) if (!MODULE_IDS.includes(id)) problems.push(`unknown module ${id}`);
     for (const id of CORE_MODULE_IDS) if (snapshot.modules[id] !== true) problems.push(`core module ${id} must be enabled`);
-    if (template) for (const id of MODULE_IDS) if (snapshot.modules[id] === true && !template.modules.includes(id)) problems.push(`module ${id} isn't allowed in the ${template.id} workspace`);
+    for (const id of MODULE_IDS) {
+      if (snapshot.modules[id] !== true) continue;
+      const built = getModule(id).available;
+      if (!built && UNBUILT_TRUE_TOLERATED) continue; // pre-cleanup snapshot; never usable
+      if (!built) problems.push(`module ${id} isn't built and can't be enabled`);
+      else if (template && !template.modules.includes(id)) problems.push(`module ${id} isn't allowed in the ${template.id} workspace`);
+    }
   }
 
   if (!isPlainObject(snapshot.limits)) problems.push("limits must be an object");

@@ -96,7 +96,8 @@ describe("owner protection is the isAccountOwner flag, not the 'owner' template"
 
   it("cancelled: the real account owner keeps export-only reads", async () => {
     const db = dbAs(env, statusUid("owner", cancelled));
-    await assertSucceeds(db.doc(`businesses/${cancelled}/reports/${DOC}`).get());
+    await assertSucceeds(db.doc(`businesses/${cancelled}/metrics/${DOC}`).get()); // dashboard.view is export-only
+    await assertFails(db.doc(`businesses/${cancelled}/reports/${DOC}`).get()); // Reports unbuilt (Phase 8.5 cleanup)
     await assertSucceeds(db.doc(`businesses/${cancelled}/settings/${DOC}`).get());
     await assertFails(db.doc(`businesses/${cancelled}/customers/${DOC}`).get());
     await assertFails(db.collection(`businesses/${cancelled}/members`).get()); // users.view is not export-only
@@ -105,7 +106,7 @@ describe("owner protection is the isAccountOwner flag, not the 'owner' template"
   it("active: the account-owner flag adds no permissions beyond the stored map", async () => {
     const bid = STATUS_TENANTS.active.bid;
     const db = dbAs(env, statusUid("staffAccountOwner", bid));
-    await assertFails(db.doc(`businesses/${bid}/reports/${DOC}`).get());
+    await assertFails(db.doc(`businesses/${bid}/productCosts/${DOC}`).get()); // staff map lacks inventory.costs
     await assertSucceeds(db.doc(`businesses/${bid}/orders/${DOC}`).get());
   });
 });

@@ -47,9 +47,16 @@ function visit(session, path) {
 }
 
 describe("THE scenario in the browser", () => {
-  it("staff with reports.view gets a Reports route while the module is on", () => {
-    expect(paths(reportStaff())).toContain("/reports");
-    expect(visit(reportStaff(), "/reports").route.moduleId).toBe("reports");
+  it("Reports is unbuilt (Phase 8.5 cleanup): no route even for staff holding reports.view", () => {
+    expect(paths(reportStaff())).not.toContain("/reports");
+    expect(visit(reportStaff(), "/reports").notFound).toBe(true);
+  });
+
+  it("a built module the business has: route; switched off: no route, Page not available", () => {
+    expect(visit(sessionFixture({ roleTemplate: "staff" }), "/inventory").route.moduleId).toBe("inventory");
+    const off = sessionFixture({ roleTemplate: "staff", overrides: { modules: { inventory: false } } });
+    expect(paths(off)).not.toContain("/inventory");
+    expect(visit(off, "/inventory").text).toMatch(/Page not available/);
   });
 
   it("with Reports disabled: no nav item, and typing /reports shows Page not available", () => {
@@ -99,8 +106,9 @@ describe("routes = entitlements x permissions, nothing else", () => {
     expect(paths(session)).not.toContain("/reports");
   });
 
-  it("unbuilt modules never get routes, even if entitled", () => {
-    const session = sessionFixture({ overrides: { modules: { suppliers: true } } });
+  it("unbuilt modules never get routes, even if a session claims them", () => {
+    const session = sessionFixture();
+    session.entitlements.modules.suppliers = true;
     expect(paths(session)).not.toContain("/suppliers");
     expect(visit(session, "/suppliers").notFound).toBe(true);
   });
@@ -121,10 +129,10 @@ describe("Settings package visibility", () => {
   };
 
   it("owner sees plan, modules (incl. what's not on the package), limits and features", () => {
-    const el = settingsText(sessionFixture({ overrides: { modules: { reports: false } } }));
+    const el = settingsText(sessionFixture({ overrides: { modules: { inventory: false } } }));
     expect(el.querySelector("#packagePlan").textContent).toBe("Growth");
     const modules = el.querySelector("#packageModules").textContent;
-    expect(modules).toMatch(/Reports\s*Not on your package/);
+    expect(modules).toMatch(/Inventory\s*Not on your package/);
     expect(modules).toMatch(/Orders\s*Included/);
     expect(el.textContent).toMatch(/Active users/);
     expect(el.querySelector("#packageFeatures")).not.toBeNull();

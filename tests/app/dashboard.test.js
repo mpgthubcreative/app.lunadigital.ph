@@ -123,10 +123,17 @@ describe("who sees what", () => {
   });
 
   it("a module off for the business removes its cards", async () => {
-    await show(sessionFixture({ overrides: { modules: { expenses: false } } }));
-    expect(card("operatingExpenses")).toBeNull();
-    expect(card("estimatedOperatingProfit")).toBeNull();
+    await show(sessionFixture({ overrides: { modules: { inventory: false } } }));
+    expect(card("grossProfit")).toBeNull();
+    expect(card("lowStock")).toBeNull();
     expect(card("netSales")).not.toBeNull();
+  });
+
+  it("cards of a module the workspace only PLANS (Expenses) stay as No data yet, without enabling it", async () => {
+    const s = sessionFixture();
+    expect(s.entitlements.modules.expenses).toBe(false);
+    await show(s);
+    expect(card("operatingExpenses").textContent).toMatch(/No data yet/);
   });
 
   it("the owner's dashboard reads exactly four documents", async () => {

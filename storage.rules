@@ -134,7 +134,7 @@ service firebase.storage {
 
     // ---------- Workspace templates (Phase 8.5) ----------
     // Copy of shared/workspaces.js: each template's current version and the
-    // modules it allows (core included). tests/shared/rules-registry.test.js
+    // OPERATIONAL (built) modules it allows (core included). tests/shared/rules-registry.test.js
     // fails if these drift from the registry.
     function workspaceTemplateVersions() {
       return {'distributor': 1, 'household-payroll': 1, 'baby-expense': 1, 'bridal-expense': 1};
@@ -142,10 +142,10 @@ service firebase.storage {
 
     function workspaceTemplateModules() {
       return {
-        'distributor': ['dashboard', 'users', 'settings', 'orders', 'payments', 'inventory', 'customers', 'reports', 'expenses', 'imports', 'suppliers', 'production', 'returns'],
+        'distributor': ['dashboard', 'users', 'settings', 'orders', 'payments', 'inventory'],
         'household-payroll': ['dashboard', 'users', 'settings'],
-        'baby-expense': ['dashboard', 'users', 'settings', 'expenses'],
-        'bridal-expense': ['dashboard', 'users', 'settings', 'expenses']
+        'baby-expense': ['dashboard', 'users', 'settings'],
+        'bridal-expense': ['dashboard', 'users', 'settings']
       };
     }
 

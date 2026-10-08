@@ -89,10 +89,10 @@ describe("computeEntitlements (snapshot shape)", () => {
   });
 
   it("plan disables a module, override enables it (and the reverse)", () => {
-    const lite = { ...growth(), id: "lite", name: "Lite", modules: { ...growth().modules, reports: false } };
-    expect(computeEntitlements(lite, {}, "distributor").modules.reports).toBe(false);
-    expect(computeEntitlements(lite, { modules: { reports: true } }, "distributor").modules.reports).toBe(true);
-    expect(computeEntitlements(PLAN_SEED.growth, { modules: { reports: false } }, "distributor").modules.reports).toBe(false);
+    const lite = { ...growth(), id: "lite", name: "Lite", modules: { ...growth().modules, payments: false } };
+    expect(computeEntitlements(lite, {}, "distributor").modules.payments).toBe(false);
+    expect(computeEntitlements(lite, { modules: { payments: true } }, "distributor").modules.payments).toBe(true);
+    expect(computeEntitlements(PLAN_SEED.growth, { modules: { payments: false } }, "distributor").modules.payments).toBe(false);
   });
 
   it("Founding Client style overrides: more orders, an extra user, extra imports", () => {

@@ -28,13 +28,17 @@ export const MODULES = Object.freeze([
   { id: "orders", label: "Orders", path: "/orders", icon: "orders", permission: "orders.view", available: true, collections: { orders: "orders.view" }, storage: {} },
   { id: "payments", label: "Payments", path: "/payments", icon: "payments", permission: "payments.view", available: true, collections: { payments: "payments.view" }, storage: { payments: "payments.view" } },
   { id: "inventory", label: "Inventory", path: "/inventory", icon: "inventory", permission: "inventory.view", available: true, collections: { products: "inventory.view", inventoryTransactions: "inventory.view", productCosts: "inventory.costs", inventoryTransactionCosts: "inventory.costs" }, storage: { products: "inventory.view" } },
-  { id: "customers", label: "Customers", path: "/customers", icon: "customers", permission: "customers.view", available: true, collections: { customers: "customers.view" }, storage: {} },
-  { id: "reports", label: "Reports", path: "/reports", icon: "reports", permission: "reports.view", available: true, collections: { reports: "reports.view" }, storage: { exports: "reports.export" } },
+  // Placeholders until built (Phase 8.5 cleanup): customers (Phase 9),
+  // reports (11), imports (12). available: false = never in an effective
+  // snapshot, never navigable; becoming available is an explicit release
+  // (registry flag + template modules + template version + recompute).
+  { id: "customers", label: "Customers", path: "/customers", icon: "customers", permission: "customers.view", available: false, collections: { customers: "customers.view" }, storage: {} },
+  { id: "reports", label: "Reports", path: "/reports", icon: "reports", permission: "reports.view", available: false, collections: { reports: "reports.view" }, storage: { exports: "reports.export" } },
   // Approved Phase 5, built in Phase 10. Not available yet: no route, no
   // browser-readable collection, every access denied. The expenses
   // collection gets its rule when the module is built.
   { id: "expenses", label: "Expenses", path: "/expenses", icon: "expenses", permission: "expenses.view", available: false, collections: {}, storage: {} },
-  { id: "imports", label: "Imports", path: "/imports", icon: "imports", permission: "imports.run", available: true, collections: { imports: "imports.run" }, storage: { imports: "imports.run" } },
+  { id: "imports", label: "Imports", path: "/imports", icon: "imports", permission: "imports.run", available: false, collections: { imports: "imports.run" }, storage: { imports: "imports.run" } },
   { id: "users", label: "Users", path: "/users", icon: "users", permission: "users.view", available: true, core: true, collections: { members: "users.view" }, storage: {} },
   { id: "settings", label: "Settings", path: "/settings", icon: "settings", permission: "settings.view", available: true, core: true, collections: { settings: "settings.view" }, storage: {} },
 

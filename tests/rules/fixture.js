@@ -25,7 +25,7 @@ export const TEST_PLANS = Object.freeze({
     ...structuredClone(PLAN_SEED.starter),
     id: "lite-test",
     name: "Lite (test only)",
-    modules: { ...PLAN_SEED.starter.modules, reports: false, imports: false, customers: false },
+    modules: { ...PLAN_SEED.starter.modules, payments: false, reports: false, imports: false, customers: false },
   },
 });
 export const ALL_PLANS = Object.freeze({ ...PLAN_SEED, ...TEST_PLANS });
@@ -46,15 +46,17 @@ export const TENANT_COLLECTIONS = Object.freeze({
   inventoryTransactionCosts: "inventory.costs",
   skuIndex: null,
   idempotencyKeys: null,
-  customers: "customers.view",
+  // Unbuilt since the Phase 8.5 cleanup (placeholders): nobody reads them
+  // until each module is built and explicitly activated.
+  customers: null,
   orders: "orders.view",
   payments: "payments.view",
   metrics: "dashboard.view",
   financialMetrics: "dashboard.financials",
   orderCosts: "dashboard.financials",
-  reports: "reports.view",
+  reports: null,
   settings: "settings.view",
-  imports: "imports.run",
+  imports: null,
   paymentRefs: null,
   counters: null,
   usage: null,
@@ -70,8 +72,8 @@ export const COLLECTION_NAMES = Object.freeze([...Object.keys(TENANT_COLLECTIONS
 export const STORAGE_AREAS = Object.freeze({
   products: "inventory.view",
   payments: "payments.view",
-  imports: "imports.run",
-  exports: "reports.export",
+  imports: null, // Imports unbuilt (Phase 8.5 cleanup)
+  exports: null, // Reports unbuilt (Phase 8.5 cleanup)
 });
 
 // Must match EXPORT_ONLY_PERMISSIONS in shared/tenancy.js.
@@ -98,7 +100,7 @@ export const MEMBERS = Object.freeze({
   staffA: { bid: A, role: "staff" },
   disabledA: { bid: A, role: "manager", status: "disabled" },
   revokedStaffA: { bid: A, role: "staff", overrides: { revoke: ["orders.view"] } },
-  grantedStaffA: { bid: A, role: "staff", overrides: { grant: ["reports.view"] } },
+  grantedStaffA: { bid: A, role: "staff", overrides: { grant: ["inventory.costs"] } },
   // roleTemplate string says "owner" but the stored permissions are Staff's:
   // simulates someone editing only the label.
   labelOwnerA: { bid: A, role: "owner", permissions: resolvePermissions("staff") },

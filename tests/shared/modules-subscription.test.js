@@ -12,7 +12,7 @@ describe("resolveNavigation", () => {
 
   it("shows the owner every enabled, built module", () => {
     expect(ids(resolveNavigation({ entitlements, permissions: resolvePermissions("owner") }))).toEqual([
-      "dashboard", "orders", "payments", "inventory", "customers", "reports", "imports", "users", "settings",
+      "dashboard", "orders", "payments", "inventory", "users", "settings",
     ]);
   });
 
@@ -29,9 +29,11 @@ describe("resolveNavigation", () => {
     expect(ids(resolveNavigation({ entitlements: limited, permissions: resolvePermissions("owner") }))).not.toContain("inventory");
   });
 
-  it("never shows unbuilt modules even when entitled", () => {
-    const e = computeEntitlements(PLAN_SEED.pro, { modules: { suppliers: true } }, "distributor");
-    expect(isModuleEnabled(e, "suppliers")).toBe(false);
+  it("unbuilt modules are false in the snapshot, can't be added by override, and a forged true grants nothing", () => {
+    const e = computeEntitlements(PLAN_SEED.pro, {}, "distributor");
+    expect(e.modules.suppliers).toBe(false);
+    expect(() => computeEntitlements(PLAN_SEED.pro, { modules: { suppliers: true } }, "distributor")).toThrow(/isn't allowed/);
+    expect(isModuleEnabled({ ...e, modules: { ...e.modules, suppliers: true } }, "suppliers")).toBe(false);
   });
 
   it("shows nothing without permissions", () => {

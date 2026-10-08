@@ -118,8 +118,8 @@ describe("resyncMemberPermissions", () => {
 describe("Expenses authorization while the module is unbuilt", () => {
   const guard = (uid, businessId, opts) => requireTenant(request({ uid, businessId }), { db: world.db, auth: world.auth, ...opts });
 
-  it("owner with the module entitled is still denied (not available yet)", async () => {
-    expect(doc("businesses/biz-a").entitlements.modules.expenses).toBe(true);
+  it("the plan includes it, but the snapshot holds false and the owner is denied (not built yet)", async () => {
+    expect(doc("businesses/biz-a").entitlements.modules.expenses).toBe(false);
     await expect(guard(world.uids.ownera, "biz-a", { permission: "expenses.view" })).rejects.toMatchObject({ code: "forbidden", reason: "module-disabled:expenses" });
     await expect(guard(world.uids.ownera, "biz-a", { permission: "expenses.create", write: true })).rejects.toMatchObject({ code: "forbidden" });
   });

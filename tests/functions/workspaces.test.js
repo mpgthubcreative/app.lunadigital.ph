@@ -93,10 +93,11 @@ describe("a bridal workspace can't reach Distributor APIs", () => {
 });
 
 describe("Distributor tenants are unchanged", () => {
-  it("session reports the distributor workspace and the same modules as Phase 8", async () => {
+  it("session reports the distributor workspace with its built modules (placeholders off)", async () => {
     const s = await session(world.uids.ownera, "biz-a");
     expect(s.body.workspace.templateId).toBe("distributor");
-    for (const m of ["orders", "payments", "inventory", "customers", "reports", "imports"]) expect(s.body.entitlements.modules[m], m).toBe(true);
+    for (const m of ["orders", "payments", "inventory"]) expect(s.body.entitlements.modules[m], m).toBe(true);
+    for (const m of ["customers", "reports", "imports", "expenses"]) expect(s.body.entitlements.modules[m], m).toBe(false);
   });
 
   it("orders, products and payments endpoints are reachable as before", async () => {
@@ -150,7 +151,9 @@ describe("operator tooling: assign / change template", () => {
   });
 
   it("an override the new template doesn't allow is refused, not silently dropped", async () => {
-    await updateOverrides({ ...world, businessId: "biz-a", set: { modules: { suppliers: true } }, ...op });
+    // A plan add-on for Payments on a Starter-like plan is fine in distributor...
+    await updateOverrides({ ...world, businessId: "biz-a", set: { modules: { payments: true } }, ...op });
+    // ...but baby-expense doesn't allow Payments, so the change is refused.
     await expect(assignWorkspaceTemplate({ ...world, businessId: "biz-a", templateId: "baby-expense", allowChange: true, ...op })).rejects.toMatchObject({ code: "invalid-input" });
     expect(biz("biz-a").workspaceTemplateId).toBe("distributor");
   });

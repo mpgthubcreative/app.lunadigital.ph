@@ -42,10 +42,12 @@ describe("dashboard.financials separates profitability from operations", () => {
 
   it("widgets disappear when a module they depend on isn't entitled", () => {
     const owner = resolvePermissions("owner");
-    const noExpenses = ids(resolveDashboard({ entitlements: growth({ modules: { expenses: false } }), permissions: owner }));
-    expect(noExpenses).not.toContain("operatingExpenses");
-    expect(noExpenses).not.toContain("estimatedOperatingProfit");
-    expect(noExpenses).toContain("netSales");
+    // Expenses is planned (unbuilt): its cards stay as "No data yet" without
+    // the module being enabled.
+    const planned = ids(resolveDashboard({ entitlements: growth(), permissions: owner }));
+    expect(growth().modules.expenses).toBe(false);
+    expect(planned).toContain("operatingExpenses");
+    expect(planned).toContain("netSales");
     const noInventory = ids(resolveDashboard({ entitlements: growth({ modules: { inventory: false } }), permissions: owner }));
     expect(noInventory).not.toContain("grossProfit");
     expect(noInventory).not.toContain("lowStock");
@@ -106,9 +108,9 @@ describe("Expenses module registration", () => {
     }
   });
 
-  it("even when entitled, an unbuilt module is never usable or navigable", () => {
+  it("an unbuilt module is never enabled, usable or navigable, whatever the plan says", () => {
     const access = { entitlements: growth(), permissions: resolvePermissions("owner") };
-    expect(access.entitlements.modules.expenses).toBe(true);
+    expect(access.entitlements.modules.expenses).toBe(false);
     expect(isModuleEnabled(access.entitlements, "expenses")).toBe(false);
     expect(canUseModule(access, "expenses")).toBe(false);
     expect(resolveNavigation(access).map((m) => m.id)).not.toContain("expenses");

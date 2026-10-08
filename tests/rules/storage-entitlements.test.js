@@ -14,9 +14,11 @@ let env;
 
 const PACKAGES = Object.freeze({
   "st-growth": { planId: "growth" },
-  "st-no-reports": { planId: "growth", overrides: { modules: { reports: false } } },
+  // Phase 4 used Reports/exports; Reports and Imports are unbuilt since the
+  // Phase 8.5 cleanup, so the scenario uses Payments (payments area).
+  "st-no-payments": { planId: "growth", overrides: { modules: { payments: false } } },
   "st-lite": { planId: "lite-test" },
-  "st-lite-plus": { planId: "lite-test", overrides: { modules: { reports: true, imports: true } } },
+  "st-lite-plus": { planId: "lite-test", overrides: { modules: { payments: true } } },
   "st-growth-minus": { planId: "growth", overrides: { modules: { inventory: false, payments: false } } },
 });
 
@@ -63,11 +65,16 @@ afterAll(async () => {
   await env?.cleanup();
 });
 
-describe("THE scenario in Storage: export permission, Reports off", () => {
-  it("exports are refused when Reports is disabled, allowed when it's on", async () => {
-    await assertFails(storageAs(uidOf("exportStaff", "st-no-reports")).ref(file("st-no-reports", "exports")).getMetadata());
-    await assertFails(storageAs(uidOf("owner", "st-no-reports")).ref(file("st-no-reports", "exports")).getDownloadURL());
-    await assertSucceeds(storageAs(uidOf("exportStaff", "st-growth")).ref(file("st-growth", "exports")).getMetadata());
+describe("THE scenario in Storage: payments.view, Payments off", () => {
+  it("payment proofs are refused when Payments is disabled, allowed when it's on", async () => {
+    await assertFails(storageAs(uidOf("staff", "st-no-payments")).ref(file("st-no-payments", "payments")).getMetadata());
+    await assertFails(storageAs(uidOf("owner", "st-no-payments")).ref(file("st-no-payments", "payments")).getDownloadURL());
+    await assertSucceeds(storageAs(uidOf("staff", "st-growth")).ref(file("st-growth", "payments")).getMetadata());
+  });
+
+  it("unbuilt areas (exports = Reports, imports) are refused even with the permissions", async () => {
+    for (const area of ["exports", "imports"]) await assertFails(storageAs(uidOf("exportStaff", "st-growth")).ref(file("st-growth", area)).getMetadata());
+    for (const area of ["exports", "imports"]) await assertFails(storageAs(uidOf("owner", "st-growth")).ref(file("st-growth", area)).getMetadata());
   });
 });
 
@@ -112,6 +119,6 @@ describe("no new paths across tenants or into writes", () => {
   });
 
   it("forged module claims grant nothing", async () => {
-    await assertFails(storageAs(uidOf("exportStaff", "st-no-reports"), { modules: { reports: true }, plan: "pro" }).ref(file("st-no-reports", "exports")).getMetadata());
+    await assertFails(storageAs(uidOf("staff", "st-no-payments"), { modules: { payments: true }, plan: "pro" }).ref(file("st-no-payments", "payments")).getMetadata());
   });
 });

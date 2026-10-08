@@ -67,9 +67,10 @@ describe("cross tenant: A can never read, list or write B's files", () => {
   });
 
   it("a member of both reads B under B's membership only", async () => {
-    // manager in B: exports needs reports.export, which managers hold
-    await assertSucceeds(storageAs(MULTI.uid).ref(file(B, "exports")).getMetadata());
-    // staff in A: no reports.export there
+    // manager in B: payment proofs via B's own membership
+    await assertSucceeds(storageAs(MULTI.uid).ref(file(B, "payments")).getMetadata());
+    // exports (Reports) is unbuilt: refused in both, whatever the role
+    await assertFails(storageAs(MULTI.uid).ref(file(B, "exports")).getMetadata());
     await assertFails(storageAs(MULTI.uid).ref(file(A, "exports")).getMetadata());
   });
 });
@@ -107,9 +108,9 @@ describe("disabled members and subscription states", () => {
     await assertSucceeds(storageAs(statusUid("staff", bid)).ref(file(bid, "products")).getMetadata());
   });
 
-  it("cancelled: account owner may read exports only; staff nothing", async () => {
+  it("cancelled: no Storage area is readable (exports, the only export-only area, belongs to unbuilt Reports)", async () => {
     const bid = STATUS_TENANTS.cancelled.bid;
-    await assertSucceeds(storageAs(statusUid("owner", bid)).ref(file(bid, "exports")).getMetadata());
+    await assertFails(storageAs(statusUid("owner", bid)).ref(file(bid, "exports")).getMetadata());
     await assertFails(storageAs(statusUid("owner", bid)).ref(file(bid, "products")).getMetadata());
     await assertFails(storageAs(statusUid("staff", bid)).ref(file(bid, "exports")).getMetadata());
     await assertFails(storageAs(statusUid("labelOwner", bid)).ref(file(bid, "exports")).getMetadata());

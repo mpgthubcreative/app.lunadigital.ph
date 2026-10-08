@@ -21,7 +21,9 @@ afterAll(async () => {
 });
 
 const order = (bid) => `businesses/${bid}/orders/${DOC}`;
-const report = (bid) => `businesses/${bid}/reports/${DOC}`;
+// Product costs: inventory.costs (Owner/Manager, not Staff). Phase 4 used
+// Reports here; Reports is unbuilt since the Phase 8.5 cleanup.
+const report = (bid) => `businesses/${bid}/productCosts/${DOC}`;
 const asAdmin = (fn) => env.withSecurityRulesDisabled((ctx) => fn(ctx.firestore()));
 
 describe("these do not grant access", () => {
@@ -82,7 +84,7 @@ describe("these do not grant access", () => {
   it("a roleTemplate of 'owner' whose stored permissions are Staff's", async () => {
     const db = dbAs(env, "labelOwnerA");
     await assertSucceeds(db.doc(order(A)).get()); // staff has orders.view
-    await assertFails(db.doc(report(A)).get()); // staff lacks reports.view
+    await assertFails(db.doc(report(A)).get()); // staff lacks inventory.costs
     await assertFails(db.collection(`businesses/${A}/members`).get()); // lacks users.view
     await assertFails(db.doc(`businesses/${A}/imports/${DOC}`).get());
   });
@@ -98,10 +100,10 @@ describe("these do not grant access", () => {
 
   it("membership in A does not leak into B, and B access follows B's membership", async () => {
     const db = dbAs(env, MULTI.uid);
-    // staff in A: orders yes, reports no
+    // staff in A: orders yes, product costs no
     await assertSucceeds(db.doc(order(A)).get());
     await assertFails(db.doc(report(A)).get());
-    // manager in B: reports yes (from B's own membership)
+    // manager in B: product costs yes (from B's own membership)
     await assertSucceeds(db.doc(report(B)).get());
     await assertFails(db.doc(`businesses/${B}/integrations/${DOC}`).get());
   });
@@ -114,23 +116,23 @@ describe("granular permissions", () => {
     await assertSucceeds(db.collection(`businesses/${A}/orders`).where("tenant", "==", A).limit(25).get());
   });
 
-  it("staff without reports.view cannot read reports", async () => {
+  it("staff without inventory.costs cannot read product costs", async () => {
     const db = dbAs(env, "staffA");
     await assertFails(db.doc(report(A)).get());
-    await assertFails(db.collection(`businesses/${A}/reports`).get());
+    await assertFails(db.collection(`businesses/${A}/productCosts`).get());
   });
 
-  it("a per-member grant (staff + reports.view) works", async () => {
+  it("a per-member grant (staff + inventory.costs) works", async () => {
     await assertSucceeds(dbAs(env, "grantedStaffA").doc(report(A)).get());
   });
 
   it("a per-member revoke (staff - orders.view) works", async () => {
     const db = dbAs(env, "revokedStaffA");
     await assertFails(db.doc(order(A)).get());
-    await assertSucceeds(db.doc(`businesses/${A}/customers/${DOC}`).get());
+    await assertSucceeds(db.doc(`businesses/${A}/products/${DOC}`).get());
   });
 
-  it("manager reads reports but not integrations (server-only)", async () => {
+  it("manager reads product costs but not integrations (server-only)", async () => {
     const db = dbAs(env, "managerA");
     await assertSucceeds(db.doc(report(A)).get());
     await assertFails(db.doc(`businesses/${A}/integrations/${DOC}`).get());
@@ -145,12 +147,12 @@ describe("changes take effect immediately", () => {
   it("revoking a permission on the member document", async () => {
     const db = dbAs(env, "managerA");
     await assertSucceeds(db.doc(report(A)).get());
-    // Read-modify-write: a dotted update path would mean permissions.reports.view
-    // (nested), not the "reports.view" key.
+    // Read-modify-write: a dotted update path would mean
+    // permissions.inventory.costs (nested), not the "inventory.costs" key.
     await asAdmin(async (admin) => {
       const ref = admin.doc(`businesses/${A}/members/managerA`);
       const { permissions } = (await ref.get()).data();
-      await ref.update({ permissions: { ...permissions, "reports.view": false } });
+      await ref.update({ permissions: { ...permissions, "inventory.costs": false } });
     });
     await assertFails(db.doc(report(A)).get());
   });

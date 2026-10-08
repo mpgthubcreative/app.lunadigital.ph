@@ -51,10 +51,10 @@ describe("same tenant: reads follow the member's stored permissions", () => {
       });
     }
 
-    it(`${uid} ${perms["imports.run"] ? "CAN" : "cannot"} read import rows`, async () => {
-      const read = dbAs(env, uid).collection(`businesses/${own}/imports/${DOC}/rows`).get();
-      if (perms["imports.run"]) await assertSucceeds(read);
-      else await assertFails(read);
+    // Imports is unbuilt (Phase 8.5 cleanup): nobody reads import rows,
+    // whatever their permissions, until the module is built and activated.
+    it(`${uid} cannot read import rows (Imports unbuilt)`, async () => {
+      await assertFails(dbAs(env, uid).collection(`businesses/${own}/imports/${DOC}/rows`).get());
     });
 
     it(`${uid} ${perms["users.view"] ? "CAN" : "cannot"} list team members / read a colleague`, async () => {

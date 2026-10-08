@@ -20,12 +20,13 @@ const PACKAGES = Object.freeze({
   "ent-starter": { planId: "starter" },
   "ent-growth": { planId: "growth" },
   "ent-pro": { planId: "pro" },
-  // THE scenario: Growth with Reports switched off for this business.
-  "ent-no-reports": { planId: "growth", overrides: { modules: { reports: false } } },
-  // Test-only plan without Reports / Imports / Customers ...
+  // THE scenario: Growth with Payments switched off for this business.
+  // (Phase 4 used Reports; Reports is unbuilt since the Phase 8.5 cleanup.)
+  "ent-no-payments": { planId: "growth", overrides: { modules: { payments: false } } },
+  // Test-only plan without Payments (and the unbuilt placeholders) ...
   "ent-lite": { planId: "lite-test" },
-  // ... and the same plan with Reports added back by override.
-  "ent-lite-plus": { planId: "lite-test", overrides: { modules: { reports: true } } },
+  // ... and the same plan with Payments added back by override (add-on).
+  "ent-lite-plus": { planId: "lite-test", overrides: { modules: { payments: true } } },
   // Reverse: a plan module removed by override.
   "ent-growth-minus": { planId: "growth", overrides: { modules: { inventory: false, imports: false } } },
 });
@@ -34,8 +35,12 @@ const ROLES = Object.freeze({
   owner: { role: "owner", isAccountOwner: true },
   manager: { role: "manager" },
   staff: { role: "staff" },
-  reportStaff: { role: "staff", overrides: { grant: ["reports.view"] } },
-  disabledReportStaff: { role: "staff", overrides: { grant: ["reports.view"] }, status: "disabled" },
+  // Staff hold payments.view by default; noPayStaff has it revoked, and
+  // costStaff is granted inventory.costs (a per-member grant).
+  payStaff: { role: "staff" },
+  noPayStaff: { role: "staff", overrides: { revoke: ["payments.view"] } },
+  costStaff: { role: "staff", overrides: { grant: ["inventory.costs"] } },
+  disabledPayStaff: { role: "staff", status: "disabled" },
 });
 
 const uidOf = (kind, bid) => `${kind}@${bid}`;
@@ -110,7 +115,7 @@ beforeAll(async () => {
       const doc = businessDoc(bid, "active", { planId: "growth" });
       breakIt(doc);
       await db.doc(`businesses/${bid}`).set(doc);
-      for (const kind of ["owner", "reportStaff"]) await seedMember(db, bid, uidOf(kind, bid), ROLES[kind]);
+      for (const kind of ["owner", "payStaff"]) await seedMember(db, bid, uidOf(kind, bid), ROLES[kind]);
     }
   });
 });
@@ -118,46 +123,57 @@ afterAll(async () => {
   await env?.cleanup();
 });
 
-describe("THE scenario: staff with reports.view, Reports disabled for the business", () => {
-  const bid = "ent-no-reports";
+describe("THE scenario: staff with payments.view, Payments disabled for the business", () => {
+  const bid = "ent-no-payments";
 
-  it("Firestore DENIES get, list and query of reports", async () => {
-    const db = dbAs(env, uidOf("reportStaff", bid));
-    await assertFails(db.doc(`businesses/${bid}/reports/${DOC}`).get());
-    await assertFails(db.collection(`businesses/${bid}/reports`).get());
-    await assertFails(db.collection(`businesses/${bid}/reports`).where("tenant", "==", bid).limit(10).get());
+  it("Firestore DENIES get, list and query of payments", async () => {
+    const db = dbAs(env, uidOf("payStaff", bid));
+    await assertFails(db.doc(`businesses/${bid}/payments/${DOC}`).get());
+    await assertFails(db.collection(`businesses/${bid}/payments`).get());
+    await assertFails(db.collection(`businesses/${bid}/payments`).where("tenant", "==", bid).limit(10).get());
   });
 
-  it("the same user reads reports on a package that includes them", async () => {
-    await assertSucceeds(dbAs(env, uidOf("reportStaff", "ent-growth")).doc(`businesses/ent-growth/reports/${DOC}`).get());
+  it("the same user reads payments on a package that includes them", async () => {
+    await assertSucceeds(dbAs(env, uidOf("payStaff", "ent-growth")).doc(`businesses/ent-growth/payments/${DOC}`).get());
   });
 
   it("the owner (every permission) is denied too", async () => {
-    await assertFails(dbAs(env, uidOf("owner", bid)).doc(`businesses/${bid}/reports/${DOC}`).get());
+    await assertFails(dbAs(env, uidOf("owner", bid)).doc(`businesses/${bid}/payments/${DOC}`).get());
   });
 
   it("other modules on the same package keep working", async () => {
-    await assertSucceeds(dbAs(env, uidOf("reportStaff", bid)).doc(`businesses/${bid}/orders/${DOC}`).get());
+    await assertSucceeds(dbAs(env, uidOf("payStaff", bid)).doc(`businesses/${bid}/orders/${DOC}`).get());
+  });
+});
+
+describe("unbuilt modules (Reports, Customers, Imports) are denied on every package", () => {
+  it("even the owner of a Pro business, even with every permission", async () => {
+    for (const c of ["reports", "customers", "imports"]) await assertFails(dbAs(env, uidOf("owner", "ent-pro")).doc(`businesses/ent-pro/${c}/${DOC}`).get());
   });
 });
 
 describe("membership AND permission AND module", () => {
-  const report = (bid) => `businesses/${bid}/reports/${DOC}`;
+  const payment = (bid) => `businesses/${bid}/payments/${DOC}`;
 
   it("active membership + permission + module enabled -> ALLOW", async () => {
-    await assertSucceeds(dbAs(env, uidOf("reportStaff", "ent-growth")).doc(report("ent-growth")).get());
+    await assertSucceeds(dbAs(env, uidOf("payStaff", "ent-growth")).doc(payment("ent-growth")).get());
   });
 
   it("active membership + permission + module disabled -> DENY", async () => {
-    await assertFails(dbAs(env, uidOf("reportStaff", "ent-no-reports")).doc(report("ent-no-reports")).get());
+    await assertFails(dbAs(env, uidOf("payStaff", "ent-no-payments")).doc(payment("ent-no-payments")).get());
   });
 
   it("active membership + module enabled + permission missing -> DENY", async () => {
-    await assertFails(dbAs(env, uidOf("staff", "ent-growth")).doc(report("ent-growth")).get());
+    await assertFails(dbAs(env, uidOf("noPayStaff", "ent-growth")).doc(payment("ent-growth")).get());
+  });
+
+  it("a per-member grant works (staff + inventory.costs reads product costs)", async () => {
+    await assertSucceeds(dbAs(env, uidOf("costStaff", "ent-growth")).doc(`businesses/ent-growth/productCosts/${DOC}`).get());
+    await assertFails(dbAs(env, uidOf("staff", "ent-growth")).doc(`businesses/ent-growth/productCosts/${DOC}`).get());
   });
 
   it("permission + module enabled + disabled membership -> DENY", async () => {
-    await assertFails(dbAs(env, uidOf("disabledReportStaff", "ent-growth")).doc(report("ent-growth")).get());
+    await assertFails(dbAs(env, uidOf("disabledPayStaff", "ent-growth")).doc(payment("ent-growth")).get());
   });
 });
 
@@ -184,16 +200,16 @@ describe("package x role x collection matrix", () => {
 });
 
 describe("plan differences and overrides", () => {
-  it("Starter, Growth and Pro all include Reports today (seeded definitions)", async () => {
+  it("Starter, Growth and Pro all include Payments today (seeded definitions)", async () => {
     for (const bid of ["ent-starter", "ent-growth", "ent-pro"]) {
-      await assertSucceeds(dbAs(env, uidOf("manager", bid)).doc(`businesses/${bid}/reports/${DOC}`).get());
+      await assertSucceeds(dbAs(env, uidOf("manager", bid)).doc(`businesses/${bid}/payments/${DOC}`).get());
     }
   });
 
-  it("plan without Reports denies it; override adding Reports allows it", async () => {
-    await assertFails(dbAs(env, uidOf("manager", "ent-lite")).doc(`businesses/ent-lite/reports/${DOC}`).get());
-    await assertSucceeds(dbAs(env, uidOf("manager", "ent-lite-plus")).doc(`businesses/ent-lite-plus/reports/${DOC}`).get());
-    // The override added Reports only; Imports and Customers stay off.
+  it("plan without Payments denies it; an add-on override allows it (within the template)", async () => {
+    await assertFails(dbAs(env, uidOf("manager", "ent-lite")).doc(`businesses/ent-lite/payments/${DOC}`).get());
+    await assertSucceeds(dbAs(env, uidOf("manager", "ent-lite-plus")).doc(`businesses/ent-lite-plus/payments/${DOC}`).get());
+    // The add-on covers Payments only; unbuilt modules stay off.
     await assertFails(dbAs(env, uidOf("manager", "ent-lite-plus")).doc(`businesses/ent-lite-plus/imports/${DOC}`).get());
     await assertFails(dbAs(env, uidOf("manager", "ent-lite-plus")).doc(`businesses/ent-lite-plus/customers/${DOC}`).get());
   });
@@ -220,7 +236,7 @@ describe("malformed entitlement snapshots fail closed", () => {
   Object.keys(BROKEN).forEach((label, index) => {
     const bid = brokenBid(index);
     it(`${label}: no module data for owner or staff`, async () => {
-      for (const kind of ["owner", "reportStaff"]) {
+      for (const kind of ["owner", "payStaff"]) {
         const db = dbAs(env, uidOf(kind, bid));
         for (const [collection] of READABLE) {
           await assertFails(db.doc(`businesses/${bid}/${collection}/${DOC}`).get());
@@ -249,7 +265,7 @@ describe("malformed entitlement snapshots fail closed", () => {
     await assertFails(db.doc(`businesses/${bid}/orders/${DOC}`).get());
     await set(businessDoc(bid, "active", { planId: "lite-test" }));
     await assertSucceeds(db.doc(`businesses/${bid}/orders/${DOC}`).get());
-    await assertFails(db.doc(`businesses/${bid}/reports/${DOC}`).get());
+    await assertFails(db.doc(`businesses/${bid}/payments/${DOC}`).get());
     await set(businessDoc(bid, "active", { planId: "growth" }));
   });
 });
@@ -257,11 +273,11 @@ describe("malformed entitlement snapshots fail closed", () => {
 describe("browser can't change its own package", () => {
   for (const kind of ["owner", "manager"]) {
     it(`${kind} cannot write entitlements, overrides, plan or plans/`, async () => {
-      const bid = "ent-no-reports";
+      const bid = "ent-no-payments";
       const db = dbAs(env, uidOf(kind, bid));
       const ref = db.doc(`businesses/${bid}`);
-      await assertFails(ref.update({ "entitlements.modules.reports": true }));
-      await assertFails(ref.update({ moduleOverrides: { reports: true } }));
+      await assertFails(ref.update({ "entitlements.modules.payments": true }));
+      await assertFails(ref.update({ moduleOverrides: { payments: true } }));
       await assertFails(ref.update({ "subscription.planId": "pro" }));
       await assertFails(ref.set({ entitlements: { modules: { reports: true } } }, { merge: true }));
       await assertFails(db.doc("plans/growth").update({ "modules.reports": true }));
@@ -271,9 +287,9 @@ describe("browser can't change its own package", () => {
   }
 
   it("forged plan / module claims on the token grant nothing", async () => {
-    const bid = "ent-no-reports";
-    const db = dbAs(env, uidOf("reportStaff", bid), { plan: "pro", planId: "pro", modules: { reports: true }, entitlements: { reports: true } });
-    await assertFails(db.doc(`businesses/${bid}/reports/${DOC}`).get());
+    const bid = "ent-no-payments";
+    const db = dbAs(env, uidOf("payStaff", bid), { plan: "pro", planId: "pro", modules: { payments: true }, entitlements: { payments: true } });
+    await assertFails(db.doc(`businesses/${bid}/payments/${DOC}`).get());
   });
 });
 
@@ -294,14 +310,14 @@ describe("entitlements never open a path across tenants", () => {
       const db = dbAs(env, uidOf("owner", bid));
       for (const target of [A, B, ...Object.keys(PACKAGES).filter((other) => other !== bid)]) {
         await assertFails(db.doc(`businesses/${target}/orders/${DOC}`).get());
-        await assertFails(db.doc(`businesses/${target}/reports/${DOC}`).get());
+        await assertFails(db.doc(`businesses/${target}/payments/${DOC}`).get());
       }
     }
   });
 
-  it("Reports off in my business does not let me read Reports somewhere it's on", async () => {
-    const db = dbAs(env, uidOf("reportStaff", "ent-no-reports"));
-    for (const bid of ["ent-growth", "ent-pro", B]) await assertFails(db.doc(`businesses/${bid}/reports/${DOC}`).get());
+  it("Payments off in my business does not let me read Payments somewhere it's on", async () => {
+    const db = dbAs(env, uidOf("payStaff", "ent-no-payments"));
+    for (const bid of ["ent-growth", "ent-pro", B]) await assertFails(db.doc(`businesses/${bid}/payments/${DOC}`).get());
   });
 
   it("collection-group queries stay refused", async () => {

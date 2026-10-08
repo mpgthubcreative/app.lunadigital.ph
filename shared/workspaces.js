@@ -8,10 +8,11 @@
 // subscription.planId, never a combined "distributor-growth".
 //
 // A template is data, never code:
-//   modules        every module the template ALLOWS (core included). This
-//                  is a ceiling: effective modules = template allows
-//                  ∩ (plan default, or an operator override) — see
-//                  computeEntitlements in shared/entitlements.js.
+//   modules        the OPERATIONAL modules the template allows (core
+//                  included): registered AND built (available). This is a
+//                  ceiling: effective modules = built ∩ template allows
+//                  ∩ (plan default, or an operator add-on/disable
+//                  override) — see computeEntitlements.
 //   navigation     module ids in display order
 //   dashboard      widget ids (shared/dashboard.js) in display order, and
 //                  the empty state shown when none apply yet
@@ -19,7 +20,17 @@
 //                  keys and security rules never depend on these
 //   settings       default workspace settings (plain JSON values)
 //   plannedModules roadmap metadata ONLY: no route, no permission, no
-//                  entitlement, never shown as navigation
+//                  entitlement, never shown as navigation. An entry may
+//                  name a registered-but-unbuilt module (e.g. customers)
+//                  or a future domain capability (e.g. wedding-tasks).
+//
+// Activating a module is always explicit: mark it available in
+// shared/modules.js, move it from plannedModules to modules in each
+// template that should get it, bump those templates' versions, then
+// recompute snapshots through the staged rollout. Shipping module code
+// alone activates nothing: old snapshots hold false for unbuilt modules,
+// and the registry tests fail if a built module is still "planned" or an
+// unbuilt one is listed as operational.
 //
 // No executable code, HTML, CSS, collection names or routes come from a
 // template or a tenant. firestore.rules / storage.rules keep a copy of
@@ -39,6 +50,12 @@
 // is no "missing workspace = distributor".
 export const ENTITLEMENTS_SCHEMA_VERSION = 2;
 
+// Phase 8.5 cleanup window: snapshots computed before the cleanup may
+// still hold true for an unbuilt module. Tolerated (unbuilt modules are
+// never usable anyway) until every snapshot is recomputed; then false and
+// removed (strict step), after which such a snapshot fails closed.
+export const UNBUILT_TRUE_TOLERATED = true;
+
 export const WORKSPACE_TEMPLATE_ID_PATTERN = /^[a-z][a-z0-9-]{1,31}$/;
 const CORE = ["dashboard", "users", "settings"];
 
@@ -57,15 +74,24 @@ const TEMPLATES = [
     name: "Distributor Operations",
     description: "Orders, payments, products and inventory for distributors and wholesalers.",
     status: "live",
-    modules: [...CORE, "orders", "payments", "inventory", "customers", "reports", "expenses", "imports", "suppliers", "production", "returns"],
-    navigation: ["dashboard", "orders", "payments", "inventory", "customers", "reports", "expenses", "imports", "users", "settings", "suppliers", "production", "returns"],
+    modules: [...CORE, "orders", "payments", "inventory"],
+    navigation: ["dashboard", "orders", "payments", "inventory", "users", "settings"],
     dashboard: {
       widgets: ["netSales", "grossProfit", "operatingExpenses", "estimatedOperatingProfit", "paymentsReceived", "receivablesOutstanding", "ordersToday", "unpaidOrders", "pendingFulfillment", "lowStock", "recentOrders", "lowStockItems", "recentActivity"],
       empty: { title: "Nothing to show yet", body: "Your dashboard fills in as your business uses Luna." },
     },
-    labels: { modules: { expenses: "Operating Expenses" } },
+    labels: { modules: {} },
     settings: { orderPrefix: "ORD" },
-    plannedModules: [{ id: "notifications", name: "Notifications" }],
+    plannedModules: [
+      { id: "customers", name: "Customers" },
+      { id: "reports", name: "Reports" },
+      { id: "expenses", name: "Operating Expenses" },
+      { id: "imports", name: "Imports" },
+      { id: "suppliers", name: "Suppliers" },
+      { id: "production", name: "Production" },
+      { id: "returns", name: "Returns" },
+      { id: "notifications", name: "Notifications" },
+    ],
   },
   {
     id: "household-payroll",
@@ -95,12 +121,13 @@ const TEMPLATES = [
     name: "Baby Expense Tracker",
     description: "Budget and track a baby's expenses, providers and upcoming payments.",
     status: "planned",
-    modules: [...CORE, "expenses"],
-    navigation: [...CORE.slice(0, 1), "expenses", ...CORE.slice(1)],
+    modules: [...CORE],
+    navigation: [...CORE],
     dashboard: { widgets: [], empty: { title: "Your baby budget workspace is being prepared", body: "Budget, spending and upcoming payments will appear here." } },
-    labels: { modules: { dashboard: "Baby Dashboard", expenses: "Baby Expenses" } },
+    labels: { modules: { dashboard: "Baby Dashboard" } },
     settings: {},
     plannedModules: [
+      { id: "expenses", name: "Baby Expenses" },
       { id: "baby-budget", name: "Budget" },
       { id: "expense-categories", name: "Categories" },
       { id: "providers", name: "Vendors / Providers" },
@@ -116,12 +143,13 @@ const TEMPLATES = [
     name: "Bridal / Wedding Management Tracker",
     description: "A compact wedding command center: budget, suppliers, payments, tasks and guests.",
     status: "planned",
-    modules: [...CORE, "expenses"],
-    navigation: [...CORE.slice(0, 1), "expenses", ...CORE.slice(1)],
+    modules: [...CORE],
+    navigation: [...CORE],
     dashboard: { widgets: [], empty: { title: "Your wedding workspace is being prepared", body: "Budget, supplier balances, tasks and RSVPs will appear here." } },
-    labels: { modules: { dashboard: "Wedding Dashboard", expenses: "Wedding Expenses" } },
+    labels: { modules: { dashboard: "Wedding Dashboard" } },
     settings: {},
     plannedModules: [
+      { id: "expenses", name: "Wedding Expenses" },
       { id: "wedding-budget", name: "Budget" },
       { id: "wedding-suppliers", name: "Wedding Suppliers" },
       { id: "supplier-payments", name: "Supplier Payments" },
@@ -179,7 +207,7 @@ export function isSafeLabel(value) {
 // Structural check of a template definition, used by the registry tests
 // against the module and dashboard registries passed in (kept as
 // parameters so this file stays import-free).
-export function validateWorkspaceTemplate(t, { moduleIds, coreModuleIds, widgets }) {
+export function validateWorkspaceTemplate(t, { moduleIds, coreModuleIds, availableModuleIds, widgets }) {
   const problems = [];
   const isObj = (v) => Boolean(v) && typeof v === "object" && !Array.isArray(v);
   if (!isObj(t)) return ["template must be an object"];
@@ -192,7 +220,10 @@ export function validateWorkspaceTemplate(t, { moduleIds, coreModuleIds, widgets
 
   const mods = Array.isArray(t.modules) ? t.modules : [];
   if (!Array.isArray(t.modules) || new Set(mods).size !== mods.length) problems.push("modules must be a list without duplicates");
-  for (const m of mods) if (!moduleIds.includes(m)) problems.push(`unknown module ${m}`);
+  for (const m of mods) {
+    if (!moduleIds.includes(m)) problems.push(`unknown module ${m}`);
+    else if (!availableModuleIds.includes(m)) problems.push(`module ${m} isn't built: list it in plannedModules until it is`);
+  }
   for (const m of coreModuleIds) if (!mods.includes(m)) problems.push(`core module ${m} missing`);
 
   const nav = Array.isArray(t.navigation) ? t.navigation : [];
@@ -207,7 +238,7 @@ export function validateWorkspaceTemplate(t, { moduleIds, coreModuleIds, widgets
     for (const id of ids) {
       const w = widgets.find((x) => x.id === id);
       if (!w) problems.push(`unknown widget ${id}`);
-      else for (const m of w.modules) if (!mods.includes(m)) problems.push(`widget ${id} needs module ${m} the template doesn't allow`);
+      else for (const m of w.modules) if (!mods.includes(m) && !(t.plannedModules || []).some((p) => p && p.id === m)) problems.push(`widget ${id} needs module ${m} the template neither allows nor plans`);
     }
     for (const k of ["title", "body"]) if (typeof t.dashboard.empty[k] !== "string" || /[<>]/.test(t.dashboard.empty[k])) problems.push(`dashboard.empty.${k} must be plain text`);
   }
@@ -227,8 +258,10 @@ export function validateWorkspaceTemplate(t, { moduleIds, coreModuleIds, widgets
     if (new Set(ids).size !== ids.length) problems.push("duplicate planned module");
     for (const p of t.plannedModules) {
       if (!isObj(p) || typeof p.id !== "string" || !WORKSPACE_TEMPLATE_ID_PATTERN.test(p.id) || !isSafeLabel(p.name) || Object.keys(p).some((k) => !["id", "name"].includes(k))) problems.push(`invalid planned module ${JSON.stringify(p)}`);
-      // Roadmap only: a planned id must never collide with a real module.
-      else if (moduleIds.includes(p.id)) problems.push(`planned module ${p.id} is a registered module`);
+      // Roadmap only: a planned id is either a registered module that isn't
+      // built yet, or a future capability id that isn't registered at all.
+      else if (availableModuleIds.includes(p.id)) problems.push(`planned module ${p.id} is already built: move it to modules (and bump the version)`);
+      else if (mods.includes(p.id)) problems.push(`planned module ${p.id} is also listed as operational`);
     }
   }
   return problems;

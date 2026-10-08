@@ -182,9 +182,14 @@ const checks = [
   }],
   ["GET /api/reports: no token → 401", async () => (await get("reports")).status === 401],
   ["GET /api/reports: staff.a (no reports.view) → 403", async () => (await get("reports", { as: "staff.a" })).status === 403],
-  ["GET /api/reports: manager.a (reports.view + module on) → 501, no data", async () => {
+  // Phase 8.5 cleanup: Reports is unbuilt, so even reports.view holders are refused.
+  ["GET /api/reports: manager.a (holds reports.view; Reports unbuilt) → 403", async () => {
     const r = await get("reports", { as: "manager.a" });
-    return r.status === 501 && r.body.error === "not-implemented";
+    return r.status === 403 && r.body.error === "forbidden";
+  }],
+  ["A, B, C snapshots: every unbuilt module is false (planned, not enabled)", async () => {
+    const rows = await Promise.all([session({ as: "owner.a" }), session({ as: "owner.b" }), session({ as: "owner.c" })]);
+    return rows.every((r) => r.status === 200 && ["customers", "reports", "imports", "expenses", "suppliers", "production", "returns"].every((k) => r.body.entitlements.modules[k] === false));
   }],
   ["GET /api/reports: owner.a selecting B → 403", async () => (await get("reports", { as: "owner.a", businessId: B })).status === 403],
   // Phase 5: dashboard summary documents through the deployed Firestore rules.

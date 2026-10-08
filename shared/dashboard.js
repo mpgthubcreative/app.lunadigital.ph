@@ -57,6 +57,9 @@ export const DASHBOARD_SECTIONS = Object.freeze([
 // The workspace template picks WHICH widgets exist and their order (a
 // template without Orders never lists an orders widget, so nothing is
 // fetched for it); permissions and entitled modules then filter as before.
+// A widget that depends on a module the template PLANS (e.g. Operating
+// expenses) stays visible as "No data yet" (isWidgetLive), so a planned
+// module never needs to be "enabled" to keep its placeholder card.
 // Unknown/missing workspace: no widgets.
 export function resolveDashboard({ entitlements, permissions }) {
   const modules = (entitlements && entitlements.modules) || {};
@@ -64,7 +67,7 @@ export function resolveDashboard({ entitlements, permissions }) {
   if (!template) return [];
   return template.dashboard.widgets
     .map((id) => DASHBOARD_WIDGETS.find((w) => w.id === id))
-    .filter((w) => w && Boolean(permissions) && permissions[w.permission] === true && w.modules.every((id) => modules[id] === true && template.modules.includes(id)));
+    .filter((w) => w && Boolean(permissions) && permissions[w.permission] === true && w.modules.every((id) => (modules[id] === true && template.modules.includes(id)) || template.plannedModules.some((p) => p.id === id)));
 }
 
 // What the dashboard says when a workspace has no widgets to show yet.

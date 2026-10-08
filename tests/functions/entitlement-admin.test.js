@@ -84,10 +84,10 @@ describe("updateOverrides", () => {
   });
 
   it("disables and re-enables a module; clearing restores the plan default", async () => {
-    await updateOverrides({ ...world, ...op, businessId: "biz-a", set: { modules: { reports: false } } });
-    expect(biz("biz-a").entitlements.modules.reports).toBe(false);
-    await updateOverrides({ ...world, ...op, businessId: "biz-a", clear: { modules: ["reports"] } });
-    expect(biz("biz-a").entitlements.modules.reports).toBe(true);
+    await updateOverrides({ ...world, ...op, businessId: "biz-a", set: { modules: { inventory: false } } });
+    expect(biz("biz-a").entitlements.modules.inventory).toBe(false);
+    await updateOverrides({ ...world, ...op, businessId: "biz-a", clear: { modules: ["inventory"] } });
+    expect(biz("biz-a").entitlements.modules.inventory).toBe(true);
     expect(biz("biz-a").moduleOverrides).toEqual({});
   });
 
