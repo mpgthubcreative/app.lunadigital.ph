@@ -7,11 +7,15 @@
 
 import { html, render } from "../../lib/html.js";
 import { formatCentavos } from "../../lib/format.js";
-import { ORDER_SOURCES, ORDER_SOURCE_IDS, computeTotals, parseQuantity, parseCentavos, formatQuantity, UNITS } from "@shared/index.js";
+import { ORDER_SOURCES, ORDER_SOURCE_IDS, computeTotals, parseQuantity, parseCentavos, formatQuantity, UNITS, canUseModule } from "@shared/index.js";
 
 const newKey = () => (globalThis.crypto && crypto.randomUUID ? crypto.randomUUID() : `k${Date.now()}${Math.random().toString(36).slice(2)}`).replace(/[^A-Za-z0-9_-]/g, "");
 
-// deps: { searchProducts(term) -> rows, getProducts(ids) -> map, api }
+// deps: { searchProducts(term) -> rows, getProducts(ids) -> map, api,
+//         searchCustomers?(term) -> active customers (Phase 9) }
+// Customer: a saved customer (linked by id; the server copies its name and
+// phone) or a walk-in name typed here. An already-linked order keeps its
+// link unless the user unlinks it.
 export function openOrderEditor({ session, deps, order = null }) {
   const perms = session.member.permissions;
   const canDiscount = perms["orders.discount"] === true;
@@ -19,8 +23,11 @@ export function openOrderEditor({ session, deps, order = null }) {
   const idempotencyKey = newKey();
   // Editing a fulfilled order is a correction: same screen, plus a reason.
   const correcting = order?.fulfillmentStatus === "fulfilled";
+  const canLink = canUseModule({ entitlements: session.entitlements, permissions: perms }, "customers") && typeof deps.searchCustomers === "function";
   const state = {
     customer: { name: order?.customer?.name ?? "", phone: order?.customer?.phone ?? "", notes: order?.customer?.notes ?? "" },
+    customerId: order?.customerId ?? null,
+    customerMatches: [],
     source: order?.source ?? "messenger",
     sourceNote: order?.sourceNote ?? "",
     notes: order?.notes ?? "",
@@ -89,11 +96,12 @@ export function openOrderEditor({ session, deps, order = null }) {
         <div class="modal-body">
           ${correcting ? html`<p class="form-notice" data-role="correcting">This order is fulfilled. Saving corrects stock, sales and COGS automatically and keeps the original in the activity log.</p>` : ""}
           <div class="stat-grid">
-            <div class="field"><label for="oeName">Customer name *</label><input class="input" id="oeName" name="name" value="${state.customer.name}" autocomplete="off" /></div>
-            <div class="field"><label for="oePhone">Phone</label><input class="input" id="oePhone" name="phone" value="${state.customer.phone}" inputmode="tel" autocomplete="off" /></div>
+            <div class="field"><label for="oeName">Customer name *</label><input class="input" id="oeName" name="name" value="${state.customer.name}" autocomplete="off" ${state.customerId ? "readonly" : ""} /></div>
+            <div class="field"><label for="oePhone">Phone</label><input class="input" id="oePhone" name="phone" value="${state.customer.phone}" inputmode="tel" autocomplete="off" ${state.customerId ? "readonly" : ""} /></div>
             <div class="field"><label for="oeSource">Source</label><select class="select" id="oeSource" name="source">${sourceOptions}</select></div>
             <div class="field"><label for="oeSourceNote">Source note</label><input class="input" id="oeSourceNote" name="sourceNote" value="${state.sourceNote}" autocomplete="off" /></div>
           </div>
+          <div data-role="customer-link"></div>
           <div class="field"><label for="oeSearch">Add product (name or exact SKU)</label>
             <div class="page-actions"><input class="input" id="oeSearch" name="search" autocomplete="off" /><button type="button" class="btn" data-act="search">Search</button></div>
           </div>
@@ -119,6 +127,44 @@ export function openOrderEditor({ session, deps, order = null }) {
     const resultsEl = form.querySelector('[data-role="results"]');
     const errorEl = form.querySelector('[data-role="error"]');
     const submitBtn = form.querySelector('[data-act="submit"]');
+    const linkEl = form.querySelector('[data-role="customer-link"]');
+
+    // Saved-customer link: "Find saved customer" -> Use, or Unlink -> walk-in.
+    function paintLink() {
+      form.elements.name.readOnly = Boolean(state.customerId);
+      form.elements.phone.readOnly = Boolean(state.customerId);
+      if (state.customerId) {
+        render(linkEl, html`<p class="form-notice" data-role="linked">Saved customer: <strong>${state.customer.name}</strong> <button type="button" class="btn btn-compact" data-act="unlink">Unlink</button></p>`);
+        return;
+      }
+      if (!canLink) return render(linkEl, html``);
+      render(
+        linkEl,
+        html`<div class="page-actions"><button type="button" class="btn btn-compact" data-act="find-customer">Find saved customer</button><span class="stat-hint">or type a walk-in name above</span></div>
+          ${state.customerMatches.length
+            ? html`<ul class="list" data-role="customer-matches">${state.customerMatches.map(
+                (c) => html`<li><button type="button" class="btn btn-compact" data-act="use-customer" data-id="${c.id}">Use</button> ${c.name}${c.company ? ` · ${c.company}` : ""}${c.phone ? ` · ${c.phone}` : ""}</li>`
+              )}</ul>`
+            : ""}`
+      );
+    }
+
+    async function findCustomer() {
+      const term = form.elements.name.value.trim();
+      if (!term) {
+        errorEl.textContent = "Type part of the customer's name first";
+        errorEl.hidden = false;
+        return;
+      }
+      errorEl.hidden = true;
+      try {
+        state.customerMatches = await deps.searchCustomers(term);
+      } catch {
+        state.customerMatches = [];
+      }
+      paintLink();
+      if (!state.customerMatches.length) render(linkEl, html`<p class="stat-hint" data-role="no-customer">No saved customer starts with "${term}". It will be saved on the order as a walk-in.</p>`);
+    }
 
     function paintLines() {
       const p = preview();
@@ -203,6 +249,24 @@ export function openOrderEditor({ session, deps, order = null }) {
       const act = el.dataset.act;
       if (act === "cancel") close(null);
       if (act === "search") search();
+      if (act === "find-customer") findCustomer();
+      if (act === "use-customer") {
+        const c = state.customerMatches.find((r) => r.id === el.dataset.id);
+        if (c) {
+          state.customerId = c.id;
+          state.customer.name = c.name;
+          state.customer.phone = c.phone || "";
+          form.elements.name.value = state.customer.name;
+          form.elements.phone.value = state.customer.phone;
+          state.customerMatches = [];
+          paintLink();
+        }
+      }
+      if (act === "unlink") {
+        state.customerId = null;
+        paintLink();
+        form.elements.name.focus();
+      }
       if (act === "add") {
         const p = state.results.find((r) => r.id === el.dataset.id);
         if (p && !state.lines.some((l) => l.productId === p.id)) {
@@ -229,6 +293,7 @@ export function openOrderEditor({ session, deps, order = null }) {
         if (p.discountError) throw new Error(p.discountError);
         const payload = {
           customer: { name: state.customer.name, phone: state.customer.phone, notes: state.customer.notes },
+          ...(state.customerId ? { customerId: state.customerId } : {}),
           source: state.source,
           sourceNote: state.sourceNote,
           items: p.lines.map((l) => ({ productId: l.productId, quantity: l.quantity })),
@@ -250,6 +315,7 @@ export function openOrderEditor({ session, deps, order = null }) {
     });
 
     document.addEventListener("keydown", onKey);
+    paintLink();
     paintLines();
     form.elements.name.focus();
   });

@@ -111,8 +111,8 @@ describe("planned modules are roadmap metadata only", () => {
 
   it("shipping module code alone activates nothing: an old snapshot's true for an unbuilt module never grants access", () => {
     const e = ent("distributor", "pro");
-    const old = { ...e, modules: { ...e.modules, customers: true, reports: true, expenses: true } };
-    for (const m of ["customers", "reports", "expenses"]) expect(isModuleEnabled(old, m), m).toBe(false);
+    const old = { ...e, modules: { ...e.modules, reports: true, imports: true, expenses: true } };
+    for (const m of ["reports", "imports", "expenses"]) expect(isModuleEnabled(old, m), m).toBe(false);
   });
 
   it("the future domains are recorded (payroll receipt confirmation, wedding tasks, guests/RSVP)", () => {
@@ -153,7 +153,7 @@ describe("effective modules = core + (template allows ∩ (override ?? plan))", 
     for (const planId of Object.keys(PLAN_SEED)) {
       const e = ent("distributor", planId);
       for (const id of MODULE_IDS) expect(e.modules[id], `${planId}/${id}`).toBe(CORE_MODULE_IDS.includes(id) || (BUILT.includes(id) && PLAN_SEED[planId].modules[id] === true));
-      expect(Object.keys(e.modules).filter((k) => e.modules[k])).toEqual(["dashboard", "orders", "payments", "inventory", "users", "settings"]);
+      expect(Object.keys(e.modules).filter((k) => e.modules[k])).toEqual(["dashboard", "orders", "payments", "inventory", "customers", "users", "settings"]);
     }
   });
 
@@ -238,8 +238,8 @@ describe("stored snapshot validation fails closed", () => {
 
   it("an unbuilt module switched on is rejected for being unbuilt (not only by the template ceiling)", () => {
     const s = ent("distributor", "growth");
-    s.modules.customers = true;
-    expect(v(s, "growth", "distributor").problems).toContain("module customers isn't built and can't be enabled");
+    s.modules.reports = true;
+    expect(v(s, "growth", "distributor").problems).toContain("module reports isn't built and can't be enabled");
   });
 
   it("a distributor snapshot that lost only its template id is not read as distributor", () => {
@@ -290,11 +290,11 @@ describe("navigation", () => {
   const nav = (t, role) => resolveNavigation(access(t, role)).map((m) => `${m.path} ${m.label}`);
 
   it("Distributor: unchanged order and labels for every role", () => {
-    // Customers, Reports and Imports placeholders left the navigation in the
-    // Phase 8.5 cleanup; each returns when it's built.
-    expect(nav("distributor", "owner")).toEqual(["/ Dashboard", "/orders Orders", "/payments Payments", "/inventory Inventory", "/users Users", "/settings Settings"]);
-    expect(nav("distributor", "staff")).toEqual(["/ Dashboard", "/orders Orders", "/payments Payments", "/inventory Inventory"]);
-    expect(nav("distributor", "manager")).toEqual(["/ Dashboard", "/orders Orders", "/payments Payments", "/inventory Inventory", "/users Users", "/settings Settings"]);
+    // Reports and Imports placeholders return when each is built; Customers
+    // is back since Phase 9 (distributor v2).
+    expect(nav("distributor", "owner")).toEqual(["/ Dashboard", "/orders Orders", "/payments Payments", "/inventory Inventory", "/customers Customers", "/users Users", "/settings Settings"]);
+    expect(nav("distributor", "staff")).toEqual(["/ Dashboard", "/orders Orders", "/payments Payments", "/inventory Inventory", "/customers Customers"]);
+    expect(nav("distributor", "manager")).toEqual(["/ Dashboard", "/orders Orders", "/payments Payments", "/inventory Inventory", "/customers Customers", "/users Users", "/settings Settings"]);
   });
 
   it("non-Distributor workspaces get no Distributor navigation, and their own names", () => {

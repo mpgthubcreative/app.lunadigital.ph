@@ -20,3 +20,4 @@ export * from "./quantity.js";
 export * from "./inventory.js";
 export * from "./orders.js";
 export * from "./payments.js";
+export * from "./customers.js";

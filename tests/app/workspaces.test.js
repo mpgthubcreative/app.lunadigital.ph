@@ -39,8 +39,8 @@ function visit(session, path) {
 describe("navigation", () => {
   it("Distributor: unchanged", () => {
     renderShell(document.getElementById("app"), sessionFixture());
-    // Customers / Reports / Imports placeholders return as each is built.
-    expect(navOf()).toEqual(["/ Dashboard", "/orders Orders", "/payments Payments", "/inventory Inventory", "/users Users", "/settings Settings"]);
+    // Customers is back (built in Phase 9); Reports / Imports return as each is built.
+    expect(navOf()).toEqual(["/ Dashboard", "/orders Orders", "/payments Payments", "/inventory Inventory", "/customers Customers", "/users Users", "/settings Settings"]);
   });
 
   it("Bridal: its own dashboard name, no Orders / Inventory / Payments", () => {

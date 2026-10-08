@@ -31,7 +31,7 @@
 
 import { LIMIT_KEYS, FEATURE_KEYS, isValidFeatureValue } from "./plans.seed.js";
 import { MODULE_IDS, CORE_MODULE_IDS, SELLABLE_MODULE_IDS, getModule } from "./modules.js";
-import { getWorkspaceTemplate, ENTITLEMENTS_SCHEMA_VERSION } from "./workspaces.js";
+import { getWorkspaceTemplate, acceptedTemplateVersions, ENTITLEMENTS_SCHEMA_VERSION } from "./workspaces.js";
 
 export { ENTITLEMENTS_SCHEMA_VERSION };
 
@@ -181,7 +181,7 @@ export function validateEntitlementsSnapshot(snapshot, expectedPlanId, expectedT
   const template = getWorkspaceTemplate(snapshot.workspaceTemplateId);
   if (!template) problems.push(`unknown workspace template ${JSON.stringify(snapshot.workspaceTemplateId)}`);
   else {
-    if (snapshot.workspaceTemplateVersion !== template.version) problems.push(`snapshot is for ${template.id} v${JSON.stringify(snapshot.workspaceTemplateVersion)}, current is v${template.version}`);
+    if (!acceptedTemplateVersions(template.id).includes(snapshot.workspaceTemplateVersion)) problems.push(`snapshot is for ${template.id} v${JSON.stringify(snapshot.workspaceTemplateVersion)}, current is v${template.version}`);
     if (!getWorkspaceTemplate(expectedTemplateId)) problems.push("business has no valid workspaceTemplateId");
     else if (snapshot.workspaceTemplateId !== expectedTemplateId) problems.push(`snapshot is for workspace ${JSON.stringify(snapshot.workspaceTemplateId)}, business is ${JSON.stringify(expectedTemplateId)}`);
   }

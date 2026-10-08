@@ -189,7 +189,7 @@ const checks = [
   }],
   ["A, B, C snapshots: every unbuilt module is false (planned, not enabled)", async () => {
     const rows = await Promise.all([session({ as: "owner.a" }), session({ as: "owner.b" }), session({ as: "owner.c" })]);
-    return rows.every((r) => r.status === 200 && ["customers", "reports", "imports", "expenses", "suppliers", "production", "returns"].every((k) => r.body.entitlements.modules[k] === false));
+    return rows.every((r) => r.status === 200 && ["reports", "imports", "expenses", "suppliers", "production", "returns"].every((k) => r.body.entitlements.modules[k] === false));
   }],
   ["GET /api/reports: owner.a selecting B → 403", async () => (await get("reports", { as: "owner.a", businessId: B })).status === 403],
   // Phase 5: dashboard summary documents through the deployed Firestore rules.
@@ -256,6 +256,16 @@ const checks = [
     (await fsQuery("staff.a", `businesses/${A}`, "payments")) === 200 &&
     (await fsQuery("staff.a", `businesses/${A}`, "paymentRefs")) === 403 &&
     (await fsQuery("owner.a", `businesses/${B}`, "payments")) === 403],
+  // Phase 9: customers (refusals and reads only; no customers are created here).
+  ["A, B, C have Customers on (distributor v2)", async () => {
+    const rows = await Promise.all([session({ as: "owner.a" }), session({ as: "owner.b" }), session({ as: "owner.c" })]);
+    return rows.every((r) => r.status === 200 && r.body.entitlements.modules.customers === true && r.body.workspace?.templateVersion === 2);
+  }],
+  ["POST /api/customers without a token → 401", async () => (await post("customers", { action: "create" })).status === 401],
+  ["customer statistics can't be sent from the browser (400)", async () => (await post("customers", { action: "create", customer: { name: "Smoke", stats: { outstandingBalance: 0 } } }, { as: "staff.a" })).status === 400],
+  ["owner.a selecting B can't write B's customers (403)", async () => (await post("customers", { action: "create", customer: { name: "Smoke" } }, { as: "owner.a", businessId: B })).body.error === "business-access-denied"],
+  ["staff.a lists customers; B's customers refused", async () =>
+    (await fsQuery("staff.a", `businesses/${A}`, "customers")) === 200 && (await fsQuery("owner.a", `businesses/${B}`, "customers")) === 403],
 ];
 
 console.log(`Smoke-testing ${baseUrl}\n`);

@@ -46,9 +46,9 @@ export const TENANT_COLLECTIONS = Object.freeze({
   inventoryTransactionCosts: "inventory.costs",
   skuIndex: null,
   idempotencyKeys: null,
-  // Unbuilt since the Phase 8.5 cleanup (placeholders): nobody reads them
-  // until each module is built and explicitly activated.
-  customers: null,
+  customers: "customers.view", // built in Phase 9
+  // Unbuilt (placeholders): nobody reads them until each module is built
+  // and explicitly activated.
   orders: "orders.view",
   payments: "payments.view",
   metrics: "dashboard.view",

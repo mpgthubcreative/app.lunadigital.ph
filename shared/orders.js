@@ -10,6 +10,7 @@
 // A fulfilled order can't be cancelled; reversals belong to Returns later.
 // Payment is separate from fulfillment (Phase 8): new orders are unpaid.
 
+import { isValidCustomerId } from "./customers.js";
 import { isCentavos, lineAmount } from "./quantity.js";
 import { ORDER_PAYMENT_STATUSES, derivePaymentStatus } from "./payments.js";
 
@@ -78,17 +79,22 @@ function text(value, { field, max, required = false }) {
 
 // Validates the parts of an order the browser may supply. Quantities are
 // checked against each product's unit later, by the inventory planner.
-// Returns { customer, source, sourceNote, items: [{ productId, quantity }], discount, notes }.
+// Returns { customer, customerId, source, sourceNote, items: [{ productId, quantity }], discount, notes }.
+// customerId (Phase 9) links a saved customer; the server then copies the
+// name and phone from the customer record. Without it the order is a
+// walk-in and the typed name is required.
 export function validateOrderInput(input, { requireItems = true } = {}) {
   if (!input || typeof input !== "object" || Array.isArray(input)) throw new OrderError("invalid-input", "Invalid order");
-  const allowed = ["customer", "source", "sourceNote", "items", "discount", "notes"];
+  const allowed = ["customer", "customerId", "source", "sourceNote", "items", "discount", "notes"];
   for (const key of Object.keys(input)) if (!allowed.includes(key)) throw new OrderError("invalid-input", `Field ${key} can't be set here`);
 
   const c = input.customer || {};
   if (typeof c !== "object" || Array.isArray(c)) throw new OrderError("invalid-input", "Invalid customer");
   for (const key of Object.keys(c)) if (!["name", "phone", "notes"].includes(key)) throw new OrderError("invalid-input", `Customer field ${key} can't be set`);
+  const customerId = input.customerId === undefined || input.customerId === null ? null : input.customerId;
+  if (customerId !== null && !isValidCustomerId(customerId)) throw new OrderError("invalid-input", "Invalid customer");
   const customer = {
-    name: text(c.name, { field: "Customer name", max: 120, required: true }),
+    name: text(c.name, { field: "Customer name", max: 120, required: customerId === null }),
     phone: text(c.phone, { field: "Phone", max: 40 }),
     notes: text(c.notes, { field: "Customer notes", max: 300 }),
   };
@@ -115,7 +121,7 @@ export function validateOrderInput(input, { requireItems = true } = {}) {
   const discount = input.discount === undefined || input.discount === null ? 0 : input.discount;
   if (!isCentavos(discount)) throw new OrderError("invalid-discount", "Discount must be a whole number of centavos, 0 or more");
 
-  return { customer, source: input.source, sourceNote, items, discount, notes: text(input.notes, { field: "Notes", max: 500 }) };
+  return { customer, customerId, source: input.source, sourceNote, items, discount, notes: text(input.notes, { field: "Notes", max: 500 }) };
 }
 
 // Server-priced lines -> totals. lines: [{ quantity, unitPrice }].

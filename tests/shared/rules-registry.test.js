@@ -11,7 +11,7 @@ import { LIMIT_KEYS, FEATURE_KEYS, FEATURE_DEFINITIONS } from "../../shared/plan
 import { EXPORT_ONLY_PERMISSIONS } from "../../shared/tenancy.js";
 import { PLAN_ID_PATTERN } from "../../shared/entitlements.js";
 import { PERMISSIONS, moduleForPermission } from "../../shared/permissions.js";
-import { WORKSPACE_TEMPLATES, WORKSPACE_TEMPLATE_IDS } from "../../shared/workspaces.js";
+import { WORKSPACE_TEMPLATES, WORKSPACE_TEMPLATE_IDS, acceptedTemplateVersions } from "../../shared/workspaces.js";
 
 const root = resolve(import.meta.dirname, "../..");
 const firestoreRules = readFileSync(resolve(root, "firestore.rules"), "utf8");
@@ -80,8 +80,8 @@ function snapshotChecks(name, text) {
     it("workspace template versions and allowed modules match the registry", () => {
       const versions = /function workspaceTemplateVersions\(\)\s*\{\s*return \{([^}]*)\}/.exec(src);
       expect(versions, "workspaceTemplateVersions()").not.toBeNull();
-      const parsedVersions = Object.fromEntries([...versions[1].matchAll(/'([a-z0-9-]+)':\s*(\d+)/g)].map((m) => [m[1], Number(m[2])]));
-      expect(parsedVersions).toEqual(Object.fromEntries(WORKSPACE_TEMPLATE_IDS.map((id) => [id, WORKSPACE_TEMPLATES[id].version])));
+      const parsedVersions = Object.fromEntries([...versions[1].matchAll(/'([a-z0-9-]+)':\s*\[([^\]]*)\]/g)].map((m) => [m[1], m[2].split(",").map((x) => Number(x.trim()))]));
+      expect(parsedVersions).toEqual(Object.fromEntries(WORKSPACE_TEMPLATE_IDS.map((id) => [id, acceptedTemplateVersions(id)])));
 
       const mods = /function workspaceTemplateModules\(\)\s*\{\s*return \{([\s\S]*?)\};\s*\}/.exec(src);
       expect(mods, "workspaceTemplateModules()").not.toBeNull();

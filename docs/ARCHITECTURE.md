@@ -299,7 +299,7 @@ Each checks sign-in, membership, permission, the Inventory module, subscription 
 
 **Model** (`orders/{id}`, `shared/orders.js`):
 - Identity: `orderNumber`, `orderDate` (business-local creation day), `source` (+ `sourceNote`, required for Other).
-- Customer: `customer {name, phone, notes}` snapshot and `customerId: null` (Phase 9 will link it).
+- Customer: `customer {name, phone, notes}` snapshot and `customerId` (null for a walk-in; linked to a saved customer since Phase 9).
 - Lines: `items[] {lineId, productId, sku, name, unit, quantity, unitPrice, lineSubtotal}`, a snapshot taken from the product inside the create transaction.
 - Money: `subtotal`, `discount`, `total`, `amountPaid` (0), `balance`, `paymentStatus` (unpaid).
 - Status: `fulfillmentStatus` (pending, fulfilled or cancelled) and `statusHistory[]` (created, edited with changes, fulfilled, cancelled with reason; actor and time on each).
@@ -449,7 +449,7 @@ There are no combined ids such as `distributor-growth`. Every plan works with ev
 
 | Template | Status | Allows (besides Dashboard, Users, Settings) | Planned (metadata only) |
 |---|---|---|---|
-| `distributor` | live | orders, payments, inventory | customers (Phase 9), reports, expenses, imports, suppliers, production, returns, notifications |
+| `distributor` (v2) | live | orders, payments, inventory, customers (Phase 9) | reports, expenses, imports, suppliers, production, returns, notifications |
 | `household-payroll` | planned | — | household staff, payroll, salary payments, receipt confirmation, advances, deductions, payroll history, reports |
 | `baby-expense` | planned | — | expenses ("Baby Expenses"), budget, categories, providers, payments, due dates, milestones, reports |
 | `bridal-expense` | planned | — | expenses ("Wedding Expenses"), budget, suppliers, supplier payments and balances, payment due dates, wedding tasks, guests, RSVP, reports |
@@ -544,6 +544,58 @@ The Phase 8 Payments module stays an **order-payment** domain: it depends on ord
 - **C, strict:** unbuilt modules must be `false`, enforced in the validator and in both rule sets.
 
 **Not built in 8.5:** payroll, employees, release or confirmation flows, baby or bridal screens, suppliers, tasks, guests, RSVP, seating, generic contacts, accounting, payments, custom fields, tables or forms, page or workflow builders, custom code or themes, tenant label overrides (`isSafeLabel` exists for when they come), and Customers (Phase 9).
+
+## Customers (Phase 9, Distributor)
+
+**A Distributor customer** is a store, reseller or regular buyer the business sells to. It is deliberately not a generic people or contacts engine. Wedding guests, wedding suppliers, household staff and baby-related providers will be their own domain records in their own workspaces.
+
+**Model** (`customers/{id}`, `shared/customers.js`):
+- Contact: `name` (required), `company`, `phone` (+ `phoneKey`), `email`, `address`, `notes`, `status` (active / inactive).
+- `stats` written only by the server: `orderCount`, `totalOrdered`, `outstandingBalance`, `lastOrderAt`, `lastOrderNumber`.
+- `history[]`, `revision`, and created/updated by and at.
+- No credit terms yet; they can be added later without changing the order link.
+
+**Contact changes** (`POST /api/customers`, `customers.manage`):
+- Actions: `create`, `update` (Edit → Save, only the fields sent, optional `expectedRevision`), `setStatus`, and `delete`.
+- Delete works only for a customer **no order has ever referenced** (a mistaken entry); anyone with order history is deactivated instead. Deletes write an `auditLog` snapshot.
+- A second customer with the same phone (`+63 917…` = `0917…`) gets a "possible duplicate" hint, never a block, because shops and households share numbers.
+- The activity log reads "time • person • Phone changed A → B".
+
+**The order link:**
+- An order either links a saved customer (`customerId`) or stays a walk-in name, as before.
+- When linked, the server reads the customer inside the order transaction and copies its name and phone into the order's own snapshot. Later contact edits never rewrite past orders, and a typed or forged name is ignored.
+- Linking or changing a link needs the Customers module and `customers.view`. Keeping an existing link doesn't.
+- An inactive customer can't be linked to a new order. Orders already linked to them stay editable.
+- Moving an order to another customer, or unlinking it, is part of the normal Edit → Save (and of Phase 7.1 corrections).
+
+**Statistics move in the same transaction as the business event:**
+
+| Event | orderCount | totalOrdered | outstandingBalance |
+|---|---|---|---|
+| order created (linked) | +1 | + total | + total |
+| order edited / corrected | — | + total change | + balance change |
+| order moved A → B | A −1, B +1 | A − old, B + new | A − old balance, B + new balance |
+| payment recorded / edited / removed | — | — | follows the order balance |
+| order cancelled or deleted | −1 | − total | − balance |
+
+So a customer's `outstandingBalance` always equals the sum of its non-cancelled orders' balances. The unit and emulator race tests assert exactly that after every interleaving. Updates are `FieldValue.increment`s on one document per customer, so no read is added to payments.
+
+**Reads** come straight from Firestore under the rules:
+- `customers` with `customers.view` (Customers module on).
+- A customer's order history (`orders` where `customerId ==`, newest 25) also needs `orders.view`.
+- Indexes: `customers (status, nameLower)` and `orders (customerId, createdAt desc)`.
+
+**Screens:**
+- **Customers page:** `Customer | Company | Phone | Orders | Total ordered | Balance | Last order | Status | View details`, 25 per page, search by name, filter Active/Inactive. View details shows contact, stats, order history and activity; the footer has ⋯ More (Deactivate/Reactivate, Delete when never ordered), Edit and Close.
+- **Order editor:** "Find saved customer" → Use (name and phone lock to the record, "Unlink" returns to walk-in). Without `customers.view` it's walk-in only.
+
+**Activation** (the Phase 8.5 procedure, first real use):
+1. Customers marked `available`.
+2. The Distributor template went v1 → v2 with `customers` in `modules` and `navigation`, and `upgradingFrom: [1]` during the window.
+3. The rules accepted versions [1, 2].
+4. `recompute-entitlements --all` ran, then strict: `upgradingFrom` emptied and the rules accept [2] only.
+
+Old v1 snapshots never enabled Customers by themselves.
 
 ## Dashboard and metrics (Phase 5)
 
@@ -671,7 +723,7 @@ On Orders, Reference and Proof show "—" until Payments (Phase 8) fills them in
 7. Orders ✅
 8. Payments ✅
 8.5. Workspace templates ✅
-9. Customers
+9. Customers ✅
 10. Expenses
 11. Reports (incl. operating P&L)
 12. Imports

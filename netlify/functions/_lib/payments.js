@@ -15,6 +15,7 @@
 //
 // Payments never touch Sales or COGS (those belong to fulfillment).
 
+import { applyCustomerStats } from "./customers.js";
 import { randomUUID } from "node:crypto";
 import {
   PAYMENT_SCHEMA_VERSION,
@@ -169,6 +170,7 @@ export async function recordPayment({ db, bucket, tenant, FieldValue, business, 
       });
       recordDailyMetrics({ tx, tenant, FieldValue, timezone: business.timezone, day, financial: { paymentsReceived: data.amount } });
       balanceGauges(tx, { tenant, FieldValue, before: order.total - (order.amountPaid || 0), after: fields.balance });
+    applyCustomerStats(tx, { tenant, FieldValue, customerId: order.customerId, balance: fields.balance - (order.total - (order.amountPaid || 0)) });
       return { paymentId: paymentRef.id, orderId, state: payment.state, ...fields };
     }, TX_OPTIONS);
   } catch (err) {
@@ -257,6 +259,7 @@ export async function updatePayment({ db, bucket, tenant, FieldValue, business, 
       if (delta) {
         recordDailyMetrics({ tx, tenant, FieldValue, timezone: business.timezone, day: payment.receivedDay, financial: { paymentsReceived: delta } });
         balanceGauges(tx, { tenant, FieldValue, before: order.total - (order.amountPaid || 0), after: fields.balance });
+    applyCustomerStats(tx, { tenant, FieldValue, customerId: order.customerId, balance: fields.balance - (order.total - (order.amountPaid || 0)) });
       }
       return { paymentId, orderId: payment.orderId, ...fields };
     }, TX_OPTIONS);
@@ -319,6 +322,7 @@ export async function voidPayment({ db, tenant, FieldValue, business, paymentId,
     });
     recordDailyMetrics({ tx, tenant, FieldValue, timezone: business.timezone, day: payment.receivedDay, financial: { paymentsReceived: -payment.amount } });
     balanceGauges(tx, { tenant, FieldValue, before: order.total - (order.amountPaid || 0), after: fields.balance });
+    applyCustomerStats(tx, { tenant, FieldValue, customerId: order.customerId, balance: fields.balance - (order.total - (order.amountPaid || 0)) });
     return { paymentId, orderId: payment.orderId, voided: true, ...fields };
   }, TX_OPTIONS);
 }

@@ -45,6 +45,15 @@ function applyDotted(target, dottedKey, value) {
   node[parts.at(-1)] = value;
 }
 
+function getDotted(target, dottedKey) {
+  let node = target;
+  for (const part of dottedKey.split(".")) {
+    if (!node || typeof node !== "object") return undefined;
+    node = node[part];
+  }
+  return node;
+}
+
 const clone = (v) => (v === undefined ? undefined : structuredClone(v));
 
 class DocSnap {
@@ -91,14 +100,18 @@ class DocRef {
 }
 
 class Query {
-  constructor(store, path, filters = []) {
+  constructor(store, path, filters = [], max = null) {
     this.store = store;
     this.path = path;
     this.filters = filters;
+    this.max = max;
   }
   where(field, op, value) {
     if (op !== "==") throw new Error(`fake: unsupported operator ${op}`);
-    return new Query(this.store, this.path, [...this.filters, { field, value }]);
+    return new Query(this.store, this.path, [...this.filters, { field, value }], this.max);
+  }
+  limit(n) {
+    return new Query(this.store, this.path, this.filters, n);
   }
   _matches() {
     const prefix = `${this.path}/`;
@@ -107,7 +120,7 @@ class Query {
       if (!path.startsWith(prefix) || path.slice(prefix.length).includes("/")) continue;
       if (this.filters.every((f) => data[f.field] === f.value)) out.push(new DocSnap(new DocRef(this.store, path), clone(data)));
     }
-    return out;
+    return this.max === null ? out : out.slice(0, this.max);
   }
   async get() {
     const docs = this._matches();
@@ -144,7 +157,9 @@ export class FakeFirestore {
     const previous = this.docs.get(path);
     if (!previous) throw new Error(`fake: NOT_FOUND ${path}`);
     const next = clone(previous);
-    for (const [key, value] of Object.entries(data)) applyDotted(next, key, resolveValue(value, undefined));
+    // Like Firestore: increments / arrayUnion apply to the CURRENT value at
+    // the (possibly dotted) path, not to zero.
+    for (const [key, value] of Object.entries(data)) applyDotted(next, key, resolveValue(value, getDotted(next, key)));
     this.docs.set(path, next);
   }
   async runTransaction(fn) {

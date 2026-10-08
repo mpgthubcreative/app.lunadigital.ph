@@ -137,7 +137,7 @@ service cloud.firestore {
         && m.orders is bool
         && m.payments is bool
         && m.inventory is bool
-        && m.customers == false
+        && m.customers is bool
         && m.reports == false
         && m.expenses == false
         && m.imports == false
@@ -175,16 +175,17 @@ service cloud.firestore {
 
 
     // ---------- Workspace templates (Phase 8.5) ----------
-    // Copy of shared/workspaces.js: each template's current version and the
+    // Copy of shared/workspaces.js: each template's accepted versions
+    // (upgradingFrom + current, during a rollout window) and the
     // OPERATIONAL (built) modules it allows (core included). tests/shared/rules-registry.test.js
     // fails if these drift from the registry.
     function workspaceTemplateVersions() {
-      return {'distributor': 1, 'household-payroll': 1, 'baby-expense': 1, 'bridal-expense': 1};
+      return {'distributor': [1, 2], 'household-payroll': [1], 'baby-expense': [1], 'bridal-expense': [1]};
     }
 
     function workspaceTemplateModules() {
       return {
-        'distributor': ['dashboard', 'users', 'settings', 'orders', 'payments', 'inventory'],
+        'distributor': ['dashboard', 'users', 'settings', 'orders', 'payments', 'inventory', 'customers'],
         'household-payroll': ['dashboard', 'users', 'settings'],
         'baby-expense': ['dashboard', 'users', 'settings'],
         'bridal-expense': ['dashboard', 'users', 'settings']
@@ -199,7 +200,7 @@ service cloud.firestore {
       return t is string
         && t in workspaceTemplateVersions()
         && ent.get('workspaceTemplateId', null) == t
-        && ent.get('workspaceTemplateVersion', 0) == workspaceTemplateVersions()[t];
+        && ent.get('workspaceTemplateVersion', 0) in workspaceTemplateVersions()[t];
     }
 
     // Is the module allowed by the snapshot's (already validated) workspace?

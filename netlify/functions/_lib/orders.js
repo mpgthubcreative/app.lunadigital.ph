@@ -25,6 +25,8 @@
 //   idempotencyKeys/{key}           create-once guard                          (server only)
 //   usage/{YYYY-MM}.ordersCreated   plan limit counter (never decremented)     (server only)
 
+import { readCustomerForOrder, applyCustomerStats } from "./customers.js";
+import { customerSnapshot } from "../../../shared/customers.js";
 import { createHash } from "node:crypto";
 import {
   ORDER_SCHEMA_VERSION,
@@ -75,6 +77,30 @@ function adjustBalanceGauges(tx, { tenant, FieldValue, order, newTotal }) {
   }
 }
 
+// Resolves the customer side of an edit (call before any write): a linked
+// customer's name and phone come from the customer record; linking a NEW
+// customer requires them to be active, keeping the same one doesn't.
+// Returns { data } with customer/customerId resolved.
+async function customerLink(tx, { tenant, order, data }) {
+  if (!data.customerId) return { data: { ...data, customerId: null } };
+  const same = data.customerId === (order.customerId ?? null);
+  const c = await readCustomerForOrder(tx, tenant, data.customerId, { requireActive: !same });
+  return { data: { ...data, customer: customerSnapshot(c, data.customer.notes) } };
+}
+
+// Customer statistics follow an edited order: same customer -> the total
+// and balance deltas; another customer -> the order moves between them.
+function moveCustomerStats(tx, { tenant, FieldValue, order, newCustomerId, newTotal }) {
+  const paid = order.amountPaid || 0;
+  const oldId = order.customerId ?? null;
+  if (oldId === newCustomerId) {
+    applyCustomerStats(tx, { tenant, FieldValue, customerId: oldId, total: newTotal - order.total, balance: newTotal - order.total });
+    return;
+  }
+  applyCustomerStats(tx, { tenant, FieldValue, customerId: oldId, orders: -1, total: -order.total, balance: -(order.total - paid) });
+  applyCustomerStats(tx, { tenant, FieldValue, customerId: newCustomerId, orders: 1, total: newTotal, balance: newTotal - paid });
+}
+
 const hashRequest = (value) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 
 function movementsFor(lines, type, orderId, orderNumber, reason) {
@@ -83,9 +109,10 @@ function movementsFor(lines, type, orderId, orderNumber, reason) {
 
 // ---------- Create ----------
 
-export async function createOrder({ db, tenant, FieldValue, business, entitlements, input, idempotencyKey, actor, canDiscount, now = new Date() }) {
+export async function createOrder({ db, tenant, FieldValue, business, entitlements, input, idempotencyKey, actor, canDiscount, canLinkCustomers = false, now = new Date() }) {
   if (!isValidIdempotencyKey(idempotencyKey)) throw new OrderError("invalid-input", "A valid idempotency key is required");
   const data = validateOrderInput(input);
+  if (data.customerId && !canLinkCustomers) throw new OrderError("customer-not-allowed", "You can't link orders to saved customers");
   if (data.discount > 0 && !canDiscount) throw new OrderError("discount-not-allowed", "You don't have permission to give discounts");
   const limit = entitlements && entitlements.limits && entitlements.limits.ordersPerMonth;
   if (!Number.isSafeInteger(limit) || limit < 0) throw new OrderError("business-misconfigured", "This business has no valid order limit");
@@ -129,6 +156,8 @@ export async function createOrder({ db, tenant, FieldValue, business, entitlemen
       const orderNumber = formatOrderNumber(prefix, day, seq);
       const ref = tenant.collection("orders").doc();
 
+      const linked = data.customerId ? await readCustomerForOrder(tx, tenant, data.customerId) : null;
+      const customer = linked ? customerSnapshot(linked, data.customer.notes) : data.customer;
       const plan = await prepareMovements(tx, { tenant, items: movementsFor(data.items, "reservation", ref.id, orderNumber, "order_created") });
       for (const r of plan.results) {
         if (r.product.status !== "active") throw new OrderError("product-inactive", `${r.product.name} is inactive`);
@@ -151,9 +180,9 @@ export async function createOrder({ db, tenant, FieldValue, business, entitlemen
         orderDate: day,
         source: data.source,
         sourceNote: data.sourceNote || null,
-        customer: data.customer,
-        customerId: null, // linked in Phase 9
-        customerNameLower: data.customer.name.toLocaleLowerCase("en"),
+        customer,
+        customerId: data.customerId,
+        customerNameLower: customer.name.toLocaleLowerCase("en"),
         items: totals.lines,
         itemCount: totals.lines.length,
         subtotal: totals.subtotal,
@@ -190,6 +219,7 @@ export async function createOrder({ db, tenant, FieldValue, business, entitlemen
       tx.set(usageRef, { period: month, ordersCreated: FieldValue.increment(1), updatedAt: stamp }, { merge: true });
       recordDailyMetrics({ tx, tenant, FieldValue, timezone: business.timezone, at: now, operational: { orderCount: 1 } });
       adjustCurrentMetrics({ tx, tenant, FieldValue, operational: { pendingFulfillment: 1, unpaidOrders: totals.total > 0 ? 1 : 0 }, financial: { receivablesOutstanding: totals.total } });
+      applyCustomerStats(tx, { tenant, FieldValue, customerId: data.customerId, orders: 1, total: totals.total, balance: totals.total, lastOrder: orderNumber });
       plan.commit({ actor, FieldValue });
       return { orderId: ref.id, orderNumber, replayed: false, order: { ...order, createdAt: null, updatedAt: null } };
     }, TX_OPTIONS);
@@ -204,7 +234,7 @@ export async function createOrder({ db, tenant, FieldValue, business, entitlemen
 //                    DIFFERENCE moves (20 -> 15 releases 5, 20 -> 30 reserves 10)
 //   fulfilled order  a correction (orders.correct), see correctFulfilled()
 //   cancelled order  not editable
-export async function updateOrder({ db, tenant, FieldValue, business = null, orderId, input, expectedRevision = null, actor, canDiscount, canCorrect = false, reason = null }) {
+export async function updateOrder({ db, tenant, FieldValue, business = null, orderId, input, expectedRevision = null, actor, canDiscount, canLinkCustomers = false, canCorrect = false, reason = null }) {
   const ref = orderRef(tenant, orderId);
   const data = validateOrderInput(input);
 
@@ -213,13 +243,15 @@ export async function updateOrder({ db, tenant, FieldValue, business = null, ord
     if (!snap.exists) throw new OrderError("not-found", "Order not found");
     const order = snap.data();
     if (expectedRevision !== null && expectedRevision !== order.revision) throw new OrderError("stale-order", "This order was changed by someone else. Reload and try again");
-    if (order.fulfillmentStatus === "fulfilled") {
+    if (order.fulfillmentStatus === "fulfilled" && !canCorrect) {
       // Same answer as Phase 7 for anyone without orders.correct: a fulfilled
       // order isn't editable for them.
-      if (!canCorrect) throw new OrderError("not-pending", "This order is fulfilled. Only authorized users can correct it");
-      return correctFulfilled(tx, { tenant, FieldValue, business, ref, orderId, order, data, actor, canDiscount, reason });
+      throw new OrderError("not-pending", "This order is fulfilled. Only authorized users can correct it");
     }
-    if (!isOpenFulfillment(order.fulfillmentStatus)) throw new OrderError("not-pending", `A ${order.fulfillmentStatus} order can't be edited`);
+    if (order.fulfillmentStatus !== "fulfilled" && !isOpenFulfillment(order.fulfillmentStatus)) throw new OrderError("not-pending", `A ${order.fulfillmentStatus} order can't be edited`);
+    if (data.customerId && data.customerId !== (order.customerId ?? null) && !canLinkCustomers) throw new OrderError("customer-not-allowed", "You can't link orders to saved customers");
+    const link = await customerLink(tx, { tenant, order, data });
+    if (order.fulfillmentStatus === "fulfilled") return correctFulfilled(tx, { tenant, FieldValue, business, ref, orderId, order, data: link.data, link, actor, canDiscount, reason });
     if (data.discount !== order.discount && !canDiscount) throw new OrderError("discount-not-allowed", "You don't have permission to change the discount");
 
     const oldLines = new Map(order.items.map((l) => [l.productId, l]));
@@ -257,7 +289,7 @@ export async function updateOrder({ db, tenant, FieldValue, business = null, ord
     const amountPaid = order.amountPaid || 0;
     if (totals.total < amountPaid) throw new OrderError("below-paid", "The new total would be less than what's already been paid");
 
-    const customerChanged = JSON.stringify(order.customer) !== JSON.stringify(data.customer);
+    const customerChanged = JSON.stringify(order.customer) !== JSON.stringify(link.data.customer) || (order.customerId ?? null) !== link.data.customerId;
     const entry = historyEntry("edited", actor, {
       from: order.fulfillmentStatus,
       to: order.fulfillmentStatus,
@@ -271,8 +303,9 @@ export async function updateOrder({ db, tenant, FieldValue, business = null, ord
     });
 
     tx.update(ref, {
-      customer: data.customer,
-      customerNameLower: data.customer.name.toLocaleLowerCase("en"),
+      customer: link.data.customer,
+      customerId: link.data.customerId,
+      customerNameLower: link.data.customer.name.toLocaleLowerCase("en"),
       source: data.source,
       sourceNote: data.sourceNote || null,
       notes: data.notes || null,
@@ -289,6 +322,7 @@ export async function updateOrder({ db, tenant, FieldValue, business = null, ord
       updatedAt: FieldValue.serverTimestamp(),
     });
     adjustBalanceGauges(tx, { tenant, FieldValue, order, newTotal: totals.total });
+    moveCustomerStats(tx, { tenant, FieldValue, order, newCustomerId: link.data.customerId, newTotal: totals.total });
     if (plan) plan.commit({ actor, FieldValue });
     return { orderId, revision: order.revision + 1, total: totals.total };
   }, TX_OPTIONS);
@@ -303,7 +337,7 @@ export async function updateOrder({ db, tenant, FieldValue, business = null, ord
 // Prices on existing lines keep their snapshot. Sales, discount and COGS
 // deltas post to the ORIGINAL fulfillment day so that day becomes right.
 // Inventory history gets new correction movements; nothing is deleted.
-async function correctFulfilled(tx, { tenant, FieldValue, business, ref, orderId, order, data, actor, canDiscount, reason }) {
+async function correctFulfilled(tx, { tenant, FieldValue, business, ref, orderId, order, data, link, actor, canDiscount, reason }) {
   if (data.discount !== order.discount && !canDiscount) throw new OrderError("discount-not-allowed", "You don't have permission to change the discount");
   const material = isMaterialChange({ before: order, after: data });
   const why = typeof reason === "string" ? reason.trim().replace(/\s+/g, " ") : "";
@@ -373,7 +407,7 @@ async function correctFulfilled(tx, { tenant, FieldValue, business, ref, orderId
   const cogs = costLines.reduce((s, l) => s + l.costConsumed, 0);
   const delta = { grossSales: totals.subtotal - order.subtotal, discounts: totals.discount - order.discount, cogs: cogs - costs.cogs };
 
-  const customerChanged = JSON.stringify(order.customer) !== JSON.stringify(data.customer);
+  const customerChanged = JSON.stringify(order.customer) !== JSON.stringify(data.customer) || (order.customerId ?? null) !== data.customerId;
   // Visible to everyone with orders.view: no cost figures here (they're in orderCosts).
   const entry = historyEntry("corrected", actor, {
     from: "fulfilled",
@@ -390,6 +424,7 @@ async function correctFulfilled(tx, { tenant, FieldValue, business, ref, orderId
   const stamp = FieldValue.serverTimestamp();
   tx.update(ref, {
     customer: data.customer,
+    customerId: data.customerId,
     customerNameLower: data.customer.name.toLocaleLowerCase("en"),
     source: data.source,
     sourceNote: data.sourceNote || null,
@@ -422,6 +457,7 @@ async function correctFulfilled(tx, { tenant, FieldValue, business, ref, orderId
     }
   }
   adjustBalanceGauges(tx, { tenant, FieldValue, order, newTotal: totals.total });
+  moveCustomerStats(tx, { tenant, FieldValue, order, newCustomerId: link.data.customerId, newTotal: totals.total });
   if (plan) plan.commit({ actor, FieldValue });
   return { orderId, revision: order.revision + 1, total: totals.total, corrected: true, delta };
 }
@@ -447,13 +483,14 @@ export async function deleteOrder({ db, tenant, FieldValue, orderId, reason = nu
       orderNumber: order.orderNumber,
       actor,
       reason: why,
-      snapshot: { customer: order.customer, source: order.source, items: order.items, subtotal: order.subtotal, discount: order.discount, total: order.total, orderDate: order.orderDate, fulfillmentStatus: order.fulfillmentStatus, statusHistory: order.statusHistory, createdBy: order.createdBy },
+      snapshot: { customer: order.customer, customerId: order.customerId ?? null, source: order.source, items: order.items, subtotal: order.subtotal, discount: order.discount, total: order.total, orderDate: order.orderDate, fulfillmentStatus: order.fulfillmentStatus, statusHistory: order.statusHistory, createdBy: order.createdBy },
       at: FieldValue.serverTimestamp(),
     });
     // It never was a real order: off the day's order count and the open /
     // unpaid exposure. Plan usage still counts it (no create/delete gaming).
     recordDailyMetrics({ tx, tenant, FieldValue, timezone: null, day: order.orderDate, operational: { orderCount: -1 } });
     adjustCurrentMetrics({ tx, tenant, FieldValue, operational: { pendingFulfillment: -1, unpaidOrders: (order.balance || 0) > 0 ? -1 : 0 }, financial: { receivablesOutstanding: -(order.balance || 0) } });
+    applyCustomerStats(tx, { tenant, FieldValue, customerId: order.customerId, orders: -1, total: -order.total, balance: -(order.balance || 0) });
     plan.commit({ actor, FieldValue });
     return { orderId, deleted: true };
   }, TX_OPTIONS);
@@ -572,6 +609,8 @@ export async function cancelOrder({ db, tenant, FieldValue, business, orderId, r
       operational: { pendingFulfillment: -1, ...((order.balance || 0) > 0 ? { unpaidOrders: -1 } : {}) },
       financial: { receivablesOutstanding: -(order.balance || 0) },
     });
+    // A cancelled order stops counting for its customer.
+    applyCustomerStats(tx, { tenant, FieldValue, customerId: order.customerId, orders: -1, total: -order.total, balance: -(order.balance || 0) });
     plan.commit({ actor, FieldValue });
     return { orderId, cancelled: true };
   }, TX_OPTIONS);

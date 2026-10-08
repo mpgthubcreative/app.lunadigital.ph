@@ -37,7 +37,9 @@
 // each template's id, version and allowed modules;
 // tests/shared/rules-registry.test.js fails if they drift.
 //
-// Bump `version` whenever a template's modules change. Every snapshot
+// Bump `version` whenever a template's modules change, listing the old
+// version in `upgradingFrom` while snapshots are recomputed (then empty
+// it). Every snapshot
 // records the version it was computed with; a mismatch is stale and fails
 // closed until recompute-entitlements runs (see docs/ARCHITECTURE.md for
 // the rollout order).
@@ -64,12 +66,16 @@ function deepFreeze(value) {
 const TEMPLATES = [
   {
     id: "distributor",
-    version: 1,
+    // v2 (Phase 9): Customers became operational.
+    version: 2,
+    // Rollout window: snapshots computed at these versions are still
+    // accepted until every business is recomputed; then this list empties.
+    upgradingFrom: [1],
     name: "Distributor Operations",
     description: "Orders, payments, products and inventory for distributors and wholesalers.",
     status: "live",
-    modules: [...CORE, "orders", "payments", "inventory"],
-    navigation: ["dashboard", "orders", "payments", "inventory", "users", "settings"],
+    modules: [...CORE, "orders", "payments", "inventory", "customers"],
+    navigation: ["dashboard", "orders", "payments", "inventory", "customers", "users", "settings"],
     dashboard: {
       widgets: ["netSales", "grossProfit", "operatingExpenses", "estimatedOperatingProfit", "paymentsReceived", "receivablesOutstanding", "ordersToday", "unpaidOrders", "pendingFulfillment", "lowStock", "recentOrders", "lowStockItems", "recentActivity"],
       empty: { title: "Nothing to show yet", body: "Your dashboard fills in as your business uses Luna." },
@@ -77,7 +83,6 @@ const TEMPLATES = [
     labels: { modules: {} },
     settings: { orderPrefix: "ORD" },
     plannedModules: [
-      { id: "customers", name: "Customers" },
       { id: "reports", name: "Reports" },
       { id: "expenses", name: "Operating Expenses" },
       { id: "imports", name: "Imports" },
@@ -175,6 +180,13 @@ export function snapshotWorkspaceTemplateId(snapshot) {
   return getWorkspaceTemplate(snapshot.workspaceTemplateId) ? snapshot.workspaceTemplateId : null;
 }
 
+// Versions a stored snapshot may carry for this template right now: the
+// current one, plus any listed in upgradingFrom during a rollout window.
+export function acceptedTemplateVersions(id) {
+  const t = getWorkspaceTemplate(id);
+  return t ? [...(t.upgradingFrom || []), t.version] : [];
+}
+
 export function isValidWorkspaceTemplateId(id) {
   return getWorkspaceTemplate(id) !== null;
 }
@@ -205,10 +217,11 @@ export function validateWorkspaceTemplate(t, { moduleIds, coreModuleIds, availab
   const problems = [];
   const isObj = (v) => Boolean(v) && typeof v === "object" && !Array.isArray(v);
   if (!isObj(t)) return ["template must be an object"];
-  const allowedKeys = ["id", "version", "name", "description", "status", "modules", "navigation", "dashboard", "labels", "settings", "plannedModules"];
+  const allowedKeys = ["id", "version", "upgradingFrom", "name", "description", "status", "modules", "navigation", "dashboard", "labels", "settings", "plannedModules"];
   for (const k of Object.keys(t)) if (!allowedKeys.includes(k)) problems.push(`unknown key ${k}`);
   if (typeof t.id !== "string" || !WORKSPACE_TEMPLATE_ID_PATTERN.test(t.id)) problems.push("invalid id");
   if (!Number.isSafeInteger(t.version) || t.version < 1) problems.push("version must be a positive integer");
+  if (t.upgradingFrom !== undefined && (!Array.isArray(t.upgradingFrom) || t.upgradingFrom.some((v) => !Number.isSafeInteger(v) || v < 1 || v >= t.version))) problems.push("upgradingFrom must list earlier versions");
   for (const k of ["name", "description"]) if (typeof t[k] !== "string" || !t[k].trim() || /[<>]/.test(t[k])) problems.push(`${k} must be plain text`);
   if (!["live", "planned"].includes(t.status)) problems.push("status must be live or planned");
 

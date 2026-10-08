@@ -24,14 +24,16 @@ import { orderRow, historyRows, costCorrectionRows, qtyText, sourceLabel, fulfil
 import { openOrderEditor } from "./editor.js";
 import { recordPaymentDialog, editPaymentDialog, removePaymentDialog, showProof, methodLabel } from "../payments/actions.js";
 import { STATE_TONE } from "../payments/index.js";
+import { searchCustomers as defaultSearchCustomers } from "../customers/data.js";
 
 const defaultDeps = {
   data: ordersData,
   listOrderPayments,
   searchProducts: (businessId, term) => listProducts(businessId, { search: term, status: "active" }).then((r) => r.rows),
+  searchCustomers: defaultSearchCustomers,
 };
 
-export function mount(container, session, { data = defaultDeps.data, payments = { listOrderPayments: defaultDeps.listOrderPayments }, searchProducts = defaultDeps.searchProducts, api = defaultApi, toast = defaultToast } = {}) {
+export function mount(container, session, { data = defaultDeps.data, payments = { listOrderPayments: defaultDeps.listOrderPayments }, searchProducts = defaultDeps.searchProducts, searchCustomers = defaultDeps.searchCustomers, api = defaultApi, toast = defaultToast } = {}) {
   const perms = session.member.permissions;
   const can = {
     create: perms["orders.create"] === true,
@@ -49,7 +51,7 @@ export function mount(container, session, { data = defaultDeps.data, payments = 
   const timezone = session.business.timezone;
   const state = { filters: {}, cursors: [], rows: [], hasMore: false, loading: true, error: null };
   let alive = true;
-  const editorDeps = { searchProducts: (term) => searchProducts(businessId, term), getProducts: (ids) => data.getProducts(businessId, ids), api };
+  const editorDeps = { searchProducts: (term) => searchProducts(businessId, term), searchCustomers: (term) => searchCustomers(businessId, term), getProducts: (ids) => data.getProducts(businessId, ids), api };
 
   async function load() {
     state.loading = true;
@@ -239,7 +241,7 @@ export function mount(container, session, { data = defaultDeps.data, payments = 
           <div class="page-actions">${badge(fulfillmentLabel(order.fulfillmentStatus), FULFILLMENT_TONE[order.fulfillmentStatus] || "neutral")} ${badge(paymentLabel(order.paymentStatus), PAYMENT_TONE[order.paymentStatus] || "neutral")}</div></div>
         <div class="modal-body">
           <dl class="dl">
-            <dt>Customer</dt><dd>${order.customer?.name}${order.customer?.phone ? ` · ${order.customer.phone}` : ""}</dd>
+            <dt>Customer</dt><dd>${order.customer?.name}${order.customer?.phone ? ` · ${order.customer.phone}` : ""}${order.customerId ? html` ${badge("Saved customer", "info")}` : ""}</dd>
             <dt>Source</dt><dd>${sourceLabel(order.source)}${order.sourceNote ? ` · ${order.sourceNote}` : ""}</dd>
             <dt>Created by</dt><dd>${order.createdBy?.name ?? ""}</dd>
             ${order.notes ? html`<dt>Notes</dt><dd>${order.notes}</dd>` : ""}

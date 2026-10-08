@@ -28,11 +28,12 @@ export const MODULES = Object.freeze([
   { id: "orders", label: "Orders", path: "/orders", icon: "orders", permission: "orders.view", available: true, collections: { orders: "orders.view" }, storage: {} },
   { id: "payments", label: "Payments", path: "/payments", icon: "payments", permission: "payments.view", available: true, collections: { payments: "payments.view" }, storage: { payments: "payments.view" } },
   { id: "inventory", label: "Inventory", path: "/inventory", icon: "inventory", permission: "inventory.view", available: true, collections: { products: "inventory.view", inventoryTransactions: "inventory.view", productCosts: "inventory.costs", inventoryTransactionCosts: "inventory.costs" }, storage: { products: "inventory.view" } },
-  // Placeholders until built (Phase 8.5 cleanup): customers (Phase 9),
-  // reports (11), imports (12). available: false = never in an effective
-  // snapshot, never navigable; becoming available is an explicit release
-  // (registry flag + template modules + template version + recompute).
-  { id: "customers", label: "Customers", path: "/customers", icon: "customers", permission: "customers.view", available: false, collections: { customers: "customers.view" }, storage: {} },
+  // Built in Phase 9 (Distributor customers).
+  { id: "customers", label: "Customers", path: "/customers", icon: "customers", permission: "customers.view", available: true, collections: { customers: "customers.view" }, storage: {} },
+  // Placeholders until built: reports (Phase 11), imports (12).
+  // available: false = never in an effective snapshot, never navigable;
+  // becoming available is an explicit release (registry flag + template
+  // modules + template version + recompute).
   { id: "reports", label: "Reports", path: "/reports", icon: "reports", permission: "reports.view", available: false, collections: { reports: "reports.view" }, storage: { exports: "reports.export" } },
   // Approved Phase 5, built in Phase 10. Not available yet: no route, no
   // browser-readable collection, every access denied. The expenses
