@@ -11,7 +11,7 @@
 import { randomBytes } from "node:crypto";
 import { writeFileSync } from "node:fs";
 import { parseArgs, connect } from "./_cli.js";
-import { seedPlans, createBusiness, ensureAuthUser, addMember, refreshEntitlements, ProvisioningError } from "../netlify/functions/_lib/provisioning.js";
+import { seedPlans, createBusiness, ensureAuthUser, addMember, assignPlan, ProvisioningError } from "../netlify/functions/_lib/provisioning.js";
 
 const DEMO_DOMAIN = "luna.test"; // reserved TLD — can never be a real mailbox
 
@@ -60,8 +60,8 @@ for (const b of BUSINESSES) {
     console.log(`  ${b.id}: created (${b.plan}, ${b.status})`);
   } catch (err) {
     if (!(err instanceof ProvisioningError && err.code === "business-exists")) throw err;
-    await db.collection("businesses").doc(b.id).update({ "subscription.status": b.status, "subscription.planId": b.plan });
-    await refreshEntitlements({ db, admin, businessId: b.id });
+    await db.collection("businesses").doc(b.id).update({ "subscription.status": b.status });
+    await assignPlan({ db, admin, businessId: b.id, planId: b.plan, actor: "seed-demo", reason: "seed-demo re-apply" });
     console.log(`  ${b.id}: exists — status/plan/entitlements re-applied`);
   }
 }

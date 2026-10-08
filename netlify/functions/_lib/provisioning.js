@@ -3,9 +3,14 @@
 // Server-only: these writes bypass Firestore rules via the Admin SDK, so
 // every invariant (valid plan, user limit, owner protection) is enforced
 // right here.
+//
+// Plans, overrides and entitlement snapshots change ONLY through
+// changeEntitlements() (assignPlan / updateOverrides / refreshEntitlements):
+// one transaction that validates, recomputes the snapshot and writes an
+// audit record to businesses/{bid}/auditLog and platformAudit.
 
 import { PLAN_SEED } from "../../../shared/plans.seed.js";
-import { computeEntitlements } from "../../../shared/entitlements.js";
+import { computeEntitlements, validatePlan, validateEntitlementsSnapshot, isValidPlanId, EntitlementError } from "../../../shared/entitlements.js";
 import { resolvePermissions, ROLE_TEMPLATES } from "../../../shared/permissions.js";
 import { SUBSCRIPTION_STATUSES } from "../../../shared/subscription.js";
 import { MEMBER_STATUSES, isValidBusinessId } from "../../../shared/tenancy.js";
@@ -48,6 +53,7 @@ function assertTimezone(timezone) {
 export async function seedPlans({ db, admin, overwrite = false }) {
   const results = [];
   for (const plan of Object.values(PLAN_SEED)) {
+    validatePlan(plan);
     const ref = db.collection("plans").doc(plan.id);
     const snap = await ref.get();
     if (snap.exists && !overwrite) {
@@ -60,14 +66,24 @@ export async function seedPlans({ db, admin, overwrite = false }) {
   return results;
 }
 
-export async function loadPlan(db, planId) {
-  const snap = await db.collection("plans").doc(String(planId)).get();
+function planFromSnap(snap, planId) {
   if (!snap.exists) throw new ProvisioningError("unknown-plan", `Plan "${planId}" does not exist. Run the plan seed first.`);
   return snap.data();
 }
 
+export async function loadPlan(db, planId) {
+  if (!isValidPlanId(planId)) throw new ProvisioningError("unknown-plan", `Invalid plan id: ${planId}`);
+  return planFromSnap(await db.collection("plans").doc(planId).get(), planId);
+}
+
+// computeEntitlements, with validation errors mapped to ProvisioningError.
 export function buildEntitlementsSnapshot(plan, overrides = {}) {
-  return { ...computeEntitlements(plan, overrides), planName: plan.name };
+  try {
+    return computeEntitlements(plan, overrides);
+  } catch (err) {
+    if (err instanceof EntitlementError) throw new ProvisioningError("invalid-input", err.message);
+    throw err;
+  }
 }
 
 // ---------- Businesses ----------
@@ -123,24 +139,144 @@ export async function createBusiness({
   return { businessId: ref.id };
 }
 
-// Recomputes the stored entitlements snapshot from the current plan +
-// the business's overrides. Call after any plan or override change.
-export async function refreshEntitlements({ db, admin, businessId }) {
-  const ref = tenantDb(db, businessId).ref;
-  const snap = await ref.get();
+// ---------- Plans, overrides, entitlements (Luna operators only) ----------
+
+const OVERRIDE_SECTIONS = Object.freeze({ modules: "moduleOverrides", limits: "limitOverrides", features: "featureOverrides" });
+
+function overridesOf(business) {
+  const out = {};
+  for (const [section, field] of Object.entries(OVERRIDE_SECTIONS)) {
+    const value = business[field];
+    out[section] = value && typeof value === "object" && !Array.isArray(value) ? { ...value } : {};
+  }
+  return out;
+}
+
+function summarize(entitlements) {
+  if (!entitlements || typeof entitlements !== "object") return null;
+  return { planId: entitlements.planId ?? null, modules: entitlements.modules ?? null, limits: entitlements.limits ?? null, features: entitlements.features ?? null };
+}
+
+// The one write path for a business's plan / overrides / snapshot.
+// mutate({ planId, overrides }) returns the next { planId, overrides }.
+async function changeEntitlements({ db, admin, businessId, actor, reason, action, mutate }) {
+  const why = typeof reason === "string" ? reason.trim() : "";
+  if (why.length < 3) throw new ProvisioningError("invalid-input", "A reason is required for every plan or entitlement change.");
+  const who = typeof actor === "string" && actor.trim() ? actor.trim() : "cli";
+
+  const tenant = tenantDb(db, businessId);
+  const FieldValue = admin.firestore.FieldValue;
+
+  return db.runTransaction(async (tx) => {
+    const snap = await tx.get(tenant.ref);
+    if (!snap.exists) throw new ProvisioningError("not-found", `Business ${businessId} not found.`);
+    const business = snap.data();
+    const current = { planId: business.subscription?.planId ?? null, overrides: overridesOf(business) };
+    const next = mutate(structuredClone(current));
+
+    if (!isValidPlanId(next.planId)) throw new ProvisioningError("unknown-plan", `Invalid plan id: ${next.planId}`);
+    const plan = planFromSnap(await tx.get(db.collection("plans").doc(next.planId)), next.planId);
+    // Validates the plan and the overrides; throws on anything unknown.
+    const entitlements = buildEntitlementsSnapshot(plan, next.overrides);
+    const overrides = { modules: { ...next.overrides.modules }, limits: { ...next.overrides.limits }, features: { ...next.overrides.features } };
+    const activeMembers = (await tx.get(tenant.collection("members").where("status", "==", "active"))).size;
+
+    const now = FieldValue.serverTimestamp();
+    tx.update(tenant.ref, {
+      "subscription.planId": plan.id,
+      moduleOverrides: overrides.modules,
+      limitOverrides: overrides.limits,
+      featureOverrides: overrides.features,
+      entitlements: { ...entitlements, computedAt: now },
+      updatedAt: now,
+    });
+
+    const audit = {
+      type: `entitlements.${action}`,
+      businessId,
+      actor: who,
+      reason: why,
+      before: { planId: current.planId, overrides: current.overrides, entitlements: summarize(business.entitlements) },
+      after: { planId: plan.id, overrides, entitlements: summarize(entitlements) },
+      at: now,
+    };
+    tx.set(tenant.collection("auditLog").doc(), audit);
+    tx.set(db.collection("platformAudit").doc(), audit);
+
+    const warnings = [];
+    if (activeMembers > entitlements.limits.users) {
+      warnings.push(`${activeMembers} active users exceed the new limit of ${entitlements.limits.users}. Nobody is removed; adding or re-enabling members is blocked until it's back under the limit.`);
+    }
+    return { businessId, planId: plan.id, overrides, entitlements, warnings };
+  });
+}
+
+// Moves a business to another plan (or re-applies its current one).
+// Overrides are kept.
+export async function assignPlan({ db, admin, businessId, planId, actor, reason }) {
+  return changeEntitlements({ db, admin, businessId, actor, reason, action: "plan-assigned", mutate: (state) => ({ ...state, planId }) });
+}
+
+// set:   { modules?: {id: bool}, limits?: {key: int}, features?: {key: value} }
+// clear: { modules?: [id], limits?: [key], features?: [key] }  (back to the plan default)
+export async function updateOverrides({ db, admin, businessId, set = {}, clear = {}, actor, reason }) {
+  for (const section of [...Object.keys(set), ...Object.keys(clear)]) {
+    if (!(section in OVERRIDE_SECTIONS)) throw new ProvisioningError("invalid-input", `Unknown override section: ${section}`);
+  }
+  return changeEntitlements({
+    db,
+    admin,
+    businessId,
+    actor,
+    reason,
+    action: "overrides-updated",
+    mutate: (state) => {
+      for (const section of Object.keys(OVERRIDE_SECTIONS)) {
+        for (const key of clear[section] || []) delete state.overrides[section][key];
+        Object.assign(state.overrides[section], set[section] || {});
+      }
+      return state;
+    },
+  });
+}
+
+// Recomputes the snapshot from the stored plan + overrides (after a plan
+// definition was edited, or to repair a stale snapshot).
+export async function refreshEntitlements({ db, admin, businessId, actor = "cli", reason = "recompute entitlements" }) {
+  return changeEntitlements({ db, admin, businessId, actor, reason, action: "recomputed", mutate: (state) => state });
+}
+
+// Read-only: what is stored, whether it passes validation, and what a
+// recompute would produce. Never writes.
+export async function describeEntitlements({ db, businessId }) {
+  const snap = await tenantDb(db, businessId).ref.get();
   if (!snap.exists) throw new ProvisioningError("not-found", `Business ${businessId} not found.`);
   const business = snap.data();
-  const plan = await loadPlan(db, business.subscription.planId);
-  const entitlements = buildEntitlementsSnapshot(plan, {
-    modules: business.moduleOverrides || {},
-    limits: business.limitOverrides || {},
-    features: business.featureOverrides || {},
-  });
-  await ref.update({ entitlements: { ...entitlements, computedAt: admin.firestore.FieldValue.serverTimestamp() }, updatedAt: admin.firestore.FieldValue.serverTimestamp() });
-  return entitlements;
+  const planId = business.subscription?.planId ?? null;
+  const stored = business.entitlements ?? null;
+  const check = validateEntitlementsSnapshot(stored, planId);
+  let recomputed = null;
+  let recomputeError = null;
+  try {
+    recomputed = buildEntitlementsSnapshot(await loadPlan(db, planId), overridesOf(business));
+  } catch (err) {
+    recomputeError = err.message;
+  }
+  return { businessId, planId, subscriptionStatus: business.subscription?.status ?? null, overrides: overridesOf(business), stored, valid: check.ok, problems: check.problems, recomputed, recomputeError };
 }
 
 // ---------- Users & memberships ----------
+
+// The active-user limit from a VALID entitlement snapshot. A missing or
+// malformed snapshot refuses the change instead of skipping the limit.
+function userLimit(businessSnap, businessId) {
+  const business = businessSnap.data();
+  const check = validateEntitlementsSnapshot(business.entitlements, business.subscription?.planId);
+  if (!check.ok) {
+    throw new ProvisioningError("business-misconfigured", `Business ${businessId} entitlements are invalid (${check.problems.join("; ")}). Run recompute-entitlements.`);
+  }
+  return business.entitlements.limits.users;
+}
 
 // Finds the Firebase Auth user for an email, creating it if needed.
 // A created user has NO password unless one is supplied (real onboarding
@@ -200,8 +336,7 @@ export async function addMember({
 
     const wasActive = memberSnap.exists && memberSnap.data().status === "active";
     if (status === "active" && !wasActive) {
-      const limit = businessSnap.data().entitlements?.limits?.users;
-      if (!Number.isInteger(limit)) throw new ProvisioningError("business-misconfigured", `Business ${businessId} has no user limit.`);
+      const limit = userLimit(businessSnap, businessId);
       if (activeSnap.size >= limit) {
         throw new ProvisioningError("user-limit-reached", `Business ${businessId} already has ${activeSnap.size}/${limit} active users.`);
       }
@@ -257,7 +392,7 @@ export async function setMemberStatus({ db, admin, businessId, uid, status }) {
       throw new ProvisioningError("owner-protected", "The business owner's membership can't be disabled.");
     }
     if (status === "active" && member.status !== "active") {
-      const limit = businessSnap.data().entitlements?.limits?.users;
+      const limit = userLimit(businessSnap, businessId);
       if (activeSnap.size >= limit) throw new ProvisioningError("user-limit-reached", `User limit reached (${activeSnap.size}/${limit}).`);
     }
     tx.update(memberRef, { status, updatedAt: admin.firestore.FieldValue.serverTimestamp() });

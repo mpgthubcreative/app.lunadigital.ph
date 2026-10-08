@@ -6,6 +6,10 @@
 // signed-in user in ONE business. The browser uses this only to shape the
 // UI; every future data endpoint re-resolves the same context itself via
 // requireTenant() and never trusts anything the browser echoes back.
+//
+// Commercial details (plan name, limits, usage) are returned only to
+// members holding billing.view. Everyone gets the module switches and
+// feature flags, which the UI needs to build navigation.
 
 import { respond, withErrorHandling, requireMethod } from "./_lib/http.js";
 import { getAdmin } from "./_lib/firebase-admin.js";
@@ -29,9 +33,10 @@ export function createSessionHandler({ getAdmin: loadAdmin }) {
     const user = await authenticate(event, auth);
     const context = await resolveTenantContext({ db, uid: user.uid, requestedBusinessId: requestedBusinessId(event) });
 
+    const seesPackage = context.permissions["billing.view"] === true;
     const [memberships, usage] = await Promise.all([
       listActiveMemberships(db, user.uid),
-      readUsageSummary(context.tenant, context.business.timezone),
+      seesPackage ? readUsageSummary(context.tenant, context.business.timezone) : null,
     ]);
 
     return respond(200, {
@@ -41,7 +46,7 @@ export function createSessionHandler({ getAdmin: loadAdmin }) {
       business: context.business,
       member: context.member,
       permissions: context.permissions,
-      plan: { id: context.entitlements.planId, name: context.entitlements.planName || context.entitlements.planId },
+      plan: seesPackage ? { id: context.entitlements.planId, name: context.entitlements.planName } : null,
       subscription: {
         status: context.subscription.status,
         renewalAt: toIso(context.subscription.renewalAt),
@@ -54,8 +59,8 @@ export function createSessionHandler({ getAdmin: loadAdmin }) {
       },
       entitlements: {
         modules: context.entitlements.modules,
-        limits: context.entitlements.limits,
         features: context.entitlements.features,
+        limits: seesPackage ? context.entitlements.limits : null,
       },
       usage,
       memberships,

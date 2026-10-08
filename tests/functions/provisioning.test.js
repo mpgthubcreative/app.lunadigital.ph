@@ -105,7 +105,7 @@ describe("requireTenant guard", () => {
 
   it("blocks modules the business is not entitled to", async () => {
     world.db.docs.get("businesses/biz-a").entitlements.modules.inventory = false;
-    await expect(guard(world.uids.ownera, "biz-a", { module: "inventory" })).rejects.toMatchObject({ code: "module-disabled" });
+    await expect(guard(world.uids.ownera, "biz-a", { module: "inventory" })).rejects.toMatchObject({ code: "forbidden", reason: "module-disabled:inventory" });
   });
 
   it("hands back tenant-scoped references only", async () => {

@@ -78,12 +78,20 @@ businesses/{bid}                  profile, timezone, orderPrefix, subscription{p
 
 Every future endpoint repeats this through `requireTenant(event, { permission, module, write })`, so a browser's earlier session response is never reused for authorization.
 
-## Security rules and tenant isolation (Phase 3)
+## Security rules and tenant isolation (Phases 3-4)
 
 `firestore.rules` and `storage.rules` share one model:
 
 - A browser read is allowed only when `businesses/{bid}/members/{request.auth.uid}` exists with `status == "active"`. The member document's ID must be the caller's uid; a `uid` field inside the data doesn't count. `users/{uid}.businessIds`, custom claims, `roleTemplate`, URLs and headers are never consulted.
 - Each collection needs one permission key, which must be `=== true` in the stored `permissions` map. Truthy non-booleans, non-map permission values and unknown keys grant nothing.
+- **Phase 4:** module data also needs the module to be switched on in a valid entitlement snapshot, through `canAccessModule(bid, module, permission)`, which requires all of:
+  - active membership
+  - the subscription policy allowing reads
+  - the exact permission
+  - a snapshot with `schemaVersion == 1`, computed for the business's current `subscription.planId`, whose plan document still exists, with every module, limit and feature well-formed
+  - `modules[module] == true`
+
+  A permission never unlocks a module the business isn't entitled to.
 - The subscription rule mirrors `accessPolicy` + `effectivePermissions`:
   - active, past_due and suspended read normally;
   - cancelled lets the `isAccountOwner` member read with the export-only permissions;
@@ -91,22 +99,24 @@ Every future endpoint repeats this through `requireTenant(event, { permission, m
 - Business IDs must match the `isValidBusinessId` format. This is defense in depth, because the server never creates other IDs.
 - There is no browser write anywhere (Firestore or Storage).
 
-| Browser-readable | Permission |
-|---|---|
-| `businesses/{bid}` (get only, no list) | active membership |
-| `members/{uid}` | self, or `users.view` (list needs `users.view`) |
-| `products`, `inventoryTransactions` | `inventory.view` |
-| `customers` | `customers.view` |
-| `orders` | `orders.view` |
-| `payments` | `payments.view` |
-| `metrics` | `dashboard.view` |
-| `reports` | `reports.view` |
-| `settings` | `settings.view` |
-| `imports`, `imports/*/rows` | `imports.run` |
+| Browser-readable | Module | Permission |
+|---|---|---|
+| `businesses/{bid}` (get only, no list) | none | active membership |
+| `members/{uid}` | users (core) | self, or `users.view` (list needs `users.view`) |
+| `products`, `inventoryTransactions` | inventory | `inventory.view` |
+| `customers` | customers | `customers.view` |
+| `orders` | orders | `orders.view` |
+| `payments` | payments | `payments.view` |
+| `metrics` | dashboard (core) | `dashboard.view` |
+| `reports` | reports | `reports.view` |
+| `settings` | settings (core) | `settings.view` |
+| `imports`, `imports/*/rows` | imports | `imports.run` |
+
+This mapping lives in `shared/modules.js` (`collections`, `storage`). The rules keep their own copy, and `tests/shared/rules-registry.test.js` fails if the two drift.
 
 Server-only, never readable from the browser: `users`, `plans`, `platformAudit`, `paymentRefs`, `counters`, `usage`, `auditLog`, `integrations`, `members/*/inbox`, and every collection-group query. The inbox `readAt` write is deferred to Phase 12.
 
-In Storage, `tenants/{bid}/{products|payments|imports|exports}/**` is readable with `inventory.view`, `payments.view`, `imports.run` and `reports.export` respectively, using the same membership and subscription checks through cross-service Firestore reads. Everything else is denied, and there are no browser uploads. Staging has no bucket yet, so these rules are emulator-verified but not deployed.
+In Storage, `tenants/{bid}/{products|payments|imports|exports}/**` belongs to the inventory, payments, imports and reports modules, and is readable with `inventory.view`, `payments.view`, `imports.run` and `reports.export` respectively. It uses the same membership, subscription and entitlement checks through cross-service Firestore reads. To keep it to two document reads, Storage skips the plan-existence check. Everything else is denied, and there are no browser uploads. Staging has no bucket yet, so these rules are emulator-verified but not deployed.
 
 The proof is `npm run test:rules`: `tests/rules/` runs on the real emulators with `@firebase/rules-unit-testing`. It runs in CI (`.github/workflows/ci.yml`) and before every `deploy:rules:staging`.
 
@@ -118,11 +128,61 @@ The proof is `npm run test:rules`: `tests/rules/` runs on the real emulators wit
 - `isAccountOwner` on the member record (not the role name) protects the business's owner account from being demoted or removed by other users.
 - Super Admin has no access to tenant data through the rules. Support access goes through an audited, time-limited server path.
 
-## Plans, modules, entitlements
+## Plans, modules, entitlements (Phase 4)
 
-- Effective entitlements = the plan stored in Firestore + per-business overrides. They are computed by `shared/entitlements.js` on the server and saved as a snapshot on the business document.
-- A module appears in navigation only when it is built, entitled for the business, and the user holds its view permission (`resolveNavigation`).
-- Initial plans: Starter ₱4,990 + ₱990/mo · Growth (recommended) ₱9,990 + ₱1,990/mo · Pro ₱19,990+ + ₱2,990+/mo. These are seed values, not final, and are stored in centavos.
+**Access to a module = active membership AND the exact permission AND the module enabled for the business.** This is enforced in three places from one registry:
+
+- Firestore and Storage rules: `canAccessModule`
+- the server: `requireTenant` always checks the permission's own module (`PERMISSIONS[key].module`) plus any `module` passed in
+- the browser: `canUseModule` drives both navigation and a guard on every navigation. A hidden URL shows a generic "Page not available" that never says why.
+
+**Registry.** `shared/modules.js` lists, for each module:
+
+- `id`, `label`, `path` and `icon`
+- the view `permission`
+- `available` (built yet) and `core`
+- the Firestore `collections` and Storage areas it owns
+
+Dashboard, Users and Settings are core: part of every package, always `true` in the snapshot, and never overridable. They are still checked, so a broken snapshot denies them too.
+
+**Plans** live in Firestore `plans/{planId}`, seeded from `shared/plans.seed.js`. Prices are in centavos:
+
+- Starter: ₱4,990 setup + ₱990/mo
+- Growth (recommended): ₱9,990 + ₱1,990/mo
+- Pro: ₱19,990+ + ₱2,990+/mo
+
+Every plan is validated by `validatePlan` against `LIMIT_DEFINITIONS` and `FEATURE_DEFINITIONS`. Today all three plans include every built module and differ in limits and features only.
+
+**Effective entitlements** = the plan + per-business `moduleOverrides`, `limitOverrides` and `featureOverrides`, computed by `computeEntitlements`. Overrides are strict: exact booleans, non-negative integers, values from the feature definitions, and no unknown keys or core modules. The snapshot is stored at `businesses/{bid}.entitlements`:
+
+```
+{ schemaVersion: 1, planId, planName,
+  modules  { every MODULE_ID: boolean },
+  limits   { users, ordersPerMonth, storageBytes, importsPerMonth: int >= 0 },
+  features { reportsLevel, inAppNotifications, pushNotifications, googleSheets,
+             advancedPermissions, workflowCustomization, support },
+  computedAt }
+```
+
+**Fail closed.** `validateEntitlementsSnapshot` on the server and the same checks in the rules reject the snapshot when:
+
+- it is missing
+- `schemaVersion` is anything other than 1
+- it was computed for a different plan than `subscription.planId` (stale)
+- the plan document no longer exists
+- any module, limit or feature is missing, unknown or mistyped
+
+On the server this returns 503 `business-misconfigured`. In the rules, every module read is denied. Anything that counts members against the user limit also refuses to proceed rather than skipping the limit.
+
+**Changes** go only through operator tooling, which is server-side and never reachable from the browser:
+
+- `assignPlan`, `updateOverrides` and `refreshEntitlements` in `provisioning.js` each validate, recompute the snapshot in one transaction, and write the same audit record to `businesses/{bid}/auditLog` and `platformAudit`. Each change requires a reason.
+- The CLI wrappers are `set-plan`, `set-overrides`, `recompute-entitlements` and the read-only `show-entitlements`. Writes need `--confirm <projectId>`.
+- A downgrade below the active user count warns and removes nobody. Adding or re-enabling members is blocked until the business is back under the limit.
+
+**Visibility.** `/api/session` returns the plan name, limits and usage only to members with `billing.view`. Everyone gets module switches and feature flags (for navigation). Settings shows the package only to `billing.view` holders.
+
+`GET /api/reports` is a guard-only endpoint (501 when authorized) that exercises the Reports gate until Phase 10.
 
 ## Subscription states
 
@@ -169,7 +229,7 @@ Every change writes an append-only `inventoryTransactions` record inside the sam
 1. Foundation ✅
 2. Auth and multi-tenant business/user model ✅
 3. Rules and tenant-isolation tests ✅
-4. Plans, modules, permissions
+4. Plans, modules, permissions ✅
 5. Dashboard and metrics
 6. Products and inventory
 7. Orders

@@ -40,7 +40,7 @@ export function renderShell(root, session, handlers = {}) {
           <div class="brand">${lunaMark()}<span class="brand-text">Luna</span></div>
           <div class="business-switch">
             <div class="business-name">${session.business.name}</div>
-            <div class="business-plan">${session.plan.name} plan</div>
+            ${session.plan ? html`<div class="business-plan">${session.plan.name} plan</div>` : ""}
             ${businessSwitcher(session)}
           </div>
           <nav class="nav">

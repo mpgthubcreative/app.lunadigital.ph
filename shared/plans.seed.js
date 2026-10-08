@@ -137,7 +137,36 @@ export const PLAN_SEED = Object.freeze({
   },
 });
 
-export const LIMIT_KEYS = Object.freeze(["users", "ordersPerMonth", "storageBytes", "importsPerMonth"]);
+// Vocabulary every plan and override is validated against
+// (shared/entitlements.js). Adding a limit or feature means adding it here
+// and to every plan; nothing else hard-codes these numbers.
+export const LIMIT_DEFINITIONS = Object.freeze({
+  users: { label: "Active users", unit: "count" },
+  ordersPerMonth: { label: "Orders per month", unit: "count" },
+  storageBytes: { label: "File storage", unit: "bytes" },
+  importsPerMonth: { label: "Spreadsheet imports per month", unit: "count" },
+});
+
+export const LIMIT_KEYS = Object.freeze(Object.keys(LIMIT_DEFINITIONS));
+
+export const FEATURE_DEFINITIONS = Object.freeze({
+  reportsLevel: { label: "Reports", type: "enum", values: ["basic", "advanced"] },
+  inAppNotifications: { label: "In-app notifications", type: "boolean" },
+  pushNotifications: { label: "Push notifications", type: "boolean" },
+  googleSheets: { label: "Google Sheets sync", type: "boolean" },
+  advancedPermissions: { label: "Advanced permissions", type: "boolean" },
+  workflowCustomization: { label: "Workflow customization", type: "boolean" },
+  support: { label: "Support", type: "enum", values: ["standard", "priority"] },
+});
+
+export const FEATURE_KEYS = Object.freeze(Object.keys(FEATURE_DEFINITIONS));
+
+export function isValidFeatureValue(key, value) {
+  const def = FEATURE_DEFINITIONS[key];
+  if (!def) return false;
+  if (def.type === "boolean") return value === true || value === false;
+  return def.values.includes(value);
+}
 
 export function formatMoney(centavos, { minimum = false } = {}) {
   const pesos = (Number(centavos) || 0) / 100;

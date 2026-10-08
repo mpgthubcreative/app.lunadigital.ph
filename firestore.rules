@@ -1,6 +1,6 @@
 rules_version = '2';
 
-// Luna tenant-isolation rules (Phase 3).
+// Luna tenant-isolation + commercial access rules (Phases 3-4).
 //
 // Model
 // - Every tenant record lives under businesses/{bid}/...
@@ -10,6 +10,13 @@ rules_version = '2';
 //   anything else the browser controls are never consulted.
 // - What a member may read comes from the server-written permission map
 //   on that document (permissions.{key} == true). roleTemplate is a label.
+// - Module data ALSO needs the business's entitlement snapshot
+//   (businesses/{bid}.entitlements) to be valid, computed for the
+//   business's current plan, and to have modules.{moduleId} == true.
+//   A permission never unlocks a module the business isn't entitled to.
+//   See canAccessModule(). The collection -> module / permission mapping
+//   mirrors shared/modules.js; tests/shared/rules-registry.test.js fails
+//   if the two drift.
 // - Subscription policy mirrors shared/subscription.js + effectivePermissions
 //   in shared/tenancy.js: active / past_due / suspended read normally,
 //   cancelled = account owner only with export-only permissions,
@@ -18,6 +25,8 @@ rules_version = '2';
 // Writes: there is NO `allow write` / create / update / delete anywhere in
 // this file. Every write goes through Netlify Functions (Admin SDK), which
 // enforce login, membership, permission, module, subscription and limits.
+// In particular plans, overrides and entitlement snapshots can only be
+// changed by Luna operators, never from the browser.
 //
 // Not matched here (and therefore denied): plans, users, platformAudit,
 // collection-group queries, and the server-only tenant collections
@@ -84,11 +93,109 @@ service cloud.firestore {
             || (subscriptionStatus(bid) == 'cancelled' && isAccountOwner(bid)));
     }
 
-    // Can this caller read data guarded by permission `key` in this business?
+    // Does this caller hold permission `key` here, after the subscription's
+    // export-only narrowing?
     function can(bid, key) {
       return tenantReadable(bid)
         && member(bid).get('permissions', {}).get(key, false) == true
         && (subscriptionStatus(bid) != 'cancelled' || exportOnlyPermission(key));
+    }
+
+    // ---------- Entitlements ----------
+
+    // Same checks as validateEntitlementsSnapshot (shared/entitlements.js),
+    // so the rules and the server accept and reject exactly the same
+    // snapshots. The key lists must match MODULE_IDS / CORE_MODULE_IDS
+    // (shared/modules.js) and LIMIT_DEFINITIONS / FEATURE_DEFINITIONS
+    // (shared/plans.seed.js); tests/shared/rules-registry.test.js checks.
+    function moduleIds() {
+      return ['dashboard', 'orders', 'payments', 'inventory', 'customers', 'reports', 'imports', 'users', 'settings', 'suppliers', 'production', 'returns'];
+    }
+
+    function limitKeys() {
+      return ['users', 'ordersPerMonth', 'storageBytes', 'importsPerMonth'];
+    }
+
+    function featureKeys() {
+      return ['reportsLevel', 'inAppNotifications', 'pushNotifications', 'googleSheets', 'advancedPermissions', 'workflowCustomization', 'support'];
+    }
+
+    // Every module present as a boolean; core modules on.
+    function validModules(m) {
+      return m is map
+        && m.keys().hasOnly(moduleIds())
+        && m.keys().hasAll(moduleIds())
+        && m.dashboard == true
+        && m.users == true
+        && m.settings == true
+        && m.orders is bool
+        && m.payments is bool
+        && m.inventory is bool
+        && m.customers is bool
+        && m.reports is bool
+        && m.imports is bool
+        && m.suppliers is bool
+        && m.production is bool
+        && m.returns is bool;
+    }
+
+    function validLimit(limits, key) {
+      return limits[key] is int && limits[key] >= 0;
+    }
+
+    function validLimits(l) {
+      return l is map
+        && l.keys().hasOnly(limitKeys())
+        && l.keys().hasAll(limitKeys())
+        && validLimit(l, 'users')
+        && validLimit(l, 'ordersPerMonth')
+        && validLimit(l, 'storageBytes')
+        && validLimit(l, 'importsPerMonth');
+    }
+
+    function validFeatures(f) {
+      return f is map
+        && f.keys().hasOnly(featureKeys())
+        && f.keys().hasAll(featureKeys())
+        && f.reportsLevel in ['basic', 'advanced']
+        && f.inAppNotifications is bool
+        && f.pushNotifications is bool
+        && f.googleSheets is bool
+        && f.advancedPermissions is bool
+        && f.workflowCustomization is bool
+        && f.support in ['standard', 'priority'];
+    }
+
+    // The stored snapshot is well-formed, current (schemaVersion 1), was
+    // computed for the business's current plan, and that plan exists.
+    // Anything else (missing, stale, unknown plan, wrong types) denies.
+    // Only called after tenantReadable(), so the business doc exists.
+    function entitlementsValid(bid) {
+      let business = get(businessPath(bid)).data;
+      let ent = business.get('entitlements', null);
+      let planId = business.get('subscription', {}).get('planId', null);
+      return ent is map
+        && ent.get('schemaVersion', 0) == 1
+        && planId is string
+        && planId.matches('^[a-z][a-z0-9-]{1,31}$')
+        && ent.get('planId', null) == planId
+        && exists(/databases/$(database)/documents/plans/$(planId))
+        && validModules(ent.get('modules', null))
+        && validLimits(ent.get('limits', null))
+        && validFeatures(ent.get('features', null));
+    }
+
+    // Exact boolean true only.
+    function moduleEnabled(bid, moduleId) {
+      return get(businessPath(bid)).data.entitlements.modules.get(moduleId, false) == true;
+    }
+
+    // THE module gate: active membership (+ subscription) AND the exact
+    // permission AND a valid snapshot with the module switched on.
+    function canAccessModule(bid, moduleId, key) {
+      return can(bid, key)
+        && entitlementsValid(bid)
+        && moduleEnabled(bid, moduleId);
     }
 
     // ---------- Tenant data ----------
@@ -100,22 +207,22 @@ service cloud.firestore {
 
       match /members/{uid} {
         allow get: if (signedIn() && uid == request.auth.uid && tenantReadable(bid))
-          || can(bid, 'users.view');
-        allow list: if can(bid, 'users.view');
+          || canAccessModule(bid, 'users', 'users.view');
+        allow list: if canAccessModule(bid, 'users', 'users.view');
       }
 
-      match /products/{id}              { allow read: if can(bid, 'inventory.view'); }
-      match /inventoryTransactions/{id} { allow read: if can(bid, 'inventory.view'); }
-      match /customers/{id}             { allow read: if can(bid, 'customers.view'); }
-      match /orders/{id}                { allow read: if can(bid, 'orders.view'); }
-      match /payments/{id}              { allow read: if can(bid, 'payments.view'); }
-      match /metrics/{day}              { allow read: if can(bid, 'dashboard.view'); }
-      match /reports/{id}               { allow read: if can(bid, 'reports.view'); }
-      match /settings/{section}         { allow read: if can(bid, 'settings.view'); }
+      match /products/{id}              { allow read: if canAccessModule(bid, 'inventory', 'inventory.view'); }
+      match /inventoryTransactions/{id} { allow read: if canAccessModule(bid, 'inventory', 'inventory.view'); }
+      match /customers/{id}             { allow read: if canAccessModule(bid, 'customers', 'customers.view'); }
+      match /orders/{id}                { allow read: if canAccessModule(bid, 'orders', 'orders.view'); }
+      match /payments/{id}              { allow read: if canAccessModule(bid, 'payments', 'payments.view'); }
+      match /metrics/{day}              { allow read: if canAccessModule(bid, 'dashboard', 'dashboard.view'); }
+      match /reports/{id}               { allow read: if canAccessModule(bid, 'reports', 'reports.view'); }
+      match /settings/{section}         { allow read: if canAccessModule(bid, 'settings', 'settings.view'); }
 
       match /imports/{id} {
-        allow read: if can(bid, 'imports.run');
-        match /rows/{n} { allow read: if can(bid, 'imports.run'); }
+        allow read: if canAccessModule(bid, 'imports', 'imports.run');
+        match /rows/{n} { allow read: if canAccessModule(bid, 'imports', 'imports.run'); }
       }
     }
 

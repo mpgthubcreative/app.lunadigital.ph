@@ -5,14 +5,30 @@
 // withSecurityRulesDisabled, which stands in for the Admin SDK writes the
 // server performs; every assertion then runs as a browser client.
 //
-// Member documents are built with shared/permissions.js resolvePermissions,
-// the same function provisioning uses, so the stored permission maps are
-// exactly what production would hold.
+// Member documents are built with shared/permissions.js resolvePermissions
+// and business entitlement snapshots with shared/entitlements.js
+// computeEntitlements from the real seeded plans: the same functions
+// provisioning uses, so stored documents are exactly what production holds.
 
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { initializeTestEnvironment } from "@firebase/rules-unit-testing";
 import { resolvePermissions, ROLE_TEMPLATES } from "../../shared/permissions.js";
+import { computeEntitlements } from "../../shared/entitlements.js";
+import { PLAN_SEED } from "../../shared/plans.seed.js";
+
+// Test-only plan: no seeded plan switches off a built module today, so this
+// one exists to prove "plan disables a module" and "override re-enables it".
+// It is NOT a commercial plan and is never seeded outside the emulator.
+export const TEST_PLANS = Object.freeze({
+  "lite-test": {
+    ...structuredClone(PLAN_SEED.starter),
+    id: "lite-test",
+    name: "Lite (test only)",
+    modules: { ...PLAN_SEED.starter.modules, reports: false, imports: false, customers: false },
+  },
+});
+export const ALL_PLANS = Object.freeze({ ...PLAN_SEED, ...TEST_PLANS });
 
 export const PROJECT_ID = "demo-luna";
 export const A = "demo-distributor-a";
@@ -117,8 +133,10 @@ export const STATUS_ROLES = Object.freeze({
 
 export const statusUid = (kind, bid) => `${kind}@${bid}`;
 
-function businessDoc(name, status) {
-  const subscription = { planId: "growth", renewalAt: null, graceUntil: null };
+// A business document as provisioning writes it: subscription + overrides
+// + the computed entitlement snapshot.
+export function businessDoc(name, status, { planId = "growth", overrides = {} } = {}) {
+  const subscription = { planId, renewalAt: null, graceUntil: null };
   if (status !== undefined) subscription.status = status;
   return {
     name,
@@ -126,19 +144,22 @@ function businessDoc(name, status) {
     currency: "PHP",
     isDemo: true,
     subscription,
-    entitlements: { planId: "growth", modules: { orders: true }, limits: { users: 50 } },
+    moduleOverrides: overrides.modules || {},
+    limitOverrides: overrides.limits || {},
+    featureOverrides: overrides.features || {},
+    entitlements: { ...computeEntitlements(ALL_PLANS[planId], overrides), computedAt: new Date("2026-10-07T00:00:00Z") },
   };
 }
 
-async function seedTenant(db, bid, name, status) {
-  await db.doc(`businesses/${bid}`).set(businessDoc(name, status));
+export async function seedTenant(db, bid, name, status, options) {
+  await db.doc(`businesses/${bid}`).set(businessDoc(name, status, options));
   for (const collection of Object.keys(TENANT_COLLECTIONS)) {
     await db.doc(`businesses/${bid}/${collection}/${DOC}`).set({ tenant: bid, secret: `${bid}-${collection}`, businessId: bid });
   }
   await db.doc(`businesses/${bid}/imports/${DOC}/rows/1`).set({ tenant: bid, row: 1 });
 }
 
-async function seedMember(db, bid, uid, spec) {
+export async function seedMember(db, bid, uid, spec) {
   await db.doc(`businesses/${bid}/members/${uid}`).set(memberDoc(uid, spec));
   await db.doc(`businesses/${bid}/members/${uid}/inbox/${DOC}`).set({ title: "hello", readAt: null });
 }
@@ -148,8 +169,11 @@ export async function seedWorld(env) {
   await env.withSecurityRulesDisabled(async (ctx) => {
     const db = ctx.firestore();
 
-    await seedTenant(db, A, "Demo Distributor A", "active");
-    await seedTenant(db, B, "Demo Distributor B", "active");
+    for (const plan of Object.values(ALL_PLANS)) await db.doc(`plans/${plan.id}`).set(plan);
+
+    await seedTenant(db, A, "Demo Distributor A", "active", { planId: "growth" });
+    // B is on the top plan with every module: still unreachable from A.
+    await seedTenant(db, B, "Demo Distributor B", "active", { planId: "pro" });
     for (const [uid, spec] of Object.entries(MEMBERS)) await seedMember(db, spec.bid, uid, spec);
     for (const m of MULTI.memberships) await seedMember(db, m.bid, MULTI.uid, m);
 
@@ -166,7 +190,6 @@ export async function seedWorld(env) {
     await db.doc(`users/${OUTSIDER}`).set({ businessIds: [A, B], defaultBusinessId: B });
     await db.doc(`users/${MULTI.uid}`).set({ businessIds: [A, B], defaultBusinessId: A });
 
-    await db.doc("plans/growth").set({ id: "growth", name: "Growth" });
     await db.doc(`platformAudit/${DOC}`).set({ action: "seed" });
   });
 }

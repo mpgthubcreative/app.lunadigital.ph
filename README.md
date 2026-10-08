@@ -38,6 +38,10 @@ Every script prints its target and refuses to write without `--confirm <projectI
 | `npm run create-business -- --name "…" --plan growth --owner-email … --owner-name "…" --confirm <projectId>` | Onboard a business and its owner (prints a password-setup link) |
 | `npm run add-member -- --business <id> --email … --name "…" --role manager\|staff --confirm <projectId>` | Add a team member (enforces the plan's user limit) |
 | `npm run set-member-status -- --business <id> --email … --status active\|disabled --confirm <projectId>` | Enable or disable a membership (the owner is protected) |
+| `npm run set-plan -- --business <id> --plan starter\|growth\|pro --reason "…" --confirm <projectId>` | Assign or change a plan; recomputes entitlements; audited |
+| `npm run set-overrides -- --business <id> [--modules reports=false] [--limits users=3] [--features googleSheets=true] [--clear-modules reports] --reason "…" --confirm <projectId>` | Per-business overrides (validated); recomputes; audited |
+| `npm run recompute-entitlements -- (--business <id> \| --all) --confirm <projectId>` | Rebuild entitlement snapshots from plan + overrides; audited |
+| `npm run show-entitlements -- --business <id>` | Read-only: stored snapshot, validity, and what a recompute would change |
 | `npm run seed:demo -- --confirm <projectId>` | Fake demo tenants and users. Refuses production. Passwords go to `.demo-credentials.local.md` |
 | `npm run smoke:staging -- [baseUrl]` | End-to-end sign-in and `/api/session` checks with the demo accounts |
 

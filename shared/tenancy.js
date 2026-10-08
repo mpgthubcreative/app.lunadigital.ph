@@ -31,7 +31,7 @@ export function sanitizePermissions(map) {
 }
 
 // What a cancelled (export-only) account may still do.
-const EXPORT_ONLY_PERMISSIONS = Object.freeze(["dashboard.view", "reports.view", "reports.export", "billing.view", "settings.view"]);
+export const EXPORT_ONLY_PERMISSIONS = Object.freeze(["dashboard.view", "reports.view", "reports.export", "billing.view", "settings.view"]);
 
 // Narrows a member's permissions by the subscription access policy.
 // Write restrictions for suspended accounts are enforced separately by

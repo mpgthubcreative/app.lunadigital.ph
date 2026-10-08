@@ -196,3 +196,24 @@ describe("GET /api/session — subscription policy", () => {
     expect(res.body.error).toBe("business-misconfigured");
   });
 });
+
+describe("GET /api/session — package visibility (Phase 4)", () => {
+  it("owner (billing.view) gets plan, limits and usage", async () => {
+    const res = await call(request({ uid: world.uids.ownera }));
+    expect(res.body.plan).toEqual({ id: "growth", name: "Growth" });
+    expect(res.body.entitlements.limits.users).toBe(5);
+    expect(res.body.usage).not.toBeNull();
+  });
+
+  it("staff and manager get module switches and features, but no plan, limits or usage", async () => {
+    for (const uid of [world.uids.staffa, world.uids.managera]) {
+      const res = await call(request({ uid }));
+      expect(res.status).toBe(200);
+      expect(res.body.plan).toBeNull();
+      expect(res.body.entitlements.limits).toBeNull();
+      expect(res.body.usage).toBeNull();
+      expect(res.body.entitlements.modules.orders).toBe(true);
+      expect(typeof res.body.entitlements.features.googleSheets).toBe("boolean");
+    }
+  });
+});

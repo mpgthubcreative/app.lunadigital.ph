@@ -20,10 +20,11 @@ import { watchUser, signIn, signOutUser, currentIdToken, friendlyAuthError } fro
 import { loadSession, setPreferredBusinessId } from "./session.js";
 import { renderShell } from "./shell.js";
 import { createRouter } from "./router.js";
+import { buildRoutes, routeAllowed, renderPageNotAvailable } from "./routes.js";
 import { renderLogin, renderAccessProblem, renderBoot } from "./screens.js";
 import { MODULE_LOADERS } from "../modules/loaders.js";
-import { html, render } from "../lib/html.js";
-import { pageHeader, card, emptyState } from "../components/ui.js";
+import { render } from "../lib/html.js";
+import { card, emptyState } from "../components/ui.js";
 
 const root = document.getElementById("app");
 const REVALIDATE_MS = 5 * 60 * 1000;
@@ -118,7 +119,11 @@ function mountApp(session) {
 
   let cleanup = null;
   let navToken = 0;
-  const routes = shell.nav.map((mod) => ({ path: mod.path, label: mod.label, moduleId: mod.id }));
+  const routes = buildRoutes(session);
+  const showNotAvailable = () => {
+    shell.setActive({ path: null, label: "Not available" });
+    renderPageNotAvailable(shell.content);
+  };
 
   router = createRouter({
     routes,
@@ -126,6 +131,10 @@ function mountApp(session) {
       const token = ++navToken;
       if (typeof cleanup === "function") cleanup();
       cleanup = null;
+      if (!routeAllowed(session, route)) {
+        showNotAvailable();
+        return;
+      }
       shell.setActive(route);
       try {
         const mod = await MODULE_LOADERS[route.moduleId]();
@@ -137,16 +146,7 @@ function mountApp(session) {
       }
       shell.content.focus({ preventScroll: true });
     },
-    notFound() {
-      shell.setActive({ path: null, label: "Not available" });
-      render(
-        shell.content,
-        html`
-          ${pageHeader({ title: "Page not available" })}
-          ${card({ body: emptyState({ title: "This page isn't available", body: "It doesn't exist, or it isn't enabled for your account." }) })}
-        `
-      );
-    },
+    notFound: showNotAvailable,
   });
   router.start();
 

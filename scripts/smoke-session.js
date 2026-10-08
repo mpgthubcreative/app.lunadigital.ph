@@ -43,12 +43,16 @@ async function token(key) {
   return (tokens[key] = data.idToken);
 }
 
-async function session({ as, rawToken, businessId }) {
+async function session(options) {
+  return get("session", options);
+}
+
+async function get(endpoint, { as, rawToken, businessId } = {}) {
   const headers = {};
   if (as) headers.Authorization = `Bearer ${await token(as)}`;
   if (rawToken) headers.Authorization = `Bearer ${rawToken}`;
   if (businessId) headers["X-Luna-Business-Id"] = businessId;
-  const res = await fetch(`${baseUrl}/api/session`, { headers });
+  const res = await fetch(`${baseUrl}/api/${endpoint}`, { headers });
   let body = null;
   try {
     body = await res.json();
@@ -126,6 +130,23 @@ const checks = [
   }],
   ["usage counts active members only (A: owner, manager, staff, multi = 4)", async () => (await session({ as: "owner.a" })).body.usage.users === 4],
   ["environment reported as staging", async () => (await session({ as: "owner.a" })).body.environment === "staging"],
+  // Phase 4: entitlements + package visibility
+  ["owner.a session has a schemaVersion-1 package with core modules on", async () => {
+    const r = await session({ as: "owner.a" });
+    const m = r.body.entitlements.modules;
+    return r.status === 200 && m.dashboard === true && m.users === true && m.settings === true && typeof m.reports === "boolean" && r.body.plan.id === "growth";
+  }],
+  ["staff.a session hides plan, limits and usage", async () => {
+    const r = await session({ as: "staff.a" });
+    return r.status === 200 && r.body.plan === null && r.body.entitlements.limits === null && r.body.usage === null && r.body.entitlements.modules.orders === true;
+  }],
+  ["GET /api/reports: no token → 401", async () => (await get("reports")).status === 401],
+  ["GET /api/reports: staff.a (no reports.view) → 403", async () => (await get("reports", { as: "staff.a" })).status === 403],
+  ["GET /api/reports: manager.a (reports.view + module on) → 501, no data", async () => {
+    const r = await get("reports", { as: "manager.a" });
+    return r.status === 501 && r.body.error === "not-implemented";
+  }],
+  ["GET /api/reports: owner.a selecting B → 403", async () => (await get("reports", { as: "owner.a", businessId: B })).status === 403],
 ];
 
 console.log(`Smoke-testing ${baseUrl}\n`);

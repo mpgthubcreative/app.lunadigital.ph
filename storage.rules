@@ -1,16 +1,25 @@
 rules_version = '2';
 
-// Luna tenant-scoped Storage rules (Phase 3). Not deployed yet: staging
+// Luna tenant-scoped Storage rules (Phases 3-4). Not deployed yet: staging
 // has no Storage bucket. Verified against the emulator.
 //
 // Layout: tenants/{bid}/{area}/...  (area = products | payments | imports | exports)
 //
-// Access mirrors firestore.rules exactly. It is read from the caller's own
-// Firestore membership document (cross-service rules), the server-written
-// permission map, and the business's subscription status. Nothing is
-// public, nothing outside tenants/ is reachable, and there is no browser
-// write: uploads will go through server-issued, tenant-checked paths
-// when a feature needs them.
+// Access mirrors firestore.rules. It reads the caller's own Firestore
+// membership document (cross-service rules), the server-written permission
+// map, the business's subscription status and its entitlement snapshot
+// (the area's module must be enabled). Each area belongs to a module in
+// shared/modules.js (`storage`); tests/shared/rules-registry.test.js keeps
+// this file in sync with it.
+//
+// Difference from firestore.rules: no plan-existence lookup. Cross-service
+// reads are billed and limited per request, so this file stays at two
+// Firestore documents (member + business). A snapshot for a deleted plan is
+// still denied server-side.
+//
+// Nothing is public, nothing outside tenants/ is reachable, and there is no
+// browser write: uploads will go through server-issued, tenant-checked
+// paths when a feature needs them.
 service firebase.storage {
   match /b/{bucket}/o {
 
@@ -63,11 +72,89 @@ service firebase.storage {
         && (subscriptionStatus(bid) != 'cancelled' || exportOnlyPermission(key));
     }
 
+    // Same snapshot validation as firestore.rules (minus the plan lookup).
+    function moduleIds() {
+      return ['dashboard', 'orders', 'payments', 'inventory', 'customers', 'reports', 'imports', 'users', 'settings', 'suppliers', 'production', 'returns'];
+    }
+
+    function limitKeys() {
+      return ['users', 'ordersPerMonth', 'storageBytes', 'importsPerMonth'];
+    }
+
+    function featureKeys() {
+      return ['reportsLevel', 'inAppNotifications', 'pushNotifications', 'googleSheets', 'advancedPermissions', 'workflowCustomization', 'support'];
+    }
+
+    function validModules(m) {
+      return m is map
+        && m.keys().hasOnly(moduleIds())
+        && m.keys().hasAll(moduleIds())
+        && m.dashboard == true
+        && m.users == true
+        && m.settings == true
+        && m.orders is bool
+        && m.payments is bool
+        && m.inventory is bool
+        && m.customers is bool
+        && m.reports is bool
+        && m.imports is bool
+        && m.suppliers is bool
+        && m.production is bool
+        && m.returns is bool;
+    }
+
+    function validLimit(limits, key) {
+      return limits[key] is int && limits[key] >= 0;
+    }
+
+    function validLimits(l) {
+      return l is map
+        && l.keys().hasOnly(limitKeys())
+        && l.keys().hasAll(limitKeys())
+        && validLimit(l, 'users')
+        && validLimit(l, 'ordersPerMonth')
+        && validLimit(l, 'storageBytes')
+        && validLimit(l, 'importsPerMonth');
+    }
+
+    function validFeatures(f) {
+      return f is map
+        && f.keys().hasOnly(featureKeys())
+        && f.keys().hasAll(featureKeys())
+        && f.reportsLevel in ['basic', 'advanced']
+        && f.inAppNotifications is bool
+        && f.pushNotifications is bool
+        && f.googleSheets is bool
+        && f.advancedPermissions is bool
+        && f.workflowCustomization is bool
+        && f.support in ['standard', 'priority'];
+    }
+
+    function entitlementsValid(bid) {
+      let business = firestore.get(businessPath(bid)).data;
+      let ent = business.get('entitlements', null);
+      let planId = business.get('subscription', {}).get('planId', null);
+      return ent is map
+        && ent.get('schemaVersion', 0) == 1
+        && planId is string
+        && planId.matches('^[a-z][a-z0-9-]{1,31}$')
+        && ent.get('planId', null) == planId
+        && validModules(ent.get('modules', null))
+        && validLimits(ent.get('limits', null))
+        && validFeatures(ent.get('features', null));
+    }
+
+    function canAccessModule(bid, moduleId, key) {
+      return can(bid, key)
+        && entitlementsValid(bid)
+        && firestore.get(businessPath(bid)).data.entitlements.modules.get(moduleId, false) == true;
+    }
+
     match /tenants/{bid} {
-      match /products/{path=**} { allow read: if can(bid, 'inventory.view'); }
-      match /payments/{path=**} { allow read: if can(bid, 'payments.view'); }
-      match /imports/{path=**}  { allow read: if can(bid, 'imports.run'); }
-      match /exports/{path=**}  { allow read: if can(bid, 'reports.export'); }
+      match /products/{path=**} { allow read: if canAccessModule(bid, 'inventory', 'inventory.view'); }
+      match /payments/{path=**} { allow read: if canAccessModule(bid, 'payments', 'payments.view'); }
+      match /imports/{path=**}  { allow read: if canAccessModule(bid, 'imports', 'imports.run'); }
+      match /exports/{path=**}  { allow read: if canAccessModule(bid, 'reports', 'reports.export'); }
     }
 
     match /{allPaths=**} {

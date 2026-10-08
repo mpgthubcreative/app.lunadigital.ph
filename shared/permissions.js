@@ -6,43 +6,47 @@
 // new roles (Warehouse Staff, Sales Staff, Finance, ...) are added here as
 // data without touching any code that enforces access.
 //
+// Every permission belongs to exactly one module (shared/modules.js). A
+// permission is only usable while the business is entitled to that module:
+// holding reports.view does nothing if Reports is off for the business.
+//
 // The resolved permission map is computed server-side and stored on the
 // member document (businesses/{bid}/members/{uid}.permissions); the client
 // copy of this file is only used to render UI.
 
 export const PERMISSIONS = Object.freeze({
-  "dashboard.view": { group: "Dashboard", label: "View dashboard" },
+  "dashboard.view": { module: "dashboard", group: "Dashboard", label: "View dashboard" },
 
-  "orders.view": { group: "Orders", label: "View orders" },
-  "orders.create": { group: "Orders", label: "Create orders" },
-  "orders.update": { group: "Orders", label: "Update order status" },
-  "orders.cancel": { group: "Orders", label: "Cancel orders" },
+  "orders.view": { module: "orders", group: "Orders", label: "View orders" },
+  "orders.create": { module: "orders", group: "Orders", label: "Create orders" },
+  "orders.update": { module: "orders", group: "Orders", label: "Update order status" },
+  "orders.cancel": { module: "orders", group: "Orders", label: "Cancel orders" },
 
-  "payments.view": { group: "Payments", label: "View payments" },
-  "payments.record": { group: "Payments", label: "Record payments" },
-  "payments.verify": { group: "Payments", label: "Verify payments" },
+  "payments.view": { module: "payments", group: "Payments", label: "View payments" },
+  "payments.record": { module: "payments", group: "Payments", label: "Record payments" },
+  "payments.verify": { module: "payments", group: "Payments", label: "Verify payments" },
 
-  "inventory.view": { group: "Inventory", label: "View inventory" },
-  "inventory.adjust": { group: "Inventory", label: "Adjust stock" },
-  "products.manage": { group: "Inventory", label: "Manage products" },
+  "inventory.view": { module: "inventory", group: "Inventory", label: "View inventory" },
+  "inventory.adjust": { module: "inventory", group: "Inventory", label: "Adjust stock" },
+  "products.manage": { module: "inventory", group: "Inventory", label: "Manage products" },
 
-  "customers.view": { group: "Customers", label: "View customers" },
-  "customers.manage": { group: "Customers", label: "Manage customers" },
+  "customers.view": { module: "customers", group: "Customers", label: "View customers" },
+  "customers.manage": { module: "customers", group: "Customers", label: "Manage customers" },
 
-  "reports.view": { group: "Reports", label: "View basic reports" },
-  "reports.advanced": { group: "Reports", label: "View sensitive / advanced reports" },
-  "reports.export": { group: "Reports", label: "Export reports" },
+  "reports.view": { module: "reports", group: "Reports", label: "View basic reports" },
+  "reports.advanced": { module: "reports", group: "Reports", label: "View sensitive / advanced reports" },
+  "reports.export": { module: "reports", group: "Reports", label: "Export reports" },
 
-  "imports.run": { group: "Imports", label: "Run spreadsheet imports" },
+  "imports.run": { module: "imports", group: "Imports", label: "Run spreadsheet imports" },
 
-  "users.view": { group: "Users", label: "View team members" },
-  "users.manage": { group: "Users", label: "Invite and manage team members" },
+  "users.view": { module: "users", group: "Users", label: "View team members" },
+  "users.manage": { module: "users", group: "Users", label: "Invite and manage team members" },
 
-  "settings.view": { group: "Settings", label: "View business settings" },
-  "settings.manage": { group: "Settings", label: "Change business settings" },
-  "integrations.manage": { group: "Settings", label: "Manage integrations" },
+  "settings.view": { module: "settings", group: "Settings", label: "View business settings" },
+  "settings.manage": { module: "settings", group: "Settings", label: "Change business settings" },
+  "integrations.manage": { module: "settings", group: "Settings", label: "Manage integrations" },
 
-  "billing.view": { group: "Subscription", label: "View subscription and billing" },
+  "billing.view": { module: "settings", group: "Subscription", label: "View subscription and billing" },
 });
 
 export const PERMISSION_KEYS = Object.freeze(Object.keys(PERMISSIONS));
@@ -100,6 +104,11 @@ export function resolvePermissions(templateId, overrides = {}) {
   for (const key of grant) result[key] = true;
   for (const key of revoke) delete result[key];
   return result;
+}
+
+// The module a permission belongs to, or null for an unknown key.
+export function moduleForPermission(key) {
+  return isPermissionKey(key) ? PERMISSIONS[key].module : null;
 }
 
 export function hasPermission(permissionMap, key) {
