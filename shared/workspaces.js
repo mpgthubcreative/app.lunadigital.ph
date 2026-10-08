@@ -66,11 +66,9 @@ function deepFreeze(value) {
 const TEMPLATES = [
   {
     id: "distributor",
-    // v2 (Phase 9): Customers became operational.
+    // v2 (Phase 9): Customers became operational. (v1 snapshots were
+    // accepted via upgradingFrom only until every business was recomputed.)
     version: 2,
-    // Rollout window: snapshots computed at these versions are still
-    // accepted until every business is recomputed; then this list empties.
-    upgradingFrom: [1],
     name: "Distributor Operations",
     description: "Orders, payments, products and inventory for distributors and wholesalers.",
     status: "live",

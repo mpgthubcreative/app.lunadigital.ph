@@ -242,6 +242,13 @@ describe("stored snapshot validation fails closed", () => {
     expect(v(s, "growth", "distributor").problems).toContain("module reports isn't built and can't be enabled");
   });
 
+  it("after the Phase 9 rollout a distributor v1 snapshot is stale (no window left)", () => {
+    const s = ent("distributor", "growth");
+    expect(s.workspaceTemplateVersion).toBe(2);
+    expect(v({ ...s, workspaceTemplateVersion: 1 }, "growth", "distributor").ok).toBe(false);
+    expect(WORKSPACE_TEMPLATES.distributor.upgradingFrom ?? []).toEqual([]);
+  });
+
   it("a distributor snapshot that lost only its template id is not read as distributor", () => {
     const s = ent("distributor", "growth");
     delete s.workspaceTemplateId; // version 1 and schemaVersion 2 intact

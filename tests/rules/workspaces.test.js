@@ -30,6 +30,8 @@ const VARIANTS = {
   "ws-malformed": (d) => ((d.workspaceTemplateId = ["bridal-expense"]), d),
 };
 const DIST_VARIANTS = {
+  // Phase 9: distributor moved to v2; a v1 snapshot is stale now.
+  "ws-dist-v1-stale": (d) => ((d.entitlements.workspaceTemplateVersion = 1), d),
   "ws-legacy": (d) => legacy(d),
   "ws-legacy-assigned": (d) => ((legacy(d).workspaceTemplateId = "distributor"), d),
   "ws-legacy-forged": (d) => ((legacy(d).entitlements.workspaceTemplateId = "distributor"), d),
@@ -101,6 +103,13 @@ describe("stale / unknown / mismatched / malformed workspace: every module read 
       await assertFails(storageGet(`owner@${bid}`, `tenants/${bid}/payments/seed.txt`));
     });
   }
+});
+
+describe("template versions", () => {
+  it("a distributor snapshot still at v1 (before the Phase 9 recompute) is denied now", async () => {
+    await assertFails(get("owner@ws-dist-v1-stale", `businesses/ws-dist-v1-stale/orders/${DOC}`));
+    await assertFails(get("owner@ws-dist-v1-stale", `businesses/ws-dist-v1-stale/customers/${DOC}`));
+  });
 });
 
 describe("legacy (pre-8.5) snapshots", () => {
