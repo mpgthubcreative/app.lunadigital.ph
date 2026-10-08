@@ -4,6 +4,17 @@ export function formatNumber(value) {
   return numberFormat.format(Number(value) || 0);
 }
 
+// Integer centavos -> "₱1,234.50" in the business's currency.
+export function formatCentavos(centavos, currency = "PHP") {
+  return new Intl.NumberFormat("en-PH", { style: "currency", currency, minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Number(centavos) / 100);
+}
+
+// "Oct 8, 2026" for a business-local YYYY-MM-DD (no timezone shift).
+export function formatDayId(dayId) {
+  const [y, m, d] = dayId.split("-").map(Number);
+  return new Intl.DateTimeFormat("en-PH", { dateStyle: "medium", timeZone: "UTC" }).format(new Date(Date.UTC(y, m - 1, d)));
+}
+
 export function formatBytes(bytes) {
   const value = Number(bytes) || 0;
   const units = ["B", "KB", "MB", "GB", "TB"];

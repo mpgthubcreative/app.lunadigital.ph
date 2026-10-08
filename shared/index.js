@@ -11,3 +11,7 @@ export * from "./subscription.js";
 export * from "./entitlements.js";
 export * from "./tenancy.js";
 export * from "./environment.js";
+export * from "./metrics.js";
+export * from "./finance.js";
+export * from "./dashboard.js";
+export * from "./expenses.js";

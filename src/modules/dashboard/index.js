@@ -1,31 +1,68 @@
-// Dashboard — Phase 5 wires these cards to the per-day metrics document
-// (businesses/{bid}/metrics/{date}); it never loads the order collection to
-// compute totals. Phase 1 renders the layout with empty values.
+// Dashboard: today's figures for the business, in its own timezone.
+// What's shown is decided by shared/dashboard.js (permission + entitled
+// modules); values come from the metric documents (data.js) through the
+// pure view model (view.js). Until Orders, Inventory, Payments and
+// Expenses exist, every card honestly reads "No data yet".
 
 import { html, render } from "../../lib/html.js";
 import { pageHeader, statCard, card, emptyState } from "../../components/ui.js";
+import { formatDayId } from "../../lib/format.js";
+import { DASHBOARD_SECTIONS } from "@shared/index.js";
+import { dashboardPlan, buildDashboardView } from "./view.js";
+import { fetchMetricDocuments } from "./data.js";
 
-const CARDS = [
-  { label: "Today's Sales" },
-  { label: "Today's Orders" },
-  { label: "Paid" },
-  { label: "Unpaid" },
-  { label: "For Fulfillment" },
-  { label: "Low Stock" },
-];
+function renderView(container, session, day, view) {
+  const sections = DASHBOARD_SECTIONS.filter((s) => s.id !== "lists")
+    .map((s) => ({ ...s, cards: view.cards.filter((c) => c.section === s.id) }))
+    .filter((s) => s.cards.length);
 
-export function mount(container, session) {
   render(
     container,
     html`
-      ${pageHeader({ title: "Dashboard", subtitle: `Today at ${session.business.name}` })}
-      <div class="section stat-grid">
-        ${CARDS.map((c) => statCard({ label: c.label, value: "—", hint: "Available in Phase 5" }))}
-      </div>
-      <div class="section grid grid-2">
-        ${card({ title: "Recent Orders", body: emptyState({ iconName: "orders", title: "No orders yet", body: "Orders entered in Luna will appear here." }) })}
-        ${card({ title: "Recent Activity", body: emptyState({ iconName: "inbox", title: "No activity yet", body: "Staff actions and alerts will appear here." }) })}
-      </div>
+      ${pageHeader({ title: "Dashboard", subtitle: `Today, ${formatDayId(day)} · ${session.business.name}` })}
+      ${sections.map(
+        (s) => html`
+          <section class="section" data-section="${s.id}">
+            <h2 class="section-title">${s.label}</h2>
+            <div class="stat-grid">
+              ${s.cards.map((c) => statCard({ id: c.id, label: c.label, value: c.value, empty: c.empty, hint: c.hint, note: c.note }))}
+            </div>
+          </section>
+        `
+      )}
+      ${view.lists.length
+        ? html`<div class="section grid grid-2">
+            ${view.lists.map((l) => html`<div data-widget="${l.id}">${card({ title: l.label, body: emptyState({ iconName: "inbox", title: "No data yet", body: l.empty }) })}</div>`)}
+          </div>`
+        : ""}
+      ${!sections.length && !view.lists.length
+        ? card({ body: emptyState({ title: "Nothing to show yet", body: "Your dashboard fills in as your business uses Luna." }) })
+        : ""}
     `
   );
+}
+
+// options.fetchDocuments / options.now are injectable for tests.
+export function mount(container, session, { fetchDocuments = fetchMetricDocuments, now = new Date() } = {}) {
+  let cancelled = false;
+  let plan;
+  try {
+    plan = dashboardPlan(session, now);
+  } catch (err) {
+    console.error("dashboard: can't determine the business date:", err);
+    render(container, html`${pageHeader({ title: "Dashboard" })}${card({ body: emptyState({ title: "Dashboard unavailable", body: "This business's timezone isn't set up correctly. Please contact Luna support." }) })}`);
+    return () => {};
+  }
+
+  const loading = Object.fromEntries(plan.documents.map((d) => [d.source, { status: "loading" }]));
+  renderView(container, session, plan.day, buildDashboardView({ session, widgets: plan.widgets, docs: loading }));
+
+  fetchDocuments(session.business.id, plan.documents).then((docs) => {
+    if (cancelled) return;
+    renderView(container, session, plan.day, buildDashboardView({ session, widgets: plan.widgets, docs }));
+  });
+
+  return () => {
+    cancelled = true;
+  };
 }

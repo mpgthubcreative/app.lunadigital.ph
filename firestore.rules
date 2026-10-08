@@ -31,6 +31,7 @@ rules_version = '2';
 // Not matched here (and therefore denied): plans, users, platformAudit,
 // collection-group queries, and the server-only tenant collections
 // paymentRefs, counters, usage, auditLog, integrations, members/*/inbox.
+// Also not matched: expenses (module approved, not built yet: Phase 10).
 service cloud.firestore {
   match /databases/{database}/documents {
 
@@ -109,7 +110,7 @@ service cloud.firestore {
     // (shared/modules.js) and LIMIT_DEFINITIONS / FEATURE_DEFINITIONS
     // (shared/plans.seed.js); tests/shared/rules-registry.test.js checks.
     function moduleIds() {
-      return ['dashboard', 'orders', 'payments', 'inventory', 'customers', 'reports', 'imports', 'users', 'settings', 'suppliers', 'production', 'returns'];
+      return ['dashboard', 'orders', 'payments', 'inventory', 'customers', 'reports', 'expenses', 'imports', 'users', 'settings', 'suppliers', 'production', 'returns'];
     }
 
     function limitKeys() {
@@ -133,6 +134,7 @@ service cloud.firestore {
         && m.inventory is bool
         && m.customers is bool
         && m.reports is bool
+        && m.expenses is bool
         && m.imports is bool
         && m.suppliers is bool
         && m.production is bool
@@ -217,6 +219,9 @@ service cloud.firestore {
       match /orders/{id}                { allow read: if canAccessModule(bid, 'orders', 'orders.view'); }
       match /payments/{id}              { allow read: if canAccessModule(bid, 'payments', 'payments.view'); }
       match /metrics/{day}              { allow read: if canAccessModule(bid, 'dashboard', 'dashboard.view'); }
+      // Money figures live apart from operational counts so they can need
+      // their own permission (rules can't hide fields inside a document).
+      match /financialMetrics/{day}     { allow read: if canAccessModule(bid, 'dashboard', 'dashboard.financials'); }
       match /reports/{id}               { allow read: if canAccessModule(bid, 'reports', 'reports.view'); }
       match /settings/{section}         { allow read: if canAccessModule(bid, 'settings', 'settings.view'); }
 

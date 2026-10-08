@@ -96,15 +96,15 @@ describe("firestore.rules matches the registry", () => {
   it("every registry collection is gated by its module + permission, and nothing else is", () => {
     const gated = gatedPaths(firestoreRules);
     const expected = {};
-    for (const mod of MODULES) for (const c of mod.collections) expected[c] = mod;
-    // Subcollections inherit their parent collection's module.
+    for (const mod of MODULES) {
+      for (const [c, permission] of Object.entries(mod.collections)) expected[c] = { module: mod.id, permission };
+    }
+    // Subcollections inherit their parent collection's gate.
     expected.rows = expected.imports;
 
     expect(Object.keys(gated).sort()).toEqual(Object.keys(expected).sort());
     for (const [collection, calls] of Object.entries(gated)) {
-      for (const call of calls) {
-        expect(call, collection).toEqual({ module: expected[collection].id, permission: expected[collection].permission });
-      }
+      for (const call of calls) expect(call, collection).toEqual(expected[collection]);
     }
   });
 
@@ -148,6 +148,10 @@ describe("permission -> module ownership", () => {
 
   it("every built module's view permission belongs to that module", () => {
     for (const mod of MODULES.filter((m) => m.available)) expect(moduleForPermission(mod.permission), mod.id).toBe(mod.id);
+  });
+
+  it("collection permissions belong to the collection's module", () => {
+    for (const mod of MODULES) for (const permission of Object.values(mod.collections)) expect(moduleForPermission(permission), mod.id).toBe(mod.id);
   });
 
   it("storage-area permissions belong to the area's module", () => {

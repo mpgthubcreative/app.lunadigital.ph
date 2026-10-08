@@ -11,6 +11,7 @@
 import { readFileSync } from "node:fs";
 import { normalizeEnvironment, isProduction } from "../shared/environment.js";
 import { PERMISSION_KEYS } from "../shared/permissions.js";
+import { businessDate } from "../shared/metrics.js";
 
 if (isProduction(normalizeEnvironment(process.env.LUNA_ENV))) {
   console.error("Refusing to run demo-account smoke tests against production.");
@@ -41,6 +42,15 @@ async function token(key) {
   const data = await res.json();
   if (!res.ok) throw new Error(`sign-in failed for ${key}: ${data.error && data.error.message}`);
   return (tokens[key] = data.idToken);
+}
+
+// Firestore REST read as a demo user: returns the HTTP status only.
+async function fsGet(as, path) {
+  const project = process.env.VITE_FIREBASE_PROJECT_ID;
+  const res = await fetch(`https://firestore.googleapis.com/v1/projects/${project}/databases/(default)/documents/${path}`, {
+    headers: { Authorization: `Bearer ${await token(as)}` },
+  });
+  return res.status;
 }
 
 async function session(options) {
@@ -147,6 +157,24 @@ const checks = [
     return r.status === 501 && r.body.error === "not-implemented";
   }],
   ["GET /api/reports: owner.a selecting B → 403", async () => (await get("reports", { as: "owner.a", businessId: B })).status === 403],
+  // Phase 5: dashboard summary documents through the deployed Firestore rules.
+  // An allowed read of a not-yet-written document is 404; a denied one is 403.
+  ["owner.a has dashboard.financials; staff.a doesn't", async () => {
+    const [o, s] = await Promise.all([session({ as: "owner.a" }), session({ as: "staff.a" })]);
+    return has(o, "dashboard.financials") && !has(s, "dashboard.financials") && has(s, "dashboard.view");
+  }],
+  ["owner.a reads today's metrics + financialMetrics (allowed)", async () => {
+    const day = businessDate((await session({ as: "owner.a" })).body.business.timezone);
+    const a = await fsGet("owner.a", `businesses/${A}/metrics/${day}`);
+    const b = await fsGet("owner.a", `businesses/${A}/financialMetrics/${day}`);
+    return [200, 404].includes(a) && [200, 404].includes(b);
+  }],
+  ["staff.a reads operational metrics but is refused financialMetrics", async () => {
+    const day = businessDate((await session({ as: "staff.a" })).body.business.timezone);
+    return [200, 404].includes(await fsGet("staff.a", `businesses/${A}/metrics/current`)) && (await fsGet("staff.a", `businesses/${A}/financialMetrics/${day}`)) === 403;
+  }],
+  ["owner.a is refused B's financialMetrics", async () => (await fsGet("owner.a", `businesses/${B}/financialMetrics/current`)) === 403],
+  ["Expenses (not built) is refused even to owner.a", async () => (await fsGet("owner.a", `businesses/${A}/expenses/any`)) === 403],
 ];
 
 console.log(`Smoke-testing ${baseUrl}\n`);

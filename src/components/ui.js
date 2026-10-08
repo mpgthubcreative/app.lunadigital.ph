@@ -21,12 +21,15 @@ export function badge(text, tone = "neutral") {
   return html`<span class="badge badge-${tone}">${text}</span>`;
 }
 
-export function statCard({ label, value = "—", hint = "" }) {
+// empty: the value is a placeholder ("No data yet", "…"), styled quietly.
+// note: longer explanatory text shown under the card (e.g. what an estimate excludes).
+export function statCard({ label, value = "—", hint = "", empty = false, note = "", id = "" }) {
   return html`
-    <div class="card stat-card">
+    <div class="card stat-card" ${id ? html`data-widget="${id}"` : ""}>
       <div class="stat-label">${label}</div>
-      <div class="stat-value">${value}</div>
+      <div class="stat-value${empty ? " is-empty" : ""}">${value}</div>
       ${hint ? html`<div class="stat-hint">${hint}</div>` : ""}
+      ${note ? html`<p class="stat-note">${note}</p>` : ""}
     </div>
   `;
 }

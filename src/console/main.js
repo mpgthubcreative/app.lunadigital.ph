@@ -35,7 +35,7 @@ function businessesView() {
             <thead><tr><th>Business</th><th>Plan</th><th class="num">Users</th><th>Status</th><th>Renewal</th><th>Usage</th></tr></thead>
           </table>
         </div>
-        ${emptyState({ iconName: "businesses", title: "No businesses yet", body: "Businesses are created with scripts/create-business.js for now and will be managed here in Phase 13." })}
+        ${emptyState({ iconName: "businesses", title: "No businesses yet", body: "Businesses are created with scripts/create-business.js for now and will be managed here in Phase 14." })}
       `,
     })}
   `;
@@ -45,7 +45,7 @@ function plansView() {
   const plans = Object.values(PLAN_SEED).sort((a, b) => a.sortOrder - b.sortOrder);
   const moduleLabel = (id) => MODULES.find((m) => m.id === id)?.label || id;
   return html`
-    ${pageHeader({ title: "Plans", subtitle: "Initial configuration (seed). Editable plans arrive in Phase 13 — prices and limits are not final." })}
+    ${pageHeader({ title: "Plans", subtitle: "Initial configuration (seed). Editable plans arrive in Phase 14 — prices and limits are not final." })}
     ${card({
       body: html`
         <div class="table-wrap">
@@ -105,7 +105,7 @@ function boot() {
             <div class="topbar-title" id="topbarTitle"></div>
           </header>
           <div class="banners">
-            <div class="banner banner-info" role="note">Static preview — no sign-in and no tenant data. Super Admin sign-in (platformAdmin claim) and management arrive in Phase 13.</div>
+            <div class="banner banner-info" role="note">Static preview — no sign-in and no tenant data. Super Admin sign-in (platformAdmin claim) and management arrive in Phase 14.</div>
           </div>
           <main class="content" id="content" tabindex="-1"></main>
         </div>

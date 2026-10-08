@@ -7,10 +7,12 @@
 
 const SERVER_TS = Symbol("serverTimestamp");
 const ARRAY_UNION = Symbol("arrayUnion");
+const INCREMENT = Symbol("increment");
 
 export const FieldValue = {
   serverTimestamp: () => ({ [SERVER_TS]: true }),
   arrayUnion: (...values) => ({ [ARRAY_UNION]: values }),
+  increment: (n) => ({ [INCREMENT]: n }),
 };
 
 let autoId = 0;
@@ -18,6 +20,7 @@ let autoId = 0;
 function resolveValue(value, previous) {
   if (value && typeof value === "object") {
     if (value[SERVER_TS]) return new Date("2026-10-07T00:00:00Z");
+    if (INCREMENT in value) return (typeof previous === "number" ? previous : 0) + value[INCREMENT];
     if (value[ARRAY_UNION]) {
       const base = Array.isArray(previous) ? [...previous] : [];
       for (const v of value[ARRAY_UNION]) if (!base.includes(v)) base.push(v);

@@ -399,3 +399,55 @@ export async function setMemberStatus({ db, admin, businessId, uid, status }) {
   });
   return { businessId, uid, status };
 }
+
+// ---------- Permission resync (after permission keys or templates change) ----------
+
+// Re-resolves every member's stored permission map from its role template +
+// its own grant/revoke overrides, e.g. after a release adds permission keys
+// to a template. Members whose template no longer exists are left untouched
+// and reported. Writes one audit record per business with what changed.
+export async function resyncMemberPermissions({ db, admin, businessId, actor = "cli", reason = "resync member permissions" }) {
+  const why = typeof reason === "string" ? reason.trim() : "";
+  if (why.length < 3) throw new ProvisioningError("invalid-input", "A reason is required.");
+  const tenant = tenantDb(db, businessId);
+  const FieldValue = admin.firestore.FieldValue;
+
+  return db.runTransaction(async (tx) => {
+    const businessSnap = await tx.get(tenant.ref);
+    if (!businessSnap.exists) throw new ProvisioningError("not-found", `Business ${businessId} not found.`);
+    const members = await tx.get(tenant.collection("members"));
+
+    const changes = [];
+    const skipped = [];
+    const updates = [];
+    for (const doc of members.docs) {
+      const member = doc.data();
+      if (!ROLE_TEMPLATES[member.roleTemplate]) {
+        skipped.push({ uid: doc.id, reason: `unknown role template ${JSON.stringify(member.roleTemplate)}` });
+        continue;
+      }
+      let next;
+      try {
+        next = resolvePermissions(member.roleTemplate, member.permissionOverrides || {});
+      } catch (err) {
+        skipped.push({ uid: doc.id, reason: err.message });
+        continue;
+      }
+      const current = member.permissions && typeof member.permissions === "object" ? member.permissions : {};
+      const added = Object.keys(next).filter((k) => current[k] !== true).sort();
+      const removed = Object.keys(current).filter((k) => !next[k]).sort();
+      if (!added.length && !removed.length) continue;
+      changes.push({ uid: doc.id, roleTemplate: member.roleTemplate, added, removed });
+      updates.push([doc.ref, next]);
+    }
+
+    const now = FieldValue.serverTimestamp();
+    for (const [ref, permissions] of updates) tx.update(ref, { permissions, updatedAt: now });
+    if (changes.length) {
+      const audit = { type: "permissions.resynced", businessId, actor: actor || "cli", reason: why, changes, skipped, at: now };
+      tx.set(tenant.collection("auditLog").doc(), audit);
+      tx.set(db.collection("platformAudit").doc(), audit);
+    }
+    return { businessId, changes, skipped };
+  });
+}

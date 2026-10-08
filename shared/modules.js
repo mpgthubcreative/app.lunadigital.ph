@@ -1,5 +1,7 @@
 // Module registry: the one list of everything Luna can show in a tenant's
-// navigation, and which data each module owns.
+// navigation, and which data each module owns: `collections` maps each
+// Firestore collection to the permission that reads it; `storage` does the
+// same for Storage areas.
 //
 // A user may use a module only when ALL of these hold (canUseModule):
 //   1. the module is available (built) in this version of Luna
@@ -15,21 +17,25 @@
 // malformed snapshot fails closed for them too.
 
 export const MODULES = Object.freeze([
-  { id: "dashboard", label: "Dashboard", path: "/", icon: "dashboard", permission: "dashboard.view", available: true, core: true, collections: ["metrics"], storage: {} },
-  { id: "orders", label: "Orders", path: "/orders", icon: "orders", permission: "orders.view", available: true, collections: ["orders"], storage: {} },
-  { id: "payments", label: "Payments", path: "/payments", icon: "payments", permission: "payments.view", available: true, collections: ["payments"], storage: { payments: "payments.view" } },
-  { id: "inventory", label: "Inventory", path: "/inventory", icon: "inventory", permission: "inventory.view", available: true, collections: ["products", "inventoryTransactions"], storage: { products: "inventory.view" } },
-  { id: "customers", label: "Customers", path: "/customers", icon: "customers", permission: "customers.view", available: true, collections: ["customers"], storage: {} },
-  { id: "reports", label: "Reports", path: "/reports", icon: "reports", permission: "reports.view", available: true, collections: ["reports"], storage: { exports: "reports.export" } },
-  { id: "imports", label: "Imports", path: "/imports", icon: "imports", permission: "imports.run", available: true, collections: ["imports"], storage: { imports: "imports.run" } },
-  { id: "users", label: "Users", path: "/users", icon: "users", permission: "users.view", available: true, core: true, collections: ["members"], storage: {} },
-  { id: "settings", label: "Settings", path: "/settings", icon: "settings", permission: "settings.view", available: true, core: true, collections: ["settings"], storage: {} },
+  { id: "dashboard", label: "Dashboard", path: "/", icon: "dashboard", permission: "dashboard.view", available: true, core: true, collections: { metrics: "dashboard.view", financialMetrics: "dashboard.financials" }, storage: {} },
+  { id: "orders", label: "Orders", path: "/orders", icon: "orders", permission: "orders.view", available: true, collections: { orders: "orders.view" }, storage: {} },
+  { id: "payments", label: "Payments", path: "/payments", icon: "payments", permission: "payments.view", available: true, collections: { payments: "payments.view" }, storage: { payments: "payments.view" } },
+  { id: "inventory", label: "Inventory", path: "/inventory", icon: "inventory", permission: "inventory.view", available: true, collections: { products: "inventory.view", inventoryTransactions: "inventory.view" }, storage: { products: "inventory.view" } },
+  { id: "customers", label: "Customers", path: "/customers", icon: "customers", permission: "customers.view", available: true, collections: { customers: "customers.view" }, storage: {} },
+  { id: "reports", label: "Reports", path: "/reports", icon: "reports", permission: "reports.view", available: true, collections: { reports: "reports.view" }, storage: { exports: "reports.export" } },
+  // Approved Phase 5, built in Phase 10. Not available yet: no route, no
+  // browser-readable collection, every access denied. The expenses
+  // collection gets its rule when the module is built.
+  { id: "expenses", label: "Expenses", path: "/expenses", icon: "expenses", permission: "expenses.view", available: false, collections: {}, storage: {} },
+  { id: "imports", label: "Imports", path: "/imports", icon: "imports", permission: "imports.run", available: true, collections: { imports: "imports.run" }, storage: { imports: "imports.run" } },
+  { id: "users", label: "Users", path: "/users", icon: "users", permission: "users.view", available: true, core: true, collections: { members: "users.view" }, storage: {} },
+  { id: "settings", label: "Settings", path: "/settings", icon: "settings", permission: "settings.view", available: true, core: true, collections: { settings: "settings.view" }, storage: {} },
 
   // Known future modules: may be referenced by business configuration
   // today, but never navigable until built.
-  { id: "suppliers", label: "Suppliers", path: "/suppliers", icon: "suppliers", permission: "inventory.view", available: false, collections: [], storage: {} },
-  { id: "production", label: "Production", path: "/production", icon: "production", permission: "inventory.view", available: false, collections: [], storage: {} },
-  { id: "returns", label: "Returns", path: "/returns", icon: "returns", permission: "orders.view", available: false, collections: [], storage: {} },
+  { id: "suppliers", label: "Suppliers", path: "/suppliers", icon: "suppliers", permission: "inventory.view", available: false, collections: {}, storage: {} },
+  { id: "production", label: "Production", path: "/production", icon: "production", permission: "inventory.view", available: false, collections: {}, storage: {} },
+  { id: "returns", label: "Returns", path: "/returns", icon: "returns", permission: "orders.view", available: false, collections: {}, storage: {} },
 ]);
 
 export const MODULE_IDS = Object.freeze(MODULES.map((m) => m.id));

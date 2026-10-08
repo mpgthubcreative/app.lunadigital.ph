@@ -46,6 +46,7 @@ export const TENANT_COLLECTIONS = Object.freeze({
   orders: "orders.view",
   payments: "payments.view",
   metrics: "dashboard.view",
+  financialMetrics: "dashboard.financials",
   reports: "reports.view",
   settings: "settings.view",
   imports: "imports.run",
@@ -54,6 +55,8 @@ export const TENANT_COLLECTIONS = Object.freeze({
   usage: null,
   auditLog: null,
   integrations: null,
+  // Module approved (Phase 5) but not built: no rule, so nobody reads it.
+  expenses: null,
 });
 
 export const COLLECTION_NAMES = Object.freeze([...Object.keys(TENANT_COLLECTIONS), "members", "rows", "inbox"]);

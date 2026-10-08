@@ -16,6 +16,10 @@
 
 export const PERMISSIONS = Object.freeze({
   "dashboard.view": { module: "dashboard", group: "Dashboard", label: "View dashboard" },
+  // Sales, gross profit, expenses and estimated operating profit on the
+  // dashboard. Separate from dashboard.view so staff who enter orders don't
+  // see profitability by default.
+  "dashboard.financials": { module: "dashboard", group: "Dashboard", label: "View sales and profitability on the dashboard" },
 
   "orders.view": { module: "orders", group: "Orders", label: "View orders" },
   "orders.create": { module: "orders", group: "Orders", label: "Create orders" },
@@ -36,6 +40,11 @@ export const PERMISSIONS = Object.freeze({
   "reports.view": { module: "reports", group: "Reports", label: "View basic reports" },
   "reports.advanced": { module: "reports", group: "Reports", label: "View sensitive / advanced reports" },
   "reports.export": { module: "reports", group: "Reports", label: "Export reports" },
+
+  "expenses.view": { module: "expenses", group: "Expenses", label: "View expenses" },
+  "expenses.create": { module: "expenses", group: "Expenses", label: "Record expenses" },
+  "expenses.update": { module: "expenses", group: "Expenses", label: "Edit expenses" },
+  "expenses.delete": { module: "expenses", group: "Expenses", label: "Delete expenses" },
 
   "imports.run": { module: "imports", group: "Imports", label: "Run spreadsheet imports" },
 

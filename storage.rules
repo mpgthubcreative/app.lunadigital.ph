@@ -74,7 +74,7 @@ service firebase.storage {
 
     // Same snapshot validation as firestore.rules (minus the plan lookup).
     function moduleIds() {
-      return ['dashboard', 'orders', 'payments', 'inventory', 'customers', 'reports', 'imports', 'users', 'settings', 'suppliers', 'production', 'returns'];
+      return ['dashboard', 'orders', 'payments', 'inventory', 'customers', 'reports', 'expenses', 'imports', 'users', 'settings', 'suppliers', 'production', 'returns'];
     }
 
     function limitKeys() {
@@ -97,6 +97,7 @@ service firebase.storage {
         && m.inventory is bool
         && m.customers is bool
         && m.reports is bool
+        && m.expenses is bool
         && m.imports is bool
         && m.suppliers is bool
         && m.production is bool

@@ -134,6 +134,25 @@
   font-variant-numeric: tabular-nums;
 }
 
+.stat-value.is-empty {
+  font-size: var(--text-md);
+  font-weight: 600;
+  color: var(--text-faint);
+}
+
+.stat-note {
+  margin: var(--space-2) 0 0;
+  font-size: var(--text-xs);
+  line-height: 1.45;
+  color: var(--text-muted);
+}
+
+.section-title {
+  margin: 0 0 var(--space-3);
+  font-size: var(--text-md);
+  font-weight: 600;
+}
+
 .stat-hint {
   margin-top: var(--space-1);
   font-size: var(--text-xs);

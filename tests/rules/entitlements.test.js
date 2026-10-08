@@ -42,7 +42,7 @@ const uidOf = (kind, bid) => `${kind}@${bid}`;
 
 // collection -> registry module (imports/rows follows imports)
 const MODULE_OF = {};
-for (const mod of MODULES) for (const c of mod.collections) MODULE_OF[c] = mod;
+for (const mod of MODULES) for (const c of Object.keys(mod.collections)) MODULE_OF[c] = mod;
 
 const READABLE = Object.entries(TENANT_COLLECTIONS).filter(([, permission]) => permission !== null);
 

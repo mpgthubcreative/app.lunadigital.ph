@@ -42,6 +42,7 @@ Every script prints its target and refuses to write without `--confirm <projectI
 | `npm run set-overrides -- --business <id> [--modules reports=false] [--limits users=3] [--features googleSheets=true] [--clear-modules reports] --reason "…" --confirm <projectId>` | Per-business overrides (validated); recomputes; audited |
 | `npm run recompute-entitlements -- (--business <id> \| --all) --confirm <projectId>` | Rebuild entitlement snapshots from plan + overrides; audited |
 | `npm run show-entitlements -- --business <id>` | Read-only: stored snapshot, validity, and what a recompute would change |
+| `npm run resync-permissions -- (--business <id> \| --all) --confirm <projectId>` | Re-resolve members' permission maps from template + overrides (after new permission keys); audited |
 | `npm run seed:demo -- --confirm <projectId>` | Fake demo tenants and users. Refuses production. Passwords go to `.demo-credentials.local.md` |
 | `npm run smoke:staging -- [baseUrl]` | End-to-end sign-in and `/api/session` checks with the demo accounts |
 

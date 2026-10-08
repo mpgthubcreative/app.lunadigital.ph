@@ -1,7 +1,7 @@
 // INITIAL plan configuration — not validated final pricing.
 //
 // This file is the seed for the Firestore `plans/{planId}` collection,
-// which becomes the editable source of truth (Super Admin, Phase 13). Code
+// which becomes the editable source of truth (Super Admin, Phase 14). Code
 // must never read limits or prices from anywhere else: the server computes
 // each business's effective entitlements from the stored plan + that
 // business's overrides (see entitlements.js), and the UI only displays
@@ -41,6 +41,7 @@ export const PLAN_SEED = Object.freeze({
       customers: true,
       reports: true,
       imports: true,
+      expenses: true,
       suppliers: false,
       production: false,
       returns: false,
@@ -81,6 +82,7 @@ export const PLAN_SEED = Object.freeze({
       customers: true,
       reports: true,
       imports: true,
+      expenses: true,
       suppliers: false,
       production: false,
       returns: false,
@@ -121,6 +123,7 @@ export const PLAN_SEED = Object.freeze({
       customers: true,
       reports: true,
       imports: true,
+      expenses: true,
       suppliers: false,
       production: false,
       returns: false,

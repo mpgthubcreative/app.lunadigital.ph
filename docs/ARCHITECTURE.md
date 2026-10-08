@@ -57,7 +57,10 @@ businesses/{bid}                  profile, timezone, orderPrefix, subscription{p
   products/{id}                   stockOnHand, reserved, available, reorderLevel, isLowStock
   inventoryTransactions/{id}      append-only stock movements
   customers/{id}  orders/{id}  payments/{id}  paymentRefs/{method_ref}
-  counters/{name}  metrics/{YYYY-MM-DD}  usage/{YYYY-MM}
+  counters/{name}  usage/{YYYY-MM}
+  metrics/{YYYY-MM-DD | YYYY-MM | current}           operational counts (dashboard.view)
+  financialMetrics/{YYYY-MM-DD | YYYY-MM | current}  money in centavos (dashboard.financials)
+  expenses/{id}                   Phase 10 (module registered in Phase 5, not built)
   reports/{id}                    server-generated report snapshots (added Phase 3)
   imports/{id}/rows/{n}  auditLog/{id}  settings/{section}  integrations/{provider}
 ```
@@ -108,13 +111,14 @@ Every future endpoint repeats this through `requireTenant(event, { permission, m
 | `orders` | orders | `orders.view` |
 | `payments` | payments | `payments.view` |
 | `metrics` | dashboard (core) | `dashboard.view` |
+| `financialMetrics` | dashboard (core) | `dashboard.financials` |
 | `reports` | reports | `reports.view` |
 | `settings` | settings (core) | `settings.view` |
 | `imports`, `imports/*/rows` | imports | `imports.run` |
 
 This mapping lives in `shared/modules.js` (`collections`, `storage`). The rules keep their own copy, and `tests/shared/rules-registry.test.js` fails if the two drift.
 
-Server-only, never readable from the browser: `users`, `plans`, `platformAudit`, `paymentRefs`, `counters`, `usage`, `auditLog`, `integrations`, `members/*/inbox`, and every collection-group query. The inbox `readAt` write is deferred to Phase 12.
+Server-only, never readable from the browser: `users`, `plans`, `platformAudit`, `paymentRefs`, `counters`, `usage`, `auditLog`, `integrations`, `members/*/inbox`, and every collection-group query. The inbox `readAt` write is deferred to Phase 13 (Notifications).
 
 In Storage, `tenants/{bid}/{products|payments|imports|exports}/**` belongs to the inventory, payments, imports and reports modules, and is readable with `inventory.view`, `payments.view`, `imports.run` and `reports.export` respectively. It uses the same membership, subscription and entitlement checks through cross-service Firestore reads. To keep it to two document reads, Storage skips the plan-existence check. Everything else is denied, and there are no browser uploads. Staging has no bucket yet, so these rules are emulator-verified but not deployed.
 
@@ -182,7 +186,7 @@ On the server this returns 503 `business-misconfigured`. In the rules, every mod
 
 **Visibility.** `/api/session` returns the plan name, limits and usage only to members with `billing.view`. Everyone gets module switches and feature flags (for navigation). Settings shows the package only to `billing.view` holders.
 
-`GET /api/reports` is a guard-only endpoint (501 when authorized) that exercises the Reports gate until Phase 10.
+`GET /api/reports` is a guard-only endpoint (501 when authorized) that exercises the Reports gate until Phase 11.
 
 ## Subscription states
 
@@ -205,9 +209,81 @@ Data is never deleted automatically because of non-payment.
 
 Every change writes an append-only `inventoryTransactions` record inside the same transaction as the stock change.
 
+## Dashboard and metrics (Phase 5)
+
+**Summary documents, not scans.** The dashboard never downloads orders, payments, inventory or expenses to add them up. It reads a few tenant-scoped summary documents, which server functions update with `FieldValue.increment` inside the same transaction as the business event (`netlify/functions/_lib/metrics.js`):
+
+| Document | Holds | Read permission |
+|---|---|---|
+| `metrics/{YYYY-MM-DD}` | operational flows for one business-local day: `orderCount`, `fulfilledOrders`, `cancelledOrders` | `dashboard.view` |
+| `financialMetrics/{YYYY-MM-DD}` | money flows in centavos: `grossSales`, `discounts`, `returns`, `cogs`, `operatingExpenses`, `paymentsReceived` | `dashboard.financials` |
+| `metrics/{YYYY-MM}`, `financialMetrics/{YYYY-MM}` | the same flows rolled up per month (written in the same transaction) | as above |
+| `metrics/current` | gauges: `pendingFulfillment`, `unpaidOrders`, `lowStockProducts` | `dashboard.view` |
+| `financialMetrics/current` | gauge: `receivablesOutstanding` | `dashboard.financials` |
+
+- **Two collections:** Firestore rules secure whole documents, not fields. Putting money in its own collection is the only way to show staff the order counts without the profit.
+- **What's stored:** only components. Derived figures are computed by `shared/finance.js`, so they can't disagree with their inputs.
+- **Writer guarantees:** every write sets all counters, so a document never has a partial set. Unknown fields or non-integer deltas fail the transaction.
+- **Schema:** field definitions live in `shared/metrics.js` (`schemaVersion: 1`).
+
+**Financial definitions** (`shared/finance.js`, the only place they exist):
+
+- Net Sales = Gross Sales − Discounts − Returns/Refunds
+- Gross Profit = Net Sales − COGS
+- Estimated Operating Profit = Gross Profit − Operating Expenses
+
+A figure is `null` ("No data yet") when any input is missing or not an integer. It is never treated as 0. The last figure is called **Estimated Operating Profit**, never net income or net profit, and carries a note that it may exclude taxes, depreciation, financing costs and other accounting adjustments.
+
+**Sales recognition is not decided yet.** Whether a sale counts when the order is created, confirmed, fulfilled or paid is decided with the Orders lifecycle in Phase 7. The writer takes the recognition instant from its caller; the dashboard doesn't care which event it is.
+
+**COGS (decision).** Each sale records the unit cost in force at that moment on the order line (`unitCostAtSale`) and on its `inventoryTransactions` record. The same snapshotted amount is added to `financialMetrics.cogs`. Historical profit is never recomputed from a product's current cost, so a cost change from ₱50 to ₱60 never changes last month's profit. The cost method is proposed for Phase 6: weighted average cost on the product, updated on receipts.
+
+**Business-local dates.** `businessDate(timezone, instant)` uses the business's IANA timezone through `Intl`, so 00:30 Manila time counts toward that Manila date. An invalid timezone throws instead of guessing UTC. Manila is only the default for new businesses.
+
+**Ranges.** `resolveRange` covers today (the default), yesterday, this week (starting Monday, configurable), this month, and custom ranges of up to 366 days. `metricDocIdsForRange` returns the fewest documents: whole months as rollups, the remaining days individually. A year is 12 reads.
+
+**Visibility.** `shared/dashboard.js` lists every widget with its source document, permission and the modules it depends on. A widget shows when the member holds its permission and the business is entitled to all its modules. A module that is entitled but not built yet shows "No data yet".
+
+| Permission | Who has it by default | Widgets |
+|---|---|---|
+| `dashboard.view` | everyone | operations: orders today, unpaid orders, for fulfillment/delivery, low stock |
+| `dashboard.financials` | Owner and Manager templates; not Staff | sales and profit: today's sales, gross profit, operating expenses, estimated operating profit, paid today, unpaid balance |
+
+`dashboard.financials` can be granted to or revoked from any member individually.
+
+**Reads per dashboard load.**
+
+- **Owner:** at most 4 documents (`metrics/{today}`, `metrics/current`, `financialMetrics/{today}`, `financialMetrics/current`).
+- **Staff:** 2 documents.
+
+The reads use Firestore Lite (one-shot over REST, about 36 KB gzipped).
+
+**Cost.** The rules' membership, business and plan lookups are billed too, so one dashboard load costs about 4 billed reads per document, roughly 16 for an owner and 8 for staff. Plus the `/api/session` call.
+
+**Lists.** Recent orders (`orders` ordered by `createdAt`, limit 5), low-stock products (`isLowStock == true`, limit 5) and recent activity stay empty states with no queries until their phases set `ready: true`.
+
+## Expenses (module approved in Phase 5, built in Phase 10)
+
+Expenses exist so an owner can answer "Magkano talaga kinita namin?", not to turn Luna into accounting software.
+
+- **Registry:** `id: "expenses"`, sellable, `available: false` until Phase 10. That means no route, no browser-readable collection, and every access denied, even when entitled. It is on in every seeded plan, like the other operational modules.
+- **Permissions:** `expenses.view`, `expenses.create`, `expenses.update` and `expenses.delete`. These are named `update`, not `edit`, to match `orders.update`. Owner and Manager templates have them; Staff does not.
+- **Same access model as every module:** tenant isolation, membership, entitlement, permission and subscription.
+- **Planned record** at `expenses/{id}` (`shared/expenses.js`):
+  - core fields: `date` (business-local), `categoryId`, `amount` (centavos), `payee`
+  - payment details: `paymentMethod`, `referenceNumber`
+  - optional: `notes`, `recurring`, `receipt` (later)
+  - `status`: `recorded` or `voided`. Delete means void, so the record stays for audit.
+  - `createdBy`, `createdAt`, `updatedBy`, `updatedAt`
+- **Metrics:** every change adjusts `financialMetrics/{date}.operatingExpenses` in the same transaction.
+- **Categories:** configurable per business at `settings/expenseCategories`, seeded from `DEFAULT_EXPENSE_CATEGORIES`, with stable ids.
+- **Not in scope:** receipts, tax, payroll and bank reconciliation are not planned for Phase 10.
+
+**Profit and loss (Phase 11 Reports).** Revenue − COGS = Gross Profit − Operating Expenses = Estimated Operating Profit. Filters: today, week, month, custom range, expense category, and product/category where appropriate. It is read from the month and day rollups.
+
 ## Performance
 
-- The dashboard reads the `metrics/{today}` document, which the server updates with atomic increments, plus a capped "recent orders" query and the `isLowStock == true` query.
+- The dashboard reads at most four summary documents (see above), plus small limited list queries once Orders and Inventory exist.
 - Lists are paginated (25–50 records per page) with server-side `where()` filters and indexes.
 - Every query is scoped to a single tenant.
 
@@ -230,16 +306,19 @@ Every change writes an append-only `inventoryTransactions` record inside the sam
 2. Auth and multi-tenant business/user model ✅
 3. Rules and tenant-isolation tests ✅
 4. Plans, modules, permissions ✅
-5. Dashboard and metrics
+5. Dashboard and metrics framework ✅
 6. Products and inventory
 7. Orders
 8. Payments
 9. Customers
-10. Reports
-11. Imports
-12. Notifications
-13. Super Admin console
-14. Usage metering views
-15. Reliability, backups and recovery
+10. Expenses
+11. Reports (incl. operating P&L)
+12. Imports
+13. Notifications
+14. Super Admin console
+15. Usage metering views
+16. Reliability, backups and recovery
 
-Phases 6 and 7 are in this order because orders need products to reserve.
+- Phases 6 and 7 are in this order because orders need products to reserve and a cost to snapshot.
+- Expenses come before Reports so the P&L has operating expenses to subtract.
+- Expenses don't depend on Customers, so Phases 9 and 10 could swap if that helps.

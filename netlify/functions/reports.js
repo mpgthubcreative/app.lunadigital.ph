@@ -1,6 +1,6 @@
 // GET /api/reports
 //
-// Phase 4: authorization skeleton only. Report generation is Phase 10.
+// Phase 4: authorization skeleton only. Report generation is Phase 11.
 // It exists so the Reports access rule (membership + reports.view + the
 // Reports module entitlement) is enforced and tested on a real endpoint
 // before any report data exists. An authorized caller gets 501

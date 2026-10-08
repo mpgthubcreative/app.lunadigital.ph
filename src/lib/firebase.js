@@ -10,6 +10,7 @@
 let appPromise = null;
 let authPromise = null;
 let firestorePromise = null;
+let firestoreLitePromise = null;
 
 const useEmulators = () => import.meta.env.VITE_USE_EMULATORS === "true";
 
@@ -51,6 +52,21 @@ export function getFirebase() {
     })();
   }
   return authPromise;
+}
+
+// Firestore Lite: one-shot reads over REST, no realtime listeners or
+// offline cache, and a far smaller download. Enough for summary documents
+// like the dashboard's; use getFirestoreDb() only where listeners are needed.
+export function getFirestoreLite() {
+  if (!firestoreLitePromise) {
+    firestoreLitePromise = (async () => {
+      const [{ app }, lite] = await Promise.all([getFirebase(), import("firebase/firestore/lite")]);
+      const db = lite.getFirestore(app);
+      if (useEmulators()) lite.connectFirestoreEmulator(db, "127.0.0.1", 8080);
+      return { db, lite };
+    })();
+  }
+  return firestoreLitePromise;
 }
 
 export function getFirestoreDb() {

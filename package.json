@@ -27,6 +27,7 @@
     "set-overrides": "node --env-file=.env.local scripts/set-overrides.js",
     "recompute-entitlements": "node --env-file=.env.local scripts/recompute-entitlements.js",
     "show-entitlements": "node --env-file=.env.local scripts/show-entitlements.js",
+    "resync-permissions": "node --env-file=.env.local scripts/resync-permissions.js",
     "smoke:staging": "node --env-file=.env.local scripts/smoke-session.js"
   },
   "dependencies": {

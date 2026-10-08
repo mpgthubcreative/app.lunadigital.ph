@@ -2,7 +2,7 @@
 // package (plan, modules, features, limits vs usage) only for members with
 // billing.view, normally the owner. Everything shown comes from the
 // session the server resolved; no plan, price or limit is hard-coded here.
-// Billing and plan changes are Luna operations (Super Admin, Phase 13).
+// Billing and plan changes are Luna operations (Super Admin, Phase 14).
 
 import { accessPolicy, MODULES, FEATURE_DEFINITIONS, LIMIT_DEFINITIONS } from "@shared/index.js";
 import { html, render } from "../../lib/html.js";
