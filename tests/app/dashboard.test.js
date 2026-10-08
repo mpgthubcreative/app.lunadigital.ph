@@ -20,11 +20,13 @@ const NOW = new Date("2026-10-07T16:30:00Z"); // 2026-10-08 00:30 in Manila
 const card = (id) => container.querySelector(`[data-widget="${id}"]`);
 const value = (id) => card(id)?.querySelector(".stat-value").textContent.trim();
 
-async function show(session, docs = {}) {
+async function show(session, docs = {}, lowStock = []) {
   const fetchDocuments = vi.fn(async (_bid, documents) =>
     Object.fromEntries(documents.map((d) => [d.source, docs[`${d.collection}/${d.id}`] ? { status: "ok", data: docs[`${d.collection}/${d.id}`] } : { status: "missing", data: null }]))
   );
-  mount(container, session, { fetchDocuments, now: NOW });
+  const fetchLists = vi.fn(async (_bid, widgets) => Object.fromEntries(widgets.map((w) => [w.id, { status: "ok", rows: w.id === "lowStockItems" ? lowStock : [] }])));
+  mount(container, session, { fetchDocuments, fetchLists, now: NOW });
+  fetchDocuments.fetchLists = fetchLists;
   await flush();
   return fetchDocuments;
 }
@@ -39,10 +41,20 @@ describe("no fabricated values", () => {
     expect(container.textContent).not.toMatch(/\b0\.00\b/);
   });
 
-  it("list cards are empty states and trigger no queries", async () => {
+  it("lists without data sources stay empty states with no query; low stock is queried", async () => {
     const fetch = await show(sessionFixture());
-    for (const id of ["recentOrders", "lowStockItems", "recentActivity"]) expect(card(id).textContent).toMatch(/No data yet/);
+    for (const id of ["recentOrders", "recentActivity"]) expect(card(id).textContent).toMatch(/No data yet/);
+    expect(card("lowStockItems").textContent).toMatch(/Nothing here/);
     for (const call of fetch.mock.calls) for (const d of call[1]) expect(["metrics", "financialMetrics"]).toContain(d.collection);
+    expect(fetch.fetchLists.mock.calls[0][1].map((w) => w.id)).toEqual(["lowStockItems"]);
+  });
+
+  it("shows real low-stock products (quantities only, no costs)", async () => {
+    await show(sessionFixture(), {}, [{ id: "p1", sku: "RICE-25", name: "Rice 25kg", unit: "sack", available: 3000, reorderLevel: 5000, isLowStock: true }]);
+    const text = card("lowStockItems").textContent;
+    expect(text).toMatch(/Rice 25kg/);
+    expect(text).toMatch(/3 sack available · reorder at 5/);
+    expect(text).not.toMatch(/₱/);
   });
 });
 

@@ -32,7 +32,7 @@ export const DASHBOARD_WIDGETS = Object.freeze([
 
   // ---- Lists: one small, tenant-scoped, limited query each, once ready ----
   { id: "recentOrders", section: "lists", kind: "list", label: "Recent orders", source: "list", ready: false, permission: "orders.view", modules: ["orders"], query: { collection: "orders", orderBy: ["createdAt", "desc"], limit: 5 }, empty: "Orders entered in Luna will appear here." },
-  { id: "lowStockItems", section: "lists", kind: "list", label: "Low-stock products", source: "list", ready: false, permission: "inventory.view", modules: ["inventory"], query: { collection: "products", where: ["isLowStock", "==", true], limit: 5 }, empty: "Products at or below their reorder level will appear here." },
+  { id: "lowStockItems", section: "lists", kind: "list", label: "Low-stock products", source: "list", ready: true, permission: "inventory.view", modules: ["inventory"], query: { collection: "products", where: ["isLowStock", "==", true], limit: 5 }, empty: "Products at or below their reorder level will appear here." },
   { id: "recentActivity", section: "lists", kind: "list", label: "Recent activity", source: "list", ready: false, permission: "dashboard.view", modules: [], query: null, empty: "Staff actions and alerts will appear here." },
 ]);
 

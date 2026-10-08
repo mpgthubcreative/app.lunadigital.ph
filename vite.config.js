@@ -28,7 +28,7 @@ export default defineConfig({
   test: {
     include: ["tests/**/*.test.js"],
     // Emulator security suite has its own config (vitest.rules.config.js).
-    exclude: ["tests/rules/**", "node_modules/**"],
+    exclude: ["tests/rules/**", "tests/emulator/**", "node_modules/**"],
     // Unit tests must never reach a real Firebase project: blank the web
     // config that Vite would otherwise load from .env.local
     // (tests/app/no-real-firebase.test.js checks this).

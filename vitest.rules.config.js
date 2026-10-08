@@ -5,7 +5,7 @@ import { defineConfig } from "vitest/config";
 // at a time because they share the emulator's single demo project.
 export default defineConfig({
   test: {
-    include: ["tests/rules/**/*.test.js"],
+    include: ["tests/rules/**/*.test.js", "tests/emulator/**/*.test.js"],
     fileParallelism: false,
     testTimeout: 30000,
     hookTimeout: 60000,

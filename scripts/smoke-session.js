@@ -53,6 +53,31 @@ async function fsGet(as, path) {
   return res.status;
 }
 
+async function post(endpoint, body, { as, businessId } = {}) {
+  const headers = { "Content-Type": "application/json" };
+  if (as) headers.Authorization = `Bearer ${await token(as)}`;
+  if (businessId) headers["X-Luna-Business-Id"] = businessId;
+  const res = await fetch(`${baseUrl}/api/${endpoint}`, { method: "POST", headers, body: JSON.stringify(body) });
+  let json = {};
+  try {
+    json = await res.json();
+  } catch {
+    json = {};
+  }
+  return { status: res.status, body: json };
+}
+
+// Firestore REST structured query as a demo user: HTTP status only.
+async function fsQuery(as, parentPath, collectionId) {
+  const project = process.env.VITE_FIREBASE_PROJECT_ID;
+  const res = await fetch(`https://firestore.googleapis.com/v1/projects/${project}/databases/(default)/documents/${parentPath}:runQuery`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${await token(as)}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ structuredQuery: { from: [{ collectionId }], limit: 5 } }),
+  });
+  return res.status;
+}
+
 async function session(options) {
   return get("session", options);
 }
@@ -175,6 +200,25 @@ const checks = [
   }],
   ["owner.a is refused B's financialMetrics", async () => (await fsGet("owner.a", `businesses/${B}/financialMetrics/current`)) === 403],
   ["Expenses (not built) is refused even to owner.a", async () => (await fsGet("owner.a", `businesses/${A}/expenses/any`)) === 403],
+  // Phase 6: products + inventory (no data is created by these checks).
+  ["POST /api/inventory without a token → 401", async () => (await post("inventory", { action: "receipt" })).status === 401],
+  ["staff.a can't create products or receive stock (403)", async () => {
+    const a = await post("products", { action: "create", product: { sku: "SMOKE-X", name: "x", unit: "pcs", sellingPrice: 1, reorderLevel: 0 } }, { as: "staff.a" });
+    const b = await post("inventory", { action: "receipt", productId: "aaaaaaaaaaaaaaaaaaaa", quantity: 1000, unitCost: 100 }, { as: "staff.a" });
+    return a.status === 403 && b.status === 403;
+  }],
+  ["owner.a selecting B can't create products in B (403)", async () => {
+    const r = await post("products", { action: "create", product: { sku: "SMOKE-X", name: "x", unit: "pcs", sellingPrice: 1, reorderLevel: 0 } }, { as: "owner.a", businessId: B });
+    return r.status === 403 && r.body.error === "business-access-denied";
+  }],
+  ["owner.a: smuggled balance fields are refused (400)", async () => (await post("products", { action: "create", product: { sku: "SMOKE-X", name: "x", unit: "pcs", sellingPrice: 1, reorderLevel: 0, onHand: 999000 } }, { as: "owner.a" })).status === 400],
+  ["staff.a lists products (quantities) but is refused product costs", async () =>
+    (await fsQuery("staff.a", `businesses/${A}`, "products")) === 200 && (await fsQuery("staff.a", `businesses/${A}`, "productCosts")) === 403],
+  ["owner.a reads product costs in A, nothing in B", async () =>
+    (await fsQuery("owner.a", `businesses/${A}`, "productCosts")) === 200 &&
+    (await fsQuery("owner.a", `businesses/${B}`, "products")) === 403 &&
+    (await fsQuery("owner.a", `businesses/${B}`, "productCosts")) === 403 &&
+    (await fsQuery("owner.a", `businesses/${B}`, "inventoryTransactions")) === 403],
 ];
 
 console.log(`Smoke-testing ${baseUrl}\n`);

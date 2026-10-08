@@ -20,7 +20,7 @@ export const MODULES = Object.freeze([
   { id: "dashboard", label: "Dashboard", path: "/", icon: "dashboard", permission: "dashboard.view", available: true, core: true, collections: { metrics: "dashboard.view", financialMetrics: "dashboard.financials" }, storage: {} },
   { id: "orders", label: "Orders", path: "/orders", icon: "orders", permission: "orders.view", available: true, collections: { orders: "orders.view" }, storage: {} },
   { id: "payments", label: "Payments", path: "/payments", icon: "payments", permission: "payments.view", available: true, collections: { payments: "payments.view" }, storage: { payments: "payments.view" } },
-  { id: "inventory", label: "Inventory", path: "/inventory", icon: "inventory", permission: "inventory.view", available: true, collections: { products: "inventory.view", inventoryTransactions: "inventory.view" }, storage: { products: "inventory.view" } },
+  { id: "inventory", label: "Inventory", path: "/inventory", icon: "inventory", permission: "inventory.view", available: true, collections: { products: "inventory.view", inventoryTransactions: "inventory.view", productCosts: "inventory.costs", inventoryTransactionCosts: "inventory.costs" }, storage: { products: "inventory.view" } },
   { id: "customers", label: "Customers", path: "/customers", icon: "customers", permission: "customers.view", available: true, collections: { customers: "customers.view" }, storage: {} },
   { id: "reports", label: "Reports", path: "/reports", icon: "reports", permission: "reports.view", available: true, collections: { reports: "reports.view" }, storage: { exports: "reports.export" } },
   // Approved Phase 5, built in Phase 10. Not available yet: no route, no

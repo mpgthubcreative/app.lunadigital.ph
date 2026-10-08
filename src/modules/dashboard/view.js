@@ -4,8 +4,13 @@
 // from the documents. Nothing is invented: a missing document or field is
 // "No data yet", never 0.
 
-import { resolveDashboard, dashboardDocuments, financialSummary, businessDate } from "@shared/index.js";
+import { resolveDashboard, dashboardDocuments, financialSummary, businessDate, formatQuantity, UNITS } from "@shared/index.js";
 import { formatCentavos, formatNumber } from "../../lib/format.js";
+
+// Row shapes per list widget (only fields everyone allowed to see the list may see).
+const LIST_ROWS = {
+  lowStockItems: (p) => ({ id: p.id, title: p.name, detail: `${p.sku} · ${formatQuantity(p.available)} ${UNITS[p.unit]?.label ?? p.unit} available · reorder at ${formatQuantity(p.reorderLevel)}` }),
+};
 
 export const NO_DATA = "No data yet";
 
@@ -39,7 +44,7 @@ export function dashboardPlan(session, now = new Date()) {
   return { day, widgets, documents: dashboardDocuments(widgets, day) };
 }
 
-export function buildDashboardView({ session, widgets, docs }) {
+export function buildDashboardView({ session, widgets, docs, lists = {} }) {
   const currency = session.business.currency || "PHP";
   const cards = widgets
     .filter((w) => w.kind === "stat")
@@ -48,6 +53,12 @@ export function buildDashboardView({ session, widgets, docs }) {
       const shown = display(w, result, currency);
       return { id: w.id, section: w.section, label: w.label, value: shown.text, empty: shown.empty, state: result.state, hint: w.hint || "", note: w.note || "" };
     });
-  const lists = widgets.filter((w) => w.kind === "list").map((w) => ({ id: w.id, label: w.label, empty: w.empty, ready: w.ready === true }));
-  return { cards, lists };
+  const listViews = widgets
+    .filter((w) => w.kind === "list")
+    .map((w) => {
+      const loaded = lists[w.id];
+      const rows = loaded && loaded.status === "ok" && LIST_ROWS[w.id] ? loaded.rows.map(LIST_ROWS[w.id]) : [];
+      return { id: w.id, label: w.label, empty: w.empty, ready: w.ready === true, status: w.ready ? (loaded ? loaded.status : "loading") : "not-ready", rows };
+    });
+  return { cards, lists: listViews };
 }

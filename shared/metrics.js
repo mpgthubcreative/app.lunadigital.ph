@@ -44,6 +44,9 @@ export const OPERATIONAL_GAUGES = Object.freeze({
 
 export const FINANCIAL_GAUGES = Object.freeze({
   receivablesOutstanding: { label: "Unpaid balance", unit: "centavos", fedBy: "payments" },
+  // Deliberately NO inventory-value gauge: it would make this document a
+  // write hot spot for every stock movement in the business. Total value is
+  // a sum() aggregation over productCosts.inventoryValue instead.
 });
 
 const DAY_ID = /^(\d{4})-(\d{2})-(\d{2})$/;

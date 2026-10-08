@@ -30,7 +30,8 @@ rules_version = '2';
 //
 // Not matched here (and therefore denied): plans, users, platformAudit,
 // collection-group queries, and the server-only tenant collections
-// paymentRefs, counters, usage, auditLog, integrations, members/*/inbox.
+// paymentRefs, counters, usage, auditLog, integrations, members/*/inbox,
+// skuIndex (per-business SKU uniqueness keys).
 // Also not matched: expenses (module approved, not built yet: Phase 10).
 service cloud.firestore {
   match /databases/{database}/documents {
@@ -215,6 +216,10 @@ service cloud.firestore {
 
       match /products/{id}              { allow read: if canAccessModule(bid, 'inventory', 'inventory.view'); }
       match /inventoryTransactions/{id} { allow read: if canAccessModule(bid, 'inventory', 'inventory.view'); }
+      // Costs live apart from quantities (same reason as financialMetrics):
+      // staff who see stock levels don't see average cost or value.
+      match /productCosts/{id}              { allow read: if canAccessModule(bid, 'inventory', 'inventory.costs'); }
+      match /inventoryTransactionCosts/{id} { allow read: if canAccessModule(bid, 'inventory', 'inventory.costs'); }
       match /customers/{id}             { allow read: if canAccessModule(bid, 'customers', 'customers.view'); }
       match /orders/{id}                { allow read: if canAccessModule(bid, 'orders', 'orders.view'); }
       match /payments/{id}              { allow read: if canAccessModule(bid, 'payments', 'payments.view'); }

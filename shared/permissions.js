@@ -31,7 +31,12 @@ export const PERMISSIONS = Object.freeze({
   "payments.verify": { module: "payments", group: "Payments", label: "Verify payments" },
 
   "inventory.view": { module: "inventory", group: "Inventory", label: "View inventory" },
-  "inventory.adjust": { module: "inventory", group: "Inventory", label: "Adjust stock" },
+  "inventory.receive": { module: "inventory", group: "Inventory", label: "Receive stock" },
+  "inventory.adjust": { module: "inventory", group: "Inventory", label: "Adjust stock and record opening balances" },
+  // Average cost, inventory value and cost history. Separate from
+  // inventory.view so warehouse staff can see quantities without costs
+  // (same principle as dashboard.financials).
+  "inventory.costs": { module: "inventory", group: "Inventory", label: "View product costs and inventory value" },
   "products.manage": { module: "inventory", group: "Inventory", label: "Manage products" },
 
   "customers.view": { module: "customers", group: "Customers", label: "View customers" },

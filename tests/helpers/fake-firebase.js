@@ -77,6 +77,9 @@ class DocRef {
   async update(data) {
     this.store._update(this.path, data);
   }
+  async delete() {
+    this.store.docs.delete(this.path);
+  }
   async create(data) {
     if (this.store.docs.has(this.path)) {
       const err = new Error("6 ALREADY_EXISTS: Document already exists");
@@ -150,6 +153,12 @@ export class FakeFirestore {
       get: (target) => target.get(),
       set: (ref, data, options) => writes.push(() => this._set(ref.path, data, options)),
       update: (ref, data) => writes.push(() => this._update(ref.path, data)),
+      create: (ref, data) =>
+        writes.push(() => {
+          if (this.docs.has(ref.path)) throw Object.assign(new Error("6 ALREADY_EXISTS"), { code: 6 });
+          this._set(ref.path, data);
+        }),
+      delete: (ref) => writes.push(() => this.docs.delete(ref.path)),
     };
     const result = await fn(tx);
     writes.forEach((w) => w());

@@ -15,3 +15,5 @@ export * from "./metrics.js";
 export * from "./finance.js";
 export * from "./dashboard.js";
 export * from "./expenses.js";
+export * from "./quantity.js";
+export * from "./inventory.js";

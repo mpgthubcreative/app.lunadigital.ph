@@ -68,8 +68,9 @@ describe("dashboardDocuments: a fixed, tiny read set", () => {
     expect(docs).toHaveLength(2);
   });
 
-  it("list widgets issue no query until their data exists", () => {
-    for (const w of DASHBOARD_WIDGETS.filter((x) => x.kind === "list")) expect(w.ready).toBe(false);
+  it("list widgets issue no query until their data exists (Phase 6: low stock only)", () => {
+    const ready = DASHBOARD_WIDGETS.filter((x) => x.kind === "list" && x.ready).map((w) => w.id);
+    expect(ready).toEqual(["lowStockItems"]);
     for (const w of DASHBOARD_WIDGETS.filter((x) => x.kind === "list" && x.query)) expect(w.query.limit).toBeLessThanOrEqual(10);
   });
 

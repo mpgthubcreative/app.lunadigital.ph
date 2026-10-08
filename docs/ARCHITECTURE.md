@@ -54,8 +54,11 @@ businesses/{bid}                  profile, timezone, orderPrefix, subscription{p
                                   moduleOverrides, limitOverrides, entitlements (server snapshot)
   members/{uid}                   { roleTemplate, permissionOverrides, permissions{}, status, isAccountOwner }
     inbox/{id}                    in-app notifications (client may only set readAt)
-  products/{id}                   stockOnHand, reserved, available, reorderLevel, isLowStock
-  inventoryTransactions/{id}      append-only stock movements
+  products/{id}                   master data + onHand, reserved, available, isLowStock   (inventory.view)
+  productCosts/{id}               avgCostUnits, lastReceiptUnitCost, inventoryValue       (inventory.costs)
+  skuIndex/{SKU}                  { productId }: per-business SKU uniqueness              (server only)
+  inventoryTransactions/{id}      append-only movement log, quantities before/after       (inventory.view)
+  inventoryTransactionCosts/{id}  the same movement's costs before/after                  (inventory.costs)
   customers/{id}  orders/{id}  payments/{id}  paymentRefs/{method_ref}
   counters/{name}  usage/{YYYY-MM}
   metrics/{YYYY-MM-DD | YYYY-MM | current}           operational counts (dashboard.view)
@@ -107,6 +110,7 @@ Every future endpoint repeats this through `requireTenant(event, { permission, m
 | `businesses/{bid}` (get only, no list) | none | active membership |
 | `members/{uid}` | users (core) | self, or `users.view` (list needs `users.view`) |
 | `products`, `inventoryTransactions` | inventory | `inventory.view` |
+| `productCosts`, `inventoryTransactionCosts` | inventory | `inventory.costs` |
 | `customers` | customers | `customers.view` |
 | `orders` | orders | `orders.view` |
 | `payments` | payments | `payments.view` |
@@ -200,14 +204,77 @@ On the server this returns 503 `business-misconfigured`. In the rules, every mod
 
 Data is never deleted automatically because of non-payment.
 
-## Inventory
+## Products and inventory (Phase 6)
 
-- Order created: reserve stock.
-- Order fulfilled or completed: deduct on-hand stock and release the reservation.
-- Order cancelled: release the reservation.
-- Receipts, adjustments and opening balances: change on-hand stock, with a required reason.
+**Quantities** (`shared/quantity.js`, the only place they're converted):
+- Stored as integers with 3 implied decimals (`QTY_SCALE = 1000`), so 12.5 kg is stored as `12500`.
+- Each unit has its own precision: pcs, box, case, pack, dozen, set, sack, bottle, roll, g and mL are whole numbers; kg, L and m allow up to 3 decimals.
+- Input is parsed from its decimal text, never with floating-point maths. NaN, Infinity, exponents, signs and too many decimals are rejected.
+- The maximum is 10^9 units.
 
-Every change writes an append-only `inventoryTransactions` record inside the same transaction as the stock change.
+**Money** is integer centavos.
+
+**Average cost** is stored in *cost units* (centavos × 10,000 per whole unit) so repeated receipts don't drift. ₱53.333333 is stored as `53333333`. Intermediate products use BigInt, and results round half-up.
+
+**Moving weighted average (perpetual).** On a receipt:
+
+  newAvg = (onHand × avg + received × unitCost) / (onHand + received)
+
+For example, 100 @ ₱50 + 50 @ ₱60 = 150 @ 53,333,333 cost units = ₱53.33.
+
+| Movement | On hand | Reserved | Average cost |
+|---|---|---|---|
+| opening | set (only before any movement) | — | set to the unit cost |
+| receipt | + | — | recomputed |
+| adjustment_increase | + | — | unchanged; refused if the product has no cost yet |
+| adjustment_decrease | − (can't cut into reserved) | — | unchanged |
+| reservation (Phase 7) | — | + (≤ available) | unchanged |
+| release (Phase 7) | — | − (≥ 0) | unchanged |
+| fulfillment (Phase 7) | − | − | unchanged; returns the cost consumed |
+
+- **No overselling:** there's no backorder policy yet.
+- **Low stock** = `active && available ≤ reorderLevel`, stored as `isLowStock` on every change. It uses available rather than on hand because reserved stock can't fill another order.
+
+**COGS snapshot.** `costOfQuantity(qty, avg)` is what Phase 7 stores on the order line at fulfillment. The same amount goes into `financialMetrics.cogs`. A later cost change can't reach it.
+
+**Inventory value** = on hand × moving average. It's an operational estimate, not a statutory valuation. It is stored per product (`productCosts.inventoryValue`); the business total is a `sum()` aggregation, not a gauge, because a gauge would be a business-wide write hot spot.
+
+**Writes, server only** (`netlify/functions/_lib/inventory.js`). Every change is a Firestore transaction (`maxAttempts: 10`) that reads the product and its cost document, plans with `planMovement`, and writes:
+- the product balances and the cost document
+- one `inventoryTransactions` and one `inventoryTransactionCosts` record. Each holds before and after values for on hand, reserved, available, average cost and value, plus the unit cost, cost consumed, reason, note, reference, actor and timestamp, and `seq` (the product's movement number).
+- `metrics/current.lowStockProducts` (±1), only when a product's `isLowStock` flips
+
+`prepareMovements(tx, …)` + `commit()` let Phase 7 move several products inside one order transaction: all reads first, all checks before any write.
+
+**SKU uniqueness.** SKUs are unique per business and case-insensitive (normalized to upper case). The same SKU may exist in another business. The `skuIndex/{SKU}` document is created with `tx.create` in the product's transaction, so two simultaneous creates can't both win.
+
+**Product lifecycle.**
+- Create, update and activate/deactivate are audited in `auditLog`.
+- Delete is allowed only when the product has no movements and no stock.
+- The unit locks after the first movement.
+- A product with reservations can't be deactivated.
+- Editing never rewrites history: the log keeps the SKU and name as they were.
+
+**Endpoints.**
+- `POST /api/products` (`products.manage`): create, update, setStatus, delete.
+- `POST /api/inventory`: receipt (`inventory.receive`), and opening, adjustment_increase and adjustment_decrease (`inventory.adjust`).
+
+Each checks sign-in, membership, permission, the Inventory module, subscription write access and a strict payload. Balances, costs and unknown fields are refused. Authentication runs before any body validation.
+
+**Permissions.**
+- New: `inventory.receive` and `inventory.costs`.
+- Owner and Manager templates have all inventory permissions. Staff keeps `inventory.view` only, so staff see quantities, never cost.
+- Costs live in separate documents because rules can't hide fields (the same pattern as `financialMetrics`).
+
+**Screen** (`src/modules/inventory/`):
+- Firestore Lite queries: 25 per page, cursor on (nameLower, id).
+- Filters: status, low stock, name prefix or exact SKU.
+- Cost columns and the cost side of history appear only with `inventory.costs`.
+- History is paginated 20 at a time, newest first.
+
+**Dashboard.** Low stock (the gauge) and the low-stock list (`isLowStock == true`, limit 5) are live. Sales, profit, COGS, payments and orders stay "No data yet".
+
+**Indexes** (`firestore.indexes.json`): products (status, nameLower), (status, isLowStock, nameLower), (status, categoryLower, nameLower); inventoryTransactions (productId, seq desc).
 
 ## Dashboard and metrics (Phase 5)
 
@@ -256,7 +323,7 @@ A figure is `null` ("No data yet") when any input is missing or not an integer. 
 - **Owner:** at most 4 documents (`metrics/{today}`, `metrics/current`, `financialMetrics/{today}`, `financialMetrics/current`).
 - **Staff:** 2 documents.
 
-The reads use Firestore Lite (one-shot over REST, about 36 KB gzipped).
+The reads use Firestore Lite (one-shot over REST, about 32 KB gzipped, measured).
 
 **Cost.** The rules' membership, business and plan lookups are billed too, so one dashboard load costs about 4 billed reads per document, roughly 16 for an owner and 8 for staff. Plus the `/api/session` call.
 
@@ -307,7 +374,7 @@ Expenses exist so an owner can answer "Magkano talaga kinita namin?", not to tur
 3. Rules and tenant-isolation tests ✅
 4. Plans, modules, permissions ✅
 5. Dashboard and metrics framework ✅
-6. Products and inventory
+6. Products and inventory ✅
 7. Orders
 8. Payments
 9. Customers

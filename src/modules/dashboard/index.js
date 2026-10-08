@@ -9,7 +9,14 @@ import { pageHeader, statCard, card, emptyState } from "../../components/ui.js";
 import { formatDayId } from "../../lib/format.js";
 import { DASHBOARD_SECTIONS } from "@shared/index.js";
 import { dashboardPlan, buildDashboardView } from "./view.js";
-import { fetchMetricDocuments } from "./data.js";
+import { fetchMetricDocuments, fetchDashboardLists } from "./data.js";
+
+function listBody(l) {
+  if (l.status === "loading") return emptyState({ iconName: "inbox", title: "Loading…" });
+  if (l.status === "error") return emptyState({ iconName: "inbox", title: "Couldn't load", body: "Try again in a moment." });
+  if (!l.rows.length) return emptyState({ iconName: "inbox", title: l.ready ? "Nothing here" : "No data yet", body: l.ready ? "All clear for now." : l.empty });
+  return html`<ul class="list" data-role="rows">${l.rows.map((r) => html`<li><strong>${r.title}</strong><div class="stat-hint">${r.detail}</div></li>`)}</ul>`;
+}
 
 function renderView(container, session, day, view) {
   const sections = DASHBOARD_SECTIONS.filter((s) => s.id !== "lists")
@@ -32,7 +39,7 @@ function renderView(container, session, day, view) {
       )}
       ${view.lists.length
         ? html`<div class="section grid grid-2">
-            ${view.lists.map((l) => html`<div data-widget="${l.id}">${card({ title: l.label, body: emptyState({ iconName: "inbox", title: "No data yet", body: l.empty }) })}</div>`)}
+            ${view.lists.map((l) => html`<div data-widget="${l.id}">${card({ title: l.label, body: listBody(l) })}</div>`)}
           </div>`
         : ""}
       ${!sections.length && !view.lists.length
@@ -43,7 +50,7 @@ function renderView(container, session, day, view) {
 }
 
 // options.fetchDocuments / options.now are injectable for tests.
-export function mount(container, session, { fetchDocuments = fetchMetricDocuments, now = new Date() } = {}) {
+export function mount(container, session, { fetchDocuments = fetchMetricDocuments, fetchLists = fetchDashboardLists, now = new Date() } = {}) {
   let cancelled = false;
   let plan;
   try {
@@ -58,18 +65,24 @@ export function mount(container, session, { fetchDocuments = fetchMetricDocument
   renderView(container, session, plan.day, buildDashboardView({ session, widgets: plan.widgets, docs: loading }));
 
   const failed = () => Object.fromEntries(plan.documents.map((d) => [d.source, { status: "error" }]));
-  Promise.resolve()
-    .then(() => fetchDocuments(session.business.id, plan.documents))
-    .catch((err) => {
-      // e.g. Firebase not configured / SDK failed to load: every card says
-      // "Couldn't load" rather than leaving a rejected promise behind.
-      console.error("dashboard: loading metrics failed:", err && (err.code || err.message));
-      return failed();
-    })
-    .then((docs) => {
-      if (cancelled) return;
-      renderView(container, session, plan.day, buildDashboardView({ session, widgets: plan.widgets, docs }));
-    });
+  const readyLists = plan.widgets.filter((w) => w.kind === "list" && w.ready);
+  const failedLists = () => Object.fromEntries(readyLists.map((w) => [w.id, { status: "error", rows: [] }]));
+  // e.g. Firebase not configured / SDK failed to load: affected cards say
+  // "Couldn't load" rather than leaving a rejected promise behind.
+  const safe = (fn, fallback) =>
+    Promise.resolve()
+      .then(fn)
+      .catch((err) => {
+        console.error("dashboard: loading failed:", err && (err.code || err.message));
+        return fallback();
+      });
+  Promise.all([
+    safe(() => fetchDocuments(session.business.id, plan.documents), failed),
+    readyLists.length ? safe(() => fetchLists(session.business.id, readyLists), failedLists) : {},
+  ]).then(([docs, lists]) => {
+    if (cancelled) return;
+    renderView(container, session, plan.day, buildDashboardView({ session, widgets: plan.widgets, docs, lists }));
+  });
 
   return () => {
     cancelled = true;

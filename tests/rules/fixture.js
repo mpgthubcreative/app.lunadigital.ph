@@ -42,6 +42,9 @@ const root = resolve(import.meta.dirname, "../..");
 export const TENANT_COLLECTIONS = Object.freeze({
   products: "inventory.view",
   inventoryTransactions: "inventory.view",
+  productCosts: "inventory.costs",
+  inventoryTransactionCosts: "inventory.costs",
+  skuIndex: null,
   customers: "customers.view",
   orders: "orders.view",
   payments: "payments.view",
