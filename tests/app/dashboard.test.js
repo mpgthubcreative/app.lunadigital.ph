@@ -41,12 +41,13 @@ describe("no fabricated values", () => {
     expect(container.textContent).not.toMatch(/\b0\.00\b/);
   });
 
-  it("lists without data sources stay empty states with no query; low stock is queried", async () => {
+  it("lists without data sources stay empty states with no query; orders and low stock are queried", async () => {
     const fetch = await show(sessionFixture());
-    for (const id of ["recentOrders", "recentActivity"]) expect(card(id).textContent).toMatch(/No data yet/);
+    expect(card("recentActivity").textContent).toMatch(/No data yet/);
     expect(card("lowStockItems").textContent).toMatch(/Nothing here/);
+    expect(card("recentOrders").textContent).toMatch(/Nothing here/);
     for (const call of fetch.mock.calls) for (const d of call[1]) expect(["metrics", "financialMetrics"]).toContain(d.collection);
-    expect(fetch.fetchLists.mock.calls[0][1].map((w) => w.id)).toEqual(["lowStockItems"]);
+    expect(fetch.fetchLists.mock.calls[0][1].map((w) => w.id)).toEqual(["recentOrders", "lowStockItems"]);
   });
 
   it("shows real low-stock products (quantities only, no costs)", async () => {
@@ -68,8 +69,12 @@ describe("values come from the documents through shared/finance.js", () => {
     });
     expect(value("netSales")).toBe("₱12,000.00");
     expect(value("grossProfit")).toBe("₱5,000.00");
-    expect(value("operatingExpenses")).toBe("₱1,500.00");
-    expect(value("estimatedOperatingProfit")).toBe("₱3,500.00");
+    // Expenses and Payments don't feed metrics yet: their figures (and the
+    // profit that needs expenses) stay "No data yet" even though the
+    // document holds numbers, rather than implying ₱0 of expenses.
+    expect(value("operatingExpenses")).toBe("No data yet");
+    expect(value("estimatedOperatingProfit")).toBe("No data yet");
+    expect(value("paymentsReceived")).toBe("No data yet");
     expect(value("receivablesOutstanding")).toBe("₱3,000.00");
     expect(value("ordersToday")).toBe("12");
     expect(value("pendingFulfillment")).toBe("4");

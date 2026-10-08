@@ -17,24 +17,35 @@ import { ESTIMATED_PROFIT_NOTE } from "./finance.js";
 
 export const DASHBOARD_WIDGETS = Object.freeze([
   // ---- Financial (dashboard.financials) ----
-  { id: "netSales", section: "financial", kind: "stat", label: "Today's sales", source: "financial-day", value: "netSales", format: "money", permission: "dashboard.financials", modules: ["orders"], hint: "Net of discounts and returns" },
-  { id: "grossProfit", section: "financial", kind: "stat", label: "Gross profit", source: "financial-day", value: "grossProfit", format: "money", permission: "dashboard.financials", modules: ["orders", "inventory"], hint: "Net sales minus cost of goods sold" },
-  { id: "operatingExpenses", section: "financial", kind: "stat", label: "Operating expenses", source: "financial-day", value: "operatingExpenses", format: "money", permission: "dashboard.financials", modules: ["expenses"] },
-  { id: "estimatedOperatingProfit", section: "financial", kind: "stat", label: "Estimated operating profit", source: "financial-day", value: "estimatedOperatingProfit", format: "money", permission: "dashboard.financials", modules: ["orders", "inventory", "expenses"], note: ESTIMATED_PROFIT_NOTE },
-  { id: "paymentsReceived", section: "financial", kind: "stat", label: "Paid today", source: "financial-day", value: "paymentsReceived", format: "money", permission: "dashboard.financials", modules: ["payments"] },
-  { id: "receivablesOutstanding", section: "financial", kind: "stat", label: "Unpaid balance", source: "financial-current", value: "receivablesOutstanding", format: "money", permission: "dashboard.financials", modules: ["payments"] },
+  { id: "netSales", dataFrom: ["orders"], section: "financial", kind: "stat", label: "Today's sales", source: "financial-day", value: "netSales", format: "money", permission: "dashboard.financials", modules: ["orders"], hint: "Net of discounts and returns" },
+  { id: "grossProfit", dataFrom: ["orders", "inventory"], section: "financial", kind: "stat", label: "Gross profit", source: "financial-day", value: "grossProfit", format: "money", permission: "dashboard.financials", modules: ["orders", "inventory"], hint: "Net sales minus cost of goods sold" },
+  { id: "operatingExpenses", dataFrom: ["expenses"], section: "financial", kind: "stat", label: "Operating expenses", source: "financial-day", value: "operatingExpenses", format: "money", permission: "dashboard.financials", modules: ["expenses"] },
+  { id: "estimatedOperatingProfit", dataFrom: ["orders", "inventory", "expenses"], section: "financial", kind: "stat", label: "Estimated operating profit", source: "financial-day", value: "estimatedOperatingProfit", format: "money", permission: "dashboard.financials", modules: ["orders", "inventory", "expenses"], note: ESTIMATED_PROFIT_NOTE },
+  { id: "paymentsReceived", dataFrom: ["payments"], section: "financial", kind: "stat", label: "Paid today", source: "financial-day", value: "paymentsReceived", format: "money", permission: "dashboard.financials", modules: ["payments"] },
+  { id: "receivablesOutstanding", dataFrom: ["orders"], section: "financial", kind: "stat", label: "Unpaid balance", source: "financial-current", value: "receivablesOutstanding", format: "money", permission: "dashboard.financials", modules: ["payments"] },
 
   // ---- Operations (dashboard.view) ----
-  { id: "ordersToday", section: "operations", kind: "stat", label: "Orders today", source: "operational-day", value: "orderCount", format: "number", permission: "dashboard.view", modules: ["orders"] },
-  { id: "unpaidOrders", section: "operations", kind: "stat", label: "Unpaid orders", source: "operational-current", value: "unpaidOrders", format: "number", permission: "dashboard.view", modules: ["orders", "payments"] },
-  { id: "pendingFulfillment", section: "operations", kind: "stat", label: "For fulfillment / delivery", source: "operational-current", value: "pendingFulfillment", format: "number", permission: "dashboard.view", modules: ["orders"] },
-  { id: "lowStock", section: "operations", kind: "stat", label: "Low stock", source: "operational-current", value: "lowStockProducts", format: "number", permission: "dashboard.view", modules: ["inventory"] },
+  { id: "ordersToday", dataFrom: ["orders"], section: "operations", kind: "stat", label: "Orders today", source: "operational-day", value: "orderCount", format: "number", permission: "dashboard.view", modules: ["orders"] },
+  { id: "unpaidOrders", dataFrom: ["orders"], section: "operations", kind: "stat", label: "Unpaid orders", source: "operational-current", value: "unpaidOrders", format: "number", permission: "dashboard.view", modules: ["orders", "payments"] },
+  { id: "pendingFulfillment", dataFrom: ["orders"], section: "operations", kind: "stat", label: "For fulfillment / delivery", source: "operational-current", value: "pendingFulfillment", format: "number", permission: "dashboard.view", modules: ["orders"] },
+  { id: "lowStock", dataFrom: ["inventory"], section: "operations", kind: "stat", label: "Low stock", source: "operational-current", value: "lowStockProducts", format: "number", permission: "dashboard.view", modules: ["inventory"] },
 
   // ---- Lists: one small, tenant-scoped, limited query each, once ready ----
-  { id: "recentOrders", section: "lists", kind: "list", label: "Recent orders", source: "list", ready: false, permission: "orders.view", modules: ["orders"], query: { collection: "orders", orderBy: ["createdAt", "desc"], limit: 5 }, empty: "Orders entered in Luna will appear here." },
+  { id: "recentOrders", section: "lists", kind: "list", label: "Recent orders", source: "list", ready: true, permission: "orders.view", modules: ["orders"], query: { collection: "orders", orderBy: ["createdAt", "desc"], limit: 5 }, empty: "Orders entered in Luna will appear here." },
   { id: "lowStockItems", section: "lists", kind: "list", label: "Low-stock products", source: "list", ready: true, permission: "inventory.view", modules: ["inventory"], query: { collection: "products", where: ["isLowStock", "==", true], limit: 5 }, empty: "Products at or below their reorder level will appear here." },
   { id: "recentActivity", section: "lists", kind: "list", label: "Recent activity", source: "list", ready: false, permission: "dashboard.view", modules: [], query: null, empty: "Staff actions and alerts will appear here." },
 ]);
+
+// Which modules already WRITE metrics. A widget whose dataFrom includes a
+// producer that doesn't exist yet shows "No data yet" even if its document
+// field reads 0, e.g. "Paid today" before Payments, or an estimated profit
+// that would silently treat unrecorded expenses as zero. Each phase that
+// starts feeding metrics flips its entry.
+export const LIVE_DATA_SOURCES = Object.freeze({ orders: true, inventory: true, payments: false, expenses: false });
+
+export function isWidgetLive(widget) {
+  return (widget.dataFrom || []).every((id) => LIVE_DATA_SOURCES[id] === true);
+}
 
 export const DASHBOARD_SECTIONS = Object.freeze([
   { id: "financial", label: "Sales and profit" },

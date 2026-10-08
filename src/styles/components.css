@@ -286,6 +286,77 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* ---------- Compact operational tables ----------
+   Luna standard: one record = one compact row, safe fields edited in
+   place, everything else in "View details". Secondary columns drop out on
+   narrow screens instead of turning rows into tall cards. */
+
+.table-compact th,
+.table-compact td {
+  padding: var(--space-2) var(--space-3);
+  white-space: nowrap;
+}
+
+.table-compact tbody tr:hover {
+  background: var(--surface-muted);
+}
+
+.table-compact .row-warning td:first-child {
+  box-shadow: inset 3px 0 0 var(--warning);
+}
+
+.cell-edit {
+  padding: 0;
+  border: 0;
+  border-bottom: 1px dashed var(--border-strong);
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.cell-edit:hover,
+.cell-edit:focus-visible {
+  border-bottom-color: var(--luna-primary);
+  color: var(--luna-primary);
+  outline: none;
+}
+
+.select-compact,
+.btn-compact {
+  min-height: 30px;
+  padding: 0 var(--space-2);
+  font-size: var(--text-sm);
+}
+
+.row-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-1);
+}
+
+.filters-inline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.filters-inline .input {
+  flex: 1 1 220px;
+}
+
+.dl-compact {
+  grid-template-columns: repeat(auto-fill, minmax(110px, max-content) minmax(110px, 1fr));
+  gap: var(--space-1) var(--space-4);
+}
+
+@media (max-width: 760px) {
+  .table-compact .col-secondary {
+    display: none;
+  }
+}
+
 /* ---------- Meter (usage) ---------- */
 
 .meter-row + .meter-row {

@@ -4,11 +4,12 @@
 // from the documents. Nothing is invented: a missing document or field is
 // "No data yet", never 0.
 
-import { resolveDashboard, dashboardDocuments, financialSummary, businessDate, formatQuantity, UNITS } from "@shared/index.js";
+import { resolveDashboard, dashboardDocuments, financialSummary, businessDate, formatQuantity, UNITS, isWidgetLive, FULFILLMENT_STATUSES } from "@shared/index.js";
 import { formatCentavos, formatNumber } from "../../lib/format.js";
 
 // Row shapes per list widget (only fields everyone allowed to see the list may see).
 const LIST_ROWS = {
+  recentOrders: (o) => ({ id: o.id, title: `${o.orderNumber} · ${o.customer?.name ?? ""}`, detail: `${o.itemCount} item(s) · ${FULFILLMENT_STATUSES[o.fulfillmentStatus]?.label ?? o.fulfillmentStatus}` }),
   lowStockItems: (p) => ({ id: p.id, title: p.name, detail: `${p.sku} · ${formatQuantity(p.available)} ${UNITS[p.unit]?.label ?? p.unit} available · reorder at ${formatQuantity(p.reorderLevel)}` }),
 };
 
@@ -16,6 +17,7 @@ export const NO_DATA = "No data yet";
 
 // docs: { [source]: { status: "ok" | "missing" | "error", data } }
 function valueFor(widget, docs) {
+  if (!isWidgetLive(widget)) return { state: "empty" };
   const entry = docs[widget.source];
   if (!entry || entry.status === "loading") return { state: "loading" };
   if (entry.status === "error") return { state: "error" };

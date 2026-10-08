@@ -59,7 +59,11 @@ businesses/{bid}                  profile, timezone, orderPrefix, subscription{p
   skuIndex/{SKU}                  { productId }: per-business SKU uniqueness              (server only)
   inventoryTransactions/{id}      append-only movement log, quantities before/after       (inventory.view)
   inventoryTransactionCosts/{id}  the same movement's costs before/after                  (inventory.costs)
-  customers/{id}  orders/{id}  payments/{id}  paymentRefs/{method_ref}
+  orders/{id}                     order + line snapshots + statusHistory                (orders.view)
+  orderCosts/{id}                 per-line cost consumed, COGS, gross profit            (dashboard.financials + Orders module)
+  idempotencyKeys/{key}           create-once guard for orders                          (server only)
+  counters/orders-{YYYYMMDD}      per-business, per-local-day order sequence            (server only)
+  customers/{id}  payments/{id}  paymentRefs/{method_ref}
   counters/{name}  usage/{YYYY-MM}
   metrics/{YYYY-MM-DD | YYYY-MM | current}           operational counts (dashboard.view)
   financialMetrics/{YYYY-MM-DD | YYYY-MM | current}  money in centavos (dashboard.financials)
@@ -116,6 +120,7 @@ Every future endpoint repeats this through `requireTenant(event, { permission, m
 | `payments` | payments | `payments.view` |
 | `metrics` | dashboard (core) | `dashboard.view` |
 | `financialMetrics` | dashboard (core) | `dashboard.financials` |
+| `orderCosts` | dashboard (core), plus the Orders module | `dashboard.financials` |
 | `reports` | reports | `reports.view` |
 | `settings` | settings (core) | `settings.view` |
 | `imports`, `imports/*/rows` | imports | `imports.run` |
@@ -276,6 +281,64 @@ Each checks sign-in, membership, permission, the Inventory module, subscription 
 
 **Indexes** (`firestore.indexes.json`): products (status, nameLower), (status, isLowStock, nameLower), (status, categoryLower, nameLower); inventoryTransactions (productId, seq desc).
 
+## Orders (Phase 7)
+
+**Operational sales-recognition policy.** This is Luna's reporting rule, not statutory revenue recognition.
+
+| Event | Inventory | Metrics |
+|---|---|---|
+| Created (pending) | reserve every line (all or nothing) | `metrics/{created day}.orderCount` +1, `usage/{month}.ordersCreated` +1, pending +1, unpaid +1, receivables += total. **No sales, no COGS.** |
+| Fulfilled | consume stock (on hand −, reserved −), snapshot the cost consumed per line | on the business-local **fulfilment** day: `grossSales` += subtotal, `discounts` += discount, `cogs` += the snapshotted cost, `fulfilledOrders` +1, pending −1 |
+| Cancelled (pending only) | release every reservation | `cancelledOrders` +1 on the cancel day; pending −1, unpaid −1, receivables −= balance. Created and usage counts stay. **No sales, no COGS.** |
+
+- A fulfilled order can't be cancelled; reversals will be handled by Returns.
+- Fulfilment is not payment: a fulfilled order stays unpaid until Phase 8.
+- An order created yesterday and fulfilled today counts toward today's sales.
+
+**Model** (`orders/{id}`, `shared/orders.js`):
+- Identity: `orderNumber`, `orderDate` (business-local creation day), `source` (+ `sourceNote`, required for Other).
+- Customer: `customer {name, phone, notes}` snapshot and `customerId: null` (Phase 9 will link it).
+- Lines: `items[] {lineId, productId, sku, name, unit, quantity, unitPrice, lineSubtotal}`, a snapshot taken from the product inside the create transaction.
+- Money: `subtotal`, `discount`, `total`, `amountPaid` (0), `balance`, `paymentStatus` (unpaid).
+- Status: `fulfillmentStatus` (pending, fulfilled or cancelled) and `statusHistory[]` (created, edited with changes, fulfilled, cancelled with reason; actor and time on each).
+- Bookkeeping: `revision`, `idempotencyKey`, and created/updated/fulfilled/cancelled by and at, plus `cancellationReason`.
+
+**Trust.**
+- **What the browser sends:** product IDs and scaled quantities, customer, source, notes, the discount and an idempotency key.
+- **What the server does:** re-reads every product in the transaction, prices each line with `lineAmount` (the product's selling price), and totals with `computeTotals` (subtotal − discount ≥ 0).
+- **What's refused:** prices, names, costs, totals, stock and payment fields.
+
+**Edits** (pending only, `orders.update`, optional `expectedRevision`):
+- Only the reservation difference moves: 20 → 15 releases 5, and 20 → 30 must reserve 10 more or the whole edit fails.
+- Existing lines keep their price snapshot; new products use the current price. Explicit repricing isn't supported yet.
+- Changing the discount needs `orders.discount`.
+
+**Discounts:** one order-level discount in integer centavos, at most the subtotal. It needs the new `orders.discount` permission, which Owner and Manager templates have and Staff doesn't.
+
+**Numbering:** `PREFIX-YYYYMMDD-###` from `counters/orders-{YYYYMMDD}` in the same transaction, using the business-local date. The prefix is `businesses/{bid}.orderPrefix` (2–6 letters or digits), defaulting to `ORD`.
+
+**Idempotency:** `idempotencyKeys/{key}` is created in the create transaction and stores `{orderId, requestHash, uid}`.
+- The same key with the same request returns the original order.
+- The same key with a different request returns 409.
+- When identical requests race, the loser gets ALREADY_EXISTS, which the service turns into a replay.
+
+**Plan limit:** `usage/{YYYY-MM}.ordersCreated` is read and incremented inside the create transaction against the validated `entitlements.limits.ordersPerMonth` (so overrides apply). Cancelling doesn't decrement it.
+
+**COGS:** fulfilment uses the Phase 6 `fulfillment` movement and its `costConsumed`. The result is stored once in `orderCosts/{id}` and added to `financialMetrics.cogs`; it's never recomputed.
+
+**Endpoint:** `POST /api/orders` with these actions: create (`orders.create`), update (`orders.update`), fulfill (`orders.fulfill`, new; Staff has it) and cancel (`orders.cancel`).
+- It checks sign-in (first), the Orders and Inventory modules, write access and a strict payload.
+- The fulfil response includes COGS and profit only for `dashboard.financials`.
+
+**Screen:**
+- 25 newest per page, filtered by fulfilment, payment, source and date, each with its own `(field, createdAt desc)` index.
+- New and edit dialog with product search, availability, a live preview of totals, and one idempotency key per dialog.
+- Detail view with history; COGS and gross profit appear only for `dashboard.financials`.
+
+**Dashboard:** orders today, unpaid orders, for fulfilment, unpaid balance, net sales and gross profit are live, and recent orders is a live list. Widgets whose data producer doesn't exist yet stay "No data yet": operating expenses, estimated operating profit and paid today (`LIVE_DATA_SOURCES`).
+
+**Scale note:** the counter, usage and `metrics/current` documents are shared by every order in a business. That's fine for SMB volumes; sharding is needed if a tenant sustains more than about one order per second.
+
 ## Dashboard and metrics (Phase 5)
 
 **Summary documents, not scans.** The dashboard never downloads orders, payments, inventory or expenses to add them up. It reads a few tenant-scoped summary documents, which server functions update with `FieldValue.increment` inside the same transaction as the business event (`netlify/functions/_lib/metrics.js`):
@@ -367,6 +430,30 @@ Expenses exist so an owner can answer "Magkano talaga kinita namin?", not to tur
 - The UI escapes every interpolated value by default (`src/lib/html.js`).
 - Netlify sets security headers and a strict CSP: no inline scripts or styles.
 
+## UI standard: compact operational tables (2026-10-08)
+
+Luna should feel like an operations control sheet: compact, scannable, quick to edit, with few clicks. Validation, audit, transactions and security happen behind the scenes.
+
+- **One record = one compact row** (`.table-compact`). No tall cards.
+- **Inline edits** for safe common fields such as price, reorder level and status, using a cell button that opens a one-field popover, or an inline select.
+- **Stock is never typed over.** Changes go through a row **Adjust** action (a signed quantity plus a reason, logged server-side).
+- **One View details per row** holds the full record, history and transaction log, notes, and uncommon or destructive actions.
+- **Cost and profit columns** appear only with the matching permission.
+- **Mobile:** secondary columns (`.col-secondary`) hide under 760 px wide; their data stays in View details.
+
+Columns by screen:
+
+| Screen | Columns |
+|---|---|
+| Inventory (Phase 6/7) | SKU | Product | Category | Unit | On hand | Reserved | Available | (Avg cost | Value) | Reorder at | Price | Status | Adjust / View details |
+| Orders (Phase 7) | Order # | Time | Customer | Items | Total | Reference | Proof | Payment | Fulfillment | View details |
+| Payments | Order # | Customer | Amount | Method | Reference | Proof | Verification | Date | View |
+| Expenses | Date | Category | Vendor | Amount | Method | Reference | Status | View |
+| Customers | Customer | Contact | Orders | Total purchases | Last order | Status | View |
+| Users, Suppliers, Returns | the same pattern |
+
+On Orders, Reference and Proof show "—" until Payments (Phase 8) fills them in.
+
 ## Build phases
 
 1. Foundation ✅
@@ -375,7 +462,7 @@ Expenses exist so an owner can answer "Magkano talaga kinita namin?", not to tur
 4. Plans, modules, permissions ✅
 5. Dashboard and metrics framework ✅
 6. Products and inventory ✅
-7. Orders
+7. Orders ✅
 8. Payments
 9. Customers
 10. Expenses

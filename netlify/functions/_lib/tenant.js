@@ -89,6 +89,7 @@ async function evaluateCandidate(db, uid, businessId) {
         name: business.name || "",
         timezone: business.timezone || "UTC",
         currency: business.currency || "PHP",
+        orderPrefix: business.orderPrefix || null,
       },
       member: {
         roleTemplate,

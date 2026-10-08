@@ -250,7 +250,10 @@ export async function prepareMovements(tx, { tenant, items }) {
     return planned.map(({ item, plan }) => ({ productId: item.productId, transactionId: plan.transactionId, next: plan.next, costConsumed: plan.costConsumed }));
   }
 
-  return { results: planned.map(({ item, plan }) => ({ productId: item.productId, next: plan.next, costConsumed: plan.costConsumed })), commit };
+  // `product`: the trusted product fields read in THIS transaction, so callers
+  // (orders) price and snapshot lines from the same reads, never from the browser.
+  const snapshot = (p) => ({ sku: p.sku, name: p.name, unit: p.unit, sellingPrice: p.sellingPrice, status: p.status });
+  return { results: planned.map(({ item, plan, product }) => ({ productId: item.productId, next: plan.next, costConsumed: plan.costConsumed, product: snapshot(product) })), commit };
 }
 
 // One movement on one product, in its own transaction.

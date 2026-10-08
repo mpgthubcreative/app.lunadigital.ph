@@ -17,7 +17,7 @@
 // malformed snapshot fails closed for them too.
 
 export const MODULES = Object.freeze([
-  { id: "dashboard", label: "Dashboard", path: "/", icon: "dashboard", permission: "dashboard.view", available: true, core: true, collections: { metrics: "dashboard.view", financialMetrics: "dashboard.financials" }, storage: {} },
+  { id: "dashboard", label: "Dashboard", path: "/", icon: "dashboard", permission: "dashboard.view", available: true, core: true, collections: { metrics: "dashboard.view", financialMetrics: "dashboard.financials", orderCosts: "dashboard.financials" }, storage: {} },
   { id: "orders", label: "Orders", path: "/orders", icon: "orders", permission: "orders.view", available: true, collections: { orders: "orders.view" }, storage: {} },
   { id: "payments", label: "Payments", path: "/payments", icon: "payments", permission: "payments.view", available: true, collections: { payments: "payments.view" }, storage: { payments: "payments.view" } },
   { id: "inventory", label: "Inventory", path: "/inventory", icon: "inventory", permission: "inventory.view", available: true, collections: { products: "inventory.view", inventoryTransactions: "inventory.view", productCosts: "inventory.costs", inventoryTransactionCosts: "inventory.costs" }, storage: { products: "inventory.view" } },

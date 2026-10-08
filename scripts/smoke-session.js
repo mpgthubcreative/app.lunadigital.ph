@@ -219,6 +219,21 @@ const checks = [
     (await fsQuery("owner.a", `businesses/${B}`, "products")) === 403 &&
     (await fsQuery("owner.a", `businesses/${B}`, "productCosts")) === 403 &&
     (await fsQuery("owner.a", `businesses/${B}`, "inventoryTransactions")) === 403],
+  // Phase 7: orders (refusals and reads only; no orders are created here).
+  ["POST /api/orders without a token → 401", async () => (await post("orders", { action: "create" })).status === 401],
+  ["staff.a can't give a discount (403 discount-not-allowed)", async () => {
+    const r = await post("orders", { action: "create", idempotencyKey: `smoke-${Date.now()}-discount`, order: { customer: { name: "Smoke" }, source: "phone", items: [{ productId: "aaaaaaaaaaaaaaaaaaaa", quantity: 1000 }], discount: 100 } }, { as: "staff.a" });
+    return r.status === 403 && r.body.error === "discount-not-allowed";
+  }],
+  ["staff.a can't cancel orders (403)", async () => (await post("orders", { action: "cancel", orderId: "aaaaaaaaaaaaaaaaaaaa", reason: "smoke test" }, { as: "staff.a" })).status === 403],
+  ["forged totals are refused (400)", async () => (await post("orders", { action: "create", idempotencyKey: `smoke-${Date.now()}-total`, total: 1, order: { customer: { name: "Smoke" }, source: "phone", items: [] } }, { as: "owner.a" })).status === 400],
+  ["owner.a selecting B can't write B's orders (403)", async () => (await post("orders", { action: "fulfill", orderId: "aaaaaaaaaaaaaaaaaaaa" }, { as: "owner.a", businessId: B })).body.error === "business-access-denied"],
+  ["staff.a lists orders but is refused order costs", async () =>
+    (await fsQuery("staff.a", `businesses/${A}`, "orders")) === 200 && (await fsQuery("staff.a", `businesses/${A}`, "orderCosts")) === 403],
+  ["owner.a reads order costs in A; nothing of B's orders", async () =>
+    (await fsQuery("owner.a", `businesses/${A}`, "orderCosts")) === 200 &&
+    (await fsQuery("owner.a", `businesses/${B}`, "orders")) === 403 &&
+    (await fsQuery("owner.a", `businesses/${B}`, "orderCosts")) === 403],
 ];
 
 console.log(`Smoke-testing ${baseUrl}\n`);

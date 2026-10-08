@@ -31,7 +31,8 @@ rules_version = '2';
 // Not matched here (and therefore denied): plans, users, platformAudit,
 // collection-group queries, and the server-only tenant collections
 // paymentRefs, counters, usage, auditLog, integrations, members/*/inbox,
-// skuIndex (per-business SKU uniqueness keys).
+// skuIndex (per-business SKU uniqueness keys), idempotencyKeys (order create-once
+// guards). counters and usage hold order numbering and plan-limit counts.
 // Also not matched: expenses (module approved, not built yet: Phase 10).
 service cloud.firestore {
   match /databases/{database}/documents {
@@ -222,6 +223,9 @@ service cloud.firestore {
       match /inventoryTransactionCosts/{id} { allow read: if canAccessModule(bid, 'inventory', 'inventory.costs'); }
       match /customers/{id}             { allow read: if canAccessModule(bid, 'customers', 'customers.view'); }
       match /orders/{id}                { allow read: if canAccessModule(bid, 'orders', 'orders.view'); }
+      // Per-order COGS / gross profit: profitability, so dashboard.financials,
+      // and only while the business has the Orders module.
+      match /orderCosts/{id}            { allow read: if canAccessModule(bid, 'dashboard', 'dashboard.financials') && moduleEnabled(bid, 'orders'); }
       match /payments/{id}              { allow read: if canAccessModule(bid, 'payments', 'payments.view'); }
       match /metrics/{day}              { allow read: if canAccessModule(bid, 'dashboard', 'dashboard.view'); }
       // Money figures live apart from operational counts so they can need

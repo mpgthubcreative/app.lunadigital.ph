@@ -6,9 +6,11 @@
 
 import { getFirestoreLite } from "../../lib/firebase.js";
 import { listLowStock } from "../inventory/data.js";
+import { listRecentOrders } from "../orders/data.js";
 
 // Ready list widgets -> their (small, limited) query.
 const LIST_FETCHERS = {
+  recentOrders: (businessId) => listRecentOrders(businessId, 5),
   lowStockItems: (businessId) => listLowStock(businessId, 5),
 };
 

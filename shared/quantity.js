@@ -151,3 +151,9 @@ export function costOfQuantity(quantity, avgCostUnits) {
 export function inventoryValue(onHand, avgCostUnits) {
   return costOfQuantity(onHand, avgCostUnits);
 }
+
+// Line amount: quantity x unit price per whole unit, in centavos, rounded
+// half-up ("2.5 kg @ ₱120.00" -> 30000). The only place a line total is computed.
+export function lineAmount(quantity, unitPriceCentavos) {
+  return toSafe(divRound(big(quantity) * big(unitPriceCentavos), big(QTY_SCALE)));
+}

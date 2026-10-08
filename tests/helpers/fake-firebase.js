@@ -161,7 +161,14 @@ export class FakeFirestore {
       delete: (ref) => writes.push(() => this.docs.delete(ref.path)),
     };
     const result = await fn(tx);
-    writes.forEach((w) => w());
+    // All-or-nothing like Firestore: a failing write rolls back the others.
+    const snapshot = new Map(this.docs);
+    try {
+      writes.forEach((w) => w());
+    } catch (err) {
+      this.docs = snapshot;
+      throw err;
+    }
     return result;
   }
   // Test helper: raw write without FieldValue handling.

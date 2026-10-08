@@ -23,8 +23,11 @@ export const PERMISSIONS = Object.freeze({
 
   "orders.view": { module: "orders", group: "Orders", label: "View orders" },
   "orders.create": { module: "orders", group: "Orders", label: "Create orders" },
-  "orders.update": { module: "orders", group: "Orders", label: "Update order status" },
+  "orders.update": { module: "orders", group: "Orders", label: "Edit pending orders" },
+  "orders.fulfill": { module: "orders", group: "Orders", label: "Fulfill orders" },
   "orders.cancel": { module: "orders", group: "Orders", label: "Cancel orders" },
+  // Discounts change profitability; staff who enter orders don't get them by default.
+  "orders.discount": { module: "orders", group: "Orders", label: "Give order discounts" },
 
   "payments.view": { module: "payments", group: "Payments", label: "View payments" },
   "payments.record": { module: "payments", group: "Payments", label: "Record payments" },
@@ -86,6 +89,7 @@ export const ROLE_TEMPLATES = Object.freeze({
       "orders.view",
       "orders.create",
       "orders.update",
+      "orders.fulfill",
       "payments.view",
       "payments.record",
       "inventory.view",
