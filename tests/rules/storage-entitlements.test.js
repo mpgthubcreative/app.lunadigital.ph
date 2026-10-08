@@ -28,6 +28,7 @@ const BROKEN = Object.freeze({
   "st-bad-stale": (b) => (b.subscription.planId = "pro"),
   "st-bad-limits": (b) => (b.entitlements.limits.users = "5"),
   "st-bad-feature": (b) => (b.entitlements.features.support = "gold"),
+  "st-bad-unbuilt-on": (b) => (b.entitlements.modules.imports = true),
 });
 
 const ROLES = Object.freeze({

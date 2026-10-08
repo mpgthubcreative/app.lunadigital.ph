@@ -92,16 +92,19 @@ service firebase.storage {
         && m.dashboard == true
         && m.users == true
         && m.settings == true
+        // Built modules are booleans; unbuilt ones (shared/modules.js
+        // available: false) must be false: a snapshot can never enable a
+        // module that isn't built (Phase 8.5 cleanup).
         && m.orders is bool
         && m.payments is bool
         && m.inventory is bool
-        && m.customers is bool
-        && m.reports is bool
-        && m.expenses is bool
-        && m.imports is bool
-        && m.suppliers is bool
-        && m.production is bool
-        && m.returns is bool;
+        && m.customers == false
+        && m.reports == false
+        && m.expenses == false
+        && m.imports == false
+        && m.suppliers == false
+        && m.production == false
+        && m.returns == false;
     }
 
     function validLimit(limits, key) {

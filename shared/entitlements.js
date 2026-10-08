@@ -31,7 +31,7 @@
 
 import { LIMIT_KEYS, FEATURE_KEYS, isValidFeatureValue } from "./plans.seed.js";
 import { MODULE_IDS, CORE_MODULE_IDS, SELLABLE_MODULE_IDS, getModule } from "./modules.js";
-import { getWorkspaceTemplate, ENTITLEMENTS_SCHEMA_VERSION, UNBUILT_TRUE_TOLERATED } from "./workspaces.js";
+import { getWorkspaceTemplate, ENTITLEMENTS_SCHEMA_VERSION } from "./workspaces.js";
 
 export { ENTITLEMENTS_SCHEMA_VERSION };
 
@@ -197,7 +197,8 @@ export function validateEntitlementsSnapshot(snapshot, expectedPlanId, expectedT
     for (const id of MODULE_IDS) {
       if (snapshot.modules[id] !== true) continue;
       const built = getModule(id).available;
-      if (!built && UNBUILT_TRUE_TOLERATED) continue; // pre-cleanup snapshot; never usable
+      // A snapshot may never claim an unbuilt module: shipping code for it
+      // must not silently activate it for tenants with an old snapshot.
       if (!built) problems.push(`module ${id} isn't built and can't be enabled`);
       else if (template && !template.modules.includes(id)) problems.push(`module ${id} isn't allowed in the ${template.id} workspace`);
     }

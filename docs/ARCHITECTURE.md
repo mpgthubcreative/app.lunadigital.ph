@@ -197,7 +197,7 @@ On the server this returns 503 `business-misconfigured`. In the rules, every mod
 
 **Visibility.** `/api/session` returns the plan name, limits and usage only to members with `billing.view`. Everyone gets module switches and feature flags (for navigation). Settings shows the package only to `billing.view` holders.
 
-`GET /api/reports` is a guard-only endpoint (501 when authorized) that exercises the Reports gate until Phase 11.
+`GET /api/reports` is a guard-only endpoint that exercises the Reports gate. Since the Phase 8.5 cleanup Reports is unbuilt, so it answers 403 to everyone until Phase 11 builds and activates the module.
 
 ## Subscription states
 
@@ -433,29 +433,44 @@ There are no combined ids such as `distributor-growth`. Every plan works with ev
 | Field | Meaning |
 |---|---|
 | `id`, `version`, `name`, `description`, `status` | stable id; integer version; `live` or `planned` |
-| `modules` | every module the template **allows**, using existing module ids (core included). This is a ceiling. |
+| `modules` | the **operational** modules the template allows: registered and built, using existing module ids (core included). This is a ceiling. |
 | `navigation` | module ids in display order |
 | `dashboard.widgets`, `dashboard.empty` | registered widget ids in order, and the empty state |
 | `labels.modules` | plain-text display names (for example `expenses` → "Wedding Expenses"). Ids, permission keys and rules never depend on labels. |
 | `settings` | default workspace settings (plain values) |
-| `plannedModules` | roadmap metadata only: never a route, a permission, an entitlement or a navigation item |
+| `plannedModules` | roadmap metadata only: never a route, a permission, an entitlement or a navigation item. An entry is either a registered module that isn't built yet (for example `customers`) or a future capability id (for example `wedding-tasks`). |
 
-`validateWorkspaceTemplate` (run by the tests) rejects unknown keys, unknown modules or widgets, widgets needing modules the template doesn't allow, unsafe labels (markup, over 40 characters), non-plain settings, and planned ids that collide with real modules.
+`validateWorkspaceTemplate` (run by the tests) rejects:
+- unknown keys, modules or widgets
+- an unbuilt module listed as operational
+- a built module still listed as planned
+- widgets needing a module the template neither allows nor plans
+- unsafe labels (markup, over 40 characters) and non-plain settings
 
 | Template | Status | Allows (besides Dashboard, Users, Settings) | Planned (metadata only) |
 |---|---|---|---|
-| `distributor` | live | orders, payments, inventory, customers, reports, expenses, imports, suppliers, production, returns | notifications |
+| `distributor` | live | orders, payments, inventory | customers (Phase 9), reports, expenses, imports, suppliers, production, returns, notifications |
 | `household-payroll` | planned | — | household staff, payroll, salary payments, receipt confirmation, advances, deductions, payroll history, reports |
-| `baby-expense` | planned | expenses (not built yet, so inactive) | budget, categories, providers, payments, due dates, milestones, reports |
-| `bridal-expense` | planned | expenses (not built yet, so inactive) | budget, suppliers, supplier payments and balances, payment due dates, wedding tasks, guests, RSVP, reports |
+| `baby-expense` | planned | — | expenses ("Baby Expenses"), budget, categories, providers, payments, due dates, milestones, reports |
+| `bridal-expense` | planned | — | expenses ("Wedding Expenses"), budget, suppliers, supplier payments and balances, payment due dates, wedding tasks, guests, RSVP, reports |
 
 **Effective modules** (`computeEntitlements(plan, overrides, workspaceTemplateId)`, which has no default template):
 
 - Core modules are always on.
-- Any other module must be allowed by the template (a hard ceiling). It is then the operator override if one is set, otherwise the plan default.
+- Any other module must be **built** (`available` in `shared/modules.js`) and allowed by the template (a hard ceiling). It is then the operator override if one is set, otherwise the plan default.
 - An override may switch a module off. It may also grant a plan add-on, a Phase 4 behaviour that is kept, but only within the template.
-- An override for a module the template doesn't allow is refused, never silently dropped. So is one for an unknown module.
-- An unbuilt module can sit in a snapshot but is never usable (`available: false`).
+- An override for a module the template doesn't allow is refused, never silently dropped. That includes every unbuilt or unknown module.
+- **An unbuilt module is always `false` in a snapshot.** The validator and both rule sets reject any snapshot that says otherwise. Since the Phase 8.5 cleanup, the operational set is Dashboard, Orders, Payments, Inventory, Users and Settings; the Customers, Reports and Imports placeholders left the navigation until each is built.
+
+**Activating a module** (for example Customers in Phase 9) is always explicit:
+1. Build it and mark it `available` in `shared/modules.js`.
+2. Move it from `plannedModules` to `modules` (and `navigation`) in each template that should get it, and bump those templates' `version`.
+3. Update the rules' copies; the drift test enforces this.
+4. Roll out: deploy rules and code that accept both versions, run `recompute-entitlements --all`, then drop the old version.
+
+Shipping module code alone activates nothing: stored snapshots hold `false` for unbuilt modules, and the registry tests fail if a built module is still planned.
+
+The Distributor dashboard keeps its Operating expenses and Estimated operating profit cards as "No data yet". A widget may depend on a module the template *plans*, without that module being enabled.
 
 **Snapshot schemaVersion 2** adds `workspaceTemplateId` and `workspaceTemplateVersion`. It is rejected (server 503 `business-misconfigured`, rules deny) when:
 - the template is missing, malformed or unknown
@@ -522,6 +537,11 @@ The Phase 8 Payments module stays an **order-payment** domain: it depends on ord
   - **Guests:** guest or household, group/side, contact, invitation status, RSVP status, party size, confirmed count, notes, table later, sent and RSVP dates.
   - Statuses use stable internal ids (`invited`, `attending`, `declined`, `awaiting`) with configurable display labels; no logic depends on display text.
   - Compact row: Guest | Group | Invited | Party Size | RSVP | Confirmed | Table | View.
+
+**Cleanup rollout (staging).** It used the same staged pattern as the main 8.5 rollout:
+- **A, tolerant:** rules, then code (`c0e3024`). Old snapshots holding `true` for an unbuilt module were still accepted.
+- **B:** `recompute-entitlements --all`.
+- **C, strict:** unbuilt modules must be `false`, enforced in the validator and in both rule sets.
 
 **Not built in 8.5:** payroll, employees, release or confirmation flows, baby or bridal screens, suppliers, tasks, guests, RSVP, seating, generic contacts, accounting, payments, custom fields, tables or forms, page or workflow builders, custom code or themes, tenant label overrides (`isSafeLabel` exists for when they come), and Customers (Phase 9).
 

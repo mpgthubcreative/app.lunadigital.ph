@@ -51,7 +51,8 @@ function snapshotChecks(name, text) {
 
     it("every module flag is type-checked; core modules must be true", () => {
       for (const id of MODULE_IDS) {
-        expect(src, id).toContain(CORE_MODULE_IDS.includes(id) ? `m.${id} == true` : `m.${id} is bool`);
+        const mod = MODULES.find((m) => m.id === id);
+        expect(src, id).toContain(CORE_MODULE_IDS.includes(id) ? `m.${id} == true` : mod.available ? `m.${id} is bool` : `m.${id} == false`);
       }
     });
 

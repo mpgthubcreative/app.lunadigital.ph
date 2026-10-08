@@ -50,12 +50,6 @@
 // is no "missing workspace = distributor".
 export const ENTITLEMENTS_SCHEMA_VERSION = 2;
 
-// Phase 8.5 cleanup window: snapshots computed before the cleanup may
-// still hold true for an unbuilt module. Tolerated (unbuilt modules are
-// never usable anyway) until every snapshot is recomputed; then false and
-// removed (strict step), after which such a snapshot fails closed.
-export const UNBUILT_TRUE_TOLERATED = true;
-
 export const WORKSPACE_TEMPLATE_ID_PATTERN = /^[a-z][a-z0-9-]{1,31}$/;
 const CORE = ["dashboard", "users", "settings"];
 

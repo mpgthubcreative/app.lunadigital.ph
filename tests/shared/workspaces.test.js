@@ -11,7 +11,6 @@ import {
   workspaceAllowsModule,
   snapshotWorkspaceTemplateId,
   isSafeLabel,
-  UNBUILT_TRUE_TOLERATED,
 } from "../../shared/workspaces.js";
 import { MODULES, MODULE_IDS, CORE_MODULE_IDS, getModule, isModuleEnabled, canUseModule, resolveNavigation } from "../../shared/modules.js";
 import { computeEntitlements, validateEntitlementsSnapshot, ENTITLEMENTS_SCHEMA_VERSION } from "../../shared/entitlements.js";
@@ -67,7 +66,8 @@ describe("registry", () => {
     expect(bad((t) => (t.navigation = [...t.navigation, "orders"]))).not.toEqual([]);
     expect(bad((t) => (t.dashboard.widgets = ["netSales"]))).not.toEqual([]); // needs orders, not allowed
     expect(bad((t) => (t.plannedModules = [{ id: "orders", name: "Orders" }]))).not.toEqual([]); // built: must be operational, not planned
-    expect(bad((t) => (t.modules = [...t.modules, "expenses"]))).not.toEqual([]); // unbuilt: can't be operational
+    // unbuilt: can't be operational (even with a navigation slot)
+    expect(bad((t) => ((t.modules = [...t.modules, "expenses"]), (t.navigation = [...t.navigation, "expenses"]), (t.plannedModules = t.plannedModules.filter((p) => p.id !== "expenses"))))).toEqual(["module expenses isn't built: list it in plannedModules until it is"]);
     expect(bad((t) => (t.settings.render = () => 1))).not.toEqual([]);
     expect(bad((t) => (t.css = "body{display:none}"))).not.toEqual([]);
     expect(bad((t) => (t.modules = t.modules.filter((m) => m !== "users")))).not.toEqual([]);
@@ -225,7 +225,8 @@ describe("stored snapshot validation fails closed", () => {
     "future template version": [(s) => (s.workspaceTemplateVersion = 2), "bridal-expense"],
     "version as a string": [(s) => (s.workspaceTemplateVersion = "1"), "bridal-expense"],
     "module beyond the template (forged)": [(s) => (s.modules.orders = true), "bridal-expense"],
-    ...(UNBUILT_TRUE_TOLERATED ? {} : { "unbuilt module enabled (old snapshot or forged)": [(s) => (s.modules.customers = true), "bridal-expense"] }),
+    "unbuilt module enabled (old snapshot or forged)": [(s) => (s.modules.customers = true), "bridal-expense"],
+    "unbuilt module enabled in a distributor snapshot": [(s) => (s.modules.reports = true), "bridal-expense"],
   };
   for (const [name, [mutate, businessTemplate]] of Object.entries(cases)) {
     it(name, () => {
@@ -234,6 +235,12 @@ describe("stored snapshot validation fails closed", () => {
       expect(v(s, "growth", businessTemplate).ok).toBe(false);
     });
   }
+
+  it("an unbuilt module switched on is rejected for being unbuilt (not only by the template ceiling)", () => {
+    const s = ent("distributor", "growth");
+    s.modules.customers = true;
+    expect(v(s, "growth", "distributor").problems).toContain("module customers isn't built and can't be enabled");
+  });
 
   it("a distributor snapshot that lost only its template id is not read as distributor", () => {
     const s = ent("distributor", "growth");

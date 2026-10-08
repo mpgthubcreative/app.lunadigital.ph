@@ -78,6 +78,8 @@ const BROKEN = Object.freeze({
   "schemaVersion 3 (future)": (b) => (b.entitlements.schemaVersion = 3),
   "workspace version stale": (b) => (b.entitlements.workspaceTemplateVersion = 0),
   "workspace missing from snapshot": (b) => delete b.entitlements.workspaceTemplateId,
+  "unbuilt module enabled (customers = true)": (b) => (b.entitlements.modules.customers = true),
+  "unbuilt module enabled (reports = true, old snapshot)": (b) => (b.entitlements.modules.reports = true),
   "modules not a map": (b) => (b.entitlements.modules = ["orders", "reports"]),
   "reports = 'true' (string)": (b) => (b.entitlements.modules.reports = "true"),
   "orders = 1": (b) => (b.entitlements.modules.orders = 1),
