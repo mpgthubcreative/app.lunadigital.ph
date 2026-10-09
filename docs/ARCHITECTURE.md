@@ -452,7 +452,7 @@ There are no combined ids such as `distributor-growth`. Every plan works with ev
 |---|---|---|---|
 | `distributor` (v5) | live | orders, payments, inventory, customers (Phase 9), expenses (Phase 10, "Operating Expenses"), reports (Phase 11), imports (Phase 12) | suppliers, production, returns (notifications became a core capability in Phase 13) |
 | `household-payroll` (v2) | live (Phase 14) | household, attendance, payroll, advances | payroll reports |
-| `baby-expense` (v2) | live (Phase 15) | expenses ("Baby Expenses"), budget (with categories), schedule (Payment Schedule), providers | milestones, reports |
+| `baby-expense` (v2 only) | live (Phase 15) | expenses ("Baby Expenses"), budget (with categories), schedule (Payment Schedule), providers | milestones, reports |
 | `bridal-expense` | planned | — | expenses ("Wedding Expenses"), budget, suppliers, supplier payments and balances, payment due dates, wedding tasks, guests, RSVP, reports |
 
 **Effective modules** (`computeEntitlements(plan, overrides, workspaceTemplateId)`, which has no default template):
@@ -1212,13 +1212,16 @@ Every Baby write (expense, category, budget, schedule) reads and writes `budgets
 - a category deleted while an expense uses it
 
 ### Staged rollout
-1. **Compatible step (this commit).**
-   - `budget`, `schedule` and `providers` are in `ROLLING_OUT_MODULE_IDS`, and both rule files read them with `m.get(…, false)`.
-   - The template accepts v1 and v2. A v1 snapshot stays valid but opens no Baby data.
-   - Deploy the rules, indexes and code, then run `seed-plans --overwrite`, `recompute-entitlements --all` and `resync-permissions --all`, then a live probe.
-2. **Strict step.** Empty `ROLLING_OUT_MODULE_IDS`, require the three keys, and drop baby-expense v1.
-
-Shipping the code alone activates nothing on staging. No Baby business exists there today.
+1. **Compatible step: deployed and verified (2026-10-09), commit `cc0fcef`.**
+   - `budget`, `schedule` and `providers` were in `ROLLING_OUT_MODULE_IDS`, read in both rule files with `m.get(…, false)`, and the template accepted v1 and v2.
+   - Rules and 14 new indexes were deployed (60/60 READY, deployed rules equal to the source), and the code was pushed (CI green, Netlify live from git).
+   - `seed-plans --overwrite` added only the three module keys to each plan. `recompute-entitlements --all` added them as `false` to every Distributor and Household snapshot. `resync-permissions --all` gave Owners and Managers the six Baby keys, Staff none.
+   - `demo-baby-a` (baby-expense v2) was created as the Baby staging tenant.
+   - A live probe passed 136/136: the budget maths, edit and remove, categories, provider snapshots, Payment Schedule idempotency (repeat and concurrent), the 75/90/100% alerts, the dashboard period vs current split, filtered Excel, isolation, and the Distributor expense regression. The regression probes were green; Imports commits were blocked only by the demo tenants' exhausted monthly quota.
+2. **Strict step (this commit).**
+   - `ROLLING_OUT_MODULE_IDS` is empty again. Every snapshot of every template must carry `budget`, `schedule` and `providers` as booleans (`requiredModuleIds()`, `m.budget is bool` in both rule files, and the shared validator).
+   - `baby-expense` accepts **v2 only** (no `upgradingFrom`). v1, missing, unknown or string versions, and a missing or non-boolean Baby key fail closed in the validator, the server (503) and both rule files. Baby modules forged into Distributor, Household or Bridal snapshots open nothing.
+   - Before deploying, every staging snapshot was checked against the strict validator (all 6 pass). Deploy order: the strict rules first (they only fail more closed), then the same commit pushed to Netlify.
 
 ### Not built (later)
 - Medical records of any kind, and medical advice
@@ -1289,7 +1292,7 @@ On Orders, Reference and Proof show "—" until Payments (Phase 8) fills them in
 12.5. Dashboard filters + Excel Export Core ✅
 13. Notifications ✅
 14. Household / Kasambahay Payroll MVP ✅ (the household-payroll workspace)
-15. Baby Expense Tracker MVP (the baby-expense workspace): local gate passed; staging activation awaiting approval
+15. Baby Expense Tracker MVP ✅ (the baby-expense workspace)
 16. Super Admin console
 17. Usage metering views
 18. Reliability, backups and recovery

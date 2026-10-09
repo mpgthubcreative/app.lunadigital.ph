@@ -32,6 +32,10 @@ const BROKEN = Object.freeze({
   // pre-Phase-14 snapshot is stale everywhere).
   "st-bad-no-household-keys": (b) => { for (const k of ["household", "attendance", "payroll", "advances"]) delete b.entitlements.modules[k]; },
   "st-bad-no-payroll-key": (b) => delete b.entitlements.modules.payroll,
+  // Phase 15 strict step: the Baby keys are required, as booleans.
+  "st-bad-no-baby-keys": (b) => { for (const k of ["budget", "schedule", "providers"]) delete b.entitlements.modules[k]; },
+  "st-bad-no-providers-key": (b) => delete b.entitlements.modules.providers,
+  "st-bad-schedule-string": (b) => (b.entitlements.modules.schedule = "false"),
 });
 
 const ROLES = Object.freeze({

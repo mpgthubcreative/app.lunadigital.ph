@@ -65,7 +65,7 @@ export const MODULE_IDS = Object.freeze(MODULES.map((m) => m.id));
 // missing from snapshots computed before it (staged rollout, see
 // docs/ARCHITECTURE.md "Activating a module"): a missing key reads as false.
 // Emptied once recompute-entitlements has run everywhere.
-export const ROLLING_OUT_MODULE_IDS = Object.freeze(["budget", "schedule", "providers"]);
+export const ROLLING_OUT_MODULE_IDS = Object.freeze([]);
 export const CORE_MODULE_IDS = Object.freeze(MODULES.filter((m) => m.core).map((m) => m.id));
 // Modules a plan or override can switch on or off.
 export const SELLABLE_MODULE_IDS = Object.freeze(MODULES.filter((m) => !m.core).map((m) => m.id));

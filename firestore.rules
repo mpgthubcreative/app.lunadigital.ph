@@ -118,10 +118,10 @@ service cloud.firestore {
 
     // Keys every snapshot must carry. During a module's staged rollout
     // (shared/modules.js ROLLING_OUT_MODULE_IDS) its key may still be
-    // missing from older snapshots, where it reads as off. Phase 15 rollout
-    // (compatible step): budget, schedule and providers may be missing.
+    // missing from older snapshots, where it reads as off. No rollout is
+    // open now: every key is required.
     function requiredModuleIds() {
-      return ['dashboard', 'orders', 'payments', 'inventory', 'customers', 'reports', 'expenses', 'imports', 'household', 'attendance', 'payroll', 'advances', 'users', 'settings', 'suppliers', 'production', 'returns'];
+      return ['dashboard', 'orders', 'payments', 'inventory', 'customers', 'reports', 'expenses', 'imports', 'household', 'attendance', 'payroll', 'advances', 'budget', 'schedule', 'providers', 'users', 'settings', 'suppliers', 'production', 'returns'];
     }
 
     function limitKeys() {
@@ -154,9 +154,9 @@ service cloud.firestore {
         && m.attendance is bool
         && m.payroll is bool
         && m.advances is bool
-        && m.get('budget', false) is bool
-        && m.get('schedule', false) is bool
-        && m.get('providers', false) is bool
+        && m.budget is bool
+        && m.schedule is bool
+        && m.providers is bool
         && m.suppliers == false
         && m.production == false
         && m.returns == false;
@@ -196,7 +196,7 @@ service cloud.firestore {
     // OPERATIONAL (built) modules it allows (core included). tests/shared/rules-registry.test.js
     // fails if these drift from the registry.
     function workspaceTemplateVersions() {
-      return {'distributor': [5], 'household-payroll': [2], 'baby-expense': [1, 2], 'bridal-expense': [1]};
+      return {'distributor': [5], 'household-payroll': [2], 'baby-expense': [2], 'bridal-expense': [1]};
     }
 
     function workspaceTemplateModules() {

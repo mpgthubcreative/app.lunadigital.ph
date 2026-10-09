@@ -115,10 +115,9 @@ const TEMPLATES = [
     id: "baby-expense",
     // v2 (Phase 15): Baby Expenses (the Expenses Core with the Baby
     // profile), Budget & Categories, Payment Schedule, Providers / Vendors.
-    // v1 snapshots are accepted via upgradingFrom only until every business
-    // is recomputed (staged rollout).
+    // (v1 snapshots were accepted via upgradingFrom only until every
+    // business was recomputed.)
     version: 2,
-    upgradingFrom: [1],
     name: "Baby Expense Tracker",
     description: "Budget and track a baby's expenses, providers and upcoming payments.",
     status: "live",

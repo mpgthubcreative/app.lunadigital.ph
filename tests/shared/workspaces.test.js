@@ -276,7 +276,7 @@ describe("stored snapshot validation fails closed", () => {
   });
 
   it("Phase 14 strict: household-payroll v2 is the only accepted version; stale or malformed snapshots fail closed", () => {
-    expect(ROLLING_OUT_MODULE_IDS).toEqual(["budget", "schedule", "providers"]); // Phase 15 compatible step
+    expect(ROLLING_OUT_MODULE_IDS).toEqual([]);
     expect(WORKSPACE_TEMPLATES["household-payroll"].upgradingFrom).toBeUndefined();
     const s = ent("household-payroll", "growth");
     expect(s.workspaceTemplateVersion).toBe(2);
@@ -290,6 +290,39 @@ describe("stored snapshot validation fails closed", () => {
       const old = structuredClone(ent(t, "growth"));
       for (const k of ["household", "attendance", "payroll", "advances"]) delete old.modules[k];
       expect(v(old, "growth", t).ok, t).toBe(false);
+    }
+  });
+
+  it("Phase 15 strict: baby-expense v2 is the only accepted version; stale or malformed snapshots fail closed", () => {
+    expect(WORKSPACE_TEMPLATES["baby-expense"].upgradingFrom).toBeUndefined();
+    const s = ent("baby-expense", "growth");
+    expect(s.workspaceTemplateVersion).toBe(2);
+    expect(v(s, "growth", "baby-expense")).toEqual({ ok: true, problems: [] });
+    for (const bad of [1, 0, 3, 99, "2", null, 2.5]) expect(v({ ...s, workspaceTemplateVersion: bad }, "growth", "baby-expense").ok, String(bad)).toBe(false);
+    const noVersion = structuredClone(s);
+    delete noVersion.workspaceTemplateVersion;
+    expect(v(noVersion, "growth", "baby-expense").ok).toBe(false);
+    // each Baby key is required, as a boolean, in every template's snapshot
+    for (const t of ["baby-expense", "distributor", "household-payroll", "bridal-expense"]) {
+      for (const k of ["budget", "schedule", "providers"]) {
+        const missing = structuredClone(ent(t, "growth"));
+        delete missing.modules[k];
+        expect(v(missing, "growth", t).ok, `${t} missing ${k}`).toBe(false);
+        const notBool = structuredClone(ent(t, "growth"));
+        notBool.modules[k] = "true";
+        expect(v(notBool, "growth", t).ok, `${t} ${k}="true"`).toBe(false);
+      }
+    }
+  });
+
+  it("Phase 15 strict: Baby modules forged into Distributor, Household or Bridal snapshots are refused", () => {
+    for (const t of ["distributor", "household-payroll", "bridal-expense"]) {
+      for (const m of ["budget", "schedule", "providers"]) {
+        const s = structuredClone(ent(t, "growth"));
+        s.modules[m] = true;
+        expect(v(s, "growth", t).ok, `${t}/${m}`).toBe(false);
+      }
+      expect(v(ent(t, "growth"), "growth", t).ok, t).toBe(true);
     }
   });
 

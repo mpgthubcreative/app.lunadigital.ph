@@ -1,9 +1,10 @@
 // Phase 15 rules: Baby data (the budget, categories, spending metrics,
 // providers, the payment schedule and Baby Expenses) is readable only by
 // members of THAT Baby business with the module's view permission, only in
-// the baby-expense workspace; nothing is browser-writable. Compatible step:
-// baby-expense v1 snapshots (no Baby keys) stay valid but open no Baby
-// data; forged Baby modules in other workspaces open nothing.
+// the baby-expense workspace; nothing is browser-writable. Strict step:
+// only baby-expense v2 snapshots carrying every Baby key (as a boolean) are
+// valid; v1, missing / unknown / string versions and missing or non-bool
+// Baby keys fail closed; forged Baby modules in other workspaces open nothing.
 
 import { afterAll, beforeAll, describe, it } from "vitest";
 import { assertFails, assertSucceeds } from "@firebase/rules-unit-testing";
@@ -33,7 +34,7 @@ beforeAll(async () => {
     await db.doc("businesses/home-x").set(businessDoc("Home", "active", { planId: "growth", workspaceTemplateId: "household-payroll" }));
     await seedMember(db, "home-x", "owner@home-x", { role: "owner", isAccountOwner: true });
     for (const c of Object.keys(COLLECTIONS)) await db.doc(`businesses/home-x/${c}/d1`).set({ x: 1 });
-    // Compatible step: a Baby business still on its v1 snapshot (no Baby keys, Expenses off).
+    // Strict step: a Baby business still on its v1 snapshot (no Baby keys, Expenses off) is stale.
     const v1 = businessDoc("Baby v1", "active", { planId: "growth", workspaceTemplateId: "baby-expense" });
     for (const k of ["budget", "schedule", "providers"]) delete v1.entitlements.modules[k];
     v1.entitlements.modules.expenses = false;
@@ -42,15 +43,33 @@ beforeAll(async () => {
     await seedMember(db, "baby-v1", "owner@baby-v1", { role: "owner", isAccountOwner: true });
     for (const c of Object.keys(COLLECTIONS)) await db.doc(`businesses/baby-v1/${c}/d1`).set({ x: 1 });
     await db.doc("businesses/baby-v1/settings/general").set({ x: 1 });
-    // Malformed: an unknown version, a Baby key that isn't a bool.
-    const v3 = businessDoc("Baby v3", "active", { planId: "growth", workspaceTemplateId: "baby-expense" });
-    v3.entitlements.workspaceTemplateVersion = 3;
-    const bad = businessDoc("Baby bad", "active", { planId: "growth", workspaceTemplateId: "baby-expense" });
-    bad.entitlements.modules.budget = "yes";
-    for (const [bid, b] of [["baby-v3", v3], ["baby-bad", bad]]) {
+    // Malformed / stale: v1 with every key, unknown, missing and string versions, missing Baby keys, non-bool keys.
+    const STALE = {
+      "baby-v1keys": (e) => { e.workspaceTemplateVersion = 1; },
+      "baby-v3": (e) => { e.workspaceTemplateVersion = 3; },
+      "baby-nover": (e) => { delete e.workspaceTemplateVersion; },
+      "baby-vstr": (e) => { e.workspaceTemplateVersion = "2"; },
+      "baby-nokeys": (e) => { for (const k of ["budget", "schedule", "providers"]) delete e.modules[k]; },
+      "baby-nobudget": (e) => { delete e.modules.budget; },
+      "baby-noschedule": (e) => { delete e.modules.schedule; },
+      "baby-noproviders": (e) => { delete e.modules.providers; },
+      "baby-bad": (e) => { e.modules.budget = "yes"; },
+    };
+    for (const [bid, mutate] of Object.entries(STALE)) {
+      const b = businessDoc(bid, "active", { planId: "growth", workspaceTemplateId: "baby-expense" });
+      mutate(b.entitlements);
       await db.doc(`businesses/${bid}`).set(b);
       await seedMember(db, bid, `owner@${bid}`, { role: "owner", isAccountOwner: true });
       await db.doc(`businesses/${bid}/budgets/d1`).set({ x: 1 });
+      await db.doc(`businesses/${bid}/settings/general`).set({ x: 1 });
+    }
+    // Distributor / Household snapshots missing a Baby key are stale too.
+    for (const [bid, t] of [["dist-nobaby", "distributor"], ["home-nobaby", "household-payroll"]]) {
+      const b = businessDoc(bid, "active", { planId: "growth", workspaceTemplateId: t });
+      delete b.entitlements.modules.schedule;
+      await db.doc(`businesses/${bid}`).set(b);
+      await seedMember(db, bid, `owner@${bid}`, { role: "owner", isAccountOwner: true });
+      await db.doc(`businesses/${bid}/settings/general`).set({ x: 1 });
     }
     // Baby modules forged into Distributor, Household and Bridal snapshots.
     for (const [bid, t] of [["dist-forged", "distributor"], ["home-forged", "household-payroll"], ["bridal-forged", "bridal-expense"]]) {
@@ -103,13 +122,25 @@ describe("reading Baby data", () => {
     for (const bid of ["dist-forged", "home-forged", "bridal-forged"]) for (const c of BABY_ONLY) await assertFails(dbAs(env, `owner@${bid}`).doc(`businesses/${bid}/${c}/d1`).get());
   });
 
-  it("compatible step: a v1 Baby snapshot is still valid (settings) but opens no Baby data", async () => {
-    await assertSucceeds(dbAs(env, "owner@baby-v1").doc("businesses/baby-v1/settings/general").get());
+  it("strict: the current Baby v2 snapshot works", async () => {
+    await assertSucceeds(dbAs(env, `owner@${K}`).doc(`businesses/${K}/budgets/d1`).get());
+    await assertSucceeds(dbAs(env, `owner@${K}`).doc(`businesses/${K}/expenses/d1`).get());
+  });
+
+  it("strict: a v1 Baby snapshot (pre-Phase-15) fails closed: Baby data AND settings", async () => {
+    await assertFails(dbAs(env, "owner@baby-v1").doc("businesses/baby-v1/settings/general").get());
     for (const c of Object.keys(COLLECTIONS)) await assertFails(dbAs(env, "owner@baby-v1").doc(`businesses/baby-v1/${c}/d1`).get());
   });
 
-  it("an unknown version or a non-bool Baby key fails closed", async () => {
-    for (const bid of ["baby-v3", "baby-bad"]) await assertFails(dbAs(env, `owner@${bid}`).doc(`businesses/${bid}/budgets/d1`).get());
+  for (const [bid, what] of [["baby-v1keys", "v1 with every Baby key"], ["baby-v3", "unknown future version"], ["baby-nover", "missing version"], ["baby-vstr", "version as a string"], ["baby-nokeys", "v2 missing every Baby key"], ["baby-nobudget", "v2 missing budget"], ["baby-noschedule", "v2 missing schedule"], ["baby-noproviders", "v2 missing providers"], ["baby-bad", "a non-bool Baby key"]]) {
+    it(`strict: ${what} fails closed (budget AND settings)`, async () => {
+      await assertFails(dbAs(env, `owner@${bid}`).doc(`businesses/${bid}/budgets/d1`).get());
+      await assertFails(dbAs(env, `owner@${bid}`).doc(`businesses/${bid}/settings/general`).get());
+    });
+  }
+
+  it("strict: Distributor / Household snapshots missing a Baby key fail closed", async () => {
+    for (const bid of ["dist-nobaby", "home-nobaby"]) await assertFails(dbAs(env, `owner@${bid}`).doc(`businesses/${bid}/settings/general`).get());
   });
 });
 
