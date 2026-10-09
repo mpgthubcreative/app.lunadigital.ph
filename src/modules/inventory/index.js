@@ -15,6 +15,7 @@
 // of this server-side and compute the balances; the screen only asks.
 
 import { html, render } from "../../lib/html.js";
+import { exportButton, bindExport, mayExport, exportHint } from "../../lib/export.js";
 import { pageHeader, emptyState, badge } from "../../components/ui.js";
 import { formDialog } from "../../components/form-dialog.js";
 import { confirmDialog, toast as defaultToast } from "../../components/feedback.js";
@@ -37,7 +38,7 @@ export function parseAdjustment(text, unit) {
   return { type: sign < 0 ? "adjustment_decrease" : "adjustment_increase", quantity: magnitude };
 }
 
-export function mount(container, session, { data = defaultData, api = defaultApi, toast = defaultToast } = {}) {
+export function mount(container, session, { data = defaultData, api = defaultApi, toast = defaultToast, exportDeps = {} } = {}) {
   const perms = session.member.permissions;
   const can = {
     manage: perms["products.manage"] === true,
@@ -47,7 +48,7 @@ export function mount(container, session, { data = defaultData, api = defaultApi
   };
   const businessId = session.business.id;
   const currency = session.business.currency || "PHP";
-  const state = { status: "active", lowOnly: false, search: "", cursors: [], rows: [], costs: {}, hasMore: false, loading: true, error: null };
+  const state = { status: "active", lowOnly: false, search: "", category: "", cursors: [], rows: [], costs: {}, hasMore: false, loading: true, error: null };
   let alive = true;
 
   async function load() {
@@ -55,7 +56,7 @@ export function mount(container, session, { data = defaultData, api = defaultApi
     state.error = null;
     draw();
     try {
-      const page = await data.listProducts(businessId, { status: state.status, lowOnly: state.lowOnly, search: state.search, cursor: state.cursors.at(-1) || null });
+      const page = await data.listProducts(businessId, { status: state.status, lowOnly: state.lowOnly, search: state.search, category: state.category, cursor: state.cursors.at(-1) || null });
       state.rows = page.rows;
       state.hasMore = page.hasMore;
       state.costs = can.costs ? await data.loadCostDocs(businessId, "productCosts", page.rows.map((r) => r.id)) : {};
@@ -107,6 +108,7 @@ export function mount(container, session, { data = defaultData, api = defaultApi
         })}
         <form class="section card filters filters-inline" data-role="filters">
           <input class="input" name="search" value="${state.search}" placeholder="Search name or exact SKU" aria-label="Search name or exact SKU" autocomplete="off" />
+          <input class="input" name="category" value="${state.category}" placeholder="Category" aria-label="Category (exact)" autocomplete="off" />
           <select class="select" name="status" aria-label="Status">
             <option value="active" ${state.status === "active" ? "selected" : ""}>Active</option>
             <option value="inactive" ${state.status === "inactive" ? "selected" : ""}>Inactive</option>
@@ -116,6 +118,7 @@ export function mount(container, session, { data = defaultData, api = defaultApi
             <option value="low" ${state.lowOnly ? "selected" : ""}>Low stock only</option>
           </select>
           <button type="submit" class="btn">Apply</button>
+          ${mayExport(session, "inventory") ? html`${exportButton("products", "Product list (Excel)")}${exportButton("inventory", "Stock levels (Excel)")}<span class="stat-hint" data-role="export-hint">${exportHint}</span>` : ""}
         </form>
         <section class="section card">
           ${state.error
@@ -380,16 +383,20 @@ export function mount(container, session, { data = defaultData, api = defaultApi
     state.search = form.elements.search.value;
     state.status = form.elements.status.value;
     state.lowOnly = form.elements.low.value === "low";
+    state.category = form.elements.category.value.trim();
     state.cursors = [];
     load();
   };
   container.addEventListener("click", onClick);
   container.addEventListener("change", onChange);
   container.addEventListener("submit", onSubmit);
+  // Both downloads use the APPLIED filters (what the list shows), every page.
+  const unbindExport = bindExport(container, () => Object.fromEntries([["status", state.status], ["lowOnly", state.lowOnly], ["search", state.search.trim()], ["category", state.category]].filter(([, v]) => v)), { toast, deps: exportDeps });
   load();
 
   return () => {
     alive = false;
+    unbindExport();
     container.removeEventListener("click", onClick);
     container.removeEventListener("change", onChange);
     container.removeEventListener("submit", onSubmit);

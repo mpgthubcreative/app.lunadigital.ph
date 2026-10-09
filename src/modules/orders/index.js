@@ -25,6 +25,7 @@ import { openOrderEditor } from "./editor.js";
 import { recordPaymentDialog, editPaymentDialog, removePaymentDialog, showProof, methodLabel } from "../payments/actions.js";
 import { STATE_TONE } from "../payments/index.js";
 import { searchCustomers as defaultSearchCustomers } from "../customers/data.js";
+import { exportButton, bindExport, mayExport, exportHint } from "../../lib/export.js";
 
 const defaultDeps = {
   data: ordersData,
@@ -33,7 +34,7 @@ const defaultDeps = {
   searchCustomers: defaultSearchCustomers,
 };
 
-export function mount(container, session, { data = defaultDeps.data, payments = { listOrderPayments: defaultDeps.listOrderPayments }, searchProducts = defaultDeps.searchProducts, searchCustomers = defaultDeps.searchCustomers, api = defaultApi, toast = defaultToast } = {}) {
+export function mount(container, session, { data = defaultDeps.data, payments = { listOrderPayments: defaultDeps.listOrderPayments }, searchProducts = defaultDeps.searchProducts, searchCustomers = defaultDeps.searchCustomers, api = defaultApi, toast = defaultToast, exportDeps = {} } = {}) {
   const perms = session.member.permissions;
   const can = {
     create: perms["orders.create"] === true,
@@ -98,8 +99,10 @@ export function mount(container, session, { data = defaultDeps.data, payments = 
           <select class="select" name="fulfillmentStatus" aria-label="Fulfillment">${opts(Object.entries(FULFILLMENT_STATUSES).map(([k, v]) => [k, v.label]), f.fulfillmentStatus, "Any fulfillment")}</select>
           <select class="select" name="paymentStatus" aria-label="Payment">${opts(Object.entries(PAYMENT_STATUSES).map(([k, v]) => [k, v.label]), f.paymentStatus, "Any payment")}</select>
           <select class="select" name="source" aria-label="Source">${opts(ORDER_SOURCE_IDS.map((k) => [k, ORDER_SOURCES[k].label]), f.source, "Any source")}</select>
-          <input class="input" name="day" value="${f.day || ""}" placeholder="Date YYYY-MM-DD" aria-label="Date (YYYY-MM-DD)" autocomplete="off" />
+          <input class="input" type="date" name="from" value="${f.from || ""}" aria-label="From (order date)" />
+          <input class="input" type="date" name="to" value="${f.to || ""}" aria-label="To (order date)" />
           <button type="submit" class="btn">Apply</button>
+          ${mayExport(session, "orders") ? html`${exportButton("orders")}<span class="stat-hint" data-role="export-hint">${exportHint}</span>` : ""}
         </form>
         <section class="section card">
           ${state.error
@@ -390,20 +393,27 @@ export function mount(container, session, { data = defaultDeps.data, payments = 
     if (event.target.dataset.role !== "filters") return;
     event.preventDefault();
     const form = event.target;
-    const day = form.elements.day.value.trim();
+    const from = form.elements.from.value.trim();
+    const to = form.elements.to.value.trim();
+    if ((from && !isDayId(from)) || (to && !isDayId(to)) || (from && to && from > to)) {
+      toast("Choose a valid date range (the start can't be after the end).", "danger");
+      return;
+    }
     state.filters = Object.fromEntries(
-      [["fulfillmentStatus", form.elements.fulfillmentStatus.value], ["paymentStatus", form.elements.paymentStatus.value], ["source", form.elements.source.value], ["day", isDayId(day) ? day : ""]].filter(([, v]) => v)
+      [["fulfillmentStatus", form.elements.fulfillmentStatus.value], ["paymentStatus", form.elements.paymentStatus.value], ["source", form.elements.source.value], ["from", from], ["to", to]].filter(([, v]) => v)
     );
-    if (day && !isDayId(day)) toast("Date must look like 2026-10-08", "danger");
     state.cursors = [];
     load();
   };
   container.addEventListener("click", onClick);
   container.addEventListener("change", onChange);
   container.addEventListener("submit", onSubmit);
+  // Download = the APPLIED filters (what the list shows), every page.
+  const unbindExport = bindExport(container, () => ({ ...state.filters }), { toast, deps: exportDeps });
   load();
   return () => {
     alive = false;
+    unbindExport();
     container.removeEventListener("click", onClick);
     container.removeEventListener("change", onChange);
     container.removeEventListener("submit", onSubmit);

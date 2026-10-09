@@ -20,6 +20,10 @@ export const PERMISSIONS = Object.freeze({
   // dashboard. Separate from dashboard.view so staff who enter orders don't
   // see profitability by default.
   "dashboard.financials": { module: "dashboard", group: "Dashboard", label: "View sales and profitability on the dashboard" },
+  // Phase 12.5: the canonical Excel export capability (core, every workspace).
+  // An export also needs the data's module + view permission, and money /
+  // cost columns their own permissions. Reports keeps reports.export.
+  "data.export": { module: "dashboard", group: "Exports", label: "Download Excel exports of data they can view" },
 
   "orders.view": { module: "orders", group: "Orders", label: "View orders" },
   "orders.create": { module: "orders", group: "Orders", label: "Create orders" },

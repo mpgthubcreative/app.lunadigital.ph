@@ -330,8 +330,8 @@ describe("navigation", () => {
 describe("dashboard", () => {
   const ids = (t, role = "owner") => resolveDashboard(access(t, role)).map((w) => w.id);
 
-  it("Distributor: the same widgets in the same order as before (planned-module cards stay as No data yet)", () => {
-    expect(ids("distributor")).toEqual(["netSales", "grossProfit", "operatingExpenses", "estimatedOperatingProfit", "paymentsReceived", "receivablesOutstanding", "ordersToday", "unpaidOrders", "pendingFulfillment", "lowStock", "recentOrders", "lowStockItems", "recentActivity"]);
+  it("Distributor: selected-period widgets first, then current operations (Phase 12.5 adds COGS)", () => {
+    expect(ids("distributor")).toEqual(["netSales", "cogs", "grossProfit", "operatingExpenses", "estimatedOperatingProfit", "paymentsReceived", "ordersToday", "receivablesOutstanding", "unpaidOrders", "pendingFulfillment", "lowStock", "recentOrders", "lowStockItems", "recentActivity"]);
     expect(ids("distributor", "staff")).toEqual(["ordersToday", "unpaidOrders", "pendingFulfillment", "lowStock", "recentOrders", "lowStockItems", "recentActivity"]);
   });
 

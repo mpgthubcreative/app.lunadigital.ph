@@ -30,7 +30,7 @@ export async function getAdmin() {
     throw new RequestError("server-misconfigured", "This service is temporarily unavailable.", 503);
   }
 
-  const [{ initializeApp, getApps, cert }, { getFirestore, FieldValue }, { getAuth }] = await Promise.all([
+  const [{ initializeApp, getApps, cert }, { getFirestore, FieldValue, FieldPath }, { getAuth }] = await Promise.all([
     import("firebase-admin/app"),
     import("firebase-admin/firestore"),
     import("firebase-admin/auth"),
@@ -63,6 +63,6 @@ export async function getAdmin() {
     storageBucket = getStorage(app).bucket(name);
     return storageBucket;
   };
-  cached = { db: getFirestore(app), auth: getAuth(app), admin: { firestore: { FieldValue } }, bucket };
+  cached = { db: getFirestore(app), auth: getAuth(app), admin: { firestore: { FieldValue, FieldPath } }, bucket };
   return cached;
 }

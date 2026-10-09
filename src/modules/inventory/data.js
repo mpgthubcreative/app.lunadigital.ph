@@ -4,6 +4,8 @@
 // a whole collection. All writes go through /api/products and /api/inventory.
 
 import { getFirestoreLite } from "../../lib/firebase.js";
+import { runListQuery } from "../../lib/query.js";
+import { productsQuery } from "@shared/list-queries.js";
 
 export const PAGE_SIZE = 25;
 export const HISTORY_PAGE_SIZE = 20;
@@ -15,32 +17,10 @@ function docs(snap) {
 }
 
 // One page of products. `cursor` is the last row of the previous page.
-// Search: name prefix (case-insensitive) or an exact SKU.
-export async function listProducts(businessId, { status = "active", lowOnly = false, search = "", cursor = null, pageSize = PAGE_SIZE } = {}) {
-  const { db, lite } = await getFirestoreLite();
-  const { collection, query, where, orderBy, limit, startAfter, startAt, endAt, getDocs, documentId } = lite;
-  const ref = collection(db, ...path(businessId, "products"));
-  const term = search.trim();
-
-  if (term) {
-    const lowerTerm = term.toLocaleLowerCase("en");
-    const [byName, bySku] = await Promise.all([
-      getDocs(query(ref, where("status", "==", status), orderBy("nameLower"), startAt(lowerTerm), endAt(`${lowerTerm}\uf8ff`), limit(pageSize))),
-      getDocs(query(ref, where("sku", "==", term.toUpperCase()), limit(1))),
-    ]);
-    const seen = new Map();
-    for (const p of [...docs(bySku), ...docs(byName)]) if (p.status === status && (!lowOnly || p.isLowStock)) seen.set(p.id, p);
-    return { rows: [...seen.values()], hasMore: false };
-  }
-
-  const constraints = [where("status", "==", status)];
-  if (lowOnly) constraints.push(where("isLowStock", "==", true));
-  // Name, then document id: duplicate names never skip or repeat across pages.
-  constraints.push(orderBy("nameLower"), orderBy(documentId()));
-  if (cursor) constraints.push(startAfter(cursor.nameLower, cursor.id));
-  constraints.push(limit(pageSize + 1));
-  const rows = docs(await getDocs(query(ref, ...constraints)));
-  return { rows: rows.slice(0, pageSize), hasMore: rows.length > pageSize };
+// Search: name prefix (case-insensitive) or an exact SKU. Category: exact,
+// any case. (shared/list-queries.js: the exports read the same query.)
+export async function listProducts(businessId, { status = "active", lowOnly = false, search = "", category = "", cursor = null, pageSize = PAGE_SIZE } = {}) {
+  return runListQuery(businessId, "products", productsQuery({ status, lowOnly, search, category }), { cursor, pageSize });
 }
 
 // Cost documents for the given ids, at most 30 per `in` query.

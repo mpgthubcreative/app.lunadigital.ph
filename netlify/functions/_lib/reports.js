@@ -11,7 +11,7 @@
 // 3. rebuildRollups(): recomputes every rollup from the source records
 //    (backfill, and the oracle the tests compare the incremental ones to).
 
-import { rangePlan, diffRollup, addRollup, orderContribution, paymentContribution, expenseContribution, ROLLUP_SECTIONS, REPORT_TOP_ROWS, WALK_IN_KEY } from "../../../shared/reports.js";
+import { rangePlan, sumMetricDocs, diffRollup, addRollup, orderContribution, paymentContribution, expenseContribution, ROLLUP_SECTIONS, REPORT_TOP_ROWS, WALK_IN_KEY } from "../../../shared/reports.js";
 import { financialSummary, grossMarginPct } from "../../../shared/finance.js";
 import { OPERATIONAL_COUNTERS, FINANCIAL_COUNTERS } from "../../../shared/metrics.js";
 import { canUseModule } from "../../../shared/modules.js";
@@ -53,16 +53,7 @@ export const fulfilledOrderContribution = (order, costLines) => orderContributio
 
 // ---------- 2. Reads ----------
 
-const sumFields = (docs, fields) => {
-  const out = {};
-  let found = false;
-  for (const d of docs) {
-    if (!d) continue;
-    found = true;
-    for (const f of fields) if (Number.isSafeInteger(d[f])) out[f] = (out[f] ?? 0) + d[f];
-  }
-  return found ? out : null;
-};
+const sumFields = sumMetricDocs;
 
 async function readDocs(tenant, collection, ids) {
   const snaps = await Promise.all(ids.map((id) => tenant.doc(collection, id).get()));

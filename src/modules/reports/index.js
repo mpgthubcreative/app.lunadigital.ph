@@ -8,6 +8,8 @@
 // zero. CSV downloads (reports.export) are built from the rows on screen.
 
 import { html, render } from "../../lib/html.js";
+import { exportButton, bindExport, mayExport } from "../../lib/export.js";
+import { toast as defaultToast } from "../../components/feedback.js";
 import { pageHeader, emptyState, card } from "../../components/ui.js";
 import { api as defaultApi } from "../../lib/api.js";
 import { formatCentavos, formatDayId, formatNumber } from "../../lib/format.js";
@@ -115,7 +117,7 @@ export function reportTables(r, { currency = "PHP" } = {}) {
   return tables;
 }
 
-export function mount(container, session, { api = defaultApi, now = () => new Date(), download = defaultDownload } = {}) {
+export function mount(container, session, { api = defaultApi, now = () => new Date(), download = defaultDownload, toast = defaultToast, exportDeps = {} } = {}) {
   const perms = session.member.permissions;
   const canExport = perms["reports.export"] === true;
   const currency = session.business.currency || "PHP";
@@ -198,6 +200,7 @@ export function mount(container, session, { api = defaultApi, now = () => new Da
           <input class="input" type="date" name="from" value="${state.from}" max="${today}" aria-label="From" />
           <input class="input" type="date" name="to" value="${state.to}" max="${today}" aria-label="To" />
           <button type="submit" class="btn">Apply</button>
+          ${mayExport(session, "reports") && state.report ? exportButton("reports", "Download Excel (all sections)") : ""}
         </form>
         ${state.loading
           ? card({ body: emptyState({ title: "Loading…" }) })
@@ -242,9 +245,12 @@ export function mount(container, session, { api = defaultApi, now = () => new Da
   container.addEventListener("click", onClick);
   container.addEventListener("change", onChange);
   container.addEventListener("submit", onSubmit);
+  // The workbook is for the range the report on screen shows.
+  const unbindExport = bindExport(container, () => ({ from: state.from, to: state.to }), { toast, deps: exportDeps });
   load();
   return () => {
     alive = false;
+    unbindExport();
     container.removeEventListener("click", onClick);
     container.removeEventListener("change", onChange);
     container.removeEventListener("submit", onSubmit);

@@ -2,7 +2,7 @@
 // financial/operational split, and the Expenses module registration.
 
 import { describe, it, expect } from "vitest";
-import { resolveDashboard, dashboardDocuments, DASHBOARD_WIDGETS } from "../../shared/dashboard.js";
+import { resolveDashboard, dashboardDocuments, combineDashboardDocs, DASHBOARD_WIDGETS } from "../../shared/dashboard.js";
 import { computeEntitlements, validatePlan, validateEntitlementsSnapshot } from "../../shared/entitlements.js";
 import { resolvePermissions, moduleForPermission, PERMISSIONS, ROLE_TEMPLATES } from "../../shared/permissions.js";
 import { PLAN_SEED } from "../../shared/plans.seed.js";
@@ -11,7 +11,8 @@ import { DEFAULT_EXPENSE_CATEGORIES } from "../../shared/expenses.js";
 
 const growth = (overrides) => computeEntitlements(PLAN_SEED.growth, overrides, "distributor");
 const ids = (widgets) => widgets.map((w) => w.id);
-const financial = (widgets) => widgets.filter((w) => w.section === "financial");
+// Money widgets (dashboard.financials), period or current.
+const financial = (widgets) => widgets.filter((w) => w.permission === "dashboard.financials");
 
 describe("dashboard.financials separates profitability from operations", () => {
   it("owner and manager templates include it; staff does not", () => {
@@ -28,11 +29,11 @@ describe("dashboard.financials separates profitability from operations", () => {
 
   it("owner sees sales, gross profit, expenses and estimated operating profit", () => {
     const widgets = resolveDashboard({ entitlements: growth(), permissions: resolvePermissions("owner") });
-    expect(ids(financial(widgets))).toEqual(["netSales", "grossProfit", "operatingExpenses", "estimatedOperatingProfit", "paymentsReceived", "receivablesOutstanding"]);
+    expect(ids(financial(widgets))).toEqual(["netSales", "cogs", "grossProfit", "operatingExpenses", "estimatedOperatingProfit", "paymentsReceived", "receivablesOutstanding"]);
   });
 
   it("a staff member granted dashboard.financials sees them; a manager with it revoked does not", () => {
-    expect(financial(resolveDashboard({ entitlements: growth(), permissions: resolvePermissions("staff", { grant: ["dashboard.financials"] }) })).length).toBe(6);
+    expect(financial(resolveDashboard({ entitlements: growth(), permissions: resolvePermissions("staff", { grant: ["dashboard.financials"] }) })).length).toBe(7);
     expect(financial(resolveDashboard({ entitlements: growth(), permissions: resolvePermissions("manager", { revoke: ["dashboard.financials"] }) }))).toEqual([]);
   });
 
@@ -59,7 +60,30 @@ describe("dashboard.financials separates profitability from operations", () => {
 describe("dashboardDocuments: a fixed, tiny read set", () => {
   it("owner: at most 4 documents for today, whatever the business size", () => {
     const docs = dashboardDocuments(resolveDashboard({ entitlements: growth(), permissions: resolvePermissions("owner") }), "2026-10-08");
-    expect(docs.map((d) => `${d.collection}/${d.id}`).sort()).toEqual(["financialMetrics/2026-10-08", "financialMetrics/current", "metrics/2026-10-08", "metrics/current"]);
+    expect(docs.flatMap((d) => d.ids.map((id) => `${d.collection}/${id}`)).sort()).toEqual(["financialMetrics/2026-10-08", "financialMetrics/current", "metrics/2026-10-08", "metrics/current"]);
+  });
+
+  it("a period reads the same documents as Reports (days up to 62, then whole months + edge days); current gauges stay one document", () => {
+    const owner = resolveDashboard({ entitlements: growth(), permissions: resolvePermissions("owner") });
+    const week = dashboardDocuments(owner, { from: "2026-10-05", to: "2026-10-08" });
+    expect(week.find((d) => d.source === "financial-day").ids).toEqual(["2026-10-05", "2026-10-06", "2026-10-07", "2026-10-08"]);
+    expect(week.find((d) => d.source === "financial-current").ids).toEqual(["current"]);
+    const year = dashboardDocuments(owner, { from: "2025-10-09", to: "2026-10-08" }).find((d) => d.source === "operational-day").ids;
+    expect(year).toContain("2026-09");
+    expect(year).toContain("2025-10-31");
+    expect(year.length).toBeLessThanOrEqual(72);
+  });
+
+  it("combine: a period sums its documents (none = null, never 0); a gauge is read as is", () => {
+    expect(combineDashboardDocs("financial-day", [{ grossSales: 100, cogs: 40 }, null, { grossSales: 50, cogs: 0 }])).toMatchObject({ grossSales: 150, cogs: 40 });
+    expect(combineDashboardDocs("financial-day", [null, null])).toBeNull();
+    expect(combineDashboardDocs("operational-day", [{ orderCount: 0 }])).toMatchObject({ orderCount: 0 });
+    expect(combineDashboardDocs("financial-current", [{ receivablesOutstanding: 5 }])).toEqual({ receivablesOutstanding: 5 });
+  });
+
+  it("period widgets live under Selected period; gauges under Current operations", () => {
+    for (const w of DASHBOARD_WIDGETS.filter((x) => x.kind === "stat")) expect(w.section).toBe(w.source.endsWith("-current") ? "current" : "period");
+    for (const w of DASHBOARD_WIDGETS.filter((x) => x.section === "current")) expect(`${w.label} ${w.hint}`).toMatch(/now|Current/i);
   });
 
   it("staff never request a financial document", () => {

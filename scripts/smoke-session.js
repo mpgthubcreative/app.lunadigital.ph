@@ -296,6 +296,19 @@ const checks = [
     (await fsQuery("manager.a", `businesses/${A}`, "imports")) === 200 &&
     (await fsQuery("staff.a", `businesses/${A}`, "imports")) === 403 &&
     (await fsQuery("owner.a", `businesses/${B}`, "imports")) === 403],
+  // Phase 12.5: exports (each successful export writes one small audit entry).
+  ["POST /api/exports without a token → 401", async () => (await post("exports", { dataset: "orders" })).status === 401],
+  ["staff.a (no data.export) can't export (403)", async () => (await post("exports", { dataset: "orders", filters: {} }, { as: "staff.a" })).status === 403],
+  ["owner.a selecting B can't export B (403)", async () => (await post("exports", { dataset: "orders", filters: {} }, { as: "owner.a", businessId: B })).body.error === "business-access-denied"],
+  ["unknown datasets / filters are refused (400)", async () =>
+    (await post("exports", { dataset: "members" }, { as: "owner.a" })).status === 400 &&
+    (await post("exports", { dataset: "orders", filters: { orderBy: "total" } }, { as: "owner.a" })).body.error === "invalid-filters"],
+  ["manager.a downloads Inventory as a real .xlsx", async () => {
+    const headers = { "Content-Type": "application/json", Authorization: `Bearer ${await token("manager.a")}` };
+    const res = await fetch(`${baseUrl}/api/exports`, { method: "POST", headers, body: JSON.stringify({ dataset: "inventory", filters: { lowOnly: true } }) });
+    const bytes = new Uint8Array(await res.arrayBuffer());
+    return res.status === 200 && /spreadsheetml/.test(res.headers.get("content-type")) && bytes[0] === 0x50 && bytes[1] === 0x4b && /Luna_Inventory_\d{4}-\d{2}-\d{2}\.xlsx/.test(res.headers.get("content-disposition"));
+  }],
 ];
 
 console.log(`Smoke-testing ${baseUrl}\n`);

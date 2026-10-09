@@ -80,7 +80,8 @@ export function isXlsx(bytes) {
 
 // bytes: Uint8Array of an .xlsx file -> { sheetName, rows: string[][] }
 // (first worksheet; trailing empty rows dropped; ragged rows padded).
-export function readXlsx(bytes, { maxRows = XLSX_LIMITS.maxRows, maxCols = XLSX_LIMITS.maxCols } = {}) {
+// sheet: a sheet name to read instead of the first (imports always read the first).
+export function readXlsx(bytes, { maxRows = XLSX_LIMITS.maxRows, maxCols = XLSX_LIMITS.maxCols, sheet: sheetName = null } = {}) {
   if (!isXlsx(bytes)) throw new SpreadsheetError("This isn't an .xlsx file");
   if (bytes.length > XLSX_LIMITS.maxFileBytes) throw new SpreadsheetError("The file is too large (max 5 MB)");
   let total = 0;
@@ -100,9 +101,10 @@ export function readXlsx(bytes, { maxRows = XLSX_LIMITS.maxRows, maxCols = XLSX_
   const text = (name) => (files[name] ? strFromU8(files[name]) : null);
   const workbook = text("xl/workbook.xml");
   if (!workbook) throw new SpreadsheetError("The .xlsx file has no workbook");
-  const firstSheet = /<(?:\w+:)?sheet\b([^>]*)\/?>/.exec(workbook);
-  if (!firstSheet) throw new SpreadsheetError("The workbook has no sheets");
-  const sheetAttrs = attrs(firstSheet[1]);
+  const sheetTags = [...workbook.matchAll(/<(?:\w+:)?sheet\b([^>]*)\/?>/g)].map((m) => attrs(m[1]));
+  if (!sheetTags.length) throw new SpreadsheetError("The workbook has no sheets");
+  const sheetAttrs = sheetName === null ? sheetTags[0] : sheetTags.find((a) => decodeXml(a.name || "") === sheetName);
+  if (!sheetAttrs) throw new SpreadsheetError(`The workbook has no sheet named ${sheetName}`);
   const rid = sheetAttrs["r:id"] || sheetAttrs.id;
   let target = null;
   const rels = text("xl/_rels/workbook.xml.rels") || "";
@@ -111,7 +113,7 @@ export function readXlsx(bytes, { maxRows = XLSX_LIMITS.maxRows, maxCols = XLSX_
     if (a.Id === rid) target = a.Target;
   }
   const path = target ? (target.startsWith("/") ? target.slice(1) : `xl/${target.replace(/^\.\//, "")}`) : "xl/worksheets/sheet1.xml";
-  const sheet = text(path) || text("xl/worksheets/sheet1.xml");
+  const sheet = text(path) || (sheetName === null ? text("xl/worksheets/sheet1.xml") : null);
   if (!sheet) throw new SpreadsheetError("The first worksheet is missing");
 
   const shared = [];
@@ -169,45 +171,75 @@ const cleanSheetName = (name, used) => {
   return n;
 };
 
-// sheets: [{ name, rows: (string|number|null)[][], header?: true }]
-// -> Uint8Array .xlsx. Numbers stay numbers; everything else is an inline
-// string passed through safeCellText. The first row is bold when header.
-export function writeXlsx(sheets) {
+// Number formats a column may declare (cell values stay plain numbers).
+const NUMBER_STYLES = Object.freeze({ money: 2, integer: 3, percent: 4, date: 5, datetime: 6 });
+export const XLSX_COLUMN_FORMATS = Object.freeze(["text", "number", ...Object.keys(NUMBER_STYLES)]);
+
+const STYLES_XML =
+  `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">` +
+  `<numFmts count="2"><numFmt numFmtId="166" formatCode="yyyy-mm-dd"/><numFmt numFmtId="167" formatCode="yyyy-mm-dd hh:mm"/></numFmts>` +
+  `<fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><name val="Calibri"/></font></fonts>` +
+  `<fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills><borders count="1"><border/></borders><cellStyleXfs count="1"><xf/></cellStyleXfs>` +
+  `<cellXfs count="7"><xf fontId="0"/><xf fontId="1" applyFont="1"/><xf fontId="0" numFmtId="4" applyNumberFormat="1"/><xf fontId="0" numFmtId="3" applyNumberFormat="1"/><xf fontId="0" numFmtId="10" applyNumberFormat="1"/><xf fontId="0" numFmtId="166" applyNumberFormat="1"/><xf fontId="0" numFmtId="167" applyNumberFormat="1"/></cellXfs></styleSheet>`;
+
+const coreXml = (meta) =>
+  `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">` +
+  (meta.title ? `<dc:title>${encodeXml(String(meta.title).slice(0, 200))}</dc:title>` : "") +
+  `<dc:creator>${encodeXml(String(meta.creator || "Luna Business OS").slice(0, 200))}</dc:creator>` +
+  (meta.created instanceof Date && !Number.isNaN(meta.created.getTime()) ? `<dcterms:created xsi:type="dcterms:W3CDTF">${meta.created.toISOString().replace(/\.\d{3}Z$/, "Z")}</dcterms:created>` : "") +
+  `</cp:coreProperties>`;
+
+// sheets: [{ name, rows: (string|number|null)[][], header?: true,
+//            columns?: [{ format?: "text"|"number"|"money"|"integer"|"percent"|"date"|"datetime", width? }] }]
+// meta (optional): { title, creator, created: Date } -> document properties.
+// -> Uint8Array .xlsx. Numbers stay numbers (styled by their column's
+// format; dates are Excel serials, see shared/exports.js excelSerial); everything else is an
+// inline string passed through safeCellText. With a header row, the first
+// row is bold and frozen.
+export function writeXlsx(sheets, meta = null) {
   if (!Array.isArray(sheets) || !sheets.length) throw new SpreadsheetError("Nothing to write");
   const used = new Set();
   const names = sheets.map((s) => cleanSheetName(s.name, used));
   const files = {
     "[Content_Types].xml": strToU8(
-      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>${sheets.map((_, i) => `<Override PartName="/xl/worksheets/sheet${i + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`).join("")}</Types>`
+      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>${meta ? '<Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/>' : ""}${sheets.map((_, i) => `<Override PartName="/xl/worksheets/sheet${i + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`).join("")}</Types>`
     ),
-    "_rels/.rels": strToU8(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>`),
+    "_rels/.rels": strToU8(
+      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>${meta ? '<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Target="docProps/core.xml"/>' : ""}</Relationships>`
+    ),
     "xl/workbook.xml": strToU8(
       `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>${names.map((n, i) => `<sheet name="${encodeXml(n)}" sheetId="${i + 1}" r:id="rId${i + 1}"/>`).join("")}</sheets></workbook>`
     ),
     "xl/_rels/workbook.xml.rels": strToU8(
       `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${sheets.map((_, i) => `<Relationship Id="rId${i + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${i + 1}.xml"/>`).join("")}<Relationship Id="rId${sheets.length + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>`
     ),
-    "xl/styles.xml": strToU8(
-      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><name val="Calibri"/></font></fonts><fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills><borders count="1"><border/></borders><cellStyleXfs count="1"><xf/></cellStyleXfs><cellXfs count="2"><xf fontId="0"/><xf fontId="1" applyFont="1"/></cellXfs></styleSheet>`
-    ),
+    "xl/styles.xml": strToU8(STYLES_XML),
   };
+  if (meta) files["docProps/core.xml"] = strToU8(coreXml(meta));
   sheets.forEach((s, i) => {
     const header = s.header !== false;
-    const body = (s.rows || [])
+    const columns = Array.isArray(s.columns) ? s.columns : [];
+    const numberStyle = columns.map((c) => (c && NUMBER_STYLES[c.format] ? ` s="${NUMBER_STYLES[c.format]}"` : ""));
+    const rows = s.rows || [];
+    const body = rows
       .map((row, r) => {
+        const head = header && r === 0;
         const cells = (row || [])
           .map((v, c) => {
             const ref = `${colName(c)}${r + 1}`;
-            const style = header && r === 0 ? ' s="1"' : "";
             if (v === null || v === undefined || v === "") return "";
-            if (typeof v === "number" && Number.isFinite(v)) return `<c r="${ref}"${style}><v>${v}</v></c>`;
-            return `<c r="${ref}"${style} t="inlineStr"><is><t xml:space="preserve">${encodeXml(safeCellText(v))}</t></is></c>`;
+            if (typeof v === "number" && Number.isFinite(v)) return `<c r="${ref}"${head ? ' s="1"' : numberStyle[c] || ""}><v>${v}</v></c>`;
+            return `<c r="${ref}"${head ? ' s="1"' : ""} t="inlineStr"><is><t xml:space="preserve">${encodeXml(safeCellText(v))}</t></is></c>`;
           })
           .join("");
         return `<row r="${r + 1}">${cells}</row>`;
       })
       .join("");
-    files[`xl/worksheets/sheet${i + 1}.xml`] = strToU8(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>${body}</sheetData></worksheet>`);
+    const views = header && rows.length > 1 ? '<sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>' : "";
+    const widths = columns.some((c) => c && c.width)
+      ? `<cols>${columns.map((c, k) => (c && c.width ? `<col min="${k + 1}" max="${k + 1}" width="${Math.min(80, Math.max(4, Number(c.width) || 10))}" customWidth="1"/>` : "")).join("")}</cols>`
+      : "";
+    files[`xl/worksheets/sheet${i + 1}.xml`] = strToU8(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">${views}${widths}<sheetData>${body}</sheetData></worksheet>`);
   });
   return zipSync(files, { level: 6 });
 }

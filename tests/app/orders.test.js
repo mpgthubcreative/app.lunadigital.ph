@@ -235,9 +235,10 @@ describe("list", () => {
     const form = container.querySelector('[data-role="filters"]');
     form.elements.fulfillmentStatus.value = "pending";
     form.elements.source.value = "viber";
-    form.elements.day.value = "2026-10-08";
+    form.elements.from.value = "2026-10-01";
+    form.elements.to.value = "2026-10-08";
     form.dispatchEvent(new Event("submit", { cancelable: true, bubbles: true }));
     await flush();
-    expect(d.data.listOrders.mock.calls.at(-1)[1]).toMatchObject({ filters: { fulfillmentStatus: "pending", source: "viber", day: "2026-10-08" }, cursor: null });
+    expect(d.data.listOrders.mock.calls.at(-1)[1]).toMatchObject({ filters: { fulfillmentStatus: "pending", source: "viber", from: "2026-10-01", to: "2026-10-08" }, cursor: null });
   });
 });

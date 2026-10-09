@@ -6,6 +6,7 @@
 // history). The server keeps every metric; nothing here computes one.
 
 import { html, render } from "../../lib/html.js";
+import { exportButton, bindExport, mayExport, exportHint } from "../../lib/export.js";
 import { pageHeader, emptyState, badge } from "../../components/ui.js";
 import { formDialog } from "../../components/form-dialog.js";
 import { toast as defaultToast } from "../../components/feedback.js";
@@ -95,7 +96,7 @@ export function removeExpenseDialog({ expense, api, currency = "PHP" }) {
   });
 }
 
-export function mount(container, session, { data = defaultData, api = defaultApi, toast = defaultToast, now = () => new Date() } = {}) {
+export function mount(container, session, { data = defaultData, api = defaultApi, toast = defaultToast, now = () => new Date(), exportDeps = {} } = {}) {
   const perms = session.member.permissions;
   const can = { create: perms["expenses.create"] === true, update: perms["expenses.update"] === true, remove: perms["expenses.delete"] === true };
   const businessId = session.business.id;
@@ -140,6 +141,7 @@ export function mount(container, session, { data = defaultData, api = defaultApi
           <input class="input" name="search" placeholder="Payee or reference" value="${f.search || ""}" autocomplete="off" aria-label="Search payee or reference" />
           <select class="select" name="status" aria-label="Show">${opt("active", "Active", f.status)}${opt("removed", "Removed", f.status)}</select>
           <button type="submit" class="btn">Apply</button>
+          ${mayExport(session, "expenses") && (f.status || "active") === "active" ? html`${exportButton("expenses")}<span class="stat-hint" data-role="export-hint">${exportHint}</span>` : ""}
         </form>
         <section class="section card">
           ${state.error
@@ -243,6 +245,10 @@ export function mount(container, session, { data = defaultData, api = defaultApi
     if (event.target.dataset.role !== "filters") return;
     event.preventDefault();
     const el = event.target.elements;
+    if (el.from.value && el.to.value && el.from.value > el.to.value) {
+      toast("Choose a valid date range (the start can't be after the end).", "danger");
+      return;
+    }
     state.filters = Object.fromEntries(
       [["status", el.status.value], ["from", el.from.value], ["to", el.to.value], ["category", el.category.value], ["method", el.method.value], ["search", el.search.value.trim()]].filter(([, v]) => v)
     );
@@ -251,9 +257,12 @@ export function mount(container, session, { data = defaultData, api = defaultApi
   };
   container.addEventListener("click", onClick);
   container.addEventListener("submit", onSubmit);
+  // Active expenses only (removed ones are not exported).
+  const unbindExport = bindExport(container, () => ({ ...state.filters, status: "active" }), { toast, deps: exportDeps });
   load();
   return () => {
     alive = false;
+    unbindExport();
     container.removeEventListener("click", onClick);
     container.removeEventListener("submit", onSubmit);
   };

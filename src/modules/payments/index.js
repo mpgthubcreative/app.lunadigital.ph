@@ -8,7 +8,8 @@ import { pageHeader, emptyState, badge } from "../../components/ui.js";
 import { confirmDialog, toast as defaultToast } from "../../components/feedback.js";
 import { api as defaultApi } from "../../lib/api.js";
 import { formatCentavos } from "../../lib/format.js";
-import { PAYMENT_STATES, PAYMENT_METHODS, PAYMENT_METHOD_IDS } from "@shared/index.js";
+import { PAYMENT_STATES, PAYMENT_METHODS, PAYMENT_METHOD_IDS, isDayId } from "@shared/index.js";
+import { exportButton, bindExport, mayExport, exportHint } from "../../lib/export.js";
 import * as defaultData from "./data.js";
 import { editPaymentDialog, removePaymentDialog, showProof, methodLabel } from "./actions.js";
 import { when } from "../orders/view.js";
@@ -39,7 +40,7 @@ export function paymentActivity(p, { currency = "PHP", timezone } = {}) {
   });
 }
 
-export function mount(container, session, { data = defaultData, api = defaultApi, toast = defaultToast } = {}) {
+export function mount(container, session, { data = defaultData, api = defaultApi, toast = defaultToast, exportDeps = {} } = {}) {
   const perms = session.member.permissions;
   const canVerify = perms["payments.verify"] === true;
   const businessId = session.business.id;
@@ -76,7 +77,10 @@ export function mount(container, session, { data = defaultData, api = defaultApi
         <form class="section card filters filters-inline" data-role="filters">
           <select class="select" name="state" aria-label="Status">${opt("", "Any status", state.filters.state || "")}${Object.entries(PAYMENT_STATES).map(([k, v]) => opt(k, v.label, state.filters.state))}</select>
           <select class="select" name="method" aria-label="Method">${opt("", "Any method", state.filters.method || "")}${PAYMENT_METHOD_IDS.map((k) => opt(k, PAYMENT_METHODS[k].label, state.filters.method))}</select>
+          <input class="input" type="date" name="from" value="${state.filters.from || ""}" aria-label="Received from" />
+          <input class="input" type="date" name="to" value="${state.filters.to || ""}" aria-label="Received to" />
           <button type="submit" class="btn">Apply</button>
+          ${mayExport(session, "payments") ? html`${exportButton("payments")}<span class="stat-hint" data-role="export-hint">${exportHint}</span>` : ""}
         </form>
         <section class="section card">
           ${state.error
@@ -187,15 +191,23 @@ export function mount(container, session, { data = defaultData, api = defaultApi
     if (event.target.dataset.role !== "filters") return;
     event.preventDefault();
     const f = event.target.elements;
-    state.filters = Object.fromEntries([["state", f.state.value], ["method", f.method.value]].filter(([, v]) => v));
+    const from = f.from.value.trim();
+    const to = f.to.value.trim();
+    if ((from && !isDayId(from)) || (to && !isDayId(to)) || (from && to && from > to)) {
+      toast("Choose a valid date range (the start can't be after the end).", "danger");
+      return;
+    }
+    state.filters = Object.fromEntries([["state", f.state.value], ["method", f.method.value], ["from", from], ["to", to]].filter(([, v]) => v));
     state.cursors = [];
     load();
   };
   container.addEventListener("click", onClick);
   container.addEventListener("submit", onSubmit);
+  const unbindExport = bindExport(container, () => ({ ...state.filters }), { toast, deps: exportDeps });
   load();
   return () => {
     alive = false;
+    unbindExport();
     container.removeEventListener("click", onClick);
     container.removeEventListener("submit", onSubmit);
   };

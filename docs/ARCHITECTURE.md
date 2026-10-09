@@ -612,9 +612,9 @@ These apply to every phase from Phase 12 on. Each module adopts them when it's b
 - Every cell is written as a plain value, never a formula. Text that looks like a formula (`= + - @`, tab, CR) is neutralised.
 - Small filtered results may be generated in the browser from rows the API already returned. Larger exports use protected server retrieval, paginated or chunked, with row limits. Asynchronous export jobs come only if volumes require them.
 
-**3. Distributor Excel downloads (planned):** Products, Inventory, Orders, Payments, Customers, Expenses and Reports (Reports keeps CSV and gains .xlsx), plus Import History where useful.
+**3. Distributor Excel downloads (built in Phase 12.5, see "Exports and Dashboard periods"):** Products, Inventory, Orders, Payments, Customers, Expenses and Reports (Reports keeps CSV and gains .xlsx), plus Import History where useful.
 
-**4. Distributor Dashboard date filter (planned):**
+**4. Distributor Dashboard date filter (built in Phase 12.5):**
 - Presets: Today, Yesterday, This week, This month, Last month, Custom. They use the business timezone, the same presets as Reports (`reportPresets`).
 - The filter drives period metrics (net sales, COGS, gross profit, operating expenses, estimated operating profit, payments received, orders, period activity) through the same summary documents and `financialSummary`, with no new formulas.
 
@@ -635,7 +635,7 @@ These apply to every phase from Phase 12 on. Each module adopts them when it's b
 | Expenses | date range, category, method, payee/reference search |
 | Reports | the Phase 11 business-local ranges |
 
-**7. Distributor Dashboard Excel download (planned):** reflects the selected range. Possible sheets are Summary, Sales, Products, Customers, Payments and Expenses, including only the sheets and fields the user may access. A Staff user without financial permission never gets sales, COGS, profit or expense amounts through an export.
+**7. Distributor Dashboard Excel download (built in Phase 12.5):** reflects the selected range. Possible sheets are Summary, Sales, Products, Customers, Payments and Expenses, including only the sheets and fields the user may access. A Staff user without financial permission never gets sales, COGS, profit or expense amounts through an export.
 
 **8–15. Household / Kasambahay payroll (future workspace; nothing built yet).**
 - **Modules:** Dashboard, Household Staff, Attendance, Payroll, Salary Payments, Employee Receipt Confirmation, Advances, Deductions, Payroll History, Reports, Excel Downloads.
@@ -868,6 +868,87 @@ Imports let a distributor bring in its existing **Products** and **Customers** f
 
 **Activation:** Imports was marked built; the Distributor template went v4 → v5 (`upgradingFrom: [4]` during the window, rules `[4, 5]`), then recompute, then strict `[5]`.
 
+## Exports and Dashboard periods (Phase 12.5)
+
+**Filter → View → Download** is a Luna-wide rule. The filters the user has applied decide what they see and what they download. A download contains every row matching those filters, across all pages, never just the visible page and never the unfiltered history. An "Export all" would be a separate, deliberate option; none exists yet.
+
+### Export Core
+
+One controlled path for every Excel download: `POST /api/exports { dataset, filters }`, which returns the `.xlsx` file. The browser never builds a workbook from data it happens to hold, and it is never the authorization boundary.
+
+| Piece | Where | What |
+|---|---|---|
+| Query definitions | `shared/list-queries.js` | What each list's filters mean (Orders, Payments, Products/Inventory, Customers, Expenses). The browser lists (`src/lib/query.js`) and the server exports run the same specs, so a download can't disagree with the screen. |
+| Dataset descriptors | `shared/export-datasets.js` | Per dataset: module, view permissions, export permission and filter schema. Used by the server to validate and by the browser to decide whether to show the button. |
+| Core primitives | `shared/exports.js` | Filter validation (unknown filters, bad values and bad ranges are refused; ranges are inclusive, at most 366 days), `canExport`, column visibility by permission, business-timezone date/time cells (Excel serials), money and quantity cells, safe file names, `EXPORT_MAX_ROWS`. Workspace-agnostic. |
+| Runner | `netlify/functions/_lib/export-core.js` | Access, filters, paged reads, workbook, trace (below). |
+| Builders | `netlify/functions/_lib/exports/records.js`, `summaries.js` | Columns and queries per dataset. |
+| Spreadsheet layer | `shared/xlsx.js` (Phase 12, `fflate` 0.8.3) | Extended with number formats (money `#,##0.00`, integer, percent, dates), column widths, a frozen header and document properties. Still no formulas: every text cell passes `safeCellText`. |
+
+**Access, checked on the server before anything is read:**
+- `requireTenant`: authenticated, active membership, the selected business, subscription policy (reads also work while suspended), the dataset's module entitled and allowed by the workspace template, and the export permission.
+- `canExport`, checked again: module usable, every view permission, export permission.
+- **Columns** that need more declare it (`needs`): COGS and gross profit need `dashboard.financials`; average cost and inventory value need `inventory.costs`.
+- **No fetch-then-hide:** builders don't even READ `orderCosts` or `productCosts` for callers without those permissions (tests spy on the reads). The Dashboard and Reports workbooks reuse `resolveDashboard` and `buildReport`, which never compute money without `dashboard.financials`.
+- **The browser can't choose what's read.** It sends a dataset id and filters only; it can't name a collection, field, sort key or business.
+
+**Permission model:**
+- `data.export` is the canonical capability: core (the Dashboard module), so it works in every workspace. Owner and Manager have it; Staff don't.
+- An export also needs the data's own module and view permission.
+- **Reports keeps `reports.export`** (Phase 11 behaviour) for both its CSV and `.xlsx` downloads.
+- Existing members receive the new key through `npm run resync-permissions`.
+
+**Rows, limits and performance:**
+- **Reads:** the server reads with the list's spec, page by page (1,000 per read, document cursors), until every matching row is in.
+- **Limit:** past **EXPORT_MAX_ROWS = 10,000** the request is refused (413): "This export contains too many rows. Narrow your filters and try again." It is never truncated.
+  - 10,000 is an **initial synchronous safety limit**, not a permanent scalability claim. It will be benchmarked again on production infrastructure in Phase 19.
+  - The refusal happens while reading (at most 10,001 documents), before any workbook is built, and leaves no audit or usage entry. `tests/functions/export-limit.test.js` checks the real value: 10,000 rows accepted in full, 10,001 refused.
+- **Measured** (`scripts/measure-export.js`, 10,000 orders with 30,000 order lines):
+
+  | Measure | Result |
+  |---|---|
+  | Build + write | about 1.8 s CPU |
+  | Workbook | 2.1 MB (2.9 MB base64; Netlify's limit is 6 MB) |
+  | Heap | about 100 MB |
+
+  20,000 orders reach 5.7 MB base64, too close to the response limit. There was no 10,000-row live load test on staging (to avoid creating 10,001 cloud records). The staging boundary is covered by the tests above.
+- **Searches:** a search (name prefix OR exact SKU / reference) runs its parts and merges them. The list shows the first matches; the export returns them all.
+- **No N+1:** cost documents are read in batches (`getAll`, 300 per call). The Dashboard and Reports workbooks read only summary documents.
+
+**Datasets:**
+
+| Dataset | Screen | Filters | Sheets |
+|---|---|---|---|
+| `dashboard` | Dashboard | period (required) | Summary (selected period), Period activity (day or month rows), Current operations (live, labelled "NOT for the selected period") |
+| `reports` | Reports | range (required) | Overview, Sales, Products, Customers, Payments, Expenses by category / method, Low stock (now): only the sections this caller may see |
+| `orders` | Orders | payment, fulfillment, source, order-date range | Orders (one row per order, items summarised) + Order lines |
+| `payments` | Payments | status, method, received-date range | Payments (Proof attached = Yes/No; never a storage path or URL) |
+| `products` | Inventory | search, category, status, low stock | Product list (no stock or cost) |
+| `inventory` | Inventory | same | Stock levels (+ cost and value with `inventory.costs`) |
+| `customers` | Customers | status, search | Customers with the server-kept statistics |
+| `expenses` | Expenses | date range, category, method, search | Active expenses only (removed ones are not exported) |
+
+Every workbook ends with an **Export info** sheet (business, data, filters, rows, who, when in business time).
+
+**File names:** `Luna_Orders_2026-10-01_to_2026-10-31.xlsx`, `Luna_Inventory_2026-10-08.xlsx` (business-local dates, sanitised).
+
+**Trace:** one `auditLog` entry `export.generated` (dataset, filters, row count, actor; never exported data) and `usage/{month}.exportsGenerated` / `rowsExported` for future metering. No limits are enforced yet.
+
+**Imports** keep their own downloads (blank templates, preview rows, history rows) on the same spreadsheet layer.
+
+**Future workspaces** (payroll, bridal, baby) add their own descriptors and builders when their modules are built. The core is not Distributor-specific.
+
+### Dashboard periods
+
+- **Filter:** Today, Yesterday, This week (Monday start), This month, Last month, Custom. These are the Reports presets, in the **business timezone**, inclusive, at most 366 days, never past today.
+- **Selected period:** Net sales, COGS, Gross profit, Operating expenses, Estimated operating profit, Payments received, Orders.
+  - Read from the same day / whole-month summary documents as Reports (`rangePlan`), and summed by the same `sumMetricDocs` → `financialSummary`. Dashboard and Reports therefore match for the same range (tested).
+  - A period with no summary documents shows "No data yet", never ₱0.
+- **Current operations · as of now:** Current unpaid balance, Current unpaid orders, Awaiting fulfillment now, Current low stock (+ the low-stock list).
+  - These are live gauges. Choosing Last month never relabels them as last month's, and Luna doesn't reconstruct historical stock or unpaid balances it never stored.
+- **Reads:** Today is still 4 documents. A full year is at most about 72 per collection.
+- **Download Excel** (`data.export`) produces the workbook for the period on screen.
+
 ## Performance
 
 - The dashboard reads at most four summary documents (see above), plus small limited list queries once Orders and Inventory exist.
@@ -926,6 +1007,7 @@ On Orders, Reference and Proof show "—" until Payments (Phase 8) fills them in
 10. Expenses ✅
 11. Reports (incl. operating P&L) ✅
 12. Imports ✅
+12.5. Dashboard filters + Excel Export Core ✅
 13. Notifications
 14. Super Admin console
 15. Usage metering views

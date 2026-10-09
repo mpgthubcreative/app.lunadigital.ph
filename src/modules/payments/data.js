@@ -4,22 +4,15 @@
 // come through POST /api/payments { action: "proof" } after a server check.
 
 import { getFirestoreLite } from "../../lib/firebase.js";
+import { runListQuery } from "../../lib/query.js";
+import { paymentsQuery } from "@shared/list-queries.js";
 
 export const PAGE_SIZE = 25;
 const docs = (snap) => snap.docs.map((d) => ({ id: d.id, ...d.data() }));
 
-// filters: { state?, method? }
+// filters: { state?, method?, from?, to? (received day) } (shared/list-queries.js).
 export async function listPayments(businessId, { filters = {}, cursor = null, pageSize = PAGE_SIZE } = {}) {
-  const { db, lite } = await getFirestoreLite();
-  const { collection, query, where, orderBy, limit, startAfter, getDocs } = lite;
-  const constraints = [];
-  if (filters.state) constraints.push(where("state", "==", filters.state));
-  if (filters.method) constraints.push(where("method", "==", filters.method));
-  constraints.push(orderBy("createdAt", "desc"));
-  if (cursor) constraints.push(startAfter(cursor.createdAt));
-  constraints.push(limit(pageSize + 1));
-  const rows = docs(await getDocs(query(collection(db, "businesses", businessId, "payments"), ...constraints)));
-  return { rows: rows.slice(0, pageSize), hasMore: rows.length > pageSize };
+  return runListQuery(businessId, "payments", paymentsQuery(filters), { cursor, pageSize });
 }
 
 // Every payment of one order (order detail), oldest first.

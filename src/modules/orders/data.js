@@ -4,25 +4,17 @@
 // limited. All writes go through POST /api/orders.
 
 import { getFirestoreLite } from "../../lib/firebase.js";
+import { runListQuery } from "../../lib/query.js";
+import { ordersQuery } from "@shared/list-queries.js";
 
 export const PAGE_SIZE = 25;
 
 const docs = (snap) => snap.docs.map((d) => ({ id: d.id, ...d.data() }));
 
-// filters: { fulfillmentStatus?, paymentStatus?, source?, day? (YYYY-MM-DD) }
+// filters: { fulfillmentStatus?, paymentStatus?, source?, from?, to? (YYYY-MM-DD) }
+// (shared/list-queries.js: the Orders export reads the same query).
 export async function listOrders(businessId, { filters = {}, cursor = null, pageSize = PAGE_SIZE } = {}) {
-  const { db, lite } = await getFirestoreLite();
-  const { collection, query, where, orderBy, limit, startAfter, getDocs } = lite;
-  const constraints = [];
-  if (filters.fulfillmentStatus) constraints.push(where("fulfillmentStatus", "==", filters.fulfillmentStatus));
-  if (filters.paymentStatus) constraints.push(where("paymentStatus", "==", filters.paymentStatus));
-  if (filters.source) constraints.push(where("source", "==", filters.source));
-  if (filters.day) constraints.push(where("orderDate", "==", filters.day));
-  constraints.push(orderBy("createdAt", "desc"));
-  if (cursor) constraints.push(startAfter(cursor.createdAt));
-  constraints.push(limit(pageSize + 1));
-  const rows = docs(await getDocs(query(collection(db, "businesses", businessId, "orders"), ...constraints)));
-  return { rows: rows.slice(0, pageSize), hasMore: rows.length > pageSize };
+  return runListQuery(businessId, "orders", ordersQuery(filters), { cursor, pageSize });
 }
 
 export async function getOrder(businessId, orderId) {

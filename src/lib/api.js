@@ -65,3 +65,34 @@ export async function api(path, { method = "GET", body } = {}) {
   }
   return data;
 }
+
+// POST that answers with a file (Phase 12.5 exports): { blob, fileName,
+// rows }. Errors come back as the usual JSON and become an ApiError.
+export async function apiDownload(path, body) {
+  const headers = { Accept: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/json", "Content-Type": "application/json" };
+  if (tokenProvider) {
+    const token = await tokenProvider();
+    if (token) headers.Authorization = `Bearer ${token}`;
+  }
+  const businessId = businessSelector();
+  if (businessId) headers[BUSINESS_SELECTOR_HEADER] = businessId;
+  let response;
+  try {
+    response = await fetch(`/api/${path.replace(/^\//, "")}`, { method: "POST", headers, body: JSON.stringify(body) });
+  } catch {
+    throw new ApiError(0, "network-error", "Can't reach Luna. Check your connection and try again.");
+  }
+  const type = response.headers.get("Content-Type") || "";
+  if (!response.ok || type.includes("application/json")) {
+    let data = null;
+    try {
+      data = await response.json();
+    } catch {
+      // handled below
+    }
+    throw new ApiError(response.status, (data && data.error) || "server-error", (data && data.message) || "Something went wrong. Please try again.");
+  }
+  const disposition = response.headers.get("Content-Disposition") || "";
+  const match = /filename="([^"]+)"/.exec(disposition);
+  return { blob: await response.blob(), fileName: match ? match[1] : "Luna_Export.xlsx", rows: Number(response.headers.get("X-Luna-Export-Rows")) || 0 };
+}

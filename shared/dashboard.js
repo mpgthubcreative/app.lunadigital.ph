@@ -9,31 +9,40 @@
 // enter orders don't see profitability by default.
 //
 // Sources (see shared/metrics.js):
-//   operational-day / operational-current  metrics/{YYYY-MM-DD} / metrics/current
-//   financial-day   / financial-current    financialMetrics/{YYYY-MM-DD} / financialMetrics/current
+//   operational-day / financial-day   the SELECTED PERIOD (Phase 12.5): the
+//       metrics / financialMetrics day (or whole-month) documents covering
+//       it, summed exactly like Reports (shared/reports.js rangePlan +
+//       sumMetricDocs), so Dashboard and Reports agree for the same range.
+//   operational-current / financial-current   CURRENT OPERATIONS: the live
+//       gauges (metrics/current, financialMetrics/current). They are never
+//       reconstructed for a past period and are always labelled as "now".
 //   list   a small limited query, only once `ready` (its module's data exists)
 
-import { ESTIMATED_PROFIT_NOTE } from "./finance.js";
+import { ESTIMATED_PROFIT_NOTE, financialSummary } from "./finance.js";
+import { rangePlan, sumMetricDocs } from "./reports.js";
+import { OPERATIONAL_COUNTERS, FINANCIAL_COUNTERS } from "./metrics.js";
 import { snapshotWorkspaceTemplateId, getWorkspaceTemplate } from "./workspaces.js";
 
 export const DASHBOARD_WIDGETS = Object.freeze([
-  // ---- Financial (dashboard.financials) ----
-  { id: "netSales", dataFrom: ["orders"], section: "financial", kind: "stat", label: "Today's sales", source: "financial-day", value: "netSales", format: "money", permission: "dashboard.financials", modules: ["orders"], hint: "Net of discounts and returns" },
-  { id: "grossProfit", dataFrom: ["orders", "inventory"], section: "financial", kind: "stat", label: "Gross profit", source: "financial-day", value: "grossProfit", format: "money", permission: "dashboard.financials", modules: ["orders", "inventory"], hint: "Net sales minus cost of goods sold" },
-  { id: "operatingExpenses", dataFrom: ["expenses"], section: "financial", kind: "stat", label: "Operating expenses", source: "financial-day", value: "operatingExpenses", format: "money", permission: "dashboard.financials", modules: ["expenses"] },
-  { id: "estimatedOperatingProfit", dataFrom: ["orders", "inventory", "expenses"], section: "financial", kind: "stat", label: "Estimated operating profit", source: "financial-day", value: "estimatedOperatingProfit", format: "money", permission: "dashboard.financials", modules: ["orders", "inventory", "expenses"], note: ESTIMATED_PROFIT_NOTE },
-  { id: "paymentsReceived", dataFrom: ["payments"], section: "financial", kind: "stat", label: "Paid today", source: "financial-day", value: "paymentsReceived", format: "money", permission: "dashboard.financials", modules: ["payments"] },
-  { id: "receivablesOutstanding", dataFrom: ["orders"], section: "financial", kind: "stat", label: "Unpaid balance", source: "financial-current", value: "receivablesOutstanding", format: "money", permission: "dashboard.financials", modules: ["payments"] },
+  // ---- Selected period: money (dashboard.financials) ----
+  { id: "netSales", dataFrom: ["orders"], section: "period", kind: "stat", label: "Net sales", source: "financial-day", value: "netSales", format: "money", permission: "dashboard.financials", modules: ["orders"], hint: "Net of discounts and returns" },
+  { id: "cogs", dataFrom: ["orders", "inventory"], section: "period", kind: "stat", label: "COGS", source: "financial-day", value: "cogs", format: "money", permission: "dashboard.financials", modules: ["orders", "inventory"], hint: "Cost of goods sold" },
+  { id: "grossProfit", dataFrom: ["orders", "inventory"], section: "period", kind: "stat", label: "Gross profit", source: "financial-day", value: "grossProfit", format: "money", permission: "dashboard.financials", modules: ["orders", "inventory"], hint: "Net sales minus cost of goods sold" },
+  { id: "operatingExpenses", dataFrom: ["expenses"], section: "period", kind: "stat", label: "Operating expenses", source: "financial-day", value: "operatingExpenses", format: "money", permission: "dashboard.financials", modules: ["expenses"] },
+  { id: "estimatedOperatingProfit", dataFrom: ["orders", "inventory", "expenses"], section: "period", kind: "stat", label: "Estimated operating profit", source: "financial-day", value: "estimatedOperatingProfit", format: "money", permission: "dashboard.financials", modules: ["orders", "inventory", "expenses"], note: ESTIMATED_PROFIT_NOTE },
+  { id: "paymentsReceived", dataFrom: ["payments"], section: "period", kind: "stat", label: "Payments received", source: "financial-day", value: "paymentsReceived", format: "money", permission: "dashboard.financials", modules: ["payments"] },
+  // ---- Selected period: counts (dashboard.view) ----
+  { id: "ordersToday", dataFrom: ["orders"], section: "period", kind: "stat", label: "Orders", source: "operational-day", value: "orderCount", format: "number", permission: "dashboard.view", modules: ["orders"], hint: "Orders created in the period" },
 
-  // ---- Operations (dashboard.view) ----
-  { id: "ordersToday", dataFrom: ["orders"], section: "operations", kind: "stat", label: "Orders today", source: "operational-day", value: "orderCount", format: "number", permission: "dashboard.view", modules: ["orders"] },
-  { id: "unpaidOrders", dataFrom: ["orders"], section: "operations", kind: "stat", label: "Unpaid orders", source: "operational-current", value: "unpaidOrders", format: "number", permission: "dashboard.view", modules: ["orders", "payments"] },
-  { id: "pendingFulfillment", dataFrom: ["orders"], section: "operations", kind: "stat", label: "For fulfillment / delivery", source: "operational-current", value: "pendingFulfillment", format: "number", permission: "dashboard.view", modules: ["orders"] },
-  { id: "lowStock", dataFrom: ["inventory"], section: "operations", kind: "stat", label: "Low stock", source: "operational-current", value: "lowStockProducts", format: "number", permission: "dashboard.view", modules: ["inventory"] },
+  // ---- Current operations: live gauges, always "now" ----
+  { id: "receivablesOutstanding", dataFrom: ["orders"], section: "current", kind: "stat", label: "Current unpaid balance", source: "financial-current", value: "receivablesOutstanding", format: "money", permission: "dashboard.financials", modules: ["payments"], hint: "As of now" },
+  { id: "unpaidOrders", dataFrom: ["orders"], section: "current", kind: "stat", label: "Current unpaid orders", source: "operational-current", value: "unpaidOrders", format: "number", permission: "dashboard.view", modules: ["orders", "payments"], hint: "As of now" },
+  { id: "pendingFulfillment", dataFrom: ["orders"], section: "current", kind: "stat", label: "Awaiting fulfillment now", source: "operational-current", value: "pendingFulfillment", format: "number", permission: "dashboard.view", modules: ["orders"], hint: "As of now" },
+  { id: "lowStock", dataFrom: ["inventory"], section: "current", kind: "stat", label: "Current low stock", source: "operational-current", value: "lowStockProducts", format: "number", permission: "dashboard.view", modules: ["inventory"], hint: "As of now" },
 
   // ---- Lists: one small, tenant-scoped, limited query each, once ready ----
   { id: "recentOrders", section: "lists", kind: "list", label: "Recent orders", source: "list", ready: true, permission: "orders.view", modules: ["orders"], query: { collection: "orders", orderBy: ["createdAt", "desc"], limit: 5 }, empty: "Orders entered in Luna will appear here." },
-  { id: "lowStockItems", section: "lists", kind: "list", label: "Low-stock products", source: "list", ready: true, permission: "inventory.view", modules: ["inventory"], query: { collection: "products", where: ["isLowStock", "==", true], limit: 5 }, empty: "Products at or below their reorder level will appear here." },
+  { id: "lowStockItems", section: "lists", kind: "list", label: "Low-stock products (now)", source: "list", ready: true, permission: "inventory.view", modules: ["inventory"], query: { collection: "products", where: ["isLowStock", "==", true], limit: 5 }, empty: "Products at or below their reorder level will appear here." },
   { id: "recentActivity", section: "lists", kind: "list", label: "Recent activity", source: "list", ready: false, permission: "dashboard.view", modules: [], query: null, empty: "Staff actions and alerts will appear here." },
 ]);
 
@@ -48,9 +57,11 @@ export function isWidgetLive(widget) {
   return (widget.dataFrom || []).every((id) => LIVE_DATA_SOURCES[id] === true);
 }
 
+// Selected period vs current operations: a current gauge never claims to
+// describe a past period.
 export const DASHBOARD_SECTIONS = Object.freeze([
-  { id: "financial", label: "Sales and profit" },
-  { id: "operations", label: "Operations" },
+  { id: "period", label: "Selected period" },
+  { id: "current", label: "Current operations" },
   { id: "lists", label: null },
 ]);
 
@@ -76,23 +87,41 @@ export function dashboardEmptyState(entitlements) {
   return template ? template.dashboard.empty : { title: "Nothing to show yet", body: "Your dashboard fills in as your business uses Luna." };
 }
 
-const SOURCE_DOCS = {
-  "operational-day": (day) => ["metrics", day],
-  "operational-current": () => ["metrics", "current"],
-  "financial-day": (day) => ["financialMetrics", day],
-  "financial-current": () => ["financialMetrics", "current"],
-};
+const PERIOD_SOURCES = { "operational-day": "metrics", "financial-day": "financialMetrics" };
+const CURRENT_SOURCES = { "operational-current": "metrics", "financial-current": "financialMetrics" };
+const SOURCE_FIELDS = { "operational-day": Object.keys(OPERATIONAL_COUNTERS), "financial-day": Object.keys(FINANCIAL_COUNTERS) };
 
-// The metric documents a set of visible widgets needs for `day`, deduped:
-// at most four document reads, whatever the business size. Lists aren't
-// documents and are skipped here.
-export function dashboardDocuments(widgets, day) {
+// The metric documents a set of visible widgets needs, deduped by source:
+// [{ source, collection, ids }]. range: { from, to } (or one day id). A
+// period reads the same day / whole-month documents as Reports (at most
+// ~72 per collection for a full year); a current gauge reads one document.
+// Lists aren't documents and are skipped here.
+export function dashboardDocuments(widgets, range) {
+  const { from, to } = typeof range === "string" ? { from: range, to: range } : range;
+  const ids = [...new Set(rangePlan(from, to).buckets.flatMap((b) => b.docs))];
   const seen = new Map();
   for (const w of widgets) {
-    const make = SOURCE_DOCS[w.source];
-    if (!make) continue;
-    const [collection, id] = make(day);
-    seen.set(`${collection}/${id}`, { source: w.source, collection, id });
+    if (PERIOD_SOURCES[w.source]) seen.set(w.source, { source: w.source, collection: PERIOD_SOURCES[w.source], ids });
+    else if (CURRENT_SOURCES[w.source]) seen.set(w.source, { source: w.source, collection: CURRENT_SOURCES[w.source], ids: ["current"] });
   }
   return [...seen.values()];
+}
+
+// The documents read for one source -> the value the widgets use: the
+// period's documents summed (null if none exist = "No data yet"), or the
+// current gauge document as is.
+export function combineDashboardDocs(source, docs) {
+  if (SOURCE_FIELDS[source]) return sumMetricDocs(docs, SOURCE_FIELDS[source]);
+  return docs.find(Boolean) ?? null;
+}
+
+// One widget's number from its source value (combineDashboardDocs), or
+// null = "No data yet". Shared by the Dashboard screen and its export.
+export function widgetValue(widget, data) {
+  if (!isWidgetLive(widget) || !data) return null;
+  if (widget.source.startsWith("financial")) {
+    const summary = widget.source === "financial-current" ? financialSummary({}, data) : financialSummary(data);
+    return summary[widget.value] ?? null;
+  }
+  return Number.isSafeInteger(data[widget.value]) ? data[widget.value] : null;
 }

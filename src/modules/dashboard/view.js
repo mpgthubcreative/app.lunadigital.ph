@@ -4,7 +4,7 @@
 // from the documents. Nothing is invented: a missing document or field is
 // "No data yet", never 0.
 
-import { resolveDashboard, dashboardDocuments, financialSummary, businessDate, formatQuantity, UNITS, isWidgetLive, FULFILLMENT_STATUSES } from "@shared/index.js";
+import { resolveDashboard, dashboardDocuments, widgetValue, businessDate, formatQuantity, UNITS, isWidgetLive, FULFILLMENT_STATUSES } from "@shared/index.js";
 import { formatCentavos, formatNumber } from "../../lib/format.js";
 
 // Row shapes per list widget (only fields everyone allowed to see the list may see).
@@ -22,14 +22,7 @@ function valueFor(widget, docs) {
   if (!entry || entry.status === "loading") return { state: "loading" };
   if (entry.status === "error") return { state: "error" };
   if (entry.status !== "ok" || !entry.data) return { state: "empty" };
-
-  let raw;
-  if (widget.source.startsWith("financial")) {
-    const summary = widget.source === "financial-current" ? financialSummary({}, entry.data) : financialSummary(entry.data);
-    raw = summary[widget.value];
-  } else {
-    raw = Number.isSafeInteger(entry.data[widget.value]) ? entry.data[widget.value] : null;
-  }
+  const raw = widgetValue(widget, entry.data);
   return raw === null || raw === undefined ? { state: "empty" } : { state: "ok", raw };
 }
 
@@ -40,10 +33,12 @@ function display(widget, result, currency) {
   return { text: widget.format === "money" ? formatCentavos(result.raw, currency) : formatNumber(result.raw), empty: false };
 }
 
-export function dashboardPlan(session, now = new Date()) {
+// range: { from, to } business-local days (default: the business's today).
+export function dashboardPlan(session, now = new Date(), range = null) {
   const widgets = resolveDashboard({ entitlements: session.entitlements, permissions: session.member.permissions });
   const day = businessDate(session.business.timezone, now);
-  return { day, widgets, documents: dashboardDocuments(widgets, day) };
+  const period = range || { from: day, to: day };
+  return { day, range: period, widgets, documents: dashboardDocuments(widgets, period) };
 }
 
 export function buildDashboardView({ session, widgets, docs, lists = {} }) {

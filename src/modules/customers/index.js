@@ -6,6 +6,7 @@
 // Order statistics come from the server; nothing here computes them.
 
 import { html, render } from "../../lib/html.js";
+import { exportButton, bindExport, mayExport, exportHint } from "../../lib/export.js";
 import { pageHeader, emptyState, badge } from "../../components/ui.js";
 import { formDialog } from "../../components/form-dialog.js";
 import { confirmDialog, toast as defaultToast } from "../../components/feedback.js";
@@ -74,7 +75,7 @@ export function editCustomerDialog({ customer, api }) {
   });
 }
 
-export function mount(container, session, { data = defaultData, api = defaultApi, toast = defaultToast } = {}) {
+export function mount(container, session, { data = defaultData, api = defaultApi, toast = defaultToast, exportDeps = {} } = {}) {
   const perms = session.member.permissions;
   const canManage = perms["customers.manage"] === true;
   const canSeeOrders = perms["orders.view"] === true && session.entitlements?.modules?.orders === true;
@@ -113,6 +114,7 @@ export function mount(container, session, { data = defaultData, api = defaultApi
             ${Object.entries(CUSTOMER_STATUSES).map(([k, v]) => html`<option value="${k}" ${state.status === k ? "selected" : ""}>${v.label}</option>`)}
           </select>
           <button type="submit" class="btn">Apply</button>
+          ${mayExport(session, "customers") ? html`${exportButton("customers")}<span class="stat-hint" data-role="export-hint">${exportHint}</span>` : ""}
         </form>
         <section class="section card">
           ${state.error
@@ -271,9 +273,11 @@ export function mount(container, session, { data = defaultData, api = defaultApi
   };
   container.addEventListener("click", onClick);
   container.addEventListener("submit", onSubmit);
+  const unbindExport = bindExport(container, () => Object.fromEntries([["status", state.status], ["search", state.search.trim()]].filter(([, v]) => v)), { toast, deps: exportDeps });
   load();
   return () => {
     alive = false;
+    unbindExport();
     container.removeEventListener("click", onClick);
     container.removeEventListener("submit", onSubmit);
   };

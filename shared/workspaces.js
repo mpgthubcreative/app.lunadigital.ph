@@ -79,7 +79,8 @@ const TEMPLATES = [
     modules: [...CORE, "orders", "payments", "inventory", "customers", "expenses", "reports", "imports"],
     navigation: ["dashboard", "orders", "payments", "inventory", "customers", "expenses", "reports", "imports", "users", "settings"],
     dashboard: {
-      widgets: ["netSales", "grossProfit", "operatingExpenses", "estimatedOperatingProfit", "paymentsReceived", "receivablesOutstanding", "ordersToday", "unpaidOrders", "pendingFulfillment", "lowStock", "recentOrders", "lowStockItems", "recentActivity"],
+      // Selected period first, then current operations (Phase 12.5).
+      widgets: ["netSales", "cogs", "grossProfit", "operatingExpenses", "estimatedOperatingProfit", "paymentsReceived", "ordersToday", "receivablesOutstanding", "unpaidOrders", "pendingFulfillment", "lowStock", "recentOrders", "lowStockItems", "recentActivity"],
       empty: { title: "Nothing to show yet", body: "Your dashboard fills in as your business uses Luna." },
     },
     labels: { modules: { expenses: "Operating Expenses" } },

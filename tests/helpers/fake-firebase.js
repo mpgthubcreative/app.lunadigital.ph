@@ -108,27 +108,80 @@ class DocRef {
   }
 }
 
+// FieldPath.documentId() stand-in (orderBy / where on the document id).
+const DOC_ID = Symbol("documentId");
+export const FieldPath = { documentId: () => DOC_ID };
+
+const OPS = {
+  "==": (a, b) => a === b || (a instanceof Date && b instanceof Date && a.getTime() === b.getTime()),
+  "<": (a, b) => a !== undefined && a < b,
+  "<=": (a, b) => a !== undefined && a <= b,
+  ">": (a, b) => a !== undefined && a > b,
+  ">=": (a, b) => a !== undefined && a >= b,
+  in: (a, b) => b.includes(a),
+};
+const valueOf = (snap, field) => (field === DOC_ID ? snap.id : snap._data[field] instanceof Date ? snap._data[field].getTime() : snap._data[field]);
+const cmp = (a, b) => (a === b ? 0 : a === undefined ? -1 : b === undefined ? 1 : a < b ? -1 : 1);
+
 class Query {
-  constructor(store, path, filters = [], max = null) {
+  constructor(store, path, filters = [], max = null, order = [], after = null) {
     this.store = store;
     this.path = path;
     this.filters = filters;
     this.max = max;
+    this.order = order;
+    this.after = after;
+  }
+  _with(changes) {
+    const q = { filters: this.filters, max: this.max, order: this.order, after: this.after, ...changes };
+    return new Query(this.store, this.path, q.filters, q.max, q.order, q.after);
   }
   where(field, op, value) {
-    if (op !== "==" && op !== "in") throw new Error(`fake: unsupported operator ${op}`);
+    if (!OPS[op]) throw new Error(`fake: unsupported operator ${op}`);
     if (op === "in" && (!Array.isArray(value) || value.length > 30)) throw new Error("fake: 'in' needs an array of at most 30 values");
-    return new Query(this.store, this.path, [...this.filters, { field, op, value }], this.max);
+    return this._with({ filters: [...this.filters, { field, op, value: value instanceof Date ? value.getTime() : value }] });
+  }
+  orderBy(field, dir = "asc") {
+    return this._with({ order: [...this.order, { field, dir }] });
+  }
+  // A document snapshot (like the Admin SDK) or the orderBy values.
+  startAfter(...values) {
+    return this._with({ after: values });
   }
   limit(n) {
-    return new Query(this.store, this.path, this.filters, n);
+    return this._with({ max: n });
   }
   _matches() {
     const prefix = `${this.path}/`;
-    const out = [];
+    let out = [];
     for (const [path, data] of this.store.docs) {
       if (!path.startsWith(prefix) || path.slice(prefix.length).includes("/")) continue;
-      if (this.filters.every((f) => (f.op === "in" ? f.value.includes(data[f.field]) : data[f.field] === f.value))) out.push(new DocSnap(new DocRef(this.store, path), clone(data)));
+      const snap = new DocSnap(new DocRef(this.store, path), clone(data));
+      if (this.filters.every((f) => OPS[f.op](valueOf(snap, f.field), f.value))) out.push(snap);
+    }
+    // Firestore's implicit order: the orderBy fields, then the document id.
+    const order = [...this.order];
+    if (!order.some((o) => o.field === DOC_ID)) order.push({ field: DOC_ID, dir: order.at(-1)?.dir || "asc" });
+    const compare = (x, y) => {
+      for (const o of order) {
+        const c = cmp(valueOf(x, o.field), valueOf(y, o.field));
+        if (c) return o.dir === "desc" ? -c : c;
+      }
+      return 0;
+    };
+    out.sort(compare);
+    if (this.after) {
+      const [first] = this.after;
+      const anchor = first instanceof DocSnap ? first : null;
+      const values = anchor ? null : this.after.map((v) => (v instanceof Date ? v.getTime() : v));
+      out = out.filter((snap) => {
+        if (anchor) return compare(snap, anchor) > 0;
+        for (let i = 0; i < values.length; i++) {
+          const c = cmp(valueOf(snap, order[i].field), values[i]);
+          if (c) return (order[i].dir === "desc" ? -c : c) > 0;
+        }
+        return false;
+      });
     }
     return this.max === null ? out : out.slice(0, this.max);
   }
@@ -157,6 +210,9 @@ export class FakeFirestore {
   }
   doc(path) {
     return new DocRef(this, path);
+  }
+  async getAll(...refs) {
+    return Promise.all(refs.map((r) => r.get()));
   }
   _set(path, data, options = {}) {
     const previous = this.docs.get(path);
@@ -288,7 +344,7 @@ export class FakeBucket {
 export function fakeAdmin() {
   const db = new FakeFirestore();
   const auth = new FakeAuth();
-  const admin = { firestore: { FieldValue } };
+  const admin = { firestore: { FieldValue, FieldPath } };
   const storage = new FakeBucket();
   return { db, auth, admin, storage, bucket: async () => storage };
 }

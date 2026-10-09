@@ -13,7 +13,7 @@
 // and posted to the event's own day (fulfilment day, payment received day,
 // expense date), so corrections restate history exactly like the metrics.
 
-import { isDayId } from "./metrics.js";
+import { isDayId, addDays } from "./metrics.js";
 
 export const REPORT_MAX_DAYS = 366;
 // Up to this many days, reports read day documents and include a by-day
@@ -37,7 +37,8 @@ const toUTC = (dayId) => {
   return Date.UTC(y, m - 1, d);
 };
 const fromUTC = (ms) => new Date(ms).toISOString().slice(0, 10);
-export const addDays = (dayId, n) => fromUTC(toUTC(dayId) + n * 86400000);
+// One addDays for all of shared/ (metrics.js owns it; re-exported for callers).
+export { addDays };
 export const daysBetween = (from, to) => Math.round((toUTC(to) - toUTC(from)) / 86400000) + 1; // inclusive
 const lastDayOfMonth = (monthId) => {
   const [y, m] = monthId.split("-").map(Number);
@@ -66,6 +67,22 @@ export function validateRange({ from, to }, today) {
   const days = daysBetween(from, to);
   if (days > REPORT_MAX_DAYS) throw new ReportError("invalid-range", `Choose at most ${REPORT_MAX_DAYS} days`);
   return { from, to, days };
+}
+
+// Sums metric documents (metrics / financialMetrics days or months) field
+// by field. Every metrics write fills all counters, so a document that
+// exists is a real (possibly zero) value; no document at all is "no data"
+// (null), never a fabricated 0. Reports, the Dashboard period and both
+// exports use this one function, so they can't disagree.
+export function sumMetricDocs(docs, fields) {
+  const out = {};
+  let found = false;
+  for (const d of docs) {
+    if (!d) continue;
+    found = true;
+    for (const f of fields) if (Number.isSafeInteger(d[f])) out[f] = (out[f] ?? 0) + d[f];
+  }
+  return found ? out : null;
 }
 
 // Which summary documents cover [from, to] exactly:
