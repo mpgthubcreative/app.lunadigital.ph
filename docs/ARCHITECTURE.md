@@ -1120,9 +1120,12 @@ New module ids would make every existing snapshot invalid until it's recomputed.
 
 Status (2026-10-09):
 - **Compatible step: deployed and verified.** It went live as `b9ef618` (Netlify, and the Firestore and Storage rules). Then `seed-plans --overwrite`, `recompute-entitlements --all` and `resync-permissions --all` ran.
-- **Strict step: prepared in source, not yet deployed.** Before it was committed, a read-only check confirmed that every staging snapshot passes the strict validator and that the deployed rules were still the compatible ones.
+- **Strict step: deployed and verified.** It is commit `f5db021`, with CI green.
+  - Before it was committed, a read-only check confirmed that every staging snapshot passes the strict validator and that the deployed rules were still the compatible ones.
+  - Netlify published `f5db021`, then the strict Firestore and Storage rules were deployed. The deployed rulesets match the source byte-for-byte.
+  - A live probe passed 27/27. It used three temporary tenants, which were then removed. Household v2 works, and household v1 and snapshots without household keys are refused by Firestore, Storage and the runtime (503). Household modules forged into a Distributor open nothing.
 
-In the strict source, `ROLLING_OUT_MODULE_IDS` is empty and `household-payroll` accepts **v2 only**. Snapshots that are v1, have no version or an unknown or string version, or lack a household key fail closed in the validator and in both rule files. Household modules forged into a Distributor, Baby or Bridal snapshot open nothing (`tests/rules/payroll.test.js`, `tests/shared/workspaces.test.js`).
+`ROLLING_OUT_MODULE_IDS` is now empty and `household-payroll` accepts **v2 only**. Snapshots that are v1, have no version or an unknown or string version, or lack a household key fail closed in the validator and in both rule files. Household modules forged into a Distributor, Baby or Bridal snapshot open nothing (`tests/rules/payroll.test.js`, `tests/shared/workspaces.test.js`).
 
 ### Not built (later)
 - **Payroll reports**, beyond the Excel downloads.
