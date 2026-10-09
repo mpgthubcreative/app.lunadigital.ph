@@ -4,7 +4,7 @@
 // from the documents. Nothing is invented: a missing document or field is
 // "No data yet", never 0.
 
-import { resolveDashboard, dashboardDocuments, widgetValue, businessDate, formatQuantity, UNITS, isWidgetLive, FULFILLMENT_STATUSES, ATTENDANCE_STATUSES } from "@shared/index.js";
+import { resolveDashboard, dashboardDocuments, dashboardCounts, widgetSourceKey, widgetValue, businessDate, formatQuantity, UNITS, isWidgetLive, FULFILLMENT_STATUSES, ATTENDANCE_STATUSES, TASK_STATUSES } from "@shared/index.js";
 import { formatCentavos, formatNumber } from "../../lib/format.js";
 
 // Row shapes per list widget (only fields everyone allowed to see the list may see).
@@ -17,6 +17,16 @@ const LIST_ROWS = {
   spendingByCategory: (l) => ({ id: l.id, title: `${l.name} · ${formatCentavos(l.spent)} spent`, detail: l.budget === null ? "No category budget" : l.remaining < 0 ? `Budget ${formatCentavos(l.budget)} · over by ${formatCentavos(-l.remaining)}` : `Budget ${formatCentavos(l.budget)} · ${formatCentavos(l.remaining)} left` }),
   upcomingPayments: (s) => ({ id: s.id, title: `${s.description} · ${formatCentavos(s.amount)}`, detail: `Due ${s.dueDate}${s.payee ? ` · ${s.payee}` : ""}` }),
   recentExpenses: (e) => ({ id: e.id, title: `${e.categoryName ?? "Expense"} · ${formatCentavos(e.amount)}`, detail: `${e.date}${e.payee ? ` · ${e.payee}` : ""}` }),
+  upcomingSupplierPayments: (p) => ({ id: p.id, title: `${p.supplierName} · ${formatCentavos(p.amount)}`, detail: `${p.description} · due ${p.dueDate}` }),
+  tasksDueSoon: (t) => ({ id: t.id, title: t.title, detail: `Due ${t.dueDate}${t.assignee ? ` · ${t.assignee}` : ""} · ${TASK_STATUSES[t.status]?.label ?? t.status}` }),
+  recentWeddingExpenses: (e) => ({ id: e.id, title: `${e.categoryName ?? "Expense"} · ${formatCentavos(e.amount)}`, detail: `${e.date}${e.payee ? ` · ${e.payee}` : ""}` }),
+  // Invitations vs people, labelled separately.
+  rsvpSummary: (r) =>
+    r.row === "attending"
+      ? { id: r.id, title: `Attending: ${r.attendingSeats} people`, detail: `${r.attending} invitation(s) of ${r.invitations}` }
+      : r.row === "declined"
+        ? { id: r.id, title: `Declined: ${r.declined} invitation(s)`, detail: `${r.declinedSeats} people` }
+        : { id: r.id, title: `Awaiting RSVP: ${r.awaiting} invitation(s)`, detail: `${r.awaitingSeats} people not yet answered` },
   lowStockItems: (p) => ({ id: p.id, title: p.name, detail: `${p.sku} · ${formatQuantity(p.available)} ${UNITS[p.unit]?.label ?? p.unit} available · reorder at ${formatQuantity(p.reorderLevel)}` }),
 };
 
@@ -25,7 +35,7 @@ export const NO_DATA = "No data yet";
 // docs: { [source]: { status: "ok" | "missing" | "error", data } }
 function valueFor(widget, docs) {
   if (!isWidgetLive(widget)) return { state: "empty" };
-  const entry = docs[widget.source];
+  const entry = docs[widgetSourceKey(widget)];
   if (!entry || entry.status === "loading") return { state: "loading" };
   if (entry.status === "error") return { state: "error" };
   if (entry.status !== "ok" || !entry.data) return { state: "empty" };
@@ -45,7 +55,10 @@ export function dashboardPlan(session, now = new Date(), range = null) {
   const widgets = resolveDashboard({ entitlements: session.entitlements, permissions: session.member.permissions });
   const day = businessDate(session.business.timezone, now);
   const period = range || { from: day, to: day };
-  return { day, range: period, widgets, documents: dashboardDocuments(widgets, period) };
+  // Count widgets (e.g. overdue tasks) are live queries against today, read
+  // alongside the documents: { source: "count:<id>", collection, where, count: true }.
+  const counts = dashboardCounts(widgets, day).map((c) => ({ source: c.key, collection: c.collection, where: c.where, count: true }));
+  return { day, range: period, widgets, documents: [...dashboardDocuments(widgets, period), ...counts] };
 }
 
 export function buildDashboardView({ session, widgets, docs, lists = {} }) {

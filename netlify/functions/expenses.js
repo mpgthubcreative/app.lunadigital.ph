@@ -31,6 +31,9 @@ const STATUS = {
   // Phase 15 (Baby profile)
   "invalid-category": 400,
   "invalid-provider": 400,
+  // Phase 16 (Bridal profile)
+  "invalid-supplier": 400,
+  "over-agreed": 409,
   "not-available": 403,
 };
 

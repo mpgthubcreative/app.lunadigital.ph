@@ -23,6 +23,7 @@ import { rangePlan, sumMetricDocs } from "./reports.js";
 import { OPERATIONAL_COUNTERS, FINANCIAL_COUNTERS } from "./metrics.js";
 import { snapshotWorkspaceTemplateId, getWorkspaceTemplate } from "./workspaces.js";
 import { budgetSummary } from "./baby.js";
+import { weddingSummary, rsvpSummary } from "./wedding.js";
 
 export const DASHBOARD_WIDGETS = Object.freeze([
   // ---- Selected period: money (dashboard.financials) ----
@@ -63,6 +64,26 @@ export const DASHBOARD_WIDGETS = Object.freeze([
   { id: "spendingByCategory", section: "lists", kind: "list", label: "Spending by category (now)", source: "list", ready: true, permission: "budget.view", modules: ["budget"], query: { collection: "expenseCategories", orderBy: ["order", "asc"], limit: 50 }, empty: "Your categories and what's been spent in each will appear here." },
   { id: "upcomingPayments", section: "lists", kind: "list", label: "Upcoming payments", source: "list", ready: true, permission: "schedule.view", modules: ["schedule"], query: { collection: "scheduledPayments", where: ["status", "==", "upcoming"], orderBy: ["dueDate", "asc"], limit: 5 }, empty: "Payments you schedule (deposits, due bills) will appear here." },
   { id: "recentExpenses", section: "lists", kind: "list", label: "Recent expenses", source: "list", ready: true, permission: "expenses.view", modules: ["expenses"], query: { collection: "expenses", where: ["status", "==", "active"], orderBy: ["date", "desc"], limit: 5 }, empty: "Baby Expenses you record will appear here." },
+
+  // ---- Bridal / Wedding (Phase 16): no Distributor or Baby widget is read ----
+  // Selected period: wedding spending from spendingMetrics (day / month docs).
+  { id: "weddingSpent", dataFrom: ["budget"], section: "period", kind: "stat", label: "Wedding spending", source: "wedding-day", value: "spent", format: "money", permission: "budget.view", modules: ["budget", "expenses"], hint: "Wedding Expenses dated in the period" },
+  { id: "weddingSupplierPaid", dataFrom: ["budget"], section: "period", kind: "stat", label: "Paid to suppliers", source: "wedding-day", value: "supplierPaid", format: "money", permission: "budget.view", modules: ["budget", "vendors"], hint: "Wedding Expenses for a supplier, dated in the period" },
+  { id: "weddingExpenseCount", dataFrom: ["budget"], section: "period", kind: "stat", label: "Expenses recorded", source: "wedding-day", value: "count", format: "number", permission: "budget.view", modules: ["budget", "expenses"] },
+  // Wedding plan, as of now (no history of these figures is stored).
+  { id: "weddingBudgetTotal", dataFrom: ["budget"], section: "current", kind: "stat", label: "Total wedding budget", source: "wedding-current", value: "total", format: "money", permission: "budget.view", modules: ["budget"], hint: "As of now" },
+  { id: "weddingSpentNow", dataFrom: ["budget"], section: "current", kind: "stat", label: "Total spent", source: "wedding-current", value: "spent", format: "money", permission: "budget.view", modules: ["budget", "expenses"], hint: "All Wedding Expenses, as of now" },
+  { id: "weddingRemaining", dataFrom: ["budget"], section: "current", kind: "stat", label: "Remaining budget", source: "wedding-current", value: "remaining", format: "money", permission: "budget.view", modules: ["budget", "expenses"], hint: "Total budget − total spent, as of now" },
+  { id: "weddingSupplierBalance", dataFrom: ["budget"], section: "current", kind: "stat", label: "Supplier balance", source: "wedding-current", value: "supplierBalance", format: "money", permission: "budget.view", modules: ["budget", "vendors"], hint: "Still owed on supplier agreements, as of now" },
+  { id: "weddingUpcoming", dataFrom: ["budget"], section: "current", kind: "stat", label: "Upcoming payments", source: "wedding-current", value: "upcoming", format: "money", permission: "budget.view", modules: ["budget", "vendorpayments"], hint: "Scheduled, not yet paid (not counted as spent), as of now" },
+  { id: "weddingOpenTasks", section: "current", kind: "stat", label: "Open tasks", source: "task-current", value: "open", format: "number", permission: "tasks.view", modules: ["tasks"], hint: "Not Started or In Progress, as of now" },
+  { id: "weddingOverdueTasks", section: "current", kind: "stat", label: "Overdue tasks", source: "count", count: { collection: "weddingTasks", where: [["open", "==", true], ["dueDate", "<", "$today"]] }, format: "number", permission: "tasks.view", modules: ["tasks"], hint: "Open and past their due date, as of now" },
+  { id: "weddingConfirmedGuests", section: "current", kind: "stat", label: "Confirmed guests (people)", source: "rsvp-current", value: "attendingSeats", format: "number", permission: "guests.view", modules: ["guests"], hint: "Sum of confirmed attendees, as of now" },
+  { id: "weddingAwaitingRsvp", section: "current", kind: "stat", label: "Awaiting RSVP (invitations)", source: "rsvp-current", value: "awaiting", format: "number", permission: "guests.view", modules: ["guests"], hint: "Invitations not yet answered, as of now" },
+  { id: "upcomingSupplierPayments", section: "lists", kind: "list", label: "Upcoming supplier payments", source: "list", ready: true, permission: "vendorpayments.view", modules: ["vendorpayments"], query: { collection: "supplierPayments", where: ["status", "==", "upcoming"], orderBy: ["dueDate", "asc"], limit: 5 }, empty: "Supplier payments you schedule will appear here." },
+  { id: "tasksDueSoon", section: "lists", kind: "list", label: "Tasks due soon and overdue", source: "list", ready: true, permission: "tasks.view", modules: ["tasks"], query: { collection: "weddingTasks", where: ["open", "==", true], orderBy: ["dueDate", "asc"], limit: 5 }, empty: "Open tasks with a due date will appear here." },
+  { id: "recentWeddingExpenses", section: "lists", kind: "list", label: "Recent wedding expenses", source: "list", ready: true, permission: "expenses.view", modules: ["expenses"], query: { collection: "expenses", where: ["status", "==", "active"], orderBy: ["date", "desc"], limit: 5 }, empty: "Wedding Expenses you record will appear here." },
+  { id: "rsvpSummary", section: "lists", kind: "list", label: "RSVP summary (now)", source: "list", ready: true, permission: "guests.view", modules: ["guests"], query: { collection: "guestTotals", limit: 1 }, empty: "Add guests to see invitations, confirmations and declines." },
 ]);
 
 // Which modules already WRITE metrics. A widget whose dataFrom includes a
@@ -108,9 +129,14 @@ export function dashboardEmptyState(entitlements) {
 
 // Phase 15 adds the Baby sources: spending-day (spendingMetrics, summed
 // like the others) and budget-current (budgets/current).
-const PERIOD_SOURCES = { "operational-day": "metrics", "financial-day": "financialMetrics", "spending-day": "spendingMetrics" };
-const CURRENT_SOURCES = { "operational-current": "metrics", "financial-current": "financialMetrics", "budget-current": "budgets" };
-const SOURCE_FIELDS = { "operational-day": Object.keys(OPERATIONAL_COUNTERS), "financial-day": Object.keys(FINANCIAL_COUNTERS), "spending-day": ["spent", "count"] };
+// Phase 16 adds the Wedding sources: wedding-day (spendingMetrics with the
+// supplier figure), wedding-current (budgets/current + supplier balance),
+// task-current (taskTotals/current), rsvp-current (guestTotals/current) and
+// "count": a live count query (dashboardCounts) for figures that depend on
+// today, e.g. overdue tasks, which are derived and never stored.
+const PERIOD_SOURCES = { "operational-day": "metrics", "financial-day": "financialMetrics", "spending-day": "spendingMetrics", "wedding-day": "spendingMetrics" };
+const CURRENT_SOURCES = { "operational-current": "metrics", "financial-current": "financialMetrics", "budget-current": "budgets", "wedding-current": "budgets", "task-current": "taskTotals", "rsvp-current": "guestTotals" };
+const SOURCE_FIELDS = { "operational-day": Object.keys(OPERATIONAL_COUNTERS), "financial-day": Object.keys(FINANCIAL_COUNTERS), "spending-day": ["spent", "count"], "wedding-day": ["spent", "count", "supplierPaid"] };
 
 // The metric documents a set of visible widgets needs, deduped by source:
 // [{ source, collection, ids }]. range: { from, to } (or one day id). A
@@ -128,6 +154,14 @@ export function dashboardDocuments(widgets, range) {
   return [...seen.values()];
 }
 
+// Count queries for visible "count" widgets, "$today" resolved to the
+// business's today: [{ key: "count:<widgetId>", collection, where }].
+export function dashboardCounts(widgets, today) {
+  return widgets.filter((w) => w.source === "count").map((w) => ({ key: widgetSourceKey(w), collection: w.count.collection, where: w.count.where.map(([f, op, v]) => [f, op, v === "$today" ? today : v]) }));
+}
+// Where a widget's data lives in the fetched-source map.
+export const widgetSourceKey = (w) => (w.source === "count" ? `count:${w.id}` : w.source);
+
 // The documents read for one source -> the value the widgets use: the
 // period's documents summed (null if none exist = "No data yet"), or the
 // current gauge document as is.
@@ -142,6 +176,10 @@ export function widgetValue(widget, data) {
   if (!isWidgetLive(widget) || !data) return null;
   // Baby: Remaining = budget − spent, computed here (never stored or sent).
   if (widget.source === "budget-current") return budgetSummary(data)[widget.value] ?? null;
+  // Wedding: remaining and supplier balance computed here (never stored or sent).
+  if (widget.source === "wedding-current") return weddingSummary(data)[widget.value] ?? null;
+  if (widget.source === "rsvp-current") return rsvpSummary(data)[widget.value] ?? null;
+  if (widget.source === "count") return Number.isSafeInteger(data.count) ? data.count : null;
   if (widget.source.startsWith("financial")) {
     const summary = widget.source === "financial-current" ? financialSummary({}, data) : financialSummary(data);
     return summary[widget.value] ?? null;

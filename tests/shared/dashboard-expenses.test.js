@@ -82,7 +82,8 @@ describe("dashboardDocuments: a fixed, tiny read set", () => {
   });
 
   it("period widgets live under Selected period; gauges under Current operations", () => {
-    for (const w of DASHBOARD_WIDGETS.filter((x) => x.kind === "stat")) expect(w.section).toBe(w.source.endsWith("-current") ? "current" : "period");
+    // ("count" = a live count as of now, e.g. overdue tasks, Phase 16.)
+    for (const w of DASHBOARD_WIDGETS.filter((x) => x.kind === "stat")) expect(w.section, w.id).toBe(w.source.endsWith("-current") || w.source === "count" ? "current" : "period");
     for (const w of DASHBOARD_WIDGETS.filter((x) => x.section === "current")) expect(`${w.label} ${w.hint}`).toMatch(/now|Current/i);
   });
 
@@ -94,7 +95,7 @@ describe("dashboardDocuments: a fixed, tiny read set", () => {
 
   it("list widgets issue no query until their data exists (Phase 7: recent orders + low stock; Phase 14: payroll lists)", () => {
     const ready = DASHBOARD_WIDGETS.filter((x) => x.kind === "list" && x.ready).map((w) => w.id);
-    expect(ready).toEqual(["recentOrders", "lowStockItems", "attendanceToday", "payrollsToRelease", "awaitingReceipt", "advancesNotPaid", "spendingByCategory", "upcomingPayments", "recentExpenses"]);
+    expect(ready).toEqual(["recentOrders", "lowStockItems", "attendanceToday", "payrollsToRelease", "awaitingReceipt", "advancesNotPaid", "spendingByCategory", "upcomingPayments", "recentExpenses", "upcomingSupplierPayments", "tasksDueSoon", "recentWeddingExpenses", "rsvpSummary"]);
     // Spending by category reads the budget's lines: bounded by MAX_CATEGORIES (50).
     for (const w of DASHBOARD_WIDGETS.filter((x) => x.kind === "list" && x.query)) expect(w.query.limit).toBeLessThanOrEqual(w.id === "spendingByCategory" ? 50 : 10);
   });

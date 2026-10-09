@@ -34,11 +34,8 @@ describe("registry", () => {
     }
   });
 
-  it("Distributor, (Phase 14) Household Payroll and (Phase 15) Baby are live; Bridal is architected, not built", () => {
-    expect(WORKSPACE_TEMPLATES.distributor.status).toBe("live");
-    expect(WORKSPACE_TEMPLATES["household-payroll"].status).toBe("live");
-    expect(WORKSPACE_TEMPLATES["baby-expense"].status).toBe("live");
-    expect(WORKSPACE_TEMPLATES["bridal-expense"].status).toBe("planned");
+  it("every workspace is live: Distributor, (14) Household Payroll, (15) Baby, (16) Bridal", () => {
+    for (const t of ["distributor", "household-payroll", "baby-expense", "bridal-expense"]) expect(WORKSPACE_TEMPLATES[t].status, t).toBe("live");
   });
 
   it("is frozen: nothing can be changed at runtime", () => {
@@ -117,9 +114,9 @@ describe("planned modules are roadmap metadata only", () => {
     const e = ent("distributor", "pro");
     const old = { ...e, modules: { ...e.modules, suppliers: true } };
     expect(isModuleEnabled(old, "suppliers")).toBe(false);
-    // Built, but planned (not activated) for bridal: a forged true grants nothing.
-    const b = ent("bridal-expense", "pro");
-    expect(isModuleEnabled({ ...b, modules: { ...b.modules, expenses: true } }, "expenses")).toBe(false);
+    // Built, but not in the household template: a forged true grants nothing.
+    const h = ent("household-payroll", "pro");
+    expect(isModuleEnabled({ ...h, modules: { ...h.modules, expenses: true } }, "expenses")).toBe(false);
   });
 
   it("the future domains are recorded (payroll receipt confirmation, wedding tasks, guests/RSVP)", () => {
@@ -128,7 +125,9 @@ describe("planned modules are roadmap metadata only", () => {
     // receipt confirmation, deductions, history) and Advances; Reports stay planned.
     expect(ids("household-payroll")).toEqual(["payroll-reports"]);
     expect(WORKSPACE_TEMPLATES["household-payroll"].modules).toEqual(["dashboard", "users", "settings", "household", "attendance", "payroll", "advances"]);
-    expect(ids("bridal-expense")).toEqual(expect.arrayContaining(["wedding-tasks", "guests", "rsvp", "wedding-suppliers"]));
+    // Phase 16 built Wedding Budget / Expenses / Suppliers / Supplier Payments / Tasks / Guests & RSVP.
+    expect(ids("bridal-expense")).toEqual(["wedding-reports"]);
+    expect(WORKSPACE_TEMPLATES["bridal-expense"].modules).toEqual(["dashboard", "users", "settings", "expenses", "budget", "vendors", "vendorpayments", "tasks", "guests"]);
     // Phase 15 built Baby Expenses, Budget & Categories, Payment Schedule and Providers.
     expect(ids("baby-expense")).toEqual(["milestones", "baby-reports"]);
     expect(WORKSPACE_TEMPLATES["baby-expense"].modules).toEqual(["dashboard", "users", "settings", "expenses", "budget", "schedule", "providers"]);
@@ -211,16 +210,25 @@ describe("effective modules = core + (template allows ∩ (override ?? plan))", 
     expect(computeEntitlements(lite, { modules: { payments: true } }, "distributor").modules.payments).toBe(true);
   });
 
-  it("bridal: Expenses is planned, so it's false in the snapshot (not merely unusable); Baby has it (Phase 15)", () => {
-    expect(ent("bridal-expense", "pro").modules.expenses).toBe(false);
-    expect(WORKSPACE_TEMPLATES["bridal-expense"].plannedModules.map((p) => p.id)).toContain("expenses");
+  it("household: Expenses isn't in the template, so it's false in the snapshot; Baby (15) and Bridal (16) have it", () => {
+    expect(ent("household-payroll", "pro").modules.expenses).toBe(false);
+    expect(ent("bridal-expense", "pro").modules.expenses).toBe(true);
     const baby = ent("baby-expense", "pro").modules;
     for (const m of ["expenses", "budget", "schedule", "providers"]) expect(baby[m], m).toBe(true);
     for (const m of ["orders", "payments", "inventory", "customers", "reports", "imports", "household", "attendance", "payroll", "advances"]) expect(baby[m], m).toBe(false);
   });
 
-  it("Baby modules never reach Distributor, Household Payroll or Bridal snapshots", () => {
-    for (const t of ["distributor", "household-payroll", "bridal-expense"]) for (const m of ["budget", "schedule", "providers"]) expect(ent(t, "pro").modules[m], `${t}/${m}`).toBe(false);
+  it("Baby-only modules never reach Distributor, Household Payroll or Bridal snapshots (budget is the shared primitive: Bridal has it, Phase 16)", () => {
+    for (const t of ["distributor", "household-payroll"]) for (const m of ["budget", "schedule", "providers"]) expect(ent(t, "pro").modules[m], `${t}/${m}`).toBe(false);
+    for (const m of ["schedule", "providers"]) expect(ent("bridal-expense", "pro").modules[m], m).toBe(false);
+    expect(ent("bridal-expense", "pro").modules.budget).toBe(true);
+  });
+
+  it("Phase 16: Bridal gets Wedding Expenses, Budget, Suppliers, Supplier Payments, Tasks, Guests; nobody else gets the Wedding modules", () => {
+    const b = ent("bridal-expense", "pro").modules;
+    for (const m of ["expenses", "budget", "vendors", "vendorpayments", "tasks", "guests"]) expect(b[m], m).toBe(true);
+    for (const m of ["orders", "payments", "inventory", "customers", "reports", "imports", "household", "attendance", "payroll", "advances", "schedule", "providers", "suppliers"]) expect(b[m], m).toBe(false);
+    for (const t of ["distributor", "household-payroll", "baby-expense"]) for (const m of ["vendors", "vendorpayments", "tasks", "guests"]) expect(ent(t, "pro").modules[m], `${t}/${m}`).toBe(false);
   });
 
   it("there is no default template", () => {
@@ -248,7 +256,7 @@ describe("stored snapshot validation fails closed", () => {
     "business template malformed": [() => {}, ["bridal-expense"]],
     "snapshot for another template (template changed)": [() => {}, "baby-expense"],
     "stale template version": [(s) => (s.workspaceTemplateVersion = 0), "bridal-expense"],
-    "future template version": [(s) => (s.workspaceTemplateVersion = 2), "bridal-expense"],
+    "future template version": [(s) => (s.workspaceTemplateVersion = 3), "bridal-expense"],
     "version as a string": [(s) => (s.workspaceTemplateVersion = "1"), "bridal-expense"],
     "module beyond the template (forged)": [(s) => (s.modules.orders = true), "bridal-expense"],
     "unbuilt module enabled (old snapshot or forged)": [(s) => (s.modules.customers = true), "bridal-expense"],
@@ -276,7 +284,6 @@ describe("stored snapshot validation fails closed", () => {
   });
 
   it("Phase 14 strict: household-payroll v2 is the only accepted version; stale or malformed snapshots fail closed", () => {
-    expect(ROLLING_OUT_MODULE_IDS).toEqual([]);
     expect(WORKSPACE_TEMPLATES["household-payroll"].upgradingFrom).toBeUndefined();
     const s = ent("household-payroll", "growth");
     expect(s.workspaceTemplateVersion).toBe(2);
@@ -317,12 +324,26 @@ describe("stored snapshot validation fails closed", () => {
 
   it("Phase 15 strict: Baby modules forged into Distributor, Household or Bridal snapshots are refused", () => {
     for (const t of ["distributor", "household-payroll", "bridal-expense"]) {
-      for (const m of ["budget", "schedule", "providers"]) {
+      // (Bridal legitimately has the shared budget primitive since Phase 16.)
+      for (const m of t === "bridal-expense" ? ["schedule", "providers"] : ["budget", "schedule", "providers"]) {
         const s = structuredClone(ent(t, "growth"));
         s.modules[m] = true;
         expect(v(s, "growth", t).ok, `${t}/${m}`).toBe(false);
       }
       expect(v(ent(t, "growth"), "growth", t).ok, t).toBe(true);
+    }
+  });
+
+  it("Phase 16 (compatible step): bridal-expense v1 and v2 accepted; Wedding modules forged into Distributor, Household or Baby are refused", () => {
+    expect(ROLLING_OUT_MODULE_IDS).toEqual(["vendors", "vendorpayments", "tasks", "guests"]);
+    expect(WORKSPACE_TEMPLATES["bridal-expense"].upgradingFrom).toEqual([1]);
+    expect(v(ent("bridal-expense", "growth"), "growth", "bridal-expense").ok).toBe(true);
+    for (const t of ["distributor", "household-payroll", "baby-expense"]) {
+      for (const m of ["vendors", "vendorpayments", "tasks", "guests"]) {
+        const s = structuredClone(ent(t, "growth"));
+        s.modules[m] = true;
+        expect(v(s, "growth", t).ok, `${t}/${m}`).toBe(false);
+      }
     }
   });
 
@@ -395,7 +416,7 @@ describe("navigation", () => {
   });
 
   it("non-Distributor workspaces get no Distributor navigation, and their own names", () => {
-    expect(nav("bridal-expense", "owner")).toEqual(["/ Wedding Dashboard", "/users Users", "/settings Settings"]);
+    expect(nav("bridal-expense", "owner")).toEqual(["/ Wedding Dashboard", "/budget Wedding Budget", "/expenses Wedding Expenses", "/wedding-suppliers Wedding Suppliers", "/supplier-payments Supplier Payments", "/wedding-tasks Wedding Tasks", "/guests Guests & RSVP", "/users Users", "/settings Settings"]);
     expect(nav("baby-expense", "owner")).toEqual(["/ Baby Dashboard", "/budget Budget & Categories", "/expenses Baby Expenses", "/payment-schedule Payment Schedule", "/providers Providers / Vendors", "/users Users", "/settings Settings"]);
     expect(nav("household-payroll", "owner")).toEqual(["/ Payroll Dashboard", "/attendance Attendance", "/payroll Payroll", "/advances Advances", "/household-staff Household Staff", "/users Users", "/settings Settings"]);
   });
@@ -423,10 +444,11 @@ describe("dashboard", () => {
     expect(dashboardDocuments(resolveDashboard(access("household-payroll")), "2026-10-08")).toEqual([]);
   });
 
-  it("Bridal: no widgets, so no metric document or list is ever requested", () => {
-    expect(ids("bridal-expense")).toEqual([]);
-    expect(dashboardDocuments(resolveDashboard(access("bridal-expense")), "2026-10-08")).toEqual([]);
-    expect(dashboardEmptyState(ent("bridal-expense")).title).toMatch(/being prepared/);
+  it("Bridal (Phase 16): only Wedding widgets; reads spendingMetrics, budgets, taskTotals, guestTotals (+ a live overdue count), never a Distributor or Baby widget", () => {
+    expect(ids("bridal-expense")).toEqual(["weddingSpent", "weddingSupplierPaid", "weddingExpenseCount", "weddingBudgetTotal", "weddingSpentNow", "weddingRemaining", "weddingSupplierBalance", "weddingUpcoming", "weddingOpenTasks", "weddingOverdueTasks", "weddingConfirmedGuests", "weddingAwaitingRsvp", "upcomingSupplierPayments", "tasksDueSoon", "recentWeddingExpenses", "rsvpSummary"]);
+    const cols = dashboardDocuments(resolveDashboard(access("bridal-expense")), "2026-10-08").map((d) => d.collection);
+    expect([...new Set(cols)].sort()).toEqual(["budgets", "guestTotals", "spendingMetrics", "taskTotals"]);
+    expect(dashboardEmptyState(ent("bridal-expense")).title).toMatch(/ready/);
   });
 
   it("Baby (Phase 15): only Baby widgets; reads spendingMetrics + budgets/current, never a Distributor metric", () => {

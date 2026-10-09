@@ -185,9 +185,9 @@ describe("Expenses page (Phase 10)", () => {
     expect(buildRoutes(sessionFixture({ roleTemplate: "staff" })).map((r) => r.path)).not.toContain("/expenses");
   });
 
-  it("bridal never gets it (planned there), even with the permission; Baby (Phase 15) has it as Baby Expenses", () => {
-    expect(buildRoutes(sessionFixture({ workspaceTemplateId: "bridal-expense" })).map((r) => r.path)).not.toContain("/expenses");
-    expect(buildRoutes(sessionFixture({ workspaceTemplateId: "baby-expense" })).map((r) => r.path)).toContain("/expenses");
+  it("household never gets it, even with the permission; Baby (15) and Bridal (16) have it as their own Expenses", () => {
+    expect(buildRoutes(sessionFixture({ workspaceTemplateId: "household-payroll" })).map((r) => r.path)).not.toContain("/expenses");
+    for (const t of ["baby-expense", "bridal-expense"]) expect(buildRoutes(sessionFixture({ workspaceTemplateId: t })).map((r) => r.path), t).toContain("/expenses");
   });
 });
 

@@ -42,6 +42,7 @@ export const NOTIFICATION_CATEGORIES = Object.freeze({
   orders: { label: "Orders ready", mandatory: false },
   payroll: { label: "Salary receipt confirmations", mandatory: false },
   budget: { label: "Budget alerts (75%, 90%, 100% used)", mandatory: false },
+  wedding: { label: "Supplier payments recorded", mandatory: false },
 });
 export const NOTIFICATION_CATEGORY_IDS = Object.freeze(Object.keys(NOTIFICATION_CATEGORIES));
 
@@ -80,6 +81,15 @@ export const NOTIFICATION_TYPES = Object.freeze({
     permissions: ["budget.view"],
     excludeActor: false,
     action: { label: "View budget", route: "/budget" },
+  },
+  // Phase 16: a supplier payment was marked Paid (its Wedding Expense was
+  // recorded). Goes to the OTHER members who follow supplier payments.
+  "supplierpayment.paid": {
+    category: "wedding",
+    module: "vendorpayments",
+    permissions: ["vendorpayments.view"],
+    excludeActor: true,
+    action: { label: "View supplier payments", route: "/supplier-payments" },
   },
   "order.ready": {
     category: "orders",

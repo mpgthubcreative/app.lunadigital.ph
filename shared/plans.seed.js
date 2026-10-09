@@ -54,6 +54,11 @@ export const PLAN_SEED = Object.freeze({
       budget: true,
       schedule: true,
       providers: true,
+      // Phase 16 Bridal / Wedding (operational only in that workspace).
+      vendors: true,
+      vendorpayments: true,
+      tasks: true,
+      guests: true,
     },
     features: {
       reportsLevel: "basic",
@@ -104,6 +109,11 @@ export const PLAN_SEED = Object.freeze({
       budget: true,
       schedule: true,
       providers: true,
+      // Phase 16 Bridal / Wedding (operational only in that workspace).
+      vendors: true,
+      vendorpayments: true,
+      tasks: true,
+      guests: true,
     },
     features: {
       reportsLevel: "advanced",
@@ -154,6 +164,11 @@ export const PLAN_SEED = Object.freeze({
       budget: true,
       schedule: true,
       providers: true,
+      // Phase 16 Bridal / Wedding (operational only in that workspace).
+      vendors: true,
+      vendorpayments: true,
+      tasks: true,
+      guests: true,
     },
     features: {
       reportsLevel: "advanced",

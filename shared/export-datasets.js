@@ -20,6 +20,7 @@ import { PRODUCT_STATUSES } from "./inventory.js";
 import { CUSTOMER_STATUSES } from "./customers.js";
 import { ATTENDANCE_STATUS_IDS, PAYROLL_STATUSES, RECEIPT_STATUSES, ADVANCE_STATUSES, STAFF_STATUSES } from "./payroll.js";
 import { CATEGORY_STATUSES, PROVIDER_STATUSES, PROVIDER_TYPE_IDS, SCHEDULE_STATUS_IDS } from "./baby.js";
+import { SUPPLIER_SERVICE_IDS, SUPPLIER_STATUSES, SUPPLIER_PAYMENT_STATUS_IDS, TASK_STATUS_IDS, TASK_PRIORITY_IDS, RSVP_STATUS_IDS, GUEST_SIDE_IDS } from "./wedding.js";
 
 const range = { from: filter.day(), to: filter.day() };
 const RANGE_LABELS = { from: "From", to: "To" };
@@ -187,6 +188,70 @@ export const EXPORT_DATASETS = Object.freeze({
     // from / to: the due date.
     filters: { status: filter.oneOf(SCHEDULE_STATUS_IDS), category: filter.id(), providerId: filter.id(), ...range },
     filterLabels: { status: "Status", category: "Category", providerId: "Provider", from: "Due from", to: "Due to" },
+  },
+
+  // ---- Bridal / Wedding (Phase 16) ----
+  weddingBudget: {
+    id: "weddingBudget",
+    label: "Wedding Budget",
+    module: "budget",
+    workspaces: ["bridal-expense"],
+    view: ["budget.view"],
+    exportPermission: EXPORT_PERMISSION,
+    // The budget as of export time: overall + one line per category.
+    filters: { category: filter.id(), status: filter.oneOf(Object.keys(CATEGORY_STATUSES)) },
+    filterLabels: { category: "Category", status: "Status" },
+  },
+  weddingExpenses: {
+    id: "weddingExpenses",
+    label: "Wedding Expenses",
+    module: "expenses",
+    workspaces: ["bridal-expense"],
+    view: ["expenses.view"],
+    exportPermission: EXPORT_PERMISSION,
+    filters: { status: filter.oneOf(["active"]), category: filter.id(), supplierId: filter.id(), method: filter.oneOf(EXPENSE_METHOD_IDS), search: filter.text(100), ...range },
+    filterLabels: { status: "Status", category: "Category", supplierId: "Supplier", method: "Method", search: "Search", ...RANGE_LABELS },
+  },
+  weddingSuppliers: {
+    id: "weddingSuppliers",
+    label: "Wedding Suppliers",
+    module: "vendors",
+    workspaces: ["bridal-expense"],
+    view: ["vendors.view"],
+    exportPermission: EXPORT_PERMISSION,
+    filters: { status: filter.oneOf(Object.keys(SUPPLIER_STATUSES)), service: filter.oneOf(SUPPLIER_SERVICE_IDS), search: filter.text(100) },
+    filterLabels: { status: "Status", service: "Service", search: "Search" },
+  },
+  supplierPayments: {
+    id: "supplierPayments",
+    label: "Supplier Payments",
+    module: "vendorpayments",
+    workspaces: ["bridal-expense"],
+    view: ["vendorpayments.view"],
+    exportPermission: EXPORT_PERMISSION,
+    // from / to: the due date.
+    filters: { status: filter.oneOf(SUPPLIER_PAYMENT_STATUS_IDS), supplierId: filter.id(), category: filter.id(), ...range },
+    filterLabels: { status: "Status", supplierId: "Supplier", category: "Category", from: "Due from", to: "Due to" },
+  },
+  weddingTasks: {
+    id: "weddingTasks",
+    label: "Wedding Tasks",
+    module: "tasks",
+    workspaces: ["bridal-expense"],
+    view: ["tasks.view"],
+    exportPermission: EXPORT_PERMISSION,
+    filters: { state: filter.oneOf(["open", "overdue", "all"]), status: filter.oneOf(TASK_STATUS_IDS), categoryKey: filter.text(40), assigneeKey: filter.text(60), priority: filter.oneOf(TASK_PRIORITY_IDS), ...range },
+    filterLabels: { state: "Show", status: "Status", categoryKey: "Category", assigneeKey: "Assigned to", priority: "Priority", from: "Due from", to: "Due to" },
+  },
+  guests: {
+    id: "guests",
+    label: "Guests & RSVP",
+    module: "guests",
+    workspaces: ["bridal-expense"],
+    view: ["guests.view"],
+    exportPermission: EXPORT_PERMISSION,
+    filters: { rsvp: filter.oneOf(RSVP_STATUS_IDS), side: filter.oneOf(GUEST_SIDE_IDS), invited: filter.oneOf(["sent", "not_sent"]), search: filter.text(100) },
+    filterLabels: { rsvp: "RSVP", side: "Side", invited: "Invitation", search: "Search" },
   },
 });
 

@@ -8,7 +8,7 @@
 //              Reports API would return them to this caller.
 
 import { pairsSheet, tableSheet } from "../../../../shared/exports.js";
-import { resolveDashboard, dashboardDocuments, combineDashboardDocs, widgetValue } from "../../../../shared/dashboard.js";
+import { resolveDashboard, dashboardDocuments, dashboardCounts, widgetSourceKey, combineDashboardDocs, widgetValue } from "../../../../shared/dashboard.js";
 import { rangePlan } from "../../../../shared/reports.js";
 import { PAYMENT_METHODS } from "../../../../shared/payments.js";
 import { EXPENSE_METHODS, expenseCategoryLabel } from "../../../../shared/expenses.js";
@@ -18,6 +18,7 @@ import { snapshotWorkspaceTemplateId, workspaceSectionLabel } from "../../../../
 import { expensesQuery, scheduledPaymentsQuery, categoriesQuery } from "../../../../shared/list-queries.js";
 import { BUDGET_DOC_ID, budgetLines, sortCategories } from "../../../../shared/baby.js";
 import { CATEGORY_BUDGET_COLUMNS, babyExpenseColumns, scheduleColumns } from "./baby.js";
+import { weddingDashboardSheets } from "./wedding.js";
 
 const NO_DATA = "No data yet";
 const fmt = (w) => (w.format === "money" ? "money" : "integer");
@@ -27,7 +28,7 @@ const period = (from, to) => (from === to ? from : `${from} to ${to}`);
 
 // ---------- Dashboard ----------
 
-async function dashboard({ filters, permissions, entitlements, timezone, now, readByIds, readRows }) {
+async function dashboard({ tenant, filters, permissions, entitlements, timezone, now, today, readByIds, readRows }) {
   const { from, to } = filters;
   const widgets = resolveDashboard({ entitlements, permissions }).filter((w) => w.kind === "stat");
   const periodWidgets = widgets.filter((w) => w.section === "period");
@@ -35,9 +36,16 @@ async function dashboard({ filters, permissions, entitlements, timezone, now, re
   const plan = dashboardDocuments(widgets, { from, to });
   const read = new Map();
   for (const d of plan) read.set(d.source, { ...d, docs: await readByIds(d.collection, d.ids) });
+  // Live counts (as of export time), e.g. overdue tasks against the business's today.
+  for (const c of dashboardCounts(widgets, today)) {
+    let q = tenant.collection(c.collection);
+    for (const [f, op, v] of c.where) q = q.where(f, op, v);
+    read.set(c.key, { count: (await q.count().get()).data().count });
+  }
   const valueFor = (w, ids = null) => {
-    const r = read.get(w.source);
+    const r = read.get(widgetSourceKey(w));
     if (!r) return null;
+    if (w.source === "count") return widgetValue(w, { count: r.count });
     return widgetValue(w, combineDashboardDocs(w.source, (ids || r.ids).map((id) => r.docs.get(id) ?? null)));
   };
 
@@ -63,6 +71,11 @@ async function dashboard({ filters, permissions, entitlements, timezone, now, re
         rows: [["As of", "datetime", now, "Live figures at export time, NOT for the selected period"], ...currentWidgets.map((w) => pair(w.label, fmt(w), valueFor(w), "Current"))],
       })
     );
+  }
+  if (workspace === "bridal-expense") {
+    const wedding = await weddingDashboardSheets({ filters, permissions, timezone, today, readRows, readByIds });
+    sheets.push(...wedding.sheets);
+    return { rowCount: periodWidgets.length + buckets.length + currentWidgets.length + wedding.rowCount, sheets, note: "Selected-period spending comes from Luna's daily spending summaries. The wedding plan (budget, supplier balances, tasks, RSVPs) is live at export time." };
   }
   if (workspace === "baby-expense") {
     const baby = await babyDashboardSheets({ filters, permissions, timezone, readRows, readByIds });

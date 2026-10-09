@@ -118,8 +118,10 @@ describe("reading Baby data", () => {
     for (const c of Object.keys(COLLECTIONS)) await assertFails(dbAs(env, "owner@home-x").doc(`businesses/home-x/${c}/d1`).get());
   });
 
-  it("forged Baby modules in Distributor / Household / Bridal snapshots open nothing", async () => {
-    for (const bid of ["dist-forged", "home-forged", "bridal-forged"]) for (const c of BABY_ONLY) await assertFails(dbAs(env, `owner@${bid}`).doc(`businesses/${bid}/${c}/d1`).get());
+  it("forged Baby modules in Distributor / Household / Bridal snapshots open nothing of Baby's own", async () => {
+    for (const bid of ["dist-forged", "home-forged"]) for (const c of BABY_ONLY) await assertFails(dbAs(env, `owner@${bid}`).doc(`businesses/${bid}/${c}/d1`).get());
+    // Since Phase 16 Bridal legitimately owns the shared budget primitive; Baby's schedule and providers stay closed.
+    for (const c of ["providers", "scheduledPayments"]) await assertFails(dbAs(env, "owner@bridal-forged").doc(`businesses/bridal-forged/${c}/d1`).get());
   });
 
   it("strict: the current Baby v2 snapshot works", async () => {

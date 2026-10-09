@@ -44,7 +44,7 @@ describe("a bridal workspace can't reach Distributor APIs", () => {
   it("session: workspace identity, no Distributor modules on, Pro plan still Pro", async () => {
     const s = await session(uid.owner, "biz-w");
     expect(s.status).toBe(200);
-    expect(s.body.workspace).toEqual({ templateId: "bridal-expense", templateVersion: 1, name: "Bridal / Wedding Management Tracker" });
+    expect(s.body.workspace).toEqual({ templateId: "bridal-expense", templateVersion: 2, name: "Bridal / Wedding Management Tracker" });
     expect(s.body.plan).toEqual({ id: "pro", name: "Pro" });
     for (const m of ["orders", "payments", "inventory", "customers", "reports", "imports"]) expect(s.body.entitlements.modules[m], m).toBe(false);
     expect(s.body.entitlements.workspaceTemplateId).toBe("bridal-expense");
@@ -141,7 +141,7 @@ describe("operator tooling: assign / change template", () => {
     await post(createProductsHandler, world.uids.ownera, { action: "create", product: { sku: "KEEP", name: "Keep", unit: "pcs", sellingPrice: 100, reorderLevel: 0 } }, "biz-a");
     const r = await assignWorkspaceTemplate({ ...world, businessId: "biz-a", templateId: "bridal-expense", allowChange: true, actor: "ops@luna", reason: "Client switched to wedding planning" });
     expect(r).toMatchObject({ workspaceTemplateId: "bridal-expense", previousWorkspaceTemplateId: "distributor" });
-    expect(biz("biz-a")).toMatchObject({ workspaceTemplateId: "bridal-expense", entitlements: { schemaVersion: 2, workspaceTemplateId: "bridal-expense", workspaceTemplateVersion: 1, modules: { orders: false, inventory: false } } });
+    expect(biz("biz-a")).toMatchObject({ workspaceTemplateId: "bridal-expense", entitlements: { schemaVersion: 2, workspaceTemplateId: "bridal-expense", workspaceTemplateVersion: 2, modules: { orders: false, inventory: false } } });
     const [entry] = audits("biz-a").filter((a) => a.type === "workspace.template-changed");
     expect(entry).toMatchObject({ summary: "Workspace template changed: distributor → bridal-expense", actor: "ops@luna", reason: "Client switched to wedding planning", before: { workspaceTemplateId: "distributor" }, after: { workspaceTemplateId: "bridal-expense" } });
     expect(entry.at).toBeTruthy();

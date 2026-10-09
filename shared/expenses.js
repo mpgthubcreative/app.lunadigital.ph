@@ -72,9 +72,15 @@ export const EXPENSE_FIELDS = Object.freeze(["date", "category", "amount", "paye
 // so expenses can't be recorded there.
 //   categories  "fixed"  = DEFAULT_EXPENSE_CATEGORIES ids
 //               "tenant" = the business's own expenseCategories doc ids
+//   ref         an optional saved payee the browser may choose (its name
+//               becomes the payee snapshot): Baby provider, Wedding supplier
+//   link        the server-set provenance field: the scheduled / supplier
+//               payment an expense was recorded from (never sent by the browser)
 export const EXPENSE_PROFILES = Object.freeze({
-  distributor: Object.freeze({ id: "distributor", categories: "fixed", fields: EXPENSE_FIELDS }),
-  "baby-expense": Object.freeze({ id: "baby-expense", categories: "tenant", fields: Object.freeze([...EXPENSE_FIELDS, "providerId"]) }),
+  distributor: Object.freeze({ id: "distributor", categories: "fixed", fields: EXPENSE_FIELDS, ref: null, link: null }),
+  "baby-expense": Object.freeze({ id: "baby-expense", categories: "tenant", fields: Object.freeze([...EXPENSE_FIELDS, "providerId"]), ref: "providerId", refLabel: "provider", link: "scheduleId" }),
+  // Phase 16: Wedding Expenses.
+  "bridal-expense": Object.freeze({ id: "bridal-expense", categories: "tenant", fields: Object.freeze([...EXPENSE_FIELDS, "supplierId"]), ref: "supplierId", refLabel: "supplier", link: "supplierPaymentId" }),
 });
 export const expenseProfile = (workspaceTemplateId) => (typeof workspaceTemplateId === "string" && Object.hasOwn(EXPENSE_PROFILES, workspaceTemplateId) ? EXPENSE_PROFILES[workspaceTemplateId] : null);
 
@@ -118,9 +124,10 @@ export function validateExpenseInput(input, { partial = false, today, profile = 
     if (!ok) throw new ExpenseError("invalid-input", "Choose a category");
     out.category = input.category;
   }
-  if (profile.fields.includes("providerId") && has("providerId")) {
-    if (input.providerId !== null && input.providerId !== undefined && !isValidRecordId(input.providerId)) throw new ExpenseError("invalid-input", "Choose a provider");
-    out.providerId = input.providerId ?? null;
+  if (profile.ref && has(profile.ref)) {
+    const v = input[profile.ref];
+    if (v !== null && v !== undefined && !isValidRecordId(v)) throw new ExpenseError("invalid-input", `Choose a ${profile.refLabel}`);
+    out[profile.ref] = v ?? null;
   }
   if (has("amount")) {
     if (!isCentavos(input.amount) || input.amount <= 0) throw new ExpenseError("invalid-amount", "Amount must be more than ₱0");

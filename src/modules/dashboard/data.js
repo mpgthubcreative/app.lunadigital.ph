@@ -11,6 +11,8 @@ import { listRecentOrders } from "../orders/data.js";
 import { listAttendance, listPayrolls, listAdvances } from "../household/data.js";
 import { getBudget, listCategories, listScheduled, listBabyExpenses } from "../baby/data.js";
 import { budgetLines } from "@shared/baby.js";
+import { listSupplierPayments, listTasks, listWeddingExpenses, getGuestTotals } from "../wedding/data.js";
+import { rsvpSummary } from "@shared/wedding.js";
 import { combineDashboardDocs } from "@shared/dashboard.js";
 
 // Ready list widgets -> their (small, limited) query. ctx: { today }.
@@ -29,6 +31,15 @@ const LIST_FETCHERS = {
   },
   upcomingPayments: (businessId) => listScheduled(businessId, { status: "upcoming" }, { pageSize: 5 }).then(first),
   recentExpenses: (businessId) => listBabyExpenses(businessId, { status: "active" }, { pageSize: 5 }).then(first),
+  // Phase 16 (Wedding): soonest supplier payments, open tasks by due date
+  // (overdue first), latest expenses, and the RSVP totals as a short list.
+  upcomingSupplierPayments: (businessId) => listSupplierPayments(businessId, { status: "upcoming" }, { pageSize: 5 }).then(first),
+  tasksDueSoon: async (businessId, { today }) => (await listTasks(businessId, { state: "open" }, { today, pageSize: 20 })).rows.filter((t) => t.dueDate).slice(0, 5),
+  recentWeddingExpenses: (businessId) => listWeddingExpenses(businessId, { status: "active" }, { pageSize: 5 }).then(first),
+  rsvpSummary: async (businessId) => {
+    const t = rsvpSummary(await getGuestTotals(businessId));
+    return t.invitations ? [{ id: "attending", ...t, row: "attending" }, { id: "declined", ...t, row: "declined" }, { id: "awaiting", ...t, row: "awaiting" }] : [];
+  },
 };
 
 // widgets: ready list widgets -> { [widgetId]: { status, rows } }
@@ -59,6 +70,10 @@ export async function fetchMetricDocuments(businessId, documents) {
   const entries = await Promise.all(
     documents.map(async (d) => {
       try {
+        if (d.count) {
+          const q = lite.query(lite.collection(db, "businesses", businessId, d.collection), ...d.where.map(([f, op, v]) => lite.where(f, op, v)));
+          return [d.source, { status: "ok", data: { count: (await lite.getCount(q)).data().count } }];
+        }
         const snaps = await Promise.all(d.ids.map((id) => getDoc(doc(db, "businesses", businessId, d.collection, id))));
         const data = combineDashboardDocs(d.source, snaps.map((s) => (s.exists() ? s.data() : null)));
         return [d.source, data ? { status: "ok", data } : { status: "missing", data: null }];

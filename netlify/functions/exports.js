@@ -16,10 +16,11 @@ import { RECORD_BUILDERS } from "./_lib/exports/records.js";
 import { SUMMARY_BUILDERS } from "./_lib/exports/summaries.js";
 import { PAYROLL_BUILDERS } from "./_lib/exports/payroll.js";
 import { BABY_BUILDERS } from "./_lib/exports/baby.js";
+import { WEDDING_BUILDERS } from "./_lib/exports/wedding.js";
 import { EXPORT_DATASETS } from "../../shared/export-datasets.js";
 import { ExportError } from "../../shared/exports.js";
 
-const BUILDERS = { ...RECORD_BUILDERS, ...SUMMARY_BUILDERS, ...PAYROLL_BUILDERS, ...BABY_BUILDERS };
+const BUILDERS = { ...RECORD_BUILDERS, ...SUMMARY_BUILDERS, ...PAYROLL_BUILDERS, ...BABY_BUILDERS, ...WEDDING_BUILDERS };
 const FIELDS = ["dataset", "filters"];
 const STATUS = { "too-many-rows": 413, "not-allowed": 403, "invalid-filters": 400, "invalid-range": 400 };
 const XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";

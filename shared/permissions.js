@@ -88,6 +88,17 @@ export const PERMISSIONS = Object.freeze({
   "providers.view": { module: "providers", group: "Providers", label: "View providers and vendors" },
   "providers.manage": { module: "providers", group: "Providers", label: "Add and edit providers and vendors" },
 
+  // Phase 16: Bridal / Wedding (Wedding Expenses reuse expenses.*, Wedding Budget budget.*).
+  "vendors.view": { module: "vendors", group: "Wedding Suppliers", label: "View wedding suppliers, agreements and balances" },
+  "vendors.manage": { module: "vendors", group: "Wedding Suppliers", label: "Add and edit wedding suppliers and agreed amounts" },
+  "vendorpayments.view": { module: "vendorpayments", group: "Supplier Payments", label: "View supplier payments and due dates" },
+  // Marking a payment Paid also records its expense, so it needs expenses.create too.
+  "vendorpayments.manage": { module: "vendorpayments", group: "Supplier Payments", label: "Schedule, edit, cancel and mark supplier payments paid" },
+  "tasks.view": { module: "tasks", group: "Wedding Tasks", label: "View wedding tasks" },
+  "tasks.manage": { module: "tasks", group: "Wedding Tasks", label: "Add, edit and update wedding tasks" },
+  "guests.view": { module: "guests", group: "Guests & RSVP", label: "View guests and RSVPs" },
+  "guests.manage": { module: "guests", group: "Guests & RSVP", label: "Add guests and record RSVPs" },
+
   "users.view": { module: "users", group: "Users", label: "View team members" },
   "users.manage": { module: "users", group: "Users", label: "Invite and manage team members" },
 

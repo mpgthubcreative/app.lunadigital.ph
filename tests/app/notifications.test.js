@@ -61,7 +61,7 @@ describe("view helpers", () => {
   it("categories follow what the user can receive", () => {
     expect(myCategories(session("owner")).sort()).toEqual(["inventory", "orders", "payments"]);
     expect(myCategories(session("staff")).sort()).toEqual(["orders"]);
-    expect(myCategories(session("owner", null, { workspaceTemplateId: "bridal-expense", planId: "pro" }))).toEqual([]);
+    expect(myCategories(session("owner", null, { workspaceTemplateId: "bridal-expense", planId: "pro" })).sort()).toEqual(["budget", "wedding"]);
   });
 });
 

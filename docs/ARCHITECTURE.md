@@ -453,7 +453,7 @@ There are no combined ids such as `distributor-growth`. Every plan works with ev
 | `distributor` (v5) | live | orders, payments, inventory, customers (Phase 9), expenses (Phase 10, "Operating Expenses"), reports (Phase 11), imports (Phase 12) | suppliers, production, returns (notifications became a core capability in Phase 13) |
 | `household-payroll` (v2) | live (Phase 14) | household, attendance, payroll, advances | payroll reports |
 | `baby-expense` (v2 only) | live (Phase 15) | expenses ("Baby Expenses"), budget (with categories), schedule (Payment Schedule), providers | milestones, reports |
-| `bridal-expense` | planned | — | expenses ("Wedding Expenses"), budget, suppliers, supplier payments and balances, payment due dates, wedding tasks, guests, RSVP, reports |
+| `bridal-expense` (v2) | live (Phase 16) | expenses ("Wedding Expenses"), budget ("Wedding Budget"), vendors (Wedding Suppliers), vendorpayments (Supplier Payments), tasks, guests (Guests & RSVP) | reports |
 
 **Effective modules** (`computeEntitlements(plan, overrides, workspaceTemplateId)`, which has no default template):
 
@@ -1231,6 +1231,110 @@ Every Baby write (expense, category, budget, schedule) reads and writes `budgets
 - Family role templates
 - Per-period budget history (budget snapshots)
 
+## Bridal / Wedding Command Center (Phase 16)
+
+The `bridal-expense` template goes v1 → v2 (live). It organizes the operational side of a wedding: budget, expenses, suppliers and their balances, supplier payments and due dates, tasks, and guests / RSVP. It is not project management and not accounting.
+
+| Module | Screen | Data (`businesses/{bid}/…`) | Permissions |
+|---|---|---|---|
+| `budget` (shared primitive) | Wedding Budget | `budgets/current`, `expenseCategories/{id}`, `spendingMetrics/{day or month}` (shared with Baby; each business has its own) | `budget.view`, `budget.manage` |
+| `expenses` (reused) | Wedding Expenses | `expenses/{id}`: the Expenses Core record with a tenant category, an optional `supplierId` (the payee is the supplier's name snapshot) and the server-set `supplierPaymentId` | `expenses.view / create / update / delete` |
+| `vendors` | Wedding Suppliers | `weddingSuppliers/{id}`: name, service, contact, optional agreed amount, default budget category; Luna's `paid`, `upcoming`, `upcomingCount`, `nextDue` | `vendors.view`, `vendors.manage` |
+| `vendorpayments` | Supplier Payments | `supplierPayments/{id}`: Upcoming → Paid (one linked Wedding Expense) or Cancelled | `vendorpayments.view`, `vendorpayments.manage` |
+| `tasks` | Wedding Tasks | `weddingTasks/{id}`, `taskTotals/current` | `tasks.view`, `tasks.manage` |
+| `guests` | Guests & RSVP | `guests/{id}`, `guestTotals/current` | `guests.view`, `guests.manage` |
+
+- **Module ids:** `suppliers` already names the Distributor's planned module, a different domain. So the Wedding Suppliers module id is `vendors`, and its labels are wedding words.
+- **RSVP:** part of the Guests module. RSVP is a guest's answer, so one screen keeps the guest and their RSVP together.
+- **Roles:** Owner and Manager get every Wedding permission. Staff get none: no Bridal staff workflow was needed, and no family or coordinator roles were added.
+- **Mark paid** also needs `expenses.create`.
+- **Workspace ceiling:** the template is the ceiling. Distributor, Household and Baby never get `vendors`, `vendorpayments`, `tasks` or `guests`, and forged keys open nothing in the server, the browser or the rules.
+
+### Reuse and boundaries
+- **Expenses Core:** the shared record engine is unchanged. `EXPENSE_PROFILES` now names each profile's optional saved payee (`ref`: Baby `providerId`, Bridal `supplierId`) and its server-set provenance (`link`: Baby `scheduleId`, Bridal `supplierPaymentId`). Baby and Distributor behaviour is identical; their tests pass as before.
+  - Bridal has its own sink (`_lib/wedding-spending.js`). It never writes Distributor metrics, report rollups or anything of Baby's.
+- **Budget primitive:** `/api/budget` (total and categories) and `shared/baby.js` `budgetSummary` / `budgetLines` serve both workspaces. The only workspace-specific part is the suggested-categories list (Venue, Ceremony / Church, Catering, …).
+- **Phase 15 code:** the Baby screens, sink and builders are not modified. Bridal has its own screens, export builders and HTTP handler, and imports only Baby's generic helpers.
+- **Separate domains:** a Wedding Supplier is not a Baby Provider or a Distributor Customer. A Supplier Payment is not a Distributor Payment. A guest is not a customer.
+
+### Suppliers, agreed amounts and balances (Luna computes; nobody types Paid or Balance)
+- **Paid** is the supplier's active Wedding Expenses: from a supplier payment, or recorded directly against the supplier. One source of truth.
+- **Balance** = agreed − paid, and only with an agreement. A supplier without an agreed amount is contact tracking only.
+- **Dashboard supplier balance** = `contracted − contractedPaid` on `budgets/current`, over all suppliers with an agreement (active or not).
+- **Agreed-amount policy** (deterministic, tested):
+  - A supplier with an agreed amount can't be paid more than it: the wedding sink refuses (`over-agreed`).
+  - Paid + scheduled can't exceed it either: a schedule or edit is refused.
+  - The agreed amount can't be lowered below what's committed (`below-committed`).
+  - To pay more, raise the agreement first. That change is audited ("Agreed amount changed ₱80,000 → ₱90,000").
+- **Renaming or deactivating** a supplier rewrites no history: expenses and payments keep the name they were recorded with. A payment scheduled before deactivation can still be paid.
+
+### Supplier Payments → exactly one Wedding Expense
+Upcoming ≠ Spent. Mark paid runs in one transaction:
+- It reads the payment and returns the existing expense if the payment is already Paid.
+- Otherwise it creates the expense with a deterministic id (the payment id, or `<id>r<n>` after a reopen) using `create()`.
+- The payment leaves Upcoming, budget spending and the supplier's paid amount go up once, and the supplier's upcoming and next due follow.
+- If a racing request already created that id, the call answers with that payment's expense.
+
+Removing the generated expense puts the payment back to Upcoming. Editing its amount updates the payment's paid amount and the supplier's total, and its supplier can't change. The `supplierpayment.paid` notification goes to the other members who follow supplier payments.
+
+### Tasks
+- **Status:** Not Started / In Progress / Completed / Cancelled.
+- **Completing** records the completed date and who. Reopening is logged ("Status changed Completed → In Progress (reopened)").
+- **Overdue and due soon** (within 7 days) are derived from the due date, the status and the business's today. They are never stored. The Overdue Tasks card is a live count query.
+- **Category and assignee** are free text, stored with a normalized key for filtering, so no names are hard-coded. Assignees needn't be Luna users. Linking a task to a member is future work.
+
+### Guests and RSVP
+- **Fields:** guest or household, group, side (bride / groom / both), contact, invited party size, invitation sent date, RSVP (`awaiting` / `attending` / `declined`), confirmed attendees.
+- **RSVP rules:** confirmed must be at most the party size. Attending needs at least 1. Declined and awaiting mean 0.
+- **Totals:** `guestTotals/current` keeps invitations (records) and seats (people) apart. **Confirmed guests = the sum of confirmed attendees**, not a count of Attending records. The cards are labelled accordingly.
+- **Removing** a guest (added by mistake) writes an audit-log line, and the totals drop their party.
+
+### Dashboard, filters, exports, notifications
+- **Wedding Dashboard:**
+  - **"Spending in the selected period"**: wedding spending, paid to suppliers and expenses recorded, from `spendingMetrics`.
+  - **"Wedding plan · as of now"**: total budget, spent, remaining, supplier balance, upcoming payments, open tasks, overdue tasks (live count), confirmed guests (people) and awaiting RSVP (invitations). No historical RSVP or balance snapshot is implied.
+  - **Lists:** upcoming supplier payments, tasks due soon and overdue, recent wedding expenses, an RSVP summary.
+  - Dashboards gained a `count` source: live count queries against today, read with the documents.
+- **Filters** use indexed list specs shared by screen and export. Every combination has a composite index (44 new), checked by a script that derives each query's index.
+  - Wedding Expenses: dates, category, supplier, method, search
+  - Suppliers: status, service, name prefix
+  - Supplier Payments: status, supplier, category, due range
+  - Tasks: open / overdue / all, status, category, assignee, priority, due range
+  - Guests: RSVP, side, invitation sent / not sent, name prefix
+- **Excel** goes through the Export Core: Wedding Budget, Wedding Expenses, Wedding Suppliers (with paid, balance and next due), Supplier Payments, Wedding Tasks (with derived timing) and Guests & RSVP.
+  - The Dashboard workbook adds Category Budget, Expenses, Supplier Balances, Upcoming Payments, Tasks and Guests & RSVP sheets.
+  - The datasets are Bridal-only, and no Distributor or Baby field appears.
+- **Notifications:**
+  - `supplierpayment.paid` (category `wedding`).
+  - `budget.threshold`, reused, with wedding titles (75/90/100%).
+  - Due-date and RSVP-deadline reminders are deferred (no scheduler); the dashboard lists cover upcoming items.
+
+### Concurrency (real emulator, `tests/emulator/wedding-concurrency.test.js`)
+Supplier, payment and expense writes all read and write `budgets/current` and the supplier, task writes `taskTotals/current`, and guest writes `guestTotals/current`. So they serialize per business. After each race, every stored total equals a fresh recount. The races tested:
+- Mark paid ×10, and by two users
+- the agreed amount lowered while payments are being recorded
+- removal racing re-payment and a cancel
+- schedule, edit, cancel and pay at once
+- expenses racing budget changes
+- completing and reopening the same task
+- concurrent RSVP edits, size edits, an addition and a removal
+
+### Staged rollout
+1. **Compatible step (this commit).**
+   - `vendors`, `vendorpayments`, `tasks` and `guests` are in `ROLLING_OUT_MODULE_IDS`, read with `m.get(…, false)` in both rule files.
+   - The template accepts v1 and v2. A v1 snapshot stays valid but opens no Wedding data.
+   - Deploy the rules and the 44 indexes, push, run `seed-plans --overwrite`, `recompute-entitlements --all` and `resync-permissions --all`, then a live probe.
+2. **Strict step.** Empty `ROLLING_OUT_MODULE_IDS`, require the four keys, and drop bridal-expense v1.
+
+Shipping the code alone activates nothing on staging. No Bridal business exists there today.
+
+### Not built (later)
+- A wedding website, invitation sending, QR invitations, a seating chart or floor plan, a gift registry, honeymoon planning, a photo gallery, chat, a supplier marketplace, a payment gateway, accounting, an AI planner, workflow builders
+- Wedding reports beyond the dashboard and Excel
+- Due-date and RSVP reminders (no scheduler)
+- Member-linked task assignment
+- Dietary notes and table numbers
+
 ## Performance
 
 - The dashboard reads at most four summary documents (see above), plus small limited list queries once Orders and Inventory exist.
@@ -1293,9 +1397,10 @@ On Orders, Reference and Proof show "—" until Payments (Phase 8) fills them in
 13. Notifications ✅
 14. Household / Kasambahay Payroll MVP ✅ (the household-payroll workspace)
 15. Baby Expense Tracker MVP ✅ (the baby-expense workspace)
-16. Super Admin console
-17. Usage metering views
-18. Reliability, backups and recovery
+16. Bridal / Wedding Command Center MVP (the bridal-expense workspace): local gate passed; staging activation awaiting approval
+17. Super Admin console
+18. Usage metering views
+19. Reliability, backups and recovery
 
 - Phases 6 and 7 are in this order because orders need products to reserve and a cost to snapshot.
 - Expenses come before Reports so the P&L has operating expenses to subtract.

@@ -79,7 +79,7 @@ export function customersQuery(f = {}) {
   return { parts: [{ where: [["status", "==", status]], orderBy: [["nameLower", "asc"], [ID, "asc"]] }] };
 }
 
-// filters: { status ("active"|"removed"), from?, to?, category?, method?, providerId? (Baby), search? (payee prefix or exact reference) }
+// filters: { status ("active"|"removed"), from?, to?, category?, method?, providerId? (Baby), supplierId? (Wedding), search? (payee prefix or exact reference) }
 export function expensesQuery(f = {}) {
   const status = f.status || "active";
   const term = (f.search || "").trim();
@@ -90,13 +90,14 @@ export function expensesQuery(f = {}) {
         { where: [["status", "==", status], ["reference", "==", term]], orderBy: [] },
       ],
       // A search still honours the other filters.
-      keep: (e) => (!f.category || e.category === f.category) && (!f.method || e.method === f.method) && (!f.providerId || e.providerId === f.providerId) && (!f.from || e.date >= f.from) && (!f.to || e.date <= f.to),
+      keep: (e) => (!f.category || e.category === f.category) && (!f.method || e.method === f.method) && (!f.providerId || e.providerId === f.providerId) && (!f.supplierId || e.supplierId === f.supplierId) && (!f.from || e.date >= f.from) && (!f.to || e.date <= f.to),
       sort: (a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : a.id < b.id ? 1 : a.id > b.id ? -1 : 0),
     };
   }
   const where = [["status", "==", status]];
   if (f.category) where.push(["category", "==", f.category]);
   if (f.providerId) where.push(["providerId", "==", f.providerId]);
+  if (f.supplierId) where.push(["supplierId", "==", f.supplierId]);
   if (f.method) where.push(["method", "==", f.method]);
   if (f.from) where.push(["date", ">=", f.from]);
   if (f.to) where.push(["date", "<=", f.to]);
@@ -172,6 +173,60 @@ export function scheduledPaymentsQuery(f = {}) {
   if (f.to) where.push(["dueDate", "<=", f.to]);
   const dir = status === "upcoming" ? "asc" : "desc";
   return { parts: [{ where, orderBy: [["dueDate", dir], [ID, dir]] }] };
+}
+
+// ---------- Bridal / Wedding (Phase 16) ----------
+
+// filters: { status (active by default), service?, search? (name prefix) }
+export function weddingSuppliersQuery(f = {}) {
+  const where = [["status", "==", f.status || "active"]];
+  if (f.service) where.push(["service", "==", f.service]);
+  const term = f.search ? lower(f.search) : "";
+  if (term) where.push(...prefix("nameLower", term));
+  return { parts: [{ where, orderBy: [["nameLower", "asc"], [ID, "asc"]] }] };
+}
+
+// filters: { status? (upcoming by default), supplierId?, category?, from?, to? } on the due date.
+export function supplierPaymentsQuery(f = {}) {
+  const status = f.status || "upcoming";
+  const where = [["status", "==", status]];
+  if (f.supplierId) where.push(["supplierId", "==", f.supplierId]);
+  if (f.category) where.push(["category", "==", f.category]);
+  if (f.from) where.push(["dueDate", ">=", f.from]);
+  if (f.to) where.push(["dueDate", "<=", f.to]);
+  const dir = status === "upcoming" ? "asc" : "desc";
+  return { parts: [{ where, orderBy: [["dueDate", dir], [ID, dir]] }] };
+}
+
+// filters: { state? ("open" default | "overdue" | "all"), status?, categoryKey?, assigneeKey?, priority?, from?, to? }
+// "overdue" needs { today } (open tasks due before the business's today;
+// undated tasks are never overdue: a range never matches null). Every task
+// stores dueDate (null when undated), so one order works: undated first,
+// then soonest due.
+export function weddingTasksQuery(f = {}, { today = null } = {}) {
+  const where = [];
+  const state = f.state || (f.status ? "all" : "open");
+  if (f.status) where.push(["status", "==", f.status]);
+  else if (state !== "all") where.push(["open", "==", true]);
+  for (const k of ["categoryKey", "assigneeKey", "priority"]) if (f[k]) where.push([k, "==", f[k]]);
+  if (state === "overdue") {
+    if (!today) throw new Error("overdue needs today");
+    where.push(["dueDate", "<", today]);
+  }
+  if (f.from) where.push(["dueDate", ">=", f.from]);
+  if (f.to) where.push(["dueDate", "<=", f.to]);
+  return { parts: [{ where, orderBy: [["dueDate", "asc"], [ID, "asc"]] }] };
+}
+
+// filters: { rsvp?, side?, invited? ("sent" | "not_sent"), search? (name prefix) }
+export function guestsQuery(f = {}) {
+  const where = [];
+  if (f.rsvp) where.push(["rsvp", "==", f.rsvp]);
+  if (f.side) where.push(["side", "==", f.side]);
+  if (f.invited) where.push(["invited", "==", f.invited === "sent"]);
+  const term = f.search ? lower(f.search) : "";
+  if (term) where.push(...prefix("nameLower", term));
+  return { parts: [{ where, orderBy: [["nameLower", "asc"], [ID, "asc"]] }] };
 }
 
 // Merges search parts: by id, then keep, then sort.

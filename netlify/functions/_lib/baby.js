@@ -22,6 +22,7 @@ import { BabyError, BABY_SCHEMA_VERSION, BUDGET_DOC_ID, MAX_CATEGORIES, SUGGESTE
 import { EXPENSE_METHODS } from "../../../shared/expenses.js";
 import { businessDate, isDayId } from "../../../shared/metrics.js";
 import { prepareExpenseCreate } from "./expenses.js";
+import { SUGGESTED_WEDDING_CATEGORIES } from "../../../shared/wedding.js";
 
 const TX_OPTIONS = { maxAttempts: 10 };
 const MAX_HISTORY = 200;
@@ -112,13 +113,15 @@ function newCategory(FieldValue, actor, { name, budget = null, order }) {
   };
 }
 
-// "Add suggested categories" on an empty budget: once.
-export async function setupSuggestedCategories({ db, tenant, FieldValue, actor }) {
+// "Add suggested categories" on an empty budget: once. The list follows the
+// workspace (the budget primitive is shared by Baby and, Phase 16, Wedding).
+export async function setupSuggestedCategories({ db, tenant, FieldValue, actor, workspace = "baby-expense" }) {
+  const suggested = workspace === "bridal-expense" ? SUGGESTED_WEDDING_CATEGORIES : SUGGESTED_CATEGORIES;
   return db.runTransaction(async (tx) => {
     const b = await loadBudget(tx, tenant);
     const existing = await tx.get(categoriesRef(tenant).limit(1));
     if (b.categoriesSeeded === true || !existing.empty) return { created: 0 };
-    const ids = SUGGESTED_CATEGORIES.map((name, i) => {
+    const ids = suggested.map((name, i) => {
       const r = categoriesRef(tenant).doc();
       tx.create(r, newCategory(FieldValue, actor, { name, order: (i + 1) * 10 }));
       return r.id;

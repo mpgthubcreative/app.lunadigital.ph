@@ -50,6 +50,15 @@ export const MODULES = Object.freeze([
   { id: "budget", label: "Budget", path: "/budget", icon: "budget", permission: "budget.view", available: true, collections: { budgets: "budget.view", expenseCategories: "budget.view", spendingMetrics: "budget.view" }, storage: {} },
   { id: "schedule", label: "Payment Schedule", path: "/payment-schedule", icon: "calendar", permission: "schedule.view", available: true, collections: { scheduledPayments: "schedule.view" }, storage: {} },
   { id: "providers", label: "Providers", path: "/providers", icon: "provider", permission: "providers.view", available: true, collections: { providers: "providers.view" }, storage: {} },
+  // Built in Phase 16 (Bridal / Wedding Command Center). Operational only in
+  // the bridal-expense template, which also reuses `expenses` ("Wedding
+  // Expenses") and `budget` (the generic budget primitive). "vendors" is
+  // Wedding Suppliers (the id `suppliers` is the Distributor's planned
+  // module, a different domain).
+  { id: "vendors", label: "Wedding Suppliers", path: "/wedding-suppliers", icon: "provider", permission: "vendors.view", available: true, collections: { weddingSuppliers: "vendors.view" }, storage: {} },
+  { id: "vendorpayments", label: "Supplier Payments", path: "/supplier-payments", icon: "payments", permission: "vendorpayments.view", available: true, collections: { supplierPayments: "vendorpayments.view" }, storage: {} },
+  { id: "tasks", label: "Wedding Tasks", path: "/wedding-tasks", icon: "tasks", permission: "tasks.view", available: true, collections: { weddingTasks: "tasks.view", taskTotals: "tasks.view" }, storage: {} },
+  { id: "guests", label: "Guests & RSVP", path: "/guests", icon: "users", permission: "guests.view", available: true, collections: { guests: "guests.view", guestTotals: "guests.view" }, storage: {} },
   { id: "users", label: "Users", path: "/users", icon: "users", permission: "users.view", available: true, core: true, collections: { members: "users.view" }, storage: {} },
   { id: "settings", label: "Settings", path: "/settings", icon: "settings", permission: "settings.view", available: true, core: true, collections: { settings: "settings.view" }, storage: {} },
 
@@ -65,7 +74,7 @@ export const MODULE_IDS = Object.freeze(MODULES.map((m) => m.id));
 // missing from snapshots computed before it (staged rollout, see
 // docs/ARCHITECTURE.md "Activating a module"): a missing key reads as false.
 // Emptied once recompute-entitlements has run everywhere.
-export const ROLLING_OUT_MODULE_IDS = Object.freeze([]);
+export const ROLLING_OUT_MODULE_IDS = Object.freeze(["vendors", "vendorpayments", "tasks", "guests"]);
 export const CORE_MODULE_IDS = Object.freeze(MODULES.filter((m) => m.core).map((m) => m.id));
 // Modules a plan or override can switch on or off.
 export const SELLABLE_MODULE_IDS = Object.freeze(MODULES.filter((m) => !m.core).map((m) => m.id));

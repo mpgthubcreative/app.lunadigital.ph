@@ -29,3 +29,4 @@ export * from "./imports.js";
 export * from "./notifications.js";
 export * from "./payroll.js";
 export * from "./baby.js";
+export * from "./wedding.js";

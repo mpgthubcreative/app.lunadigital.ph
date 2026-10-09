@@ -231,10 +231,10 @@ describe("POST /api/expenses", () => {
     expect((await call(world.uids.owners, { ...create }, "biz-s")).body.error).toBe("read-only");
   });
 
-  it("non-Distributor workspace: refused although the code exists (Expenses is only planned there)", async () => {
-    await createBusiness({ ...world, name: "Wedding", planId: "pro", workspaceTemplateId: "bridal-expense", businessId: "biz-w" });
-    const u = await ensureAuthUser({ auth: world.auth, email: "bride@t.test", name: "Bride" });
-    await addMember({ ...world, businessId: "biz-w", uid: u.uid, email: u.email, name: "Bride", roleTemplate: "owner", isAccountOwner: true });
+  it("a workspace without Expenses (Household Payroll): refused although the code exists", async () => {
+    await createBusiness({ ...world, name: "Home", planId: "pro", workspaceTemplateId: "household-payroll", businessId: "biz-w" });
+    const u = await ensureAuthUser({ auth: world.auth, email: "home@t.test", name: "Home" });
+    await addMember({ ...world, businessId: "biz-w", uid: u.uid, email: u.email, name: "Home", roleTemplate: "owner", isAccountOwner: true });
     expect(docAt("businesses/biz-w").entitlements.modules.expenses).toBe(false);
     const r = await call(u.uid, create, "biz-w");
     expect(r).toMatchObject({ status: 403, body: { error: "forbidden" } });

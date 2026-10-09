@@ -10,6 +10,7 @@
 import { snapshotWorkspaceTemplateId } from "@shared/workspaces.js";
 
 const isBaby = (session) => snapshotWorkspaceTemplateId(session?.entitlements) === "baby-expense";
+const isBridal = (session) => snapshotWorkspaceTemplateId(session?.entitlements) === "bridal-expense";
 
 export const MODULE_LOADERS = {
   dashboard: () => import("./dashboard/index.js"),
@@ -17,7 +18,7 @@ export const MODULE_LOADERS = {
   payments: () => import("./payments/index.js"),
   inventory: () => import("./inventory/index.js"),
   customers: () => import("./customers/index.js"),
-  expenses: (session) => (isBaby(session) ? import("./baby/expenses.js") : import("./expenses/index.js")),
+  expenses: (session) => (isBaby(session) ? import("./baby/expenses.js") : isBridal(session) ? import("./wedding/expenses.js") : import("./expenses/index.js")),
   reports: () => import("./reports/index.js"),
   imports: () => import("./imports/index.js"),
   users: () => import("./users/index.js"),
@@ -28,9 +29,14 @@ export const MODULE_LOADERS = {
   payroll: () => import("./payroll/index.js"),
   advances: () => import("./advances/index.js"),
   // Phase 15: Baby Expense Tracker.
-  budget: () => import("./baby/budget.js"),
+  budget: (session) => (isBridal(session) ? import("./wedding/budget.js") : import("./baby/budget.js")),
   schedule: () => import("./baby/schedule.js"),
   providers: () => import("./baby/providers.js"),
+  // Phase 16: Bridal / Wedding.
+  vendors: () => import("./wedding/suppliers.js"),
+  vendorpayments: () => import("./wedding/payments.js"),
+  tasks: () => import("./wedding/tasks.js"),
+  guests: () => import("./wedding/guests.js"),
   // Not a module in shared/modules.js: the core Notifications page (Phase 13).
   notifications: () => import("./notifications/index.js"),
 };

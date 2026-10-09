@@ -45,7 +45,7 @@ describe("navigation", () => {
 
   it("Bridal: its own dashboard name, no Orders / Inventory / Payments", () => {
     renderShell(document.getElementById("app"), bridal());
-    expect(navOf()).toEqual(["/ Wedding Dashboard", "/users Users", "/settings Settings"]);
+    expect(navOf()).toEqual(["/ Wedding Dashboard", "/budget Wedding Budget", "/expenses Wedding Expenses", "/wedding-suppliers Wedding Suppliers", "/supplier-payments Supplier Payments", "/wedding-tasks Wedding Tasks", "/guests Guests & RSVP", "/users Users", "/settings Settings"]);
   });
 
   it("Bridal staff: roles still apply", () => {
@@ -78,17 +78,16 @@ describe("typing a Distributor URL in a bridal workspace", () => {
 describe("dashboard", () => {
   const NOW = new Date("2026-10-08T04:00:00Z");
 
-  it("Bridal: no metric documents and no lists are requested; the workspace's own empty state", async () => {
+  it("Bridal (Phase 16): only Wedding sources are requested, never a Distributor metric", async () => {
     const fetchDocuments = vi.fn(async () => ({}));
     const fetchLists = vi.fn(async () => ({}));
     const container = document.getElementById("content");
     mountDashboard(container, bridal(), { fetchDocuments, fetchLists, now: NOW });
     await new Promise((r) => setTimeout(r, 0));
-    expect(fetchLists).not.toHaveBeenCalled();
-    for (const call of fetchDocuments.mock.calls) expect(call[1]).toEqual([]);
+    const cols = new Set(fetchDocuments.mock.calls.flatMap((c) => c[1].map((d) => d.collection)));
+    expect([...cols].sort()).toEqual(["budgets", "guestTotals", "spendingMetrics", "taskTotals", "weddingTasks"]);
     expect(container.querySelector("h1, .page-title")?.textContent).toMatch(/Wedding Dashboard/);
-    expect(container.querySelector('[data-role="workspace-empty"]').textContent).toMatch(/wedding workspace is being prepared/);
-    expect(container.textContent).not.toMatch(/Today's sales|Orders today|Low stock|Unpaid|₱/);
+    expect(container.textContent).not.toMatch(/Today's sales|Orders today|Low stock|Unpaid/);
   });
 
   it("Distributor: still requests its metric documents and lists", async () => {

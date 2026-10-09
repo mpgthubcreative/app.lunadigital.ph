@@ -138,27 +138,27 @@ const TEMPLATES = [
   },
   {
     id: "bridal-expense",
-    version: 1,
+    // v2 (Phase 16): Wedding Budget (the generic budget primitive), Wedding
+    // Expenses (the Expenses Core with the Bridal profile), Wedding
+    // Suppliers, Supplier Payments, Wedding Tasks, Guests & RSVP. v1
+    // snapshots are accepted via upgradingFrom only until every business is
+    // recomputed (staged rollout).
+    version: 2,
+    upgradingFrom: [1],
     name: "Bridal / Wedding Management Tracker",
     description: "A compact wedding command center: budget, suppliers, payments, tasks and guests.",
-    status: "planned",
-    modules: [...CORE],
-    navigation: [...CORE],
-    dashboard: { widgets: [], empty: { title: "Your wedding workspace is being prepared", body: "Budget, supplier balances, tasks and RSVPs will appear here." } },
-    labels: { modules: { dashboard: "Wedding Dashboard" } },
+    status: "live",
+    modules: [...CORE, "expenses", "budget", "vendors", "vendorpayments", "tasks", "guests"],
+    navigation: ["dashboard", "budget", "expenses", "vendors", "vendorpayments", "tasks", "guests", "users", "settings"],
+    dashboard: {
+      // Selected period (spending, payments made), then the current state (as of now).
+      widgets: ["weddingSpent", "weddingSupplierPaid", "weddingExpenseCount", "weddingBudgetTotal", "weddingSpentNow", "weddingRemaining", "weddingSupplierBalance", "weddingUpcoming", "weddingOpenTasks", "weddingOverdueTasks", "weddingConfirmedGuests", "weddingAwaitingRsvp", "upcomingSupplierPayments", "tasksDueSoon", "recentWeddingExpenses", "rsvpSummary"],
+      empty: { title: "Your wedding workspace is ready", body: "Set your budget, add suppliers, tasks and guests to get started." },
+      sectionLabels: { period: "Spending in the selected period", current: "Wedding plan" },
+    },
+    labels: { modules: { dashboard: "Wedding Dashboard", budget: "Wedding Budget", expenses: "Wedding Expenses", vendors: "Wedding Suppliers", vendorpayments: "Supplier Payments", tasks: "Wedding Tasks", guests: "Guests & RSVP" } },
     settings: {},
-    plannedModules: [
-      { id: "expenses", name: "Wedding Expenses" },
-      { id: "wedding-budget", name: "Budget" },
-      { id: "wedding-suppliers", name: "Wedding Suppliers" },
-      { id: "supplier-payments", name: "Supplier Payments" },
-      { id: "supplier-balances", name: "Supplier Balances" },
-      { id: "payment-due-dates", name: "Payment Due Dates" },
-      { id: "wedding-tasks", name: "Wedding Tasks / To-Do List" },
-      { id: "guests", name: "Guests / Invitees" },
-      { id: "rsvp", name: "RSVP Tracking" },
-      { id: "wedding-reports", name: "Reports" },
-    ],
+    plannedModules: [{ id: "wedding-reports", name: "Reports" }],
   },
 ];
 

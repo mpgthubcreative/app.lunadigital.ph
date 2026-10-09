@@ -113,13 +113,13 @@ service cloud.firestore {
     // (shared/modules.js) and LIMIT_DEFINITIONS / FEATURE_DEFINITIONS
     // (shared/plans.seed.js); tests/shared/rules-registry.test.js checks.
     function moduleIds() {
-      return ['dashboard', 'orders', 'payments', 'inventory', 'customers', 'reports', 'expenses', 'imports', 'household', 'attendance', 'payroll', 'advances', 'budget', 'schedule', 'providers', 'users', 'settings', 'suppliers', 'production', 'returns'];
+      return ['dashboard', 'orders', 'payments', 'inventory', 'customers', 'reports', 'expenses', 'imports', 'household', 'attendance', 'payroll', 'advances', 'budget', 'schedule', 'providers', 'vendors', 'vendorpayments', 'tasks', 'guests', 'users', 'settings', 'suppliers', 'production', 'returns'];
     }
 
     // Keys every snapshot must carry. During a module's staged rollout
     // (shared/modules.js ROLLING_OUT_MODULE_IDS) its key may still be
-    // missing from older snapshots, where it reads as off. No rollout is
-    // open now: every key is required.
+    // missing from older snapshots, where it reads as off. Phase 16 rollout
+    // (compatible step): vendors, vendorpayments, tasks and guests may be missing.
     function requiredModuleIds() {
       return ['dashboard', 'orders', 'payments', 'inventory', 'customers', 'reports', 'expenses', 'imports', 'household', 'attendance', 'payroll', 'advances', 'budget', 'schedule', 'providers', 'users', 'settings', 'suppliers', 'production', 'returns'];
     }
@@ -157,6 +157,10 @@ service cloud.firestore {
         && m.budget is bool
         && m.schedule is bool
         && m.providers is bool
+        && m.get('vendors', false) is bool
+        && m.get('vendorpayments', false) is bool
+        && m.get('tasks', false) is bool
+        && m.get('guests', false) is bool
         && m.suppliers == false
         && m.production == false
         && m.returns == false;
@@ -196,7 +200,7 @@ service cloud.firestore {
     // OPERATIONAL (built) modules it allows (core included). tests/shared/rules-registry.test.js
     // fails if these drift from the registry.
     function workspaceTemplateVersions() {
-      return {'distributor': [5], 'household-payroll': [2], 'baby-expense': [2], 'bridal-expense': [1]};
+      return {'distributor': [5], 'household-payroll': [2], 'baby-expense': [2], 'bridal-expense': [1, 2]};
     }
 
     function workspaceTemplateModules() {
@@ -204,7 +208,7 @@ service cloud.firestore {
         'distributor': ['dashboard', 'users', 'settings', 'orders', 'payments', 'inventory', 'customers', 'expenses', 'reports', 'imports'],
         'household-payroll': ['dashboard', 'users', 'settings', 'household', 'attendance', 'payroll', 'advances'],
         'baby-expense': ['dashboard', 'users', 'settings', 'expenses', 'budget', 'schedule', 'providers'],
-        'bridal-expense': ['dashboard', 'users', 'settings']
+        'bridal-expense': ['dashboard', 'users', 'settings', 'expenses', 'budget', 'vendors', 'vendorpayments', 'tasks', 'guests']
       };
     }
 
@@ -319,6 +323,15 @@ service cloud.firestore {
       match /spendingMetrics/{id}       { allow read: if canAccessModule(bid, 'budget', 'budget.view'); }
       match /scheduledPayments/{id}     { allow read: if canAccessModule(bid, 'schedule', 'schedule.view'); }
       match /providers/{id}             { allow read: if canAccessModule(bid, 'providers', 'providers.view'); }
+
+      // Phase 16: Bridal / Wedding (Wedding Expenses are expenses/, the
+      // Wedding Budget is budgets/ + expenseCategories/ + spendingMetrics/).
+      match /weddingSuppliers/{id}      { allow read: if canAccessModule(bid, 'vendors', 'vendors.view'); }
+      match /supplierPayments/{id}      { allow read: if canAccessModule(bid, 'vendorpayments', 'vendorpayments.view'); }
+      match /weddingTasks/{id}          { allow read: if canAccessModule(bid, 'tasks', 'tasks.view'); }
+      match /taskTotals/{id}            { allow read: if canAccessModule(bid, 'tasks', 'tasks.view'); }
+      match /guests/{id}                { allow read: if canAccessModule(bid, 'guests', 'guests.view'); }
+      match /guestTotals/{id}           { allow read: if canAccessModule(bid, 'guests', 'guests.view'); }
 
       match /imports/{id} {
         allow read: if canAccessModule(bid, 'imports', 'imports.run');

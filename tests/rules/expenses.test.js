@@ -28,8 +28,8 @@ beforeAll(async () => {
       await seedMember(db, bid, `owner@${bid}`, { role: "owner", isAccountOwner: true });
       await db.doc(`businesses/${bid}/expenses/${EID}`).set({ amount: 1 });
     }
-    // A bridal snapshot forged to claim Expenses: the rules re-check the template.
-    const forged = businessDoc("Forged bridal", "active", { planId: "pro", workspaceTemplateId: "bridal-expense" });
+    // A household snapshot forged to claim Expenses: the rules re-check the template.
+    const forged = businessDoc("Forged household", "active", { planId: "pro", workspaceTemplateId: "household-payroll" });
     forged.entitlements.modules.expenses = true;
     await db.doc("businesses/exp-forged").set(forged);
     await seedMember(db, "exp-forged", "owner@exp-forged", { role: "owner", isAccountOwner: true });
@@ -77,12 +77,12 @@ describe("reading expenses", () => {
     await assertFails(get("ownerExpOff", `businesses/exp-off/expenses/${EID}`));
   });
 
-  it("bridal never reads expenses (planned there, not operational); Baby does (Phase 15: Baby Expenses)", async () => {
-    await assertFails(get("owner@exp-bridal-expense", `businesses/exp-bridal-expense/expenses/${EID}`));
+  it("Baby (Phase 15) and Bridal (Phase 16) read their own Expenses", async () => {
+    await assertSucceeds(get("owner@exp-bridal-expense", `businesses/exp-bridal-expense/expenses/${EID}`));
     await assertSucceeds(get("owner@exp-baby-expense", `businesses/exp-baby-expense/expenses/${EID}`));
   });
 
-  it("a bridal snapshot forged to claim Expenses still can't read them (template ceiling in the rules)", async () => {
+  it("a household snapshot forged to claim Expenses still can't read them (template ceiling in the rules)", async () => {
     await assertFails(get("owner@exp-forged", `businesses/exp-forged/expenses/${EID}`));
   });
 
