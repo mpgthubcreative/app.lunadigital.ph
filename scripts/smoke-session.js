@@ -309,6 +309,21 @@ const checks = [
     const bytes = new Uint8Array(await res.arrayBuffer());
     return res.status === 200 && /spreadsheetml/.test(res.headers.get("content-type")) && bytes[0] === 0x50 && bytes[1] === 0x4b && /Luna_Inventory_\d{4}-\d{2}-\d{2}\.xlsx/.test(res.headers.get("content-disposition"));
   }],
+
+  // Phase 13: notifications (own inbox only; writes through the API).
+  ["POST /api/notifications without a token → 401", async () => (await post("notifications", { action: "readAll" })).status === 401],
+  ["staff.a reads its own inbox and counter; owner.a can't read manager.a's", async () => {
+    const staff = (await session({ as: "staff.a" })).body.user.uid;
+    const manager = (await session({ as: "manager.a" })).body.user.uid;
+    const own = await fsQuery("staff.a", `businesses/${A}/members/${staff}`, "inbox");
+    const counter = await fsGet("staff.a", `businesses/${A}/members/${staff}/inboxState/summary`);
+    return own === 200 && [200, 404].includes(counter) && (await fsGet("owner.a", `businesses/${A}/members/${manager}/inboxState/summary`)) === 403 && (await fsQuery("owner.a", `businesses/${A}/members/${manager}`, "inbox")) === 403;
+  }],
+  ["owner.a selecting B can't touch B's notifications (403)", async () => (await post("notifications", { action: "readAll" }, { as: "owner.a", businessId: B })).body.error === "business-access-denied"],
+  ["unknown notification actions and switching off payment alerts are refused (400)", async () =>
+    (await post("notifications", { action: "delete" }, { as: "owner.a" })).status === 400 &&
+    (await post("notifications", { action: "preferences", preferences: { payments: { inApp: false } } }, { as: "owner.a" })).body.error === "mandatory-notification"],
+  ["staff.a can mark its own notifications read", async () => (await post("notifications", { action: "readAll" }, { as: "staff.a" })).status === 200],
 ];
 
 console.log(`Smoke-testing ${baseUrl}\n`);

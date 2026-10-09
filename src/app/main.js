@@ -45,9 +45,13 @@ let pendingLoginNotice = "";
 
 setTokenProvider(currentIdToken);
 
+let currentShell = null;
+
 function stopRouter() {
   if (router) router.stop();
   router = null;
+  if (currentShell) currentShell.stopNotifications();
+  currentShell = null;
 }
 
 // The auth listener renders the login screen once sign-out completes;
@@ -116,6 +120,7 @@ function mountApp(session) {
       startApp();
     },
   });
+  currentShell = shell;
 
   let cleanup = null;
   let navToken = 0;

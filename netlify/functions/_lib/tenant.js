@@ -108,6 +108,8 @@ async function evaluateCandidate(db, uid, businessId) {
         roleLabel: (roleTemplate && ROLE_TEMPLATES[roleTemplate]?.label) || "Custom",
         isAccountOwner: member.isAccountOwner === true,
         status: member.status,
+        // Their own notification choices (Phase 13), for the settings screen.
+        notificationPreferences: member.notificationPreferences && typeof member.notificationPreferences === "object" ? member.notificationPreferences : {},
       },
       permissions: effectivePermissions(member.permissions, policy),
       subscription: {

@@ -46,6 +46,7 @@ import {
 import { prorate } from "../../../shared/quantity.js";
 import { businessDate } from "../../../shared/metrics.js";
 import { prepareMovements } from "./inventory.js";
+import { prepareNotifications } from "./notifications.js";
 import { recordDailyMetrics, adjustCurrentMetrics } from "./metrics.js";
 
 const TX_OPTIONS = { maxAttempts: 10 };
@@ -515,6 +516,15 @@ export async function setFulfillmentStage({ db, tenant, FieldValue, orderId, sta
     const order = snap.data();
     if (!isOpenFulfillment(order.fulfillmentStatus)) throw new OrderError("not-pending", `This order is already ${order.fulfillmentStatus}`);
     if (order.fulfillmentStatus === stage) return { orderId, fulfillmentStatus: stage, unchanged: true };
+    // Phase 13: "Ready" is the one stage worth telling the people who
+    // fulfill (not the person who set it). Other stage changes stay quiet.
+    // The order's new revision makes each move to Ready its own event.
+    const name = order.customer?.name ? ` for ${order.customer.name}` : "";
+    const notes = await prepareNotifications(tx, {
+      tenant,
+      actor,
+      events: stage === "ready" ? [{ type: "order.ready", key: `${orderId}-r${order.revision + 1}`, title: "Order ready", message: `${order.orderNumber}${name} is ready for fulfillment.`, recordType: "order", recordId: orderId }] : [],
+    });
     tx.update(ref, {
       fulfillmentStatus: stage,
       statusHistory: appendHistory(order, historyEntry("stage", actor, { from: order.fulfillmentStatus, to: stage })),
@@ -522,6 +532,7 @@ export async function setFulfillmentStage({ db, tenant, FieldValue, orderId, sta
       updatedBy: actor,
       updatedAt: FieldValue.serverTimestamp(),
     });
+    notes.commit({ FieldValue });
     return { orderId, fulfillmentStatus: stage };
   }, TX_OPTIONS);
 }

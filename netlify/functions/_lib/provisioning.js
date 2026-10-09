@@ -397,6 +397,8 @@ export async function addMember({
       isAccountOwner: Boolean(isAccountOwner),
       status,
       updatedAt: FieldValue.serverTimestamp(),
+      // Re-adding an existing member keeps their own notification choices (Phase 13).
+      ...(memberSnap.exists && memberSnap.data().notificationPreferences ? { notificationPreferences: memberSnap.data().notificationPreferences } : {}),
       ...(memberSnap.exists ? {} : { createdAt: FieldValue.serverTimestamp(), createdBy }),
     });
 

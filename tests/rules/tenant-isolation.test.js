@@ -71,8 +71,11 @@ describe("same tenant: reads follow the member's stored permissions", () => {
       }
     });
 
-    it(`${uid} cannot read any inbox (server-only until Phase 12)`, async () => {
-      await assertFails(dbAs(env, uid).doc(`businesses/${own}/members/${uid}/inbox/${DOC}`).get());
+    it(`${uid} reads only its OWN inbox (Phase 13), never a colleague's`, async () => {
+      const colleague = uid.startsWith("owner") ? `staff${uid.slice(-1)}` : `owner${uid.slice(-1)}`;
+      await assertSucceeds(dbAs(env, uid).doc(`businesses/${own}/members/${uid}/inbox/${DOC}`).get());
+      await assertFails(dbAs(env, uid).doc(`businesses/${own}/members/${colleague}/inbox/${DOC}`).get());
+      await assertFails(dbAs(env, uid).collection(`businesses/${own}/members/${colleague}/inbox`).get());
     });
   }
 });

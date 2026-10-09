@@ -2,10 +2,14 @@
 // Navigation comes from resolveNavigation(): plan/override entitlements ×
 // the user's permissions. No role names or plan ids are checked here.
 
-import { resolveNavigation, accessPolicy, ENVIRONMENT_LABELS, normalizeEnvironment } from "@shared/index.js";
+import { resolveNavigation, accessPolicy, ENVIRONMENT_LABELS, normalizeEnvironment, canUseNotifications } from "@shared/index.js";
 import { html, render } from "../lib/html.js";
 import { icon, lunaMark } from "../components/icons.js";
 import { initials } from "../lib/format.js";
+import { mountBell } from "./notification-bell.js";
+
+// One bell per rendered shell (a business switch renders a new shell).
+let bell = null;
 
 const SUBSCRIPTION_MESSAGES = {
   past_due: "Your subscription payment is overdue. Please settle it to avoid interruption.",
@@ -29,6 +33,9 @@ function businessSwitcher(session) {
 // handlers: { onSignOut(), onSwitchBusiness(businessId) }
 export function renderShell(root, session, handlers = {}) {
   const nav = resolveNavigation({ entitlements: session.entitlements, permissions: session.member.permissions });
+  const notifications = canUseNotifications({ entitlements: session.entitlements, permissions: session.member.permissions });
+  if (bell) bell.stop();
+  bell = null;
   const policy = accessPolicy(session.subscription.status);
   const envLabel = ENVIRONMENT_LABELS[normalizeEnvironment(session.environment)];
 
@@ -63,6 +70,7 @@ export function renderShell(root, session, handlers = {}) {
             </button>
             <div class="topbar-title" id="topbarTitle"></div>
             <div class="topbar-spacer"></div>
+            ${notifications ? html`<div class="bell-slot" id="bellSlot"></div>` : ""}
             <div class="account">
               <div class="account-text">
                 <div class="account-name">${session.user.name || session.user.email}</div>
@@ -96,6 +104,7 @@ export function renderShell(root, session, handlers = {}) {
   root.querySelector("#scrim").addEventListener("click", () => setNavOpen(false));
 
   root.querySelector("#logoutBtn").addEventListener("click", () => handlers.onSignOut && handlers.onSignOut());
+  if (notifications) bell = mountBell(root.querySelector("#bellSlot"), session, handlers.bell || {});
   const switcher = root.querySelector("#businessSelect");
   if (switcher) {
     switcher.addEventListener("change", () => handlers.onSwitchBusiness && handlers.onSwitchBusiness(switcher.value));
@@ -111,6 +120,14 @@ export function renderShell(root, session, handlers = {}) {
       });
       root.querySelector("#topbarTitle").textContent = route.label;
       document.title = `${route.label} · Luna`;
+      if (bell) {
+        bell.close();
+        bell.refresh();
+      }
+    },
+    stopNotifications() {
+      if (bell) bell.stop();
+      bell = null;
     },
   };
 }

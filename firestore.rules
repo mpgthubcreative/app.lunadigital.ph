@@ -30,7 +30,7 @@ rules_version = '2';
 //
 // Not matched here (and therefore denied): plans, users, platformAudit,
 // collection-group queries, and the server-only tenant collections
-// paymentRefs, counters, usage, auditLog, integrations, members/*/inbox,
+// paymentRefs, counters, usage, auditLog, integrations,
 // skuIndex (per-business SKU uniqueness keys), idempotencyKeys (order create-once
 // guards), reportRollups (Phase 11 report breakdowns, read only by the
 // server's GET /api/reports so money stays behind dashboard.financials).
@@ -245,6 +245,13 @@ service cloud.firestore {
         && moduleEnabled(bid, moduleId);
     }
 
+    // The caller's own inbox, with in-app notifications in their package.
+    function ownInbox(bid, uid) {
+      return signedIn()
+        && uid == request.auth.uid
+        && get(businessPath(bid)).data.get('entitlements', {}).get('features', {}).get('inAppNotifications', false) == true;
+    }
+
     // ---------- Tenant data ----------
 
     match /businesses/{bid} {
@@ -256,6 +263,13 @@ service cloud.firestore {
         allow get: if (signedIn() && uid == request.auth.uid && tenantReadable(bid))
           || canAccessModule(bid, 'users', 'users.view');
         allow list: if canAccessModule(bid, 'users', 'users.view');
+
+        // Phase 13 notifications: a member reads ONLY their own inbox and
+        // unread counter, while notifications are on for the business
+        // (core Dashboard module + the plan's inAppNotifications feature).
+        // Written only by the server (events, mark read).
+        match /inbox/{nid}      { allow read: if canAccessModule(bid, 'dashboard', 'notifications.view') && ownInbox(bid, uid); }
+        match /inboxState/{doc} { allow read: if canAccessModule(bid, 'dashboard', 'notifications.view') && ownInbox(bid, uid); }
       }
 
       match /products/{id}              { allow read: if canAccessModule(bid, 'inventory', 'inventory.view'); }

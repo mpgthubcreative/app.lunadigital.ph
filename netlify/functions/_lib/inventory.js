@@ -29,8 +29,9 @@ import {
   InventoryError,
   MOVEMENT_TYPES,
 } from "../../../shared/inventory.js";
-import { inventoryValue } from "../../../shared/quantity.js";
+import { inventoryValue, formatQuantity, UNITS } from "../../../shared/quantity.js";
 import { adjustCurrentMetrics } from "./metrics.js";
+import { prepareNotifications } from "./notifications.js";
 
 const lower = (s) => (s || "").toLocaleLowerCase("en");
 
@@ -48,6 +49,27 @@ const TX_OPTIONS = { maxAttempts: 10 };
 
 function gaugeWrites(tx, { tenant, FieldValue, lowStockDelta = 0 }) {
   if (lowStockDelta) adjustCurrentMetrics({ tx, tenant, FieldValue, operational: { lowStockProducts: lowStockDelta } });
+}
+
+// Phase 13 low-stock alerts: ONE notification each time a product crosses
+// from not-low to low (available <= reorder level). Further decreases while
+// it stays low say nothing; once it's back above the level, the next
+// crossing is a new episode (lowStockEpisode on the product, written in the
+// same transaction) and alerts again. Creating a product never alerts.
+function lowStockEvent(productId, product, available) {
+  const episode = (product.lowStockEpisode || 0) + 1;
+  const unit = UNITS[product.unit]?.label || product.unit || "";
+  return {
+    episode,
+    event: {
+      type: "inventory.low_stock",
+      key: `${productId}-${episode}`,
+      title: "Low stock",
+      message: `${product.name} is down to ${formatQuantity(available)} ${unit} available (reorder level ${formatQuantity(product.reorderLevel)}).`,
+      recordType: "product",
+      recordId: productId,
+    },
+  };
 }
 
 function audit(tx, tenant, FieldValue, entry) {
@@ -112,7 +134,9 @@ export async function updateProduct({ db, tenant, FieldValue, productId, changes
 
     const merged = { ...current, ...data };
     const low = isLowStock({ status: merged.status, available: merged.available, reorderLevel: merged.reorderLevel });
-    const update = { ...data, isLowStock: low, updatedBy: actor, updatedAt: FieldValue.serverTimestamp() };
+    const crossing = low && !current.isLowStock ? lowStockEvent(productId, merged, merged.available) : null;
+    const notes = await prepareNotifications(tx, { tenant, actor, events: crossing ? [crossing.event] : [] });
+    const update = { ...data, isLowStock: low, ...(crossing ? { lowStockEpisode: crossing.episode } : {}), updatedBy: actor, updatedAt: FieldValue.serverTimestamp() };
     if (data.name !== undefined) update.nameLower = lower(data.name);
     if (data.category !== undefined) update.categoryLower = lower(data.category);
 
@@ -124,6 +148,7 @@ export async function updateProduct({ db, tenant, FieldValue, productId, changes
     gaugeWrites(tx, { tenant, FieldValue, lowStockDelta: (low ? 1 : 0) - (current.isLowStock ? 1 : 0) });
     const before = Object.fromEntries(Object.keys(data).map((k) => [k, current[k] ?? null]));
     audit(tx, tenant, FieldValue, { type: "product.updated", productId, actor, before, after: data });
+    notes.commit({ FieldValue });
     return { productId, product: { ...merged, isLowStock: low } };
   }, TX_OPTIONS);
 }
@@ -138,9 +163,12 @@ export async function setProductStatus({ db, tenant, FieldValue, productId, stat
     if (current.status === status) return { productId, product: current };
     if (status === "inactive" && current.reserved > 0) throw new InventoryError("has-reservations", "A product with reserved stock can't be deactivated");
     const low = isLowStock({ status, available: current.available, reorderLevel: current.reorderLevel });
-    tx.update(productRef, { status, isLowStock: low, updatedBy: actor, updatedAt: FieldValue.serverTimestamp() });
+    const crossing = low && !current.isLowStock ? lowStockEvent(productId, current, current.available) : null;
+    const notes = await prepareNotifications(tx, { tenant, actor, events: crossing ? [crossing.event] : [] });
+    tx.update(productRef, { status, isLowStock: low, ...(crossing ? { lowStockEpisode: crossing.episode } : {}), updatedBy: actor, updatedAt: FieldValue.serverTimestamp() });
     gaugeWrites(tx, { tenant, FieldValue, lowStockDelta: (low ? 1 : 0) - (current.isLowStock ? 1 : 0) });
     audit(tx, tenant, FieldValue, { type: "product.status", productId, actor, before: { status: current.status }, after: { status } });
+    notes.commit({ FieldValue });
     return { productId, product: { ...current, status, isLowStock: low } };
   }, TX_OPTIONS);
 }
@@ -198,17 +226,19 @@ export async function prepareMovements(tx, { tenant, items }) {
     };
     return { item, refs: r, product, costs, state, plan: planMovement(state, item.movement) };
   });
+  for (const p of planned) p.crossing = p.plan.next.isLowStock && !p.product.isLowStock ? lowStockEvent(p.item.productId, p.product, p.plan.next.available) : null;
+  const notes = await prepareNotifications(tx, { tenant, events: planned.map((p) => p.crossing?.event) });
 
   function commit({ actor, FieldValue }) {
     const now = FieldValue.serverTimestamp();
     let lowStockDelta = 0;
-    for (const { item, refs: r, product, costs, state, plan } of planned) {
+    for (const { item, refs: r, product, costs, state, plan, crossing } of planned) {
       const m = item.movement;
       const { next } = plan;
       const seq = next.movementCount;
       const txRef = tenant.collection("inventoryTransactions").doc();
 
-      tx.update(r.product, { onHand: next.onHand, reserved: next.reserved, available: next.available, isLowStock: next.isLowStock, movementCount: seq, updatedAt: now });
+      tx.update(r.product, { onHand: next.onHand, reserved: next.reserved, available: next.available, isLowStock: next.isLowStock, ...(crossing ? { lowStockEpisode: crossing.episode } : {}), movementCount: seq, updatedAt: now });
       tx.update(r.costs, {
         avgCostUnits: next.avgCostUnits,
         inventoryValue: plan.valueAfter,
@@ -251,6 +281,7 @@ export async function prepareMovements(tx, { tenant, items }) {
       lowStockDelta += (next.isLowStock ? 1 : 0) - (product.isLowStock ? 1 : 0);
     }
     gaugeWrites(tx, { tenant, FieldValue, lowStockDelta });
+    notes.commit({ FieldValue, actor });
     return planned.map(({ item, plan }) => ({ productId: item.productId, transactionId: plan.transactionId, next: plan.next, costConsumed: plan.costConsumed }));
   }
 

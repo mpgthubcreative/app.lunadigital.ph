@@ -254,8 +254,14 @@ export class FakeFirestore {
   }
   async runTransaction(fn) {
     const writes = [];
+    // Like Firestore: every read in a transaction must come before its writes.
+    const read = (fn) => {
+      if (writes.length) throw new Error("fake: Firestore transactions require all reads to be executed before all writes");
+      return fn();
+    };
     const tx = {
-      get: (target) => target.get(),
+      get: (target) => read(() => target.get()),
+      getAll: (...refs) => read(() => Promise.all(refs.map((r) => r.get()))),
       set: (ref, data, options) => writes.push(() => this._set(ref.path, data, options)),
       update: (ref, data) => writes.push(() => this._update(ref.path, data)),
       create: (ref, data) =>

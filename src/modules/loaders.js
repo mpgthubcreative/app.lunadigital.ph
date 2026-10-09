@@ -15,4 +15,6 @@ export const MODULE_LOADERS = {
   imports: () => import("./imports/index.js"),
   users: () => import("./users/index.js"),
   settings: () => import("./settings/index.js"),
+  // Not a module in shared/modules.js: the core Notifications page (Phase 13).
+  notifications: () => import("./notifications/index.js"),
 };

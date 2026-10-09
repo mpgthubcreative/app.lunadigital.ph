@@ -7,17 +7,24 @@
 // requireTenant() on the server, so a tampered session or URL reveals
 // nothing; this just keeps the screen honest.
 
-import { resolveNavigation, canUseModule } from "@shared/index.js";
+import { resolveNavigation, canUseModule, canUseNotifications } from "@shared/index.js";
 import { html, render } from "../lib/html.js";
 import { pageHeader, card, emptyState } from "../components/ui.js";
 
 const accessOf = (session) => ({ entitlements: session.entitlements, permissions: session.member.permissions });
 
+// Phase 13: Notifications is a core capability, not a navigation module;
+// its page is reached from the bell.
+const NOTIFICATIONS_ROUTE = Object.freeze({ path: "/notifications", label: "Notifications", moduleId: "notifications" });
+
 export function buildRoutes(session) {
-  return resolveNavigation(accessOf(session)).map((mod) => ({ path: mod.path, label: mod.label, moduleId: mod.id }));
+  const routes = resolveNavigation(accessOf(session)).map((mod) => ({ path: mod.path, label: mod.label, moduleId: mod.id }));
+  if (canUseNotifications(accessOf(session))) routes.push({ ...NOTIFICATIONS_ROUTE });
+  return routes;
 }
 
 export function routeAllowed(session, route) {
+  if (route && route.moduleId === NOTIFICATIONS_ROUTE.moduleId) return canUseNotifications(accessOf(session));
   return Boolean(route && route.moduleId) && canUseModule(accessOf(session), route.moduleId);
 }
 

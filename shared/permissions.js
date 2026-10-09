@@ -24,6 +24,10 @@ export const PERMISSIONS = Object.freeze({
   // An export also needs the data's module + view permission, and money /
   // cost columns their own permissions. Reports keeps reports.export.
   "data.export": { module: "dashboard", group: "Exports", label: "Download Excel exports of data they can view" },
+  // Phase 13: the in-app notification inbox (core, every workspace). WHICH
+  // notifications a member gets follows the target module permissions
+  // (shared/notifications.js), not separate notification permissions.
+  "notifications.view": { module: "dashboard", group: "Notifications", label: "Receive and read in-app notifications" },
 
   "orders.view": { module: "orders", group: "Orders", label: "View orders" },
   "orders.create": { module: "orders", group: "Orders", label: "Create orders" },
@@ -93,6 +97,7 @@ export const ROLE_TEMPLATES = Object.freeze({
     description: "Encodes and updates orders and payments. No reports, team or settings.",
     permissions: [
       "dashboard.view",
+      "notifications.view",
       "orders.view",
       "orders.create",
       "orders.update",

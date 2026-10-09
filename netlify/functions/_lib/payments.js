@@ -33,6 +33,7 @@ import {
 import { isValidOrderId, MAX_HISTORY_ENTRIES } from "../../../shared/orders.js";
 import { businessDate } from "../../../shared/metrics.js";
 import { recordDailyMetrics, adjustCurrentMetrics } from "./metrics.js";
+import { prepareNotifications, prepareResolution } from "./notifications.js";
 
 const TX_OPTIONS = { maxAttempts: 10 };
 const peso = (c) => `₱${(c / 100).toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -133,8 +134,16 @@ export async function recordPayment({ db, bucket, tenant, FieldValue, business, 
 
       const verified = canVerify === true;
       const fields = orderPaymentFields(order, verified ? { verifiedDelta: data.amount } : { pendingDelta: data.amount });
-      const stamp = FieldValue.serverTimestamp();
       const label = PAYMENT_METHODS[data.method].label;
+      // Phase 13: whoever can verify hears about a payment that needs it.
+      const notes = verified
+        ? null
+        : await prepareNotifications(tx, {
+            tenant,
+            actor,
+            events: [{ type: "payment.awaiting_verification", key: paymentRef.id, title: "Payment awaiting verification", message: `${peso(data.amount)} ${label} received for ${order.orderNumber}.`, recordType: "payment", recordId: paymentRef.id }],
+          });
+      const stamp = FieldValue.serverTimestamp();
       const payment = {
         schemaVersion: PAYMENT_SCHEMA_VERSION,
         orderId,
@@ -173,6 +182,7 @@ export async function recordPayment({ db, bucket, tenant, FieldValue, business, 
       applyRollup(tx, { tenant, FieldValue, day, delta: paymentContribution(data) });
       balanceGauges(tx, { tenant, FieldValue, before: order.total - (order.amountPaid || 0), after: fields.balance });
     applyCustomerStats(tx, { tenant, FieldValue, customerId: order.customerId, balance: fields.balance - (order.total - (order.amountPaid || 0)) });
+      if (notes) notes.commit({ FieldValue });
       return { paymentId: paymentRef.id, orderId, state: payment.state, ...fields };
     }, TX_OPTIONS);
   } catch (err) {
@@ -286,10 +296,12 @@ export async function verifyPayment({ db, tenant, FieldValue, paymentId, actor }
     const orderRef = tenant.doc("orders", payment.orderId);
     const order = (await tx.get(orderRef)).data();
     const fields = orderPaymentFields(order, { verifiedDelta: payment.amount, pendingDelta: -payment.amount });
+    const resolution = await prepareResolution(tx, { tenant, type: "payment.awaiting_verification", key: paymentId });
     const stamp = FieldValue.serverTimestamp();
     const entry = { type: "verified", at: historyAt(), actor, label: "Payment marked verified" };
     tx.update(r.payment, { state: "verified", verifiedBy: actor, verifiedAt: stamp, history: append(payment.history, entry), revision: (payment.revision || 1) + 1, updatedBy: actor, updatedAt: stamp });
     tx.update(orderRef, { ...fields, statusHistory: append(order.statusHistory, { ...entry, paymentId }), updatedBy: actor, updatedAt: stamp });
+    resolution.commit({ FieldValue });
     return { paymentId, orderId: payment.orderId, ...fields };
   }, TX_OPTIONS);
 }
@@ -311,6 +323,7 @@ export async function voidPayment({ db, tenant, FieldValue, business, paymentId,
     const orderRef = tenant.doc("orders", payment.orderId);
     const order = (await tx.get(orderRef)).data();
     const fields = orderPaymentFields(order, payment.state === "verified" ? { verifiedDelta: -payment.amount } : { pendingDelta: -payment.amount });
+    const resolution = payment.state === "for_verification" ? await prepareResolution(tx, { tenant, type: "payment.awaiting_verification", key: paymentId }) : null;
     const stamp = FieldValue.serverTimestamp();
     const entry = { type: "voided", at: historyAt(), actor, reason: why, amount: payment.amount, label: `Payment removed ${peso(payment.amount)}` };
     tx.update(r.payment, { state: "voided", voidedBy: actor, voidedAt: stamp, voidReason: why, previousState: payment.state, referenceKey: null, history: append(payment.history, entry), revision: (payment.revision || 1) + 1, updatedBy: actor, updatedAt: stamp });
@@ -328,6 +341,7 @@ export async function voidPayment({ db, tenant, FieldValue, business, paymentId,
     applyRollup(tx, { tenant, FieldValue, day: payment.receivedDay, delta: diffRollup({}, paymentContribution(payment)) });
     balanceGauges(tx, { tenant, FieldValue, before: order.total - (order.amountPaid || 0), after: fields.balance });
     applyCustomerStats(tx, { tenant, FieldValue, customerId: order.customerId, balance: fields.balance - (order.total - (order.amountPaid || 0)) });
+    if (resolution) resolution.commit({ FieldValue });
     return { paymentId, orderId: payment.orderId, voided: true, ...fields };
   }, TX_OPTIONS);
 }

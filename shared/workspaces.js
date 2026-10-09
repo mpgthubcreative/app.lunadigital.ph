@@ -89,7 +89,6 @@ const TEMPLATES = [
       { id: "suppliers", name: "Suppliers" },
       { id: "production", name: "Production" },
       { id: "returns", name: "Returns" },
-      { id: "notifications", name: "Notifications" },
     ],
   },
   {

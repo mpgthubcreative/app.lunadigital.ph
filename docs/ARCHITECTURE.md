@@ -53,7 +53,8 @@ platformAudit/{id}                super-admin actions incl. support access to te
 businesses/{bid}                  profile, timezone, orderPrefix, subscription{planId,status,...},
                                   moduleOverrides, limitOverrides, entitlements (server snapshot)
   members/{uid}                   { roleTemplate, permissionOverrides, permissions{}, status, isAccountOwner }
-    inbox/{id}                    in-app notifications (client may only set readAt)
+    inbox/{id}                    Phase 13 notifications, one per recipient          (own uid + notifications.view)
+    inboxState/summary            { unread } for the bell                            (own uid + notifications.view)
   products/{id}                   master data + onHand, reserved, available, isLowStock   (inventory.view)
   productCosts/{id}               avgCostUnits, lastReceiptUnitCost, inventoryValue       (inventory.costs)
   skuIndex/{SKU}                  { productId }: per-business SKU uniqueness              (server only)
@@ -127,7 +128,7 @@ Every future endpoint repeats this through `requireTenant(event, { permission, m
 
 This mapping lives in `shared/modules.js` (`collections`, `storage`). The rules keep their own copy, and `tests/shared/rules-registry.test.js` fails if the two drift.
 
-Server-only, never readable from the browser: `users`, `plans`, `platformAudit`, `paymentRefs`, `counters`, `usage`, `auditLog`, `integrations`, `members/*/inbox`, and every collection-group query. The inbox `readAt` write is deferred to Phase 13 (Notifications).
+Server-only, never readable from the browser: `users`, `plans`, `platformAudit`, `paymentRefs`, `counters`, `usage`, `auditLog`, `integrations`, and every collection-group query. Since Phase 13 a member reads their OWN `members/{uid}/inbox` and `inboxState` (`notifications.view` + the plan's in-app notifications); read state changes only through `POST /api/notifications`.
 
 In Storage, `tenants/{bid}/{products|payments|imports|exports}/**` belongs to the inventory, payments, imports and reports modules, and is readable with `inventory.view`, `payments.view`, `imports.run` and `reports.export` respectively. It uses the same membership, subscription and entitlement checks through cross-service Firestore reads. To keep it to two document reads, Storage skips the plan-existence check. Everything else is denied, and there are no browser uploads. Deployed to staging in Phase 8 (bucket in us-west1) and verified live. The cross-service reads need the Firebase Storage service agent to hold `roles/firebaserules.firestoreServiceAgent`; the Firebase CLI deploy does not grant it, so it is a one-time account-side IAM step per project.
 
@@ -449,7 +450,7 @@ There are no combined ids such as `distributor-growth`. Every plan works with ev
 
 | Template | Status | Allows (besides Dashboard, Users, Settings) | Planned (metadata only) |
 |---|---|---|---|
-| `distributor` (v4) | live | orders, payments, inventory, customers (Phase 9), expenses (Phase 10, "Operating Expenses"), reports (Phase 11) | imports, suppliers, production, returns, notifications |
+| `distributor` (v5) | live | orders, payments, inventory, customers (Phase 9), expenses (Phase 10, "Operating Expenses"), reports (Phase 11), imports (Phase 12) | suppliers, production, returns (notifications became a core capability in Phase 13) |
 | `household-payroll` | planned | — | household staff, payroll, salary payments, receipt confirmation, advances, deductions, payroll history, reports |
 | `baby-expense` | planned | — | expenses ("Baby Expenses"), budget, categories, providers, payments, due dates, milestones, reports |
 | `bridal-expense` | planned | — | expenses ("Wedding Expenses"), budget, suppliers, supplier payments and balances, payment due dates, wedding tasks, guests, RSVP, reports |
@@ -949,6 +950,97 @@ Every workbook ends with an **Export info** sheet (business, data, filters, rows
 - **Reads:** Today is still 4 documents. A full year is at most about 72 per collection.
 - **Download Excel** (`data.export`) produces the workbook for the period on screen.
 
+## Notifications (Phase 13)
+
+A shared Luna capability: **event → rule → recipients → channels → read state**. It answers "what happened, or what needs my attention?" It is not built for volume. Only operational items that need someone are notified.
+
+### Shape
+| Piece | Where | What |
+|---|---|---|
+| Rules (types) | `shared/notifications.js` `NOTIFICATION_TYPES` | Each type has a category, a module, the permissions a recipient needs, whether the actor is excluded, and a link (a label and an internal route). Workspace-agnostic. |
+| Producer API | `netlify/functions/_lib/notifications.js` | `prepareNotifications(tx, …)` in the read phase of the business event's own transaction, then `commit()`. `prepareResolution` marks an item dealt with. `markRead`, `markAllRead`, `setPreferences`. |
+| Endpoint | `POST /api/notifications` | `read`, `readAll`, `preferences`, for the caller's own inbox only. The uid always comes from the token. |
+| Screens | `src/app/notification-bell.js`, `src/modules/notifications/` | The bell and drawer in the shell, and the `/notifications` page with history, filters and preferences. |
+
+### Data model
+```
+businesses/{bid}/members/{uid}/inbox/{notificationId}
+  { schemaVersion, businessId, recipientUid, type, category, module, title, message,
+    recordType, recordId, action{label,route}, eventKey, actorName,
+    read, readAt, resolved, resolvedAt, delivery{inApp,email,push}, createdAt }
+businesses/{bid}/members/{uid}/inboxState/summary   { unread, updatedAt }
+businesses/{bid}/members/{uid}.notificationPreferences   { [category]: { inApp } }
+```
+- One document per recipient, so read state is per person.
+- No secrets and no raw payloads. Payment proof paths and URLs never appear.
+- The `notificationId` is deterministic: `{type}__{eventKey}`.
+
+### Distributor rules (the only ones in Phase 13)
+| Type | Trigger (server event) | Recipients | Category / in-app |
+|---|---|---|---|
+| `payment.awaiting_verification` | A payment is recorded by someone without `payments.verify`, so it lands in the "For verification" state. Event key: the payment id. | `payments.view` + `payments.verify` (Owner, Manager); never the recorder | payments, **mandatory** |
+| `inventory.low_stock` | A product crosses from not-low to low (`available <= reorderLevel`). This happens through any stock movement (including order reservations and fulfilment), a reorder-level edit or a reactivation. Creating a product never alerts. Event key: `{productId}-{lowStockEpisode}`. | `inventory.view` + `inventory.receive` (Owner, Manager) | inventory, default on |
+| `order.ready` | An order moves to Ready, which is the only stage change worth telling. Event key: `{orderId}-r{revision}`. | `orders.view` + `orders.fulfill`, excluding whoever set it | orders, default on |
+
+- **Low stock re-alert policy:** further decreases while a product is low say nothing. Once it is back above its level, the next crossing increments `lowStockEpisode` on the product (in the same transaction) and alerts again.
+- **No "payment overdue" rule.** Luna has no due dates or credit terms, so an unpaid balance isn't "overdue". Unpaid orders stay visible on the Dashboard and in Reports.
+- **Resolution:** verifying or removing a payment that awaited verification marks every recipient's copy resolved. It also drops that copy from their unread count. Reading is per person, but resolution is a business fact. Low-stock and ready notifications aren't auto-resolved.
+
+### Recipients
+A member gets a notification only when all of these hold:
+- the membership is **active**
+- the stored permission map has `notifications.view` and every permission the rule needs
+- the rule's **module** is enabled for the business, with the workspace template as the ceiling
+- the plan has `features.inAppNotifications`
+- their preferences allow it
+
+A Bridal, Payroll or Baby business can never receive a low-stock or payment notification, because those modules aren't in its template. Malformed member data skips that member and never fails the event.
+
+### Consistency model
+- Notifications are written **in the same Firestore transaction** as the event. A payment, movement or stage change and its notifications commit together or not at all. Nothing half-applied, nothing silently lost.
+- The notification code adds reads only when an event actually notifies: the business doc, active members, and the recipients' would-be notification ids.
+- It has no external calls, so it can't make a valid operation fail on its own account.
+- **Idempotency:** deterministic ids plus an existence check inside the transaction. HTTP retries are refused by the domain itself (duplicate payment reference; a stage that's already Ready). Concurrent requests serialize on the documents they touch.
+- **Unread counter:** creation increments it in the same transaction. Mark read and read-all read the counter in their transaction and write the exact value, clamped at 0. Read-all marks in chunks of 200, and the last chunk sets 0 exactly, which also repairs any drift.
+- Concurrency tests on the emulator (`tests/emulator/notifications-concurrency.test.js`) check that the counter always equals the number of unread notifications. They cover retries, crossings, reads, read-all and resolution racing new notifications.
+
+### Read path and security
+- **Rules:** a member reads only `members/{their uid}/inbox/*` and `inboxState/*`. This needs `notifications.view` (core Dashboard module) and the plan feature. No collection-group reads and no browser writes.
+- **The bell** reads one document (the counter) on navigation, on tab focus, after a read, and every minute while visible. The drawer reads the latest 8 only when opened.
+- **The page** pages 20 at a time (`createdAt desc`, id as tiebreak), with All/Unread and category filters. Composite indexes exist for the inbox filters.
+- **A link is a convenience.** The destination checks access like any navigation. When the user no longer holds a rule's permissions, the row shows "No access" and no link.
+- Disabled members, other members, other businesses and cancelled accounts read nothing.
+
+### Preferences
+- Per category, in-app only for now. Self-service under `notifications.view`, with no separate permission.
+- **Payments awaiting verification** is mandatory in-app: it needs someone's action and nothing else surfaces it.
+- **Low stock** and **Orders ready** can be switched off.
+
+### Channels
+| Channel | Phase 13 |
+|---|---|
+| In-app | **Delivered.** It is the record of truth. |
+| Email | **Deferred.** Luna has no email provider. Adding one (for example Resend or Postmark: an account, a sending domain and a server-only API key) is a new infrastructure and billing decision that needs approval. |
+| Browser push | **Deferred.** It needs FCM, a service worker, VAPID keys and token storage. Tokens would sit under `members/{uid}/devices` (server-written, revoked on sign-out or expiry). Push is never authoritative. |
+
+The architecture is ready for both:
+- channel definitions (`NOTIFICATION_CHANNELS`)
+- opt-in channel preferences (`wantsChannel`)
+- a per-notification `delivery` state (`email` / `push`: `not_sent`)
+
+Delivery would run **after** the transaction commits, never inside it.
+
+### Not built (later)
+- **Scheduled producers.** "Task due tomorrow", "salary due" and "RSVP deadline" need a scheduled evaluation. They would be a scheduled Netlify function calling the same producer API with deterministic keys (for example `task-123-2026-10-09`). No Distributor rule needs one yet, so there is no scheduler.
+- **Future workspace types**, each with its own module and permissions:
+  - Payroll: salary ready for payment, advance approved but not paid, salary released / receipt pending, receipt confirmed.
+  - Bridal: task due or overdue, supplier payment due, RSVP deadline.
+  - Baby: upcoming payment, budget threshold, milestone reminder.
+- **Retention cleanup** of old read notifications: automatic and server-side when needed.
+- **Excel export** of the inbox. The Export Core can add it.
+- **Not planned:** analytics, SMS, chat apps, webhooks, campaigns.
+- **No audit-log entries** for reads; the inbox is its own history.
+
 ## Performance
 
 - The dashboard reads at most four summary documents (see above), plus small limited list queries once Orders and Inventory exist.
@@ -1008,7 +1100,7 @@ On Orders, Reference and Proof show "—" until Payments (Phase 8) fills them in
 11. Reports (incl. operating P&L) ✅
 12. Imports ✅
 12.5. Dashboard filters + Excel Export Core ✅
-13. Notifications
+13. Notifications ✅
 14. Super Admin console
 15. Usage metering views
 16. Reliability, backups and recovery
