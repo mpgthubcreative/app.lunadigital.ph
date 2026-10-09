@@ -87,6 +87,34 @@ describe("A. payment awaiting verification", () => {
     expect(JSON.stringify(allNotifications().map((p) => docAt(p)))).not.toMatch(/proof|tenants\//);
   });
 
+  it("the notification exists exactly when the STORED payment state is For Verification (every method, both recorders)", async () => {
+    const orderId = await orderOf(await product());
+    const cases = [];
+    for (const method of ["cash", "cod", "gcash", "maya", "bank_transfer", "other"]) {
+      for (const canVerify of [false, true]) {
+        const reference = ["gcash", "maya", "bank_transfer"].includes(method) ? `ST${method.slice(0, 2).toUpperCase()}${canVerify ? 1 : 0}${++k}` : undefined;
+        const { paymentId } = await pay(orderId, { amount: 100, method, ...(reference ? { reference } : {}) }, { canVerify, actor: canVerify ? owner : staff });
+        cases.push(paymentId);
+      }
+    }
+    for (const paymentId of cases) {
+      const state = docAt(`businesses/biz-a/payments/${paymentId}`).state;
+      const notified = Boolean(docAt(`businesses/biz-a/members/${world.uids.ownera}/inbox/${notificationId("payment.awaiting_verification", paymentId)}`));
+      expect(notified, `${paymentId}: ${state}`).toBe(state === "for_verification");
+    }
+    expect(unreadOf(world.uids.ownera)).toBe(cases.filter((p) => docAt(`businesses/biz-a/payments/${p}`).state === "for_verification").length);
+  });
+
+  it("Phase 8 policy unchanged: Staff Cash (no reference, no screenshot) is For Verification and notifies; Owner Cash is Verified and doesn't", async () => {
+    const orderId = await orderOf(await product());
+    const staffCash = await pay(orderId, { amount: 100, method: "cash" });
+    expect(staffCash.state).toBe("for_verification");
+    expect(inboxOf(world.uids.ownera).map((n) => n.recordId)).toEqual([staffCash.paymentId]);
+    const ownerCash = await pay(orderId, { amount: 100, method: "cash" }, { canVerify: true, actor: owner });
+    expect(ownerCash.state).toBe("verified");
+    expect(inboxOf(world.uids.ownera)).toHaveLength(1);
+  });
+
   it("a payment recorded by someone who can verify is verified at once: nobody is notified", async () => {
     const orderId = await orderOf(await product());
     await pay(orderId, { amount: 1000, method: "gcash", reference: "OWN-1" }, { canVerify: true, actor: owner });

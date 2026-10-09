@@ -78,9 +78,12 @@ const removeQuietly = async (bucket, path) => {
 
 // ---------- Helpers ----------
 
-function refs(tenant, { orderId, paymentId }) {
-  if (orderId !== undefined && !isValidOrderId(orderId)) throw new PaymentError("invalid-order", "Invalid order");
-  if (paymentId !== undefined && !isValidPaymentId(paymentId)) throw new PaymentError("invalid-payment", "Invalid payment");
+// Every id the caller asks for must be present and well-formed (a missing
+// one is a 400, never a null reference reaching Firestore).
+function refs(tenant, ids) {
+  const { orderId, paymentId } = ids;
+  if ("orderId" in ids && !isValidOrderId(orderId)) throw new PaymentError("invalid-order", "Choose a valid order for this payment");
+  if ("paymentId" in ids && !isValidPaymentId(paymentId)) throw new PaymentError("invalid-payment", "Invalid payment");
   return {
     order: orderId ? tenant.doc("orders", orderId) : null,
     payment: paymentId ? tenant.doc("payments", paymentId) : null,
@@ -135,14 +138,17 @@ export async function recordPayment({ db, bucket, tenant, FieldValue, business, 
       const verified = canVerify === true;
       const fields = orderPaymentFields(order, verified ? { verifiedDelta: data.amount } : { pendingDelta: data.amount });
       const label = PAYMENT_METHODS[data.method].label;
-      // Phase 13: whoever can verify hears about a payment that needs it.
-      const notes = verified
-        ? null
-        : await prepareNotifications(tx, {
-            tenant,
-            actor,
-            events: [{ type: "payment.awaiting_verification", key: paymentRef.id, title: "Payment awaiting verification", message: `${peso(data.amount)} ${label} received for ${order.orderNumber}.`, recordType: "payment", recordId: paymentRef.id }],
-          });
+      // The payment's authoritative state (Phase 8 policy, decided here on
+      // the server). Phase 13: the notification follows THIS state only.
+      const state = verified ? "verified" : "for_verification";
+      const notes =
+        state !== "for_verification"
+          ? null
+          : await prepareNotifications(tx, {
+              tenant,
+              actor,
+              events: [{ type: "payment.awaiting_verification", key: paymentRef.id, title: "Payment awaiting verification", message: `${peso(data.amount)} ${label} received for ${order.orderNumber}.`, recordType: "payment", recordId: paymentRef.id }],
+            });
       const stamp = FieldValue.serverTimestamp();
       const payment = {
         schemaVersion: PAYMENT_SCHEMA_VERSION,
@@ -155,7 +161,7 @@ export async function recordPayment({ db, bucket, tenant, FieldValue, business, 
         referenceKey: key,
         note: data.note || null,
         proof: stored,
-        state: verified ? "verified" : "for_verification",
+        state,
         verifiedBy: verified ? actor : null,
         verifiedAt: verified ? stamp : null,
         receivedAt: now,

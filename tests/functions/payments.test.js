@@ -242,6 +242,14 @@ describe("POST /api/payments", () => {
     return { status: res.statusCode, body: JSON.parse(res.body) };
   };
 
+  it("a missing or malformed order / payment id is a 400 with a plain message, never a 500", async () => {
+    const missingOrder = await call(world.uids.ownera, { action: "record", payment: { amount: 100, method: "cash" } });
+    expect(missingOrder).toMatchObject({ status: 400, body: { error: "invalid-order", message: "Choose a valid order for this payment" } });
+    expect(JSON.stringify(missingOrder.body)).not.toMatch(/stack|at |TypeError|\.js/);
+    expect((await call(world.uids.ownera, { action: "record", orderId: "../x", payment: { amount: 100, method: "cash" } })).status).toBe(400);
+    for (const action of ["verify", "proof", "void", "update"]) expect((await call(world.uids.ownera, { action, ...(action === "void" ? { reason: "no no" } : action === "update" ? { changes: {} } : {}) })).body.error, action).toBe("invalid-payment");
+  });
+
   it("401 first", async () => {
     expect((await handler()({ ...request({ method: "POST" }), body: "{x" })).statusCode).toBe(401);
   });
