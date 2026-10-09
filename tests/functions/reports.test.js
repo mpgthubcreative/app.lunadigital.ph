@@ -35,7 +35,7 @@ beforeEach(async () => {
 });
 
 const docAt = (p) => world.db.docs.get(p);
-const common = (now = OCT8) => ({ db: world.db, tenant: A, FieldValue, business: BIZ, actor, now });
+const common = (now = OCT8) => ({ db: world.db, tenant: A, FieldValue, business: BIZ, workspace: "distributor", actor, now });
 async function product(price, cost, qty = 100) {
   const { productId } = await createProduct({ ...common(), input: { sku: `R-${++k}`, name: `Item ${k}`, unit: "pcs", sellingPrice: price, reorderLevel: 0 } });
   await recordMovement({ ...common(), productId, movement: { type: "opening", quantity: Q(qty), unitCost: cost, note: "count" } });

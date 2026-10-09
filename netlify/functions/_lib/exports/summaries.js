@@ -14,6 +14,10 @@ import { PAYMENT_METHODS } from "../../../../shared/payments.js";
 import { EXPENSE_METHODS, expenseCategoryLabel } from "../../../../shared/expenses.js";
 import { UNITS } from "../../../../shared/quantity.js";
 import { buildReport } from "../reports.js";
+import { snapshotWorkspaceTemplateId, workspaceSectionLabel } from "../../../../shared/workspaces.js";
+import { expensesQuery, scheduledPaymentsQuery, categoriesQuery } from "../../../../shared/list-queries.js";
+import { BUDGET_DOC_ID, budgetLines, sortCategories } from "../../../../shared/baby.js";
+import { CATEGORY_BUDGET_COLUMNS, babyExpenseColumns, scheduleColumns } from "./baby.js";
 
 const NO_DATA = "No data yet";
 const fmt = (w) => (w.format === "money" ? "money" : "integer");
@@ -23,7 +27,7 @@ const period = (from, to) => (from === to ? from : `${from} to ${to}`);
 
 // ---------- Dashboard ----------
 
-async function dashboard({ filters, permissions, entitlements, timezone, now, readByIds }) {
+async function dashboard({ filters, permissions, entitlements, timezone, now, readByIds, readRows }) {
   const { from, to } = filters;
   const widgets = resolveDashboard({ entitlements, permissions }).filter((w) => w.kind === "stat");
   const periodWidgets = widgets.filter((w) => w.section === "period");
@@ -50,16 +54,50 @@ async function dashboard({ filters, permissions, entitlements, timezone, now, re
     rows: buckets,
   });
   const sheets = [summary, activity];
+  const workspace = snapshotWorkspaceTemplateId(entitlements);
   if (currentWidgets.length) {
     sheets.push(
       pairsSheet({
-        name: "Current operations",
+        name: workspaceSectionLabel(workspace, "current", "Current operations").slice(0, 31),
         timezone,
         rows: [["As of", "datetime", now, "Live figures at export time, NOT for the selected period"], ...currentWidgets.map((w) => pair(w.label, fmt(w), valueFor(w), "Current"))],
       })
     );
   }
+  if (workspace === "baby-expense") {
+    const baby = await babyDashboardSheets({ filters, permissions, timezone, readRows, readByIds });
+    sheets.push(...baby.sheets);
+    return { rowCount: periodWidgets.length + buckets.length + currentWidgets.length + baby.rowCount, sheets, note: "Selected-period spending comes from Luna's daily spending summaries. The current budget, category budgets and upcoming payments are live at export time." };
+  }
   return { rowCount: periodWidgets.length + buckets.length + currentWidgets.length, sheets, note: "Selected-period figures come from Luna's daily summaries (the same as Reports). Current operations are live at export time." };
+}
+
+// Baby Dashboard (Phase 15) extra sheets, each only with its view
+// permission: Category Budget (now), the selected period's Expenses, and
+// the Upcoming Payments (now). Never a Distributor sheet.
+async function babyDashboardSheets({ filters, permissions, timezone, readRows, readByIds }) {
+  const can = (p) => permissions[p] === true;
+  const sheets = [];
+  let rowCount = 0;
+  const cats = can("budget.view") || can("expenses.view") || can("schedule.view") ? sortCategories(await readRows("expenseCategories", categoriesQuery())) : [];
+  const names = new Map(cats.map((c) => [c.id, c.name]));
+  if (can("budget.view")) {
+    const doc = (await readByIds("budgets", [BUDGET_DOC_ID])).get(BUDGET_DOC_ID) ?? null;
+    const lines = budgetLines(doc, cats);
+    rowCount += lines.length;
+    sheets.push(tableSheet({ name: "Category Budget", columns: CATEGORY_BUDGET_COLUMNS, rows: lines, timezone }));
+  }
+  if (can("expenses.view")) {
+    const rows = await readRows("expenses", expensesQuery({ status: "active", from: filters.from, to: filters.to }));
+    rowCount += rows.length;
+    sheets.push(tableSheet({ name: "Expenses", columns: babyExpenseColumns(names), rows, timezone }));
+  }
+  if (can("schedule.view")) {
+    const rows = await readRows("scheduledPayments", scheduledPaymentsQuery({ status: "upcoming" }));
+    rowCount += rows.length;
+    sheets.push(tableSheet({ name: "Upcoming Payments", columns: scheduleColumns(names), rows, timezone }));
+  }
+  return { sheets, rowCount };
 }
 
 // ---------- Reports ----------

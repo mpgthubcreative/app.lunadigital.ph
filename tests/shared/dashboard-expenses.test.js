@@ -94,8 +94,9 @@ describe("dashboardDocuments: a fixed, tiny read set", () => {
 
   it("list widgets issue no query until their data exists (Phase 7: recent orders + low stock; Phase 14: payroll lists)", () => {
     const ready = DASHBOARD_WIDGETS.filter((x) => x.kind === "list" && x.ready).map((w) => w.id);
-    expect(ready).toEqual(["recentOrders", "lowStockItems", "attendanceToday", "payrollsToRelease", "awaitingReceipt", "advancesNotPaid"]);
-    for (const w of DASHBOARD_WIDGETS.filter((x) => x.kind === "list" && x.query)) expect(w.query.limit).toBeLessThanOrEqual(10);
+    expect(ready).toEqual(["recentOrders", "lowStockItems", "attendanceToday", "payrollsToRelease", "awaitingReceipt", "advancesNotPaid", "spendingByCategory", "upcomingPayments", "recentExpenses"]);
+    // Spending by category reads the budget's lines: bounded by MAX_CATEGORIES (50).
+    for (const w of DASHBOARD_WIDGETS.filter((x) => x.kind === "list" && x.query)) expect(w.query.limit).toBeLessThanOrEqual(w.id === "spendingByCategory" ? 50 : 10);
   });
 
   it("every widget's permission belongs to the module that owns it", () => {

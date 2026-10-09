@@ -1,0 +1,397 @@
+// Phase 15: Baby Expense Tracker on the server: Budget & Categories, Baby
+// Expenses (the Expenses Core with the Baby sink), Providers, the Payment
+// Schedule (Upcoming -> exactly one expense), threshold alerts, exports,
+// and workspace / tenant isolation.
+
+import { describe, it, expect, beforeEach } from "vitest";
+import { createBudgetHandler } from "../../netlify/functions/budget.js";
+import { createProvidersHandler } from "../../netlify/functions/providers.js";
+import { createScheduleHandler } from "../../netlify/functions/schedule.js";
+import { createExpensesHandler } from "../../netlify/functions/expenses.js";
+import { createExportsHandler } from "../../netlify/functions/exports.js";
+import { createBusiness, addMember, ensureAuthUser } from "../../netlify/functions/_lib/provisioning.js";
+import { buildWorld, request } from "../helpers/tenants.js";
+import { notificationId } from "../../shared/notifications.js";
+import { budgetSummary, budgetLines } from "../../shared/baby.js";
+import { readXlsx } from "../../shared/xlsx.js";
+
+const NOW = new Date("2026-10-16T04:00:00Z"); // Oct 16, 12:00 Manila
+const B = "biz-baby";
+const B2 = "biz-baby-2";
+const P = "₱";
+let world;
+let u;
+let clock;
+
+beforeEach(async () => {
+  world = await buildWorld();
+  clock = NOW;
+  await createBusiness({ ...world, name: "Reyes Baby", planId: "growth", workspaceTemplateId: "baby-expense", businessId: B });
+  await createBusiness({ ...world, name: "Cruz Baby", planId: "starter", workspaceTemplateId: "baby-expense", businessId: B2 });
+  await createBusiness({ ...world, name: "Santos Household", planId: "growth", workspaceTemplateId: "household-payroll", businessId: "biz-home" });
+  u = {};
+  const add = async (key, businessId, role, extra = {}) => {
+    const x = await ensureAuthUser({ auth: world.auth, email: `${key}@baby.test`, name: key });
+    await addMember({ ...world, businessId, uid: x.uid, email: x.email, name: key, roleTemplate: role, isAccountOwner: role === "owner", ...extra });
+    u[key] = x.uid;
+  };
+  await add("camille", B, "owner");
+  await add("paolo", B, "manager");
+  await add("yaya", B, "staff");
+  await add("nopay", B, "manager", { permissionOverrides: { revoke: ["expenses.create"] } });
+  await add("other", B2, "owner");
+  await add("home", "biz-home", "owner");
+});
+
+const deps = () => ({ getAdmin: async () => world, now: () => clock });
+const HANDLERS = { budget: createBudgetHandler, providers: createProvidersHandler, schedule: createScheduleHandler, expenses: createExpensesHandler };
+async function api(kind, uid, body, businessId = B) {
+  const res = await HANDLERS[kind](deps())({ ...request({ uid, businessId, method: "POST" }), body: JSON.stringify(body) });
+  return { status: res.statusCode, body: JSON.parse(res.body) };
+}
+const docAt = (p, businessId = B) => world.db.docs.get(`businesses/${businessId}/${p}`);
+const budget = () => docAt("budgets/current");
+const summary = () => budgetSummary(budget());
+const pathsUnder = (prefix) => [...world.db.docs.keys()].filter((k) => k.startsWith(prefix));
+
+async function category(name, budgetCentavos = null, uid = u.camille) {
+  const r = await api("budget", uid, { action: "createCategory", category: { name, budget: budgetCentavos } });
+  expect(r.status, JSON.stringify(r.body)).toBe(201);
+  return r.body.categoryId;
+}
+async function expense(input, uid = u.camille) {
+  const r = await api("expenses", uid, { action: "create", expense: { date: "2026-10-10", method: "cash", ...input } });
+  expect(r.status, JSON.stringify(r.body)).toBe(201);
+  return r.body.expenseId;
+}
+async function setTotal(total, uid = u.camille) {
+  const r = await api("budget", uid, { action: "setTotal", total });
+  expect(r.status, JSON.stringify(r.body)).toBe(200);
+  return r.body;
+}
+async function scenarioBudget() {
+  await setTotal(15000000);
+  return { medical: await category("Medical", 6000000), nursery: await category("Nursery", 4000000), clothing: await category("Clothing", 1000000) };
+}
+
+describe("THE live scenario: ₱150,000 budget, Medical ₱60,000, Nursery ₱40,000, Clothing ₱10,000", () => {
+  it("record, edit, remove: Spent / Remaining / category remaining follow exactly", async () => {
+    const c = await scenarioBudget();
+    const med = await expense({ category: c.medical, amount: 1000000, payee: "ABC Women's Clinic" });
+    const nur = await expense({ category: c.nursery, amount: 1500000 });
+    expect(summary()).toMatchObject({ total: 15000000, spent: 2500000, remaining: 12500000, expenseCount: 2 });
+    const lines = () => Object.fromEntries(budgetLines(budget(), [{ id: c.medical, name: "Medical", budget: 6000000 }, { id: c.nursery, name: "Nursery", budget: 4000000 }]).map((l) => [l.name, l.remaining]));
+    expect(lines()).toEqual({ Medical: 5000000, Nursery: 2500000 });
+
+    const doc = docAt(`expenses/${nur}`);
+    expect((await api("expenses", u.paolo, { action: "update", expenseId: nur, expectedRevision: doc.revision, changes: { amount: 1200000 } })).status).toBe(200);
+    expect(summary()).toMatchObject({ spent: 2200000, remaining: 12800000 });
+    expect(docAt(`expenses/${nur}`).history.at(-1)).toMatchObject({ type: "edited", label: `Amount changed ${P}15,000 → ${P}12,000`, actor: { uid: u.paolo } });
+
+    expect((await api("expenses", u.camille, { action: "remove", expenseId: med, reason: "Entered twice" })).status).toBe(200);
+    expect(summary()).toMatchObject({ spent: 1200000, remaining: 13800000, expenseCount: 1 });
+    expect(lines()).toEqual({ Medical: 6000000, Nursery: 2800000 });
+    expect(docAt(`expenses/${med}`)).toMatchObject({ status: "removed", removalReason: "Entered twice" });
+    // The selected-period figures (day + month) agree.
+    expect(docAt("spendingMetrics/2026-10-10")).toMatchObject({ period: "day", spent: 1200000, count: 1 });
+    expect(docAt("spendingMetrics/2026-10")).toMatchObject({ period: "month", spent: 1200000, count: 1 });
+  });
+
+  it("a budget change is not spending, recalculates Remaining, and is audited (previous -> new, actor)", async () => {
+    await scenarioBudget();
+    const before = summary();
+    await setTotal(18000000);
+    expect(summary()).toMatchObject({ total: 18000000, spent: before.spent, remaining: 18000000 - before.spent });
+    expect(budget().history.at(-1)).toMatchObject({ label: `Budget changed ${P}150,000 → ${P}180,000`, from: 15000000, to: 18000000, actor: { uid: u.camille, name: "camille" } });
+    expect(pathsUnder(`businesses/${B}/spendingMetrics/`)).toEqual([]);
+  });
+
+  it("Baby spending never touches Distributor sinks (no sales, COGS, operating expenses, report rollups)", async () => {
+    const c = await scenarioBudget();
+    await expense({ category: c.medical, amount: 500000 });
+    for (const col of ["financialMetrics", "metrics", "reportRollups"]) expect(pathsUnder(`businesses/${B}/${col}/`), col).toEqual([]);
+  });
+
+  it("the browser can't send totals: unknown fields (spent, total, categoryName) are refused", async () => {
+    const c = await scenarioBudget();
+    for (const extra of [{ spent: 1 }, { categoryName: "x" }, { scheduleId: "abcdefgh12" }]) {
+      const r = await api("expenses", u.camille, { action: "create", expense: { date: "2026-10-10", method: "cash", category: c.medical, amount: 100, ...extra } });
+      expect(r.status, JSON.stringify(extra)).toBe(400);
+    }
+    expect((await api("budget", u.camille, { action: "setTotal", total: 100, spent: 5 })).status).toBe(400);
+  });
+});
+
+describe("Baby Expenses: the Expenses Core with Baby rules", () => {
+  it("future dates are refused (upcoming money belongs in the Payment Schedule)", async () => {
+    const c = await scenarioBudget();
+    const r = await api("expenses", u.camille, { action: "create", expense: { date: "2026-10-17", method: "cash", category: c.medical, amount: 100 } });
+    expect(r.status).toBe(400);
+  });
+
+  it("Distributor's fixed categories are refused; only the family's own active categories count", async () => {
+    const c = await scenarioBudget();
+    expect((await api("expenses", u.camille, { action: "create", expense: { date: "2026-10-10", method: "cash", category: "rent", amount: 100 } })).status).toBe(400);
+    expect((await api("expenses", u.camille, { action: "create", expense: { date: "2026-10-10", method: "cash", category: "zzzzzzzzzzzz", amount: 100 } })).body.error).toBe("invalid-category");
+    await api("budget", u.camille, { action: "setCategoryStatus", categoryId: c.clothing, status: "inactive" });
+    expect((await api("expenses", u.camille, { action: "create", expense: { date: "2026-10-10", method: "cash", category: c.clothing, amount: 100 } })).body.error).toBe("invalid-category");
+  });
+
+  it("a saved provider supplies the payee snapshot, kept after the provider is renamed or deactivated", async () => {
+    const c = await scenarioBudget();
+    const p = (await api("providers", u.camille, { action: "create", provider: { name: "ABC Women's Clinic", type: "medical", phone: "0917 000 0000" } })).body.providerId;
+    const id = await expense({ category: c.medical, amount: 250000, providerId: p, payee: "ignored" });
+    expect(docAt(`expenses/${id}`)).toMatchObject({ providerId: p, payee: "ABC Women's Clinic" });
+    await api("providers", u.camille, { action: "update", providerId: p, changes: { name: "ABC Clinic (new name)" } });
+    await api("providers", u.camille, { action: "setStatus", providerId: p, status: "inactive" });
+    expect(docAt(`expenses/${id}`).payee).toBe("ABC Women's Clinic");
+    expect(docAt(`providers/${p}`).history.map((h) => h.label)).toEqual(["Added ABC Women's Clinic", "Name changed ABC Women's Clinic → ABC Clinic (new name)", "Deactivated"]);
+    const r = await api("expenses", u.camille, { action: "create", expense: { date: "2026-10-10", method: "cash", category: c.medical, amount: 100, providerId: p } });
+    expect(r.body.error).toBe("invalid-provider");
+  });
+
+  it("changing an expense's category moves its spending between the budget lines", async () => {
+    const c = await scenarioBudget();
+    const id = await expense({ category: c.medical, amount: 300000 });
+    await api("expenses", u.camille, { action: "update", expenseId: id, changes: { category: c.nursery } });
+    expect(budget().spentByCategory).toMatchObject({ [c.medical]: 0, [c.nursery]: 300000 });
+    expect(docAt(`expenses/${id}`)).toMatchObject({ categoryName: "Nursery" });
+  });
+});
+
+describe("Categories", () => {
+  it("suggested categories are offered once; names are unique (case-insensitive)", async () => {
+    const r = await api("budget", u.camille, { action: "setupCategories" });
+    expect(r.body.created).toBe(11);
+    expect((await api("budget", u.camille, { action: "setupCategories" })).body.created).toBe(0);
+    expect((await api("budget", u.camille, { action: "createCategory", category: { name: "medical" } })).body.error).toBe("duplicate-category");
+    expect(budget().categoryCount).toBe(11);
+  });
+
+  it("a used category can't be deleted (deactivate instead); an unused one can", async () => {
+    const c = await scenarioBudget();
+    await expense({ category: c.medical, amount: 100 });
+    expect((await api("budget", u.camille, { action: "deleteCategory", categoryId: c.medical })).body.error).toBe("category-in-use");
+    expect((await api("budget", u.camille, { action: "deleteCategory", categoryId: c.clothing })).status).toBe(200);
+    expect(docAt(`expenseCategories/${c.clothing}`)).toBeUndefined();
+    expect(budget().categoryCount).toBe(2);
+  });
+
+  it("a category used only by a scheduled payment can't be deleted either", async () => {
+    const c = await scenarioBudget();
+    await api("schedule", u.camille, { action: "create", payment: { description: "Crib balance", category: c.clothing, amount: 100, dueDate: "2026-11-01" } });
+    expect((await api("budget", u.camille, { action: "deleteCategory", categoryId: c.clothing })).body.error).toBe("category-in-use");
+  });
+
+  it("category budget changes are recorded on the budget history", async () => {
+    const c = await scenarioBudget();
+    await api("budget", u.camille, { action: "updateCategory", categoryId: c.nursery, changes: { budget: 4500000 } });
+    expect(budget().history.at(-1)).toMatchObject({ label: `Nursery budget changed ${P}40,000 → ${P}45,000`, from: 4000000, to: 4500000 });
+  });
+});
+
+describe("Payment Schedule -> exactly one Baby Expense", () => {
+  async function deposit(c) {
+    const r = await api("schedule", u.camille, { action: "create", payment: { description: "Hospital deposit", category: c.medical, amount: 2000000, dueDate: "2026-12-15" } });
+    expect(r.status, JSON.stringify(r.body)).toBe(201);
+    return r.body.scheduleId;
+  }
+  const expenseDocs = () => pathsUnder(`businesses/${B}/expenses/`);
+
+  it("Upcoming counts as committed, not spent; Mark paid records ONE expense and Spent rises by exactly ₱20,000", async () => {
+    const c = await scenarioBudget();
+    const before = summary().spent;
+    const id = await deposit(c);
+    expect(summary()).toMatchObject({ spent: before, upcoming: 2000000, upcomingCount: 1 });
+    const r = await api("schedule", u.camille, { action: "markPaid", scheduleId: id, payment: { method: "bank_transfer", paidDate: "2026-10-15", reference: "BT-1" } });
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(expenseDocs()).toHaveLength(1);
+    expect(docAt(`scheduledPayments/${id}`)).toMatchObject({ status: "paid", expenseId: r.body.expenseId, paidAmount: 2000000, paidDate: "2026-10-15" });
+    expect(docAt(`expenses/${r.body.expenseId}`)).toMatchObject({ scheduleId: id, amount: 2000000, category: c.medical, date: "2026-10-15", reference: "BT-1", status: "active" });
+    expect(summary()).toMatchObject({ spent: before + 2000000, upcoming: 0, upcomingCount: 0 });
+  });
+
+  it("a retry / second click returns the same expense and changes nothing", async () => {
+    const c = await scenarioBudget();
+    const id = await deposit(c);
+    const first = await api("schedule", u.camille, { action: "markPaid", scheduleId: id, payment: { method: "cash" } });
+    const snap = JSON.stringify(budget());
+    const again = await api("schedule", u.paolo, { action: "markPaid", scheduleId: id, payment: { method: "gcash", amount: 1 } });
+    expect(again.status).toBe(200);
+    expect(again.body).toMatchObject({ alreadyPaid: true, expenseId: first.body.expenseId });
+    expect(expenseDocs()).toHaveLength(1);
+    expect(JSON.stringify(budget())).toBe(snap);
+  });
+
+  it("two simultaneous Mark paid requests still make one expense", async () => {
+    const c = await scenarioBudget();
+    const id = await deposit(c);
+    const [a, b] = await Promise.all([api("schedule", u.camille, { action: "markPaid", scheduleId: id, payment: { method: "cash" } }), api("schedule", u.paolo, { action: "markPaid", scheduleId: id, payment: { method: "cash" } })]);
+    expect([a.status, b.status]).toEqual([200, 200]);
+    expect(a.body.expenseId).toBe(b.body.expenseId);
+    expect(expenseDocs()).toHaveLength(1);
+    expect(summary()).toMatchObject({ spent: 2000000, upcoming: 0 });
+  });
+
+  it("removing the paid expense reopens the payment (Upcoming again); paying again records a NEW single expense", async () => {
+    const c = await scenarioBudget();
+    const id = await deposit(c);
+    const { expenseId } = (await api("schedule", u.camille, { action: "markPaid", scheduleId: id, payment: { method: "cash" } })).body;
+    await api("expenses", u.camille, { action: "remove", expenseId, reason: "Wrong date" });
+    expect(docAt(`scheduledPayments/${id}`)).toMatchObject({ status: "upcoming", expenseId: null, attempt: 1 });
+    expect(summary()).toMatchObject({ spent: 0, upcoming: 2000000, upcomingCount: 1 });
+    const again = await api("schedule", u.camille, { action: "markPaid", scheduleId: id, payment: { method: "cash" } });
+    expect(again.body.expenseId).toBe(`${id}r1`);
+    expect(summary()).toMatchObject({ spent: 2000000, upcoming: 0 });
+  });
+
+  it("editing the paid expense's amount follows on the payment; cancelling a paid one is refused", async () => {
+    const c = await scenarioBudget();
+    const id = await deposit(c);
+    const { expenseId } = (await api("schedule", u.camille, { action: "markPaid", scheduleId: id, payment: { method: "cash" } })).body;
+    await api("expenses", u.camille, { action: "update", expenseId, changes: { amount: 1800000 } });
+    expect(docAt(`scheduledPayments/${id}`).paidAmount).toBe(1800000);
+    expect((await api("schedule", u.camille, { action: "cancel", scheduleId: id })).body.error).toBe("not-upcoming");
+  });
+
+  it("cancel leaves Upcoming without spending; a cancelled payment can't be paid", async () => {
+    const c = await scenarioBudget();
+    const id = await deposit(c);
+    expect((await api("schedule", u.camille, { action: "cancel", scheduleId: id, reason: "Changed hospital" })).status).toBe(200);
+    expect(summary()).toMatchObject({ spent: 0, upcoming: 0, upcomingCount: 0 });
+    expect((await api("schedule", u.camille, { action: "markPaid", scheduleId: id, payment: { method: "cash" } })).body.error).toBe("not-upcoming");
+    expect(expenseDocs()).toHaveLength(0);
+  });
+
+  it("editing an Upcoming payment moves the Upcoming totals with it", async () => {
+    const c = await scenarioBudget();
+    const id = await deposit(c);
+    await api("schedule", u.camille, { action: "update", scheduleId: id, changes: { amount: 2500000, category: c.nursery } });
+    expect(budget()).toMatchObject({ upcoming: 2500000, upcomingByCategory: { [c.medical]: 0, [c.nursery]: 2500000 } });
+  });
+
+  it("a payment scheduled before its category was deactivated can still be paid", async () => {
+    const c = await scenarioBudget();
+    const id = await deposit(c);
+    await api("budget", u.camille, { action: "setCategoryStatus", categoryId: c.medical, status: "inactive" });
+    expect((await api("schedule", u.camille, { action: "markPaid", scheduleId: id, payment: { method: "cash" } })).status).toBe(200);
+  });
+
+  it("Mark paid also needs expenses.create; a paid date can't be in the future", async () => {
+    const c = await scenarioBudget();
+    const id = await deposit(c);
+    expect((await api("schedule", u.nopay, { action: "markPaid", scheduleId: id, payment: { method: "cash" } })).status).toBe(403);
+    expect((await api("schedule", u.camille, { action: "markPaid", scheduleId: id, payment: { method: "cash", paidDate: "2026-10-17" } })).status).toBe(400);
+    expect(docAt(`scheduledPayments/${id}`).status).toBe("upcoming");
+  });
+});
+
+describe("budget threshold alerts (Notifications Core): once per level, never per expense", () => {
+  const inbox = (uid, key) => docAt(`members/${uid}/inbox/${notificationId("budget.threshold", key)}`);
+  it("75% / 90% / 100% notify once each; later expenses don't repeat; a new budget starts a new episode", async () => {
+    await setTotal(1000000);
+    const c = await category("Medical");
+    await expense({ category: c, amount: 700000 });
+    expect(pathsUnder(`businesses/${B}/members/${u.camille}/inbox/`)).toHaveLength(0);
+    await expense({ category: c, amount: 60000 }); // 76%
+    expect(inbox(u.camille, "2-75")).toMatchObject({ title: "Baby budget 75% used" });
+    await expense({ category: c, amount: 10000 }); // 77%: nothing new
+    expect(pathsUnder(`businesses/${B}/members/${u.camille}/inbox/`)).toHaveLength(1);
+    await expense({ category: c, amount: 300000 }); // 107%: straight to 100
+    expect(inbox(u.camille, "2-100")).toMatchObject({ title: "Baby budget fully used" });
+    expect(inbox(u.camille, "2-90")).toBeUndefined();
+    expect(inbox(u.paolo, "2-100")).toBeTruthy();
+    expect(inbox(u.yaya, "2-100")).toBeUndefined(); // no budget.view
+    await setTotal(2000000); // 53.5%: new episode, nothing yet
+    await expense({ category: c, amount: 500000 }); // 78.5%
+    expect(inbox(u.camille, "3-75")).toBeTruthy();
+  });
+});
+
+describe("access: workspace, permissions, tenants", () => {
+  it("Staff can't manage the Baby budget, providers or schedule (conservative default)", async () => {
+    expect((await api("budget", u.yaya, { action: "setTotal", total: 100 })).status).toBe(403);
+    expect((await api("providers", u.yaya, { action: "create", provider: { name: "X", type: "other" } })).status).toBe(403);
+    expect((await api("schedule", u.yaya, { action: "create", payment: {} })).status).toBe(403);
+    expect((await api("expenses", u.yaya, { action: "create", expense: {} })).status).toBe(403);
+  });
+
+  it("Distributor and Household can't reach any Baby endpoint, even as owner", async () => {
+    for (const [uid, biz] of [[world.uids.ownera, "biz-a"], [u.home, "biz-home"]]) {
+      expect((await api("budget", uid, { action: "setTotal", total: 100 }, biz)).status).toBe(403);
+      expect((await api("providers", uid, { action: "create", provider: { name: "X", type: "other" } }, biz)).status).toBe(403);
+      expect((await api("schedule", uid, { action: "create", payment: {} }, biz)).status).toBe(403);
+    }
+    // Household has no Expenses at all.
+    expect((await api("expenses", u.home, { action: "create", expense: {} }, "biz-home")).status).toBe(403);
+  });
+
+  it("Baby A can't touch Baby B: a member of A selecting B is refused, and ids don't cross", async () => {
+    const c = await scenarioBudget();
+    expect((await api("budget", u.camille, { action: "setTotal", total: 100 }, B2)).status).toBe(403);
+    expect((await api("expenses", u.other, { action: "create", expense: { date: "2026-10-10", method: "cash", category: c.medical, amount: 100 } }, B2)).body.error).toBe("invalid-category");
+    expect(pathsUnder(`businesses/${B2}/expenses/`)).toEqual([]);
+  });
+
+  it("Distributor expenses are unchanged: fixed categories, operating expenses, no Baby documents", async () => {
+    const r = await api("expenses", world.uids.ownera, { action: "create", expense: { date: "2026-10-10", method: "cash", category: "rent", amount: 500000 } }, "biz-a");
+    expect(r.status).toBe(201);
+    expect(world.db.docs.get("businesses/biz-a/financialMetrics/2026-10-10")).toMatchObject({ operatingExpenses: 500000 });
+    for (const col of ["budgets", "spendingMetrics"]) expect(pathsUnder(`businesses/biz-a/${col}/`)).toEqual([]);
+    expect((await api("expenses", world.uids.ownera, { action: "create", expense: { date: "2026-10-10", method: "cash", category: "rent", amount: 1, providerId: "abcdefgh12" } }, "biz-a")).status).toBe(400);
+  });
+});
+
+describe("Excel downloads (Export Core)", () => {
+  async function download(uid, dataset, filters = {}, businessId = B) {
+    const res = await createExportsHandler(deps())({ ...request({ uid, businessId, method: "POST" }), body: JSON.stringify({ dataset, filters }) });
+    return res.statusCode === 200 ? { status: 200, bytes: new Uint8Array(Buffer.from(res.body, "base64")), headers: res.headers } : { status: res.statusCode, body: JSON.parse(res.body) };
+  }
+  const sheet = (bytes, name) => readXlsx(bytes, { sheet: name }).rows;
+
+  it("Category = Medical: only matching Baby Expenses, every page, Baby columns only, formula-safe", async () => {
+    const c = await scenarioBudget();
+    for (let i = 0; i < 30; i++) await expense({ category: c.medical, amount: 1000 + i });
+    await expense({ category: c.nursery, amount: 99999, payee: "=HYPERLINK(\"http://x\")" });
+    const r = await download(u.camille, "babyExpenses", { category: c.medical });
+    expect(r.status).toBe(200);
+    const rows = sheet(r.bytes, "Baby Expenses");
+    expect(rows[0]).toEqual(["Date", "Category", "Provider / payee", "Amount", "Method", "Reference", "Recurring", "From payment schedule", "Notes"]);
+    expect(rows.slice(1)).toHaveLength(30);
+    expect(rows.slice(1).every((row) => row[1] === "Medical")).toBe(true);
+    const all = sheet((await download(u.camille, "babyExpenses")).bytes, "Baby Expenses");
+    const evil = all.find((row) => row[3] === "999.99");
+    expect(typeof evil[2]).toBe("string");
+    expect(evil[2]).not.toMatch(/^=/);
+    expect(JSON.stringify(all)).not.toMatch(/COGS|Gross|Profit|Sales/i);
+  });
+
+  it("Budget, Providers and Payment Schedule downloads; the dashboard workbook has Baby sheets only", async () => {
+    const c = await scenarioBudget();
+    await expense({ category: c.medical, amount: 1000000 });
+    await api("providers", u.camille, { action: "create", provider: { name: "Baby Company", type: "baby_store" } });
+    await api("schedule", u.camille, { action: "create", payment: { description: "Hospital deposit", category: c.medical, amount: 2000000, dueDate: "2026-12-15" } });
+
+    const b = await download(u.camille, "budget");
+    expect(sheet(b.bytes, "Category Budget").slice(1).map((row) => [row[0], row[2], row[3], row[4]])).toEqual([["Medical", "60000", "10000", "50000"], ["Nursery", "40000", "0", "40000"], ["Clothing", "10000", "0", "10000"]]);
+    expect(sheet((await download(u.camille, "providers", { type: "baby_store" })).bytes, "Providers").slice(1).map((row) => row[0])).toEqual(["Baby Company"]);
+    expect(sheet((await download(u.camille, "paymentSchedule", { status: "upcoming" })).bytes, "Payment Schedule").slice(1).map((row) => row[1])).toEqual(["Hospital deposit"]);
+
+    const d = await download(u.camille, "dashboard", { from: "2026-10-01", to: "2026-10-16" });
+    expect(d.status).toBe(200);
+    for (const name of ["Summary", "Period activity", "Current budget", "Category Budget", "Expenses", "Upcoming Payments", "Export info"]) expect(readXlsx(d.bytes, { sheet: name }).sheetName).toBe(name);
+    expect(() => readXlsx(d.bytes, { sheet: "Current operations" })).toThrow();
+    expect(sheet(d.bytes, "Expenses").slice(1).map((row) => row[3])).toEqual(["10000"]);
+    expect(sheet(d.bytes, "Upcoming Payments").slice(1).map((row) => row[1])).toEqual(["Hospital deposit"]);
+    expect(JSON.stringify(sheet(d.bytes, "Summary"))).not.toMatch(/COGS|Gross|Profit|Sales/i);
+  });
+
+  it("Baby datasets are closed to Distributor / Household, and Distributor's Expenses dataset is closed to Baby", async () => {
+    for (const ds of ["budget", "babyExpenses", "providers", "paymentSchedule"]) {
+      expect((await download(world.uids.ownera, ds, {}, "biz-a")).status, ds).toBe(403);
+      expect((await download(u.home, ds, {}, "biz-home")).status, ds).toBe(403);
+    }
+    expect((await download(u.camille, "expenses")).status).toBe(403);
+    expect((await download(u.yaya, "babyExpenses")).status).toBe(403);
+  });
+});

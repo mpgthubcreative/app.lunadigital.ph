@@ -50,6 +50,10 @@ export const PLAN_SEED = Object.freeze({
       attendance: true,
       payroll: true,
       advances: true,
+      // Phase 15 Baby Expense Tracker (operational only in that workspace).
+      budget: true,
+      schedule: true,
+      providers: true,
     },
     features: {
       reportsLevel: "basic",
@@ -96,6 +100,10 @@ export const PLAN_SEED = Object.freeze({
       attendance: true,
       payroll: true,
       advances: true,
+      // Phase 15 Baby Expense Tracker (operational only in that workspace).
+      budget: true,
+      schedule: true,
+      providers: true,
     },
     features: {
       reportsLevel: "advanced",
@@ -142,6 +150,10 @@ export const PLAN_SEED = Object.freeze({
       attendance: true,
       payroll: true,
       advances: true,
+      // Phase 15 Baby Expense Tracker (operational only in that workspace).
+      budget: true,
+      schedule: true,
+      providers: true,
     },
     features: {
       reportsLevel: "advanced",

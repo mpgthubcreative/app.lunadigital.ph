@@ -41,6 +41,7 @@ export const NOTIFICATION_CATEGORIES = Object.freeze({
   inventory: { label: "Low stock", mandatory: false },
   orders: { label: "Orders ready", mandatory: false },
   payroll: { label: "Salary receipt confirmations", mandatory: false },
+  budget: { label: "Budget alerts (75%, 90%, 100% used)", mandatory: false },
 });
 export const NOTIFICATION_CATEGORY_IDS = Object.freeze(Object.keys(NOTIFICATION_CATEGORIES));
 
@@ -70,6 +71,15 @@ export const NOTIFICATION_TYPES = Object.freeze({
     permissions: ["payroll.view"],
     excludeActor: false,
     action: { label: "View payroll", route: "/payroll" },
+  },
+  // Phase 15: the Baby budget reached 75 / 90 / 100% used. One per level
+  // per budget episode (event key "<episode>-<level>"), never per expense.
+  "budget.threshold": {
+    category: "budget",
+    module: "budget",
+    permissions: ["budget.view"],
+    excludeActor: false,
+    action: { label: "View budget", route: "/budget" },
   },
   "order.ready": {
     category: "orders",

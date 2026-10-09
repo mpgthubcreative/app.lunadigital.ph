@@ -33,9 +33,9 @@ function world() {
   const id = `expc-${Date.now().toString(36)}-${run}`;
   return { tenant: tenantDb(db, id), business: { id, timezone: "Asia/Manila" } };
 }
-const add = (w, date, amount) => ex.createExpense({ db, tenant: w.tenant, FieldValue, business: w.business, actor, now: NOW, input: { date, category: "misc", amount, method: "cash" } });
-const edit = (w, expenseId, changes, expectedRevision = null) => ex.updateExpense({ db, tenant: w.tenant, FieldValue, business: w.business, actor, now: NOW, expenseId, changes, expectedRevision });
-const remove = (w, expenseId) => ex.removeExpense({ db, tenant: w.tenant, FieldValue, business: w.business, actor, expenseId, reason: "race test" });
+const add = (w, date, amount) => ex.createExpense({ db, tenant: w.tenant, FieldValue, business: w.business, workspace: "distributor", actor, now: NOW, input: { date, category: "misc", amount, method: "cash" } });
+const edit = (w, expenseId, changes, expectedRevision = null) => ex.updateExpense({ db, tenant: w.tenant, FieldValue, business: w.business, workspace: "distributor", actor, now: NOW, expenseId, changes, expectedRevision });
+const remove = (w, expenseId) => ex.removeExpense({ db, tenant: w.tenant, FieldValue, business: w.business, workspace: "distributor", actor, expenseId, reason: "race test" });
 
 async function expectMetricsExact(w) {
   const active = (await w.tenant.collection("expenses").where("status", "==", "active").get()).docs.map((d) => d.data());

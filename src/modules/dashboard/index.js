@@ -13,7 +13,7 @@ import { pageHeader, statCard, card, emptyState } from "../../components/ui.js";
 import { toast as defaultToast } from "../../components/feedback.js";
 import { formatDayId } from "../../lib/format.js";
 import { exportButton, bindExport, mayExport } from "../../lib/export.js";
-import { DASHBOARD_SECTIONS, dashboardEmptyState, workspaceModuleLabel, snapshotWorkspaceTemplateId, reportPresets, validateRange } from "@shared/index.js";
+import { DASHBOARD_SECTIONS, dashboardEmptyState, workspaceModuleLabel, workspaceSectionLabel, snapshotWorkspaceTemplateId, reportPresets, validateRange } from "@shared/index.js";
 import { dashboardPlan, buildDashboardView } from "./view.js";
 import { fetchMetricDocuments, fetchDashboardLists } from "./data.js";
 
@@ -51,7 +51,9 @@ export function mount(container, session, { fetchDocuments = fetchMetricDocument
     if (!alive) return;
     const view = state.view;
     const empty = dashboardEmptyState(session.entitlements);
-    const label = (s) => (s.id === "period" ? `${s.label} · ${presets[state.preset]?.label ?? "Custom"}, ${rangeText(state.range)}` : s.id === "current" ? `${s.label} · as of now` : s.label);
+    // The workspace may name a section (Baby: "Current budget").
+    const name = (s) => workspaceSectionLabel(snapshotWorkspaceTemplateId(session.entitlements), s.id, s.label);
+    const label = (s) => (s.id === "period" ? `${name(s)} · ${presets[state.preset]?.label ?? "Custom"}, ${rangeText(state.range)}` : s.id === "current" ? `${name(s)} · as of now` : s.label);
     const sections = DASHBOARD_SECTIONS.filter((s) => s.id !== "lists")
       .map((s) => ({ ...s, cards: view.cards.filter((c) => c.section === s.id) }))
       .filter((s) => s.cards.length);

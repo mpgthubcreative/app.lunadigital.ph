@@ -243,7 +243,7 @@ describe("C. order ready", () => {
   });
 
   it("there is no 'payment overdue' rule (no due dates exist)", () => {
-    expect(Object.keys(NOTIFICATION_TYPES).sort()).toEqual(["inventory.low_stock", "order.ready", "payment.awaiting_verification", "payroll.receipt_confirmed"]);
+    expect(Object.keys(NOTIFICATION_TYPES).sort()).toEqual(["budget.threshold", "inventory.low_stock", "order.ready", "payment.awaiting_verification", "payroll.receipt_confirmed"]);
   });
 });
 

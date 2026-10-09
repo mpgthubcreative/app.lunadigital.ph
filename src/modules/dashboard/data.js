@@ -9,6 +9,8 @@ import { getFirestoreLite } from "../../lib/firebase.js";
 import { listLowStock } from "../inventory/data.js";
 import { listRecentOrders } from "../orders/data.js";
 import { listAttendance, listPayrolls, listAdvances } from "../household/data.js";
+import { getBudget, listCategories, listScheduled, listBabyExpenses } from "../baby/data.js";
+import { budgetLines } from "@shared/baby.js";
 import { combineDashboardDocs } from "@shared/dashboard.js";
 
 // Ready list widgets -> their (small, limited) query. ctx: { today }.
@@ -20,6 +22,13 @@ const LIST_FETCHERS = {
   payrollsToRelease: (businessId) => listPayrolls(businessId, { status: "draft" }).then((p) => p.rows.slice(0, 5)),
   awaitingReceipt: (businessId) => listPayrolls(businessId, { receiptStatus: "awaiting" }).then((p) => p.rows.slice(0, 5)),
   advancesNotPaid: (businessId) => listAdvances(businessId, { status: "not_yet_paid" }).then((p) => p.rows.slice(0, 5)),
+  // Phase 15 (Baby): the budget lines (as of now), soonest payments, latest expenses.
+  spendingByCategory: async (businessId) => {
+    const [budget, categories] = await Promise.all([getBudget(businessId), listCategories(businessId)]);
+    return budgetLines(budget, categories).filter((l) => l.status === "active" || l.spent);
+  },
+  upcomingPayments: (businessId) => listScheduled(businessId, { status: "upcoming" }, { pageSize: 5 }).then(first),
+  recentExpenses: (businessId) => listBabyExpenses(businessId, { status: "active" }, { pageSize: 5 }).then(first),
 };
 
 // widgets: ready list widgets -> { [widgetId]: { status, rows } }

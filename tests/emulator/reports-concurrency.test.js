@@ -54,7 +54,7 @@ const create = (w, productId, qty, customerId = null, discount = 0) =>
   orders.createOrder({ db, tenant: w.tenant, FieldValue, business: w.business, entitlements: { limits: { ordersPerMonth: 1000 } }, input: { customer: { name: "walk-in" }, ...(customerId ? { customerId } : {}), source: "phone", items: [{ productId, quantity: Q(qty) }], discount }, idempotencyKey: `rep-conc-${Date.now().toString(36)}-${++keySeq}`.padEnd(20, "x"), actor, canDiscount: true, canLinkCustomers: true, now: NOW });
 const fulfil = (w, orderId) => orders.fulfillOrder({ db, tenant: w.tenant, FieldValue, business: w.business, orderId, actor, now: NOW });
 const record = (w, orderId, amount, method) => pay.recordPayment({ db, bucket, tenant: w.tenant, FieldValue, business: w.business, orderId, input: { amount, method, ...(method === "cash" ? {} : { reference: `R${++keySeq}X${run}Z` }) }, actor, canVerify: true, now: NOW });
-const spend = (w, date, amount, category, method) => ex.createExpense({ db, tenant: w.tenant, FieldValue, business: w.business, actor, now: NOW, input: { date, category, amount, method } });
+const spend = (w, date, amount, category, method) => ex.createExpense({ db, tenant: w.tenant, FieldValue, business: w.business, workspace: "distributor", actor, now: NOW, input: { date, category, amount, method } });
 
 const numeric = (r) => {
   const out = {};
@@ -105,7 +105,7 @@ describe("rollups under concurrency (real emulator)", () => {
       pay.updatePayment({ db, bucket, tenant: w.tenant, FieldValue, business: w.business, paymentId: p1, changes: { method: "maya", amount: 90000 }, actor }),
       record(w, o2, 20000, "cash"),
       record(w, o2, 30000, "bank_transfer"),
-      ex.updateExpense({ db, tenant: w.tenant, FieldValue, business: w.business, actor, now: NOW, expenseId: e1, changes: { category: "fees", date: "2026-10-01" } }),
+      ex.updateExpense({ db, tenant: w.tenant, FieldValue, business: w.business, workspace: "distributor", actor, now: NOW, expenseId: e1, changes: { category: "fees", date: "2026-10-01" } }),
       spend(w, "2026-10-08", 7000, "rent", "gcash"),
     ]);
     expectExplicit(results, ["overpayment", "below-paid"]);

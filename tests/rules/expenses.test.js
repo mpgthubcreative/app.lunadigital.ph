@@ -77,8 +77,9 @@ describe("reading expenses", () => {
     await assertFails(get("ownerExpOff", `businesses/exp-off/expenses/${EID}`));
   });
 
-  it("bridal / baby workspaces never read expenses (planned there, not operational)", async () => {
-    for (const t of ["bridal-expense", "baby-expense"]) await assertFails(get(`owner@exp-${t}`, `businesses/exp-${t}/expenses/${EID}`));
+  it("bridal never reads expenses (planned there, not operational); Baby does (Phase 15: Baby Expenses)", async () => {
+    await assertFails(get("owner@exp-bridal-expense", `businesses/exp-bridal-expense/expenses/${EID}`));
+    await assertSucceeds(get("owner@exp-baby-expense", `businesses/exp-baby-expense/expenses/${EID}`));
   });
 
   it("a bridal snapshot forged to claim Expenses still can't read them (template ceiling in the rules)", async () => {

@@ -79,6 +79,15 @@ export const PERMISSIONS = Object.freeze({
   "advances.view": { module: "advances", group: "Advances", label: "View advances" },
   "advances.manage": { module: "advances", group: "Advances", label: "Record advances and mark them paid" },
 
+  // Phase 15: Baby Expense Tracker (Baby Expenses reuse expenses.*).
+  "budget.view": { module: "budget", group: "Budget", label: "View the budget, categories, spent and remaining" },
+  "budget.manage": { module: "budget", group: "Budget", label: "Change the budget and manage categories" },
+  "schedule.view": { module: "schedule", group: "Payment Schedule", label: "View upcoming payments" },
+  // Marking a payment Paid also records its expense, so it needs expenses.create too.
+  "schedule.manage": { module: "schedule", group: "Payment Schedule", label: "Schedule, edit, cancel and mark payments paid" },
+  "providers.view": { module: "providers", group: "Providers", label: "View providers and vendors" },
+  "providers.manage": { module: "providers", group: "Providers", label: "Add and edit providers and vendors" },
+
   "users.view": { module: "users", group: "Users", label: "View team members" },
   "users.manage": { module: "users", group: "Users", label: "Invite and manage team members" },
 

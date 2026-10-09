@@ -15,14 +15,22 @@
 //   status      active | removed (removal keeps the record for audit)
 //   history[], revision, createdBy/At, updatedBy/At
 //
-// Recognition: the amount is an Operating Expense on its business-local
-// date (financialMetrics/{date} and its month). The server keeps those
-// metrics in step on create / edit / remove; the browser never writes
-// them. The record has no template-specific fields: other workspaces may
-// reuse this domain later under their own label ("Wedding Expenses").
+// Recognition depends on the workspace (EXPENSE_PROFILES, Phase 15): the
+// record behaviour above is shared; what an expense COUNTS AS is not.
+//   distributor   an Operating Expense on its business-local date
+//                 (financialMetrics/{date} and its month, + the report
+//                 rollups), from a fixed category list.
+//   baby-expense  Baby spending against the budget (budgets/current and
+//                 spendingMetrics/{date|month}, shared/baby.js), from the
+//                 tenant's own categories, optionally paid to a saved
+//                 provider (providerId; payee holds the provider's name
+//                 snapshot). Never sales, COGS or profit.
+// The server keeps those totals in step on create / edit / remove; the
+// browser never writes them.
 
 import { isDayId } from "./metrics.js";
 import { isCentavos } from "./quantity.js";
+import { isValidRecordId } from "./baby.js";
 
 export const EXPENSE_SCHEMA_VERSION = 1;
 
@@ -59,6 +67,17 @@ export const EXPENSE_STATUSES = Object.freeze({ active: { label: "Active" }, rem
 
 export const EXPENSE_FIELDS = Object.freeze(["date", "category", "amount", "payee", "method", "reference", "notes", "recurring"]);
 
+// Per-workspace expense behaviour (Phase 15). Data only: the server pairs
+// each profile with its own totals ("sink"); unknown workspaces have none,
+// so expenses can't be recorded there.
+//   categories  "fixed"  = DEFAULT_EXPENSE_CATEGORIES ids
+//               "tenant" = the business's own expenseCategories doc ids
+export const EXPENSE_PROFILES = Object.freeze({
+  distributor: Object.freeze({ id: "distributor", categories: "fixed", fields: EXPENSE_FIELDS }),
+  "baby-expense": Object.freeze({ id: "baby-expense", categories: "tenant", fields: Object.freeze([...EXPENSE_FIELDS, "providerId"]) }),
+});
+export const expenseProfile = (workspaceTemplateId) => (typeof workspaceTemplateId === "string" && Object.hasOwn(EXPENSE_PROFILES, workspaceTemplateId) ? EXPENSE_PROFILES[workspaceTemplateId] : null);
+
 // One expense can't exceed ₱100,000,000 (a typo guard, not a business rule).
 export const MAX_EXPENSE_CENTAVOS = 10_000_000_000;
 
@@ -79,10 +98,14 @@ function text(value, { field, max }) {
 
 // Full validation for a new expense; `partial` for an edit (only the keys
 // present change). `today` is the business-local date: future dates are
-// refused (an expense is recorded when it happened).
-export function validateExpenseInput(input, { partial = false, today } = {}) {
+// refused (an expense is recorded when it happened; money still to be paid
+// belongs in the Baby Payment Schedule). `profile` (EXPENSE_PROFILES) sets
+// the category rule and extra fields; the server always passes the
+// workspace's profile, and without one this is the original Phase 10
+// (fixed-category) validation.
+export function validateExpenseInput(input, { partial = false, today, profile = EXPENSE_PROFILES.distributor } = {}) {
   if (!input || typeof input !== "object" || Array.isArray(input)) throw new ExpenseError("invalid-input", "Invalid expense");
-  for (const key of Object.keys(input)) if (!EXPENSE_FIELDS.includes(key)) throw new ExpenseError("invalid-input", `Field ${key} can't be set here`);
+  for (const key of Object.keys(input)) if (!profile.fields.includes(key)) throw new ExpenseError("invalid-input", `Field ${key} can't be set here`);
   const has = (k) => !partial || Object.hasOwn(input, k);
   const out = {};
   if (has("date")) {
@@ -91,8 +114,13 @@ export function validateExpenseInput(input, { partial = false, today } = {}) {
     out.date = input.date;
   }
   if (has("category")) {
-    if (!EXPENSE_CATEGORY_IDS.includes(input.category)) throw new ExpenseError("invalid-input", "Choose a category");
+    const ok = profile.categories === "tenant" ? isValidRecordId(input.category) : EXPENSE_CATEGORY_IDS.includes(input.category);
+    if (!ok) throw new ExpenseError("invalid-input", "Choose a category");
     out.category = input.category;
+  }
+  if (profile.fields.includes("providerId") && has("providerId")) {
+    if (input.providerId !== null && input.providerId !== undefined && !isValidRecordId(input.providerId)) throw new ExpenseError("invalid-input", "Choose a provider");
+    out.providerId = input.providerId ?? null;
   }
   if (has("amount")) {
     if (!isCentavos(input.amount) || input.amount <= 0) throw new ExpenseError("invalid-amount", "Amount must be more than ₱0");

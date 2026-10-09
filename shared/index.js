@@ -28,3 +28,4 @@ export * from "./reports.js";
 export * from "./imports.js";
 export * from "./notifications.js";
 export * from "./payroll.js";
+export * from "./baby.js";

@@ -5,8 +5,11 @@
 // server code for each dataset (netlify/functions/_lib/exports/).
 //
 // Each workspace adds descriptors for its own modules when they are built
-// (Phase 14: household payroll). The module gate keeps them inside their
-// workspace: a Distributor can never download payroll, and the reverse.
+// (Phase 14: household payroll; Phase 15: baby). The module gate keeps them
+// inside their workspace: a Distributor can never download payroll, and the
+// reverse. `workspaces` (optional) narrows a dataset further where one
+// module serves several workspaces with different meanings (Expenses:
+// Distributor operating expenses vs Baby Expenses).
 
 import { filter, EXPORT_PERMISSION } from "./exports.js";
 import { FULFILLMENT_STATUSES } from "./orders.js";
@@ -16,6 +19,7 @@ import { EXPENSE_CATEGORY_IDS, EXPENSE_METHOD_IDS } from "./expenses.js";
 import { PRODUCT_STATUSES } from "./inventory.js";
 import { CUSTOMER_STATUSES } from "./customers.js";
 import { ATTENDANCE_STATUS_IDS, PAYROLL_STATUSES, RECEIPT_STATUSES, ADVANCE_STATUSES, STAFF_STATUSES } from "./payroll.js";
+import { CATEGORY_STATUSES, PROVIDER_STATUSES, PROVIDER_TYPE_IDS, SCHEDULE_STATUS_IDS } from "./baby.js";
 
 const range = { from: filter.day(), to: filter.day() };
 const RANGE_LABELS = { from: "From", to: "To" };
@@ -91,6 +95,9 @@ export const EXPORT_DATASETS = Object.freeze({
     id: "expenses",
     label: "Expenses",
     module: "expenses",
+    // The Distributor (operating-expense) columns and fixed categories; Baby
+    // Expenses have their own dataset below.
+    workspaces: ["distributor"],
     view: ["expenses.view"],
     exportPermission: EXPORT_PERMISSION,
     // Active expenses only: removed ones are an audit view, not an export.
@@ -135,6 +142,51 @@ export const EXPORT_DATASETS = Object.freeze({
     exportPermission: EXPORT_PERMISSION,
     filters: { staffId: filter.id(), status: filter.oneOf(Object.keys(ADVANCE_STATUSES)), ...range },
     filterLabels: { staffId: "Employee", status: "Status", ...RANGE_LABELS },
+  },
+
+  // ---- Baby Expense Tracker (Phase 15) ----
+  budget: {
+    id: "budget",
+    label: "Budget",
+    module: "budget",
+    workspaces: ["baby-expense"],
+    view: ["budget.view"],
+    exportPermission: EXPORT_PERMISSION,
+    // The budget as of export time: overall + one line per category.
+    filters: { category: filter.id(), status: filter.oneOf(Object.keys(CATEGORY_STATUSES)) },
+    filterLabels: { category: "Category", status: "Status" },
+  },
+  babyExpenses: {
+    id: "babyExpenses",
+    label: "Baby Expenses",
+    module: "expenses",
+    workspaces: ["baby-expense"],
+    view: ["expenses.view"],
+    exportPermission: EXPORT_PERMISSION,
+    // Active only, like the Distributor expenses export.
+    filters: { status: filter.oneOf(["active"]), category: filter.id(), providerId: filter.id(), method: filter.oneOf(EXPENSE_METHOD_IDS), search: filter.text(100), ...range },
+    filterLabels: { status: "Status", category: "Category", providerId: "Provider", method: "Method", search: "Search", ...RANGE_LABELS },
+  },
+  providers: {
+    id: "providers",
+    label: "Providers",
+    module: "providers",
+    workspaces: ["baby-expense"],
+    view: ["providers.view"],
+    exportPermission: EXPORT_PERMISSION,
+    filters: { status: filter.oneOf(Object.keys(PROVIDER_STATUSES)), type: filter.oneOf(PROVIDER_TYPE_IDS), search: filter.text(100) },
+    filterLabels: { status: "Status", type: "Type", search: "Search" },
+  },
+  paymentSchedule: {
+    id: "paymentSchedule",
+    label: "Payment Schedule",
+    module: "schedule",
+    workspaces: ["baby-expense"],
+    view: ["schedule.view"],
+    exportPermission: EXPORT_PERMISSION,
+    // from / to: the due date.
+    filters: { status: filter.oneOf(SCHEDULE_STATUS_IDS), category: filter.id(), providerId: filter.id(), ...range },
+    filterLabels: { status: "Status", category: "Category", providerId: "Provider", from: "Due from", to: "Due to" },
   },
 });
 

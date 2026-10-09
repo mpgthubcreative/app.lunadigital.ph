@@ -22,6 +22,7 @@
 import { daysBetween, REPORT_MAX_DAYS } from "./reports.js";
 import { isDayId } from "./metrics.js";
 import { canUseModule } from "./modules.js";
+import { snapshotWorkspaceTemplateId } from "./workspaces.js";
 import { QTY_SCALE } from "./quantity.js";
 
 // INITIAL synchronous safety limit, not a scalability claim. Measured
@@ -97,6 +98,7 @@ export function validateExportFilters(descriptor, raw, { today = null } = {}) {
 // membership/subscription in requireTenant.)
 export function canExport({ entitlements, permissions }, descriptor) {
   if (!descriptor || !permissions) return false;
+  if (descriptor.workspaces && !descriptor.workspaces.includes(snapshotWorkspaceTemplateId(entitlements))) return false;
   return canUseModule({ entitlements, permissions }, descriptor.module) && descriptor.view.every((p) => permissions[p] === true) && permissions[descriptor.exportPermission] === true;
 }
 

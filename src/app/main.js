@@ -142,7 +142,7 @@ function mountApp(session) {
       }
       shell.setActive(route);
       try {
-        const mod = await MODULE_LOADERS[route.moduleId]();
+        const mod = await MODULE_LOADERS[route.moduleId](session);
         if (token !== navToken) return;
         cleanup = mod.mount(shell.content, session) || null;
       } catch (err) {

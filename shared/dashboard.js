@@ -22,6 +22,7 @@ import { ESTIMATED_PROFIT_NOTE, financialSummary } from "./finance.js";
 import { rangePlan, sumMetricDocs } from "./reports.js";
 import { OPERATIONAL_COUNTERS, FINANCIAL_COUNTERS } from "./metrics.js";
 import { snapshotWorkspaceTemplateId, getWorkspaceTemplate } from "./workspaces.js";
+import { budgetSummary } from "./baby.js";
 
 export const DASHBOARD_WIDGETS = Object.freeze([
   // ---- Selected period: money (dashboard.financials) ----
@@ -49,6 +50,19 @@ export const DASHBOARD_WIDGETS = Object.freeze([
   { id: "awaitingReceipt", section: "lists", kind: "list", label: "Awaiting receipt confirmation", source: "list", ready: true, permission: "payroll.view", modules: ["payroll"], query: { collection: "payrolls", where: ["receiptStatus", "==", "awaiting"], limit: 5 }, empty: "Paid salaries the employee hasn't confirmed yet will appear here." },
   { id: "advancesNotPaid", section: "lists", kind: "list", label: "Advances not yet paid", source: "list", ready: true, permission: "advances.view", modules: ["advances"], query: { collection: "advances", where: ["status", "==", "not_yet_paid"], limit: 5 }, empty: "Advances recorded but not yet released will appear here." },
   { id: "recentActivity", section: "lists", kind: "list", label: "Recent activity", source: "list", ready: false, permission: "dashboard.view", modules: [], query: null, empty: "Staff actions and alerts will appear here." },
+
+  // ---- Baby Expense Tracker (Phase 15): no Distributor metric is read ----
+  // Selected period: Baby spending from spendingMetrics (day / month docs).
+  { id: "babySpent", dataFrom: ["budget"], section: "period", kind: "stat", label: "Spent", source: "spending-day", value: "spent", format: "money", permission: "budget.view", modules: ["budget", "expenses"], hint: "Baby Expenses dated in the period" },
+  { id: "babyExpenseCount", dataFrom: ["budget"], section: "period", kind: "stat", label: "Expenses recorded", source: "spending-day", value: "count", format: "number", permission: "budget.view", modules: ["budget", "expenses"] },
+  // Current budget: budgets/current, always "as of now" (no history is stored).
+  { id: "budgetTotal", dataFrom: ["budget"], section: "current", kind: "stat", label: "Total budget", source: "budget-current", value: "total", format: "money", permission: "budget.view", modules: ["budget"], hint: "As of now" },
+  { id: "budgetSpent", dataFrom: ["budget"], section: "current", kind: "stat", label: "Total spent", source: "budget-current", value: "spent", format: "money", permission: "budget.view", modules: ["budget", "expenses"], hint: "All Baby Expenses, as of now" },
+  { id: "budgetRemaining", dataFrom: ["budget"], section: "current", kind: "stat", label: "Remaining budget", source: "budget-current", value: "remaining", format: "money", permission: "budget.view", modules: ["budget", "expenses"], hint: "Total budget − total spent, as of now" },
+  { id: "budgetUpcoming", dataFrom: ["budget"], section: "current", kind: "stat", label: "Upcoming payments", source: "budget-current", value: "upcoming", format: "money", permission: "budget.view", modules: ["budget", "schedule"], hint: "Scheduled, not yet paid (not counted as spent), as of now" },
+  { id: "spendingByCategory", section: "lists", kind: "list", label: "Spending by category (now)", source: "list", ready: true, permission: "budget.view", modules: ["budget"], query: { collection: "expenseCategories", orderBy: ["order", "asc"], limit: 50 }, empty: "Your categories and what's been spent in each will appear here." },
+  { id: "upcomingPayments", section: "lists", kind: "list", label: "Upcoming payments", source: "list", ready: true, permission: "schedule.view", modules: ["schedule"], query: { collection: "scheduledPayments", where: ["status", "==", "upcoming"], orderBy: ["dueDate", "asc"], limit: 5 }, empty: "Payments you schedule (deposits, due bills) will appear here." },
+  { id: "recentExpenses", section: "lists", kind: "list", label: "Recent expenses", source: "list", ready: true, permission: "expenses.view", modules: ["expenses"], query: { collection: "expenses", where: ["status", "==", "active"], orderBy: ["date", "desc"], limit: 5 }, empty: "Baby Expenses you record will appear here." },
 ]);
 
 // Which modules already WRITE metrics. A widget whose dataFrom includes a
@@ -56,7 +70,7 @@ export const DASHBOARD_WIDGETS = Object.freeze([
 // field reads 0, e.g. "Paid today" before Payments, or an estimated profit
 // that would silently treat unrecorded expenses as zero. Each phase that
 // starts feeding metrics flips its entry.
-export const LIVE_DATA_SOURCES = Object.freeze({ orders: true, inventory: true, payments: true, expenses: true });
+export const LIVE_DATA_SOURCES = Object.freeze({ orders: true, inventory: true, payments: true, expenses: true, budget: true });
 
 export function isWidgetLive(widget) {
   return (widget.dataFrom || []).every((id) => LIVE_DATA_SOURCES[id] === true);
@@ -92,9 +106,11 @@ export function dashboardEmptyState(entitlements) {
   return template ? template.dashboard.empty : { title: "Nothing to show yet", body: "Your dashboard fills in as your business uses Luna." };
 }
 
-const PERIOD_SOURCES = { "operational-day": "metrics", "financial-day": "financialMetrics" };
-const CURRENT_SOURCES = { "operational-current": "metrics", "financial-current": "financialMetrics" };
-const SOURCE_FIELDS = { "operational-day": Object.keys(OPERATIONAL_COUNTERS), "financial-day": Object.keys(FINANCIAL_COUNTERS) };
+// Phase 15 adds the Baby sources: spending-day (spendingMetrics, summed
+// like the others) and budget-current (budgets/current).
+const PERIOD_SOURCES = { "operational-day": "metrics", "financial-day": "financialMetrics", "spending-day": "spendingMetrics" };
+const CURRENT_SOURCES = { "operational-current": "metrics", "financial-current": "financialMetrics", "budget-current": "budgets" };
+const SOURCE_FIELDS = { "operational-day": Object.keys(OPERATIONAL_COUNTERS), "financial-day": Object.keys(FINANCIAL_COUNTERS), "spending-day": ["spent", "count"] };
 
 // The metric documents a set of visible widgets needs, deduped by source:
 // [{ source, collection, ids }]. range: { from, to } (or one day id). A
@@ -124,6 +140,8 @@ export function combineDashboardDocs(source, docs) {
 // null = "No data yet". Shared by the Dashboard screen and its export.
 export function widgetValue(widget, data) {
   if (!isWidgetLive(widget) || !data) return null;
+  // Baby: Remaining = budget − spent, computed here (never stored or sent).
+  if (widget.source === "budget-current") return budgetSummary(data)[widget.value] ?? null;
   if (widget.source.startsWith("financial")) {
     const summary = widget.source === "financial-current" ? financialSummary({}, data) : financialSummary(data);
     return summary[widget.value] ?? null;

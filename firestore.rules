@@ -113,13 +113,13 @@ service cloud.firestore {
     // (shared/modules.js) and LIMIT_DEFINITIONS / FEATURE_DEFINITIONS
     // (shared/plans.seed.js); tests/shared/rules-registry.test.js checks.
     function moduleIds() {
-      return ['dashboard', 'orders', 'payments', 'inventory', 'customers', 'reports', 'expenses', 'imports', 'household', 'attendance', 'payroll', 'advances', 'users', 'settings', 'suppliers', 'production', 'returns'];
+      return ['dashboard', 'orders', 'payments', 'inventory', 'customers', 'reports', 'expenses', 'imports', 'household', 'attendance', 'payroll', 'advances', 'budget', 'schedule', 'providers', 'users', 'settings', 'suppliers', 'production', 'returns'];
     }
 
     // Keys every snapshot must carry. During a module's staged rollout
     // (shared/modules.js ROLLING_OUT_MODULE_IDS) its key may still be
-    // missing from older snapshots, where it reads as off. No rollout is
-    // open now: every key is required.
+    // missing from older snapshots, where it reads as off. Phase 15 rollout
+    // (compatible step): budget, schedule and providers may be missing.
     function requiredModuleIds() {
       return ['dashboard', 'orders', 'payments', 'inventory', 'customers', 'reports', 'expenses', 'imports', 'household', 'attendance', 'payroll', 'advances', 'users', 'settings', 'suppliers', 'production', 'returns'];
     }
@@ -154,6 +154,9 @@ service cloud.firestore {
         && m.attendance is bool
         && m.payroll is bool
         && m.advances is bool
+        && m.get('budget', false) is bool
+        && m.get('schedule', false) is bool
+        && m.get('providers', false) is bool
         && m.suppliers == false
         && m.production == false
         && m.returns == false;
@@ -193,14 +196,14 @@ service cloud.firestore {
     // OPERATIONAL (built) modules it allows (core included). tests/shared/rules-registry.test.js
     // fails if these drift from the registry.
     function workspaceTemplateVersions() {
-      return {'distributor': [5], 'household-payroll': [2], 'baby-expense': [1], 'bridal-expense': [1]};
+      return {'distributor': [5], 'household-payroll': [2], 'baby-expense': [1, 2], 'bridal-expense': [1]};
     }
 
     function workspaceTemplateModules() {
       return {
         'distributor': ['dashboard', 'users', 'settings', 'orders', 'payments', 'inventory', 'customers', 'expenses', 'reports', 'imports'],
         'household-payroll': ['dashboard', 'users', 'settings', 'household', 'attendance', 'payroll', 'advances'],
-        'baby-expense': ['dashboard', 'users', 'settings'],
+        'baby-expense': ['dashboard', 'users', 'settings', 'expenses', 'budget', 'schedule', 'providers'],
         'bridal-expense': ['dashboard', 'users', 'settings']
       };
     }
@@ -309,6 +312,13 @@ service cloud.firestore {
       match /attendance/{id}            { allow read: if canAccessModule(bid, 'attendance', 'attendance.view'); }
       match /payrolls/{id}              { allow read: if canAccessModule(bid, 'payroll', 'payroll.view'); }
       match /advances/{id}              { allow read: if canAccessModule(bid, 'advances', 'advances.view'); }
+
+      // Phase 15: Baby Expense Tracker (Baby Expenses are expenses/ above).
+      match /budgets/{id}               { allow read: if canAccessModule(bid, 'budget', 'budget.view'); }
+      match /expenseCategories/{id}     { allow read: if canAccessModule(bid, 'budget', 'budget.view'); }
+      match /spendingMetrics/{id}       { allow read: if canAccessModule(bid, 'budget', 'budget.view'); }
+      match /scheduledPayments/{id}     { allow read: if canAccessModule(bid, 'schedule', 'schedule.view'); }
+      match /providers/{id}             { allow read: if canAccessModule(bid, 'providers', 'providers.view'); }
 
       match /imports/{id} {
         allow read: if canAccessModule(bid, 'imports', 'imports.run');

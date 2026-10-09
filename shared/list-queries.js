@@ -79,7 +79,7 @@ export function customersQuery(f = {}) {
   return { parts: [{ where: [["status", "==", status]], orderBy: [["nameLower", "asc"], [ID, "asc"]] }] };
 }
 
-// filters: { status ("active"|"removed"), from?, to?, category?, method?, search? (payee prefix or exact reference) }
+// filters: { status ("active"|"removed"), from?, to?, category?, method?, providerId? (Baby), search? (payee prefix or exact reference) }
 export function expensesQuery(f = {}) {
   const status = f.status || "active";
   const term = (f.search || "").trim();
@@ -90,12 +90,13 @@ export function expensesQuery(f = {}) {
         { where: [["status", "==", status], ["reference", "==", term]], orderBy: [] },
       ],
       // A search still honours the other filters.
-      keep: (e) => (!f.category || e.category === f.category) && (!f.method || e.method === f.method) && (!f.from || e.date >= f.from) && (!f.to || e.date <= f.to),
+      keep: (e) => (!f.category || e.category === f.category) && (!f.method || e.method === f.method) && (!f.providerId || e.providerId === f.providerId) && (!f.from || e.date >= f.from) && (!f.to || e.date <= f.to),
       sort: (a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : a.id < b.id ? 1 : a.id > b.id ? -1 : 0),
     };
   }
   const where = [["status", "==", status]];
   if (f.category) where.push(["category", "==", f.category]);
+  if (f.providerId) where.push(["providerId", "==", f.providerId]);
   if (f.method) where.push(["method", "==", f.method]);
   if (f.from) where.push(["date", ">=", f.from]);
   if (f.to) where.push(["date", "<=", f.to]);
@@ -142,6 +143,35 @@ export function advancesQuery(f = {}) {
   if (f.from) where.push(["date", ">=", f.from]);
   if (f.to) where.push(["date", "<=", f.to]);
   return { parts: [{ where, orderBy: [["date", "desc"], [ID, "desc"]] }] };
+}
+
+// ---------- Baby Expense Tracker (Phase 15) ----------
+
+// Every category (a budget has at most MAX_CATEGORIES lines), display order.
+export function categoriesQuery() {
+  return { parts: [{ where: [], orderBy: [["order", "asc"], [ID, "asc"]] }] };
+}
+
+// filters: { status (active by default), type?, search? (name prefix) }
+export function providersQuery(f = {}) {
+  const where = [["status", "==", f.status || "active"]];
+  if (f.type) where.push(["type", "==", f.type]);
+  const term = f.search ? lower(f.search) : "";
+  if (term) return { parts: [{ where: [...where, ...prefix("nameLower", term)], orderBy: [["nameLower", "asc"], [ID, "asc"]] }] };
+  return { parts: [{ where, orderBy: [["nameLower", "asc"], [ID, "asc"]] }] };
+}
+
+// filters: { status? (upcoming by default), category?, providerId?, from?, to? } on the due date.
+// Upcoming reads soonest first; Paid / Cancelled most recent first.
+export function scheduledPaymentsQuery(f = {}) {
+  const status = f.status || "upcoming";
+  const where = [["status", "==", status]];
+  if (f.category) where.push(["category", "==", f.category]);
+  if (f.providerId) where.push(["providerId", "==", f.providerId]);
+  if (f.from) where.push(["dueDate", ">=", f.from]);
+  if (f.to) where.push(["dueDate", "<=", f.to]);
+  const dir = status === "upcoming" ? "asc" : "desc";
+  return { parts: [{ where, orderBy: [["dueDate", dir], [ID, dir]] }] };
 }
 
 // Merges search parts: by id, then keep, then sort.

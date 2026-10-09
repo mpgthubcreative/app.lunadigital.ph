@@ -35,7 +35,7 @@ const docAt = (p) => world.db.docs.get(p);
 const fin = (id) => docAt(`businesses/biz-a/financialMetrics/${id}`) || {};
 const opexOn = (id) => fin(id).operatingExpenses ?? 0;
 const exp = (id) => docAt(`businesses/biz-a/expenses/${id}`);
-const common = () => ({ db: world.db, tenant: A, FieldValue, business: BIZ, actor, now: NOW });
+const common = () => ({ db: world.db, tenant: A, FieldValue, business: BIZ, workspace: "distributor", actor, now: NOW });
 const add = (over = {}) => createExpense({ ...common(), input: { date: "2026-10-08", category: "packaging", amount: 200000, method: "cash", ...over } });
 
 // Invariant: every day/month document's operatingExpenses equals the sum
@@ -212,7 +212,7 @@ describe("POST /api/expenses", () => {
 
   it("cross-tenant: A can't create in, edit or remove B's expenses, or move B's metrics", async () => {
     const B = tenantDb(world.db, "biz-b");
-    const { expenseId } = await createExpense({ db: world.db, tenant: B, FieldValue, business: { ...BIZ, id: "biz-b" }, actor, now: NOW, input: { date: "2026-10-08", category: "rent", amount: 100000, method: "cash" } });
+    const { expenseId } = await createExpense({ db: world.db, tenant: B, FieldValue, business: { ...BIZ, id: "biz-b" }, workspace: "distributor", actor, now: NOW, input: { date: "2026-10-08", category: "rent", amount: 100000, method: "cash" } });
     for (const uid of [world.uids.ownera, world.uids.managera]) {
       expect((await call(uid, { action: "update", expenseId, changes: { amount: 1 } })).status).toBe(404);
       expect((await call(uid, { action: "remove", expenseId, reason: "hijack" })).status).toBe(404);

@@ -113,23 +113,26 @@ const TEMPLATES = [
   },
   {
     id: "baby-expense",
-    version: 1,
+    // v2 (Phase 15): Baby Expenses (the Expenses Core with the Baby
+    // profile), Budget & Categories, Payment Schedule, Providers / Vendors.
+    // v1 snapshots are accepted via upgradingFrom only until every business
+    // is recomputed (staged rollout).
+    version: 2,
+    upgradingFrom: [1],
     name: "Baby Expense Tracker",
     description: "Budget and track a baby's expenses, providers and upcoming payments.",
-    status: "planned",
-    modules: [...CORE],
-    navigation: [...CORE],
-    dashboard: { widgets: [], empty: { title: "Your baby budget workspace is being prepared", body: "Budget, spending and upcoming payments will appear here." } },
-    labels: { modules: { dashboard: "Baby Dashboard" } },
+    status: "live",
+    modules: [...CORE, "expenses", "budget", "schedule", "providers"],
+    navigation: ["dashboard", "budget", "expenses", "schedule", "providers", "users", "settings"],
+    dashboard: {
+      // Selected period (spending), then the current budget (as of now).
+      widgets: ["babySpent", "babyExpenseCount", "budgetTotal", "budgetSpent", "budgetRemaining", "budgetUpcoming", "spendingByCategory", "upcomingPayments", "recentExpenses"],
+      empty: { title: "Your baby budget is ready", body: "Set your budget and add categories to start tracking spending." },
+      sectionLabels: { period: "Spending in the selected period", current: "Current budget" },
+    },
+    labels: { modules: { dashboard: "Baby Dashboard", budget: "Budget & Categories", expenses: "Baby Expenses", schedule: "Payment Schedule", providers: "Providers / Vendors" } },
     settings: {},
     plannedModules: [
-      { id: "expenses", name: "Baby Expenses" },
-      { id: "baby-budget", name: "Budget" },
-      { id: "expense-categories", name: "Categories" },
-      { id: "providers", name: "Vendors / Providers" },
-      { id: "baby-payments", name: "Payments" },
-      { id: "payment-schedules", name: "Payment Schedules" },
-      { id: "due-dates", name: "Due Dates" },
       { id: "milestones", name: "Milestones" },
       { id: "baby-reports", name: "Reports" },
     ],
@@ -202,6 +205,14 @@ export function workspaceModuleLabel(templateId, moduleId, fallback) {
   return label || fallback;
 }
 
+// The dashboard's heading for a section ("period" / "current") in this
+// workspace, e.g. Baby's "Current budget"; `fallback` otherwise.
+export function workspaceSectionLabel(templateId, sectionId, fallback) {
+  const t = getWorkspaceTemplate(templateId);
+  const labels = t && t.dashboard.sectionLabels;
+  return (labels && Object.hasOwn(labels, sectionId) && labels[sectionId]) || fallback;
+}
+
 // Labels are short plain text: letters, digits, spaces and a few
 // punctuation marks. No markup, no control characters.
 export function isSafeLabel(value) {
@@ -246,6 +257,11 @@ export function validateWorkspaceTemplate(t, { moduleIds, coreModuleIds, availab
       else for (const m of w.modules) if (!mods.includes(m) && !(t.plannedModules || []).some((p) => p && p.id === m)) problems.push(`widget ${id} needs module ${m} the template neither allows nor plans`);
     }
     for (const k of ["title", "body"]) if (typeof t.dashboard.empty[k] !== "string" || /[<>]/.test(t.dashboard.empty[k])) problems.push(`dashboard.empty.${k} must be plain text`);
+    for (const k of Object.keys(t.dashboard)) if (!["widgets", "empty", "sectionLabels"].includes(k)) problems.push(`unknown dashboard key ${k}`);
+    if (t.dashboard.sectionLabels !== undefined) {
+      if (!isObj(t.dashboard.sectionLabels)) problems.push("dashboard.sectionLabels must be an object");
+      else for (const [k, v] of Object.entries(t.dashboard.sectionLabels)) if (!["period", "current"].includes(k) || typeof v !== "string" || !v.trim() || v.length > 60 || /[<>]/.test(v)) problems.push(`invalid dashboard section label ${k}`);
+    }
   }
 
   if (!isObj(t.labels) || !isObj(t.labels.modules) || Object.keys(t.labels).some((k) => k !== "modules")) problems.push("labels must be { modules }");

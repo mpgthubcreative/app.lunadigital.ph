@@ -34,10 +34,11 @@ describe("registry", () => {
     }
   });
 
-  it("Distributor and (Phase 14) Household Payroll are live; Bridal and Baby are architected, not built", () => {
+  it("Distributor, (Phase 14) Household Payroll and (Phase 15) Baby are live; Bridal is architected, not built", () => {
     expect(WORKSPACE_TEMPLATES.distributor.status).toBe("live");
     expect(WORKSPACE_TEMPLATES["household-payroll"].status).toBe("live");
-    for (const id of ["bridal-expense", "baby-expense"]) expect(WORKSPACE_TEMPLATES[id].status).toBe("planned");
+    expect(WORKSPACE_TEMPLATES["baby-expense"].status).toBe("live");
+    expect(WORKSPACE_TEMPLATES["bridal-expense"].status).toBe("planned");
   });
 
   it("is frozen: nothing can be changed at runtime", () => {
@@ -128,7 +129,9 @@ describe("planned modules are roadmap metadata only", () => {
     expect(ids("household-payroll")).toEqual(["payroll-reports"]);
     expect(WORKSPACE_TEMPLATES["household-payroll"].modules).toEqual(["dashboard", "users", "settings", "household", "attendance", "payroll", "advances"]);
     expect(ids("bridal-expense")).toEqual(expect.arrayContaining(["wedding-tasks", "guests", "rsvp", "wedding-suppliers"]));
-    expect(ids("baby-expense")).toEqual(expect.arrayContaining(["baby-budget", "milestones"]));
+    // Phase 15 built Baby Expenses, Budget & Categories, Payment Schedule and Providers.
+    expect(ids("baby-expense")).toEqual(["milestones", "baby-reports"]);
+    expect(WORKSPACE_TEMPLATES["baby-expense"].modules).toEqual(["dashboard", "users", "settings", "expenses", "budget", "schedule", "providers"]);
   });
 });
 
@@ -208,11 +211,16 @@ describe("effective modules = core + (template allows ∩ (override ?? plan))", 
     expect(computeEntitlements(lite, { modules: { payments: true } }, "distributor").modules.payments).toBe(true);
   });
 
-  it("baby / bridal: Expenses is planned, so it's false in the snapshot (not merely unusable)", () => {
-    for (const t of ["baby-expense", "bridal-expense"]) {
-      expect(ent(t, "pro").modules.expenses).toBe(false);
-      expect(WORKSPACE_TEMPLATES[t].plannedModules.map((p) => p.id)).toContain("expenses");
-    }
+  it("bridal: Expenses is planned, so it's false in the snapshot (not merely unusable); Baby has it (Phase 15)", () => {
+    expect(ent("bridal-expense", "pro").modules.expenses).toBe(false);
+    expect(WORKSPACE_TEMPLATES["bridal-expense"].plannedModules.map((p) => p.id)).toContain("expenses");
+    const baby = ent("baby-expense", "pro").modules;
+    for (const m of ["expenses", "budget", "schedule", "providers"]) expect(baby[m], m).toBe(true);
+    for (const m of ["orders", "payments", "inventory", "customers", "reports", "imports", "household", "attendance", "payroll", "advances"]) expect(baby[m], m).toBe(false);
+  });
+
+  it("Baby modules never reach Distributor, Household Payroll or Bridal snapshots", () => {
+    for (const t of ["distributor", "household-payroll", "bridal-expense"]) for (const m of ["budget", "schedule", "providers"]) expect(ent(t, "pro").modules[m], `${t}/${m}`).toBe(false);
   });
 
   it("there is no default template", () => {
@@ -268,7 +276,7 @@ describe("stored snapshot validation fails closed", () => {
   });
 
   it("Phase 14 strict: household-payroll v2 is the only accepted version; stale or malformed snapshots fail closed", () => {
-    expect(ROLLING_OUT_MODULE_IDS).toEqual([]);
+    expect(ROLLING_OUT_MODULE_IDS).toEqual(["budget", "schedule", "providers"]); // Phase 15 compatible step
     expect(WORKSPACE_TEMPLATES["household-payroll"].upgradingFrom).toBeUndefined();
     const s = ent("household-payroll", "growth");
     expect(s.workspaceTemplateVersion).toBe(2);
@@ -355,7 +363,7 @@ describe("navigation", () => {
 
   it("non-Distributor workspaces get no Distributor navigation, and their own names", () => {
     expect(nav("bridal-expense", "owner")).toEqual(["/ Wedding Dashboard", "/users Users", "/settings Settings"]);
-    expect(nav("baby-expense", "owner")).toEqual(["/ Baby Dashboard", "/users Users", "/settings Settings"]);
+    expect(nav("baby-expense", "owner")).toEqual(["/ Baby Dashboard", "/budget Budget & Categories", "/expenses Baby Expenses", "/payment-schedule Payment Schedule", "/providers Providers / Vendors", "/users Users", "/settings Settings"]);
     expect(nav("household-payroll", "owner")).toEqual(["/ Payroll Dashboard", "/attendance Attendance", "/payroll Payroll", "/advances Advances", "/household-staff Household Staff", "/users Users", "/settings Settings"]);
   });
 
@@ -382,11 +390,15 @@ describe("dashboard", () => {
     expect(dashboardDocuments(resolveDashboard(access("household-payroll")), "2026-10-08")).toEqual([]);
   });
 
-  it("Bridal / Baby: no widgets, so no metric document or list is ever requested", () => {
-    for (const t of ["bridal-expense", "baby-expense"]) {
-      expect(ids(t)).toEqual([]);
-      expect(dashboardDocuments(resolveDashboard(access(t)), "2026-10-08")).toEqual([]);
-      expect(dashboardEmptyState(ent(t)).title).toMatch(/being prepared/);
-    }
+  it("Bridal: no widgets, so no metric document or list is ever requested", () => {
+    expect(ids("bridal-expense")).toEqual([]);
+    expect(dashboardDocuments(resolveDashboard(access("bridal-expense")), "2026-10-08")).toEqual([]);
+    expect(dashboardEmptyState(ent("bridal-expense")).title).toMatch(/being prepared/);
+  });
+
+  it("Baby (Phase 15): only Baby widgets; reads spendingMetrics + budgets/current, never a Distributor metric", () => {
+    expect(ids("baby-expense")).toEqual(["babySpent", "babyExpenseCount", "budgetTotal", "budgetSpent", "budgetRemaining", "budgetUpcoming", "spendingByCategory", "upcomingPayments", "recentExpenses"]);
+    const cols = dashboardDocuments(resolveDashboard(access("baby-expense")), "2026-10-08").map((d) => d.collection);
+    expect(cols.sort()).toEqual(["budgets", "spendingMetrics"]);
   });
 });

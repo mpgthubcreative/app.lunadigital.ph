@@ -44,6 +44,12 @@ export const MODULES = Object.freeze([
   { id: "attendance", label: "Attendance", path: "/attendance", icon: "calendar", permission: "attendance.view", available: true, collections: { attendance: "attendance.view" }, storage: {} },
   { id: "payroll", label: "Payroll", path: "/payroll", icon: "payroll", permission: "payroll.view", available: true, collections: { payrolls: "payroll.view" }, storage: {} },
   { id: "advances", label: "Advances", path: "/advances", icon: "advance", permission: "advances.view", available: true, collections: { advances: "advances.view" }, storage: {} },
+  // Built in Phase 15 (Baby Expense Tracker). Operational only in the
+  // baby-expense template, which also reuses `expenses` ("Baby Expenses").
+  // Categories are the budget's lines, so they belong to Budget.
+  { id: "budget", label: "Budget", path: "/budget", icon: "budget", permission: "budget.view", available: true, collections: { budgets: "budget.view", expenseCategories: "budget.view", spendingMetrics: "budget.view" }, storage: {} },
+  { id: "schedule", label: "Payment Schedule", path: "/payment-schedule", icon: "calendar", permission: "schedule.view", available: true, collections: { scheduledPayments: "schedule.view" }, storage: {} },
+  { id: "providers", label: "Providers", path: "/providers", icon: "provider", permission: "providers.view", available: true, collections: { providers: "providers.view" }, storage: {} },
   { id: "users", label: "Users", path: "/users", icon: "users", permission: "users.view", available: true, core: true, collections: { members: "users.view" }, storage: {} },
   { id: "settings", label: "Settings", path: "/settings", icon: "settings", permission: "settings.view", available: true, core: true, collections: { settings: "settings.view" }, storage: {} },
 
@@ -59,7 +65,7 @@ export const MODULE_IDS = Object.freeze(MODULES.map((m) => m.id));
 // missing from snapshots computed before it (staged rollout, see
 // docs/ARCHITECTURE.md "Activating a module"): a missing key reads as false.
 // Emptied once recompute-entitlements has run everywhere.
-export const ROLLING_OUT_MODULE_IDS = Object.freeze([]);
+export const ROLLING_OUT_MODULE_IDS = Object.freeze(["budget", "schedule", "providers"]);
 export const CORE_MODULE_IDS = Object.freeze(MODULES.filter((m) => m.core).map((m) => m.id));
 // Modules a plan or override can switch on or off.
 export const SELLABLE_MODULE_IDS = Object.freeze(MODULES.filter((m) => !m.core).map((m) => m.id));

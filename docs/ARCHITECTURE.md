@@ -451,8 +451,8 @@ There are no combined ids such as `distributor-growth`. Every plan works with ev
 | Template | Status | Allows (besides Dashboard, Users, Settings) | Planned (metadata only) |
 |---|---|---|---|
 | `distributor` (v5) | live | orders, payments, inventory, customers (Phase 9), expenses (Phase 10, "Operating Expenses"), reports (Phase 11), imports (Phase 12) | suppliers, production, returns (notifications became a core capability in Phase 13) |
-| `household-payroll` | planned | — | household staff, payroll, salary payments, receipt confirmation, advances, deductions, payroll history, reports |
-| `baby-expense` | planned | — | expenses ("Baby Expenses"), budget, categories, providers, payments, due dates, milestones, reports |
+| `household-payroll` (v2) | live (Phase 14) | household, attendance, payroll, advances | payroll reports |
+| `baby-expense` (v2) | live (Phase 15) | expenses ("Baby Expenses"), budget (with categories), schedule (Payment Schedule), providers | milestones, reports |
 | `bridal-expense` | planned | — | expenses ("Wedding Expenses"), budget, suppliers, supplier payments and balances, payment due dates, wedding tasks, guests, RSVP, reports |
 
 **Effective modules** (`computeEntitlements(plan, overrides, workspaceTemplateId)`, which has no default template):
@@ -661,7 +661,7 @@ These apply to every phase from Phase 12 on. Each module adopts them when it's b
 | To-Do | Task, Category, Assigned To, Due Date, Priority, Status | status, due date, assignee, category, priority |
 | Guests / RSVP | Guest, Group, Party Size, Invitation Status, RSVP, Confirmed Guests, Table | Confirmed / Declined / Awaiting, side or group, table |
 
-**17. Baby tracker (future; nothing built yet):** filtered .xlsx for Budget, Expenses, Categories, Providers / Vendors and Payment Schedules (for example Category = Medical, Period = First Trimester). The exact pregnancy/baby periods are designed in that phase.
+**17. Baby tracker (built in Phase 15, see "Baby Expense Tracker"):** filtered .xlsx for Budget (with its categories), Baby Expenses, Providers / Vendors and the Payment Schedule (for example Category = Medical over a date range). Named pregnancy periods (e.g. First Trimester) were not added; a custom date range covers them.
 
 **18. Never** generate a workbook by dumping a Firestore collection into the browser.
 
@@ -1136,6 +1136,98 @@ Status (2026-10-09):
 - **Household-specific role templates.**
 - **Correcting a paid payroll:** it is locked.
 
+## Baby Expense Tracker (Phase 15)
+
+The `baby-expense` workspace template goes v1 → v2 (live). It is a personal budget and spending tracker for preparing for and caring for a baby. It is not accounting and not a medical record.
+
+| Module | Screen | Data (`businesses/{bid}/…`) | Permissions |
+|---|---|---|---|
+| `expenses` (reused) | Baby Expenses | `expenses/{id}`: the Expenses Core record, with a tenant category, an optional `providerId` and the payee snapshot | `expenses.view / create / update / delete` |
+| `budget` | Budget & Categories | `budgets/current` (the total budget and Luna's running totals), `expenseCategories/{id}` (the budget's lines), `spendingMetrics/{day or month}` | `budget.view`, `budget.manage` |
+| `schedule` | Payment Schedule | `scheduledPayments/{id}`: Upcoming → Paid (one linked expense) or Cancelled | `schedule.view`, `schedule.manage` |
+| `providers` | Providers / Vendors | `providers/{id}`: name, type, phone, email, location, notes, status | `providers.view`, `providers.manage` |
+
+- **Roles:** Owner and Manager get every Baby permission. Staff get none: the Staff template is Distributor-oriented, and no family roles were added.
+- **Marking a payment Paid** records an expense, so it needs `schedule.manage` **and** `expenses.create`, with the Expenses module.
+- **Workspace ceiling:** the template is the ceiling. Distributor, Household and Bridal never get `budget`, `schedule` or `providers`, and Baby modules forged into their snapshots open nothing in the server, the browser or either rule file.
+
+### Expenses Core reuse: one record engine, a sink per workspace
+`netlify/functions/_lib/expenses.js` keeps the shared record behaviour:
+- validation: integer centavos, business-local dates, no future dates
+- history, revisions (Edit → Save), audited removal
+
+What an expense **counts as** is the workspace's sink. It is chosen from the business's validated workspace (`ctx.workspace.templateId`), never a default:
+- **`distributor`:** Operating Expenses in `financialMetrics` plus the report rollups, from the fixed categories. This is unchanged Phase 10 behaviour, and the Distributor expense, report and metrics tests pass as before.
+- **`baby-expense`** (`_lib/baby-spending.js`): `budgets/current` plus `spendingMetrics`, from the tenant's own categories. It never writes sales, COGS, profit, `financialMetrics` or report rollups.
+- Any other workspace has no profile, so expenses are refused (`not-available`).
+
+`shared/expenses.js` `EXPENSE_PROFILES` holds each profile's category rule (`fixed` or `tenant`) and its extra fields (Baby adds `providerId`).
+
+### Budget model (Luna computes; nobody types Spent)
+- **The overall figures:** `Remaining = Budget − Spent` and `Category remaining = Category budget − Category spent` (`shared/baby.js` `budgetSummary` / `budgetLines`). They are computed on read and never stored or sent by the browser.
+- **The running totals** on `budgets/current` (`spent`, `expenseCount`, `spentByCategory`, `upcoming`, `upcomingCount`, `upcomingByCategory`) are moved by the server in the same transaction as the record.
+- **A budget change** (Edit → Save) is not spending. It records previous → new, who and when on the budget history, for example "Budget changed ₱150,000 → ₱180,000".
+- **Categories** are tenant data: name, active/inactive, an optional budget allocation, and an order. "Add suggested categories" offers the list once (Medical, Nursery / Furniture, …). A category that any expense or payment has used (`useCount`) can't be deleted, only deactivated. Names are unique, and there are at most 50.
+
+### Providers
+A small Baby directory. It is not Distributor Customers and not Bridal suppliers. An expense or payment linked to a provider keeps the provider's name as its payee snapshot, so history reads as it was paid after a rename or deactivation. A deactivated provider can't be used for new records.
+
+### Payment Schedule → exactly one expense
+- **Upcoming money is committed, not spent:** it counts in Upcoming only.
+- **Mark paid** (paid date ≤ today, method, reference, actual amount) runs in one transaction:
+  - It reads the payment.
+  - If the payment is already Paid, it returns the existing expense (a retry or a second click).
+  - Otherwise it creates the expense with a **deterministic id** (the payment id, or `<id>r<n>` after a reopen) using `create()`. The payment leaves Upcoming in the same `budgets/current` write that adds the spending.
+  - If a racing request already created that id, the call answers with that payment's expense.
+- **Removing a paid payment's expense** puts the payment back to Upcoming. Editing that expense's amount updates the payment's paid amount. A Paid payment can't be cancelled.
+- **Statuses** use stable ids (`upcoming`, `paid`, `cancelled`); labels are display text only.
+
+### Dashboard, filters, exports, notifications
+- **Baby Dashboard:** it reads no Distributor metric.
+  - **"Spending in the selected period"** comes from `spendingMetrics` day/month documents, summed by the Phase 12.5 range planner (Today, Yesterday, This week, This month, Last month, Custom; business timezone).
+  - **"Current budget · as of now"** comes from `budgets/current`: Total budget, Total spent, Remaining, Upcoming. No historical budget is stored, so a past period never shows a "remaining then".
+  - **Lists:** Spending by category, Upcoming payments, Recent expenses.
+  - Templates may now name their sections (`dashboard.sectionLabels`).
+- **Filters** use indexed list specs shared by the screen and the export (`shared/list-queries.js`):
+  - Baby Expenses: date range, category, provider, method, search
+  - Providers: status, type, name prefix
+  - Payment Schedule: status, due-date range, category, provider
+  - Budget: category, status
+  - New composite indexes cover each combination; nothing scans.
+- **Excel**, through the Export Core (`_lib/exports/baby.js`). The datasets are Budget, Baby Expenses, Providers and Payment Schedule.
+  - The descriptors' `workspaces` field keeps Baby datasets Baby-only and the Distributor `expenses` dataset Distributor-only.
+  - The Dashboard workbook adds Category Budget, Expenses (selected period) and Upcoming Payments sheets, and calls its current sheet "Current budget".
+  - No Distributor field appears.
+- **Notifications:** `budget.threshold` (category `budget`, optional) fires at 75%, 90% and 100% of the overall budget. It fires once per level per budget episode (a total-budget change starts a new episode), crossing upward only, and the Notifications Core dedupes by id. Due-date reminders are deferred (no scheduler); the dashboard list is the MVP.
+
+### Concurrency (real emulator, `tests/emulator/baby-concurrency.test.js`)
+Every Baby write (expense, category, budget, schedule) reads and writes `budgets/current`, so a family's spending writes serialize. A category being deleted and an expense starting to use it both touch the category document. After each race, the totals equal a fresh sum of the records, and every Paid payment has exactly one expense. The races tested:
+- 20 expenses at once
+- two users editing one expense (one wins, the other is told it's stale)
+- edits and removals racing budget changes
+- Mark paid ×10 at once, and by two users
+- Mark paid racing Cancel
+- removing the paid expense racing a second Mark paid
+- a provider deactivated while expenses are recorded
+- a category deleted while an expense uses it
+
+### Staged rollout
+1. **Compatible step (this commit).**
+   - `budget`, `schedule` and `providers` are in `ROLLING_OUT_MODULE_IDS`, and both rule files read them with `m.get(…, false)`.
+   - The template accepts v1 and v2. A v1 snapshot stays valid but opens no Baby data.
+   - Deploy the rules, indexes and code, then run `seed-plans --overwrite`, `recompute-entitlements --all` and `resync-permissions --all`, then a live probe.
+2. **Strict step.** Empty `ROLLING_OUT_MODULE_IDS`, require the three keys, and drop baby-expense v1.
+
+Shipping the code alone activates nothing on staging. No Baby business exists there today.
+
+### Not built (later)
+- Medical records of any kind, and medical advice
+- Accounting, tax, bank or card sync, Google Sheets sync, custom fields
+- Milestones and Baby reports (still planned)
+- Scheduled due-date reminders
+- Family role templates
+- Per-period budget history (budget snapshots)
+
 ## Performance
 
 - The dashboard reads at most four summary documents (see above), plus small limited list queries once Orders and Inventory exist.
@@ -1197,9 +1289,10 @@ On Orders, Reference and Proof show "—" until Payments (Phase 8) fills them in
 12.5. Dashboard filters + Excel Export Core ✅
 13. Notifications ✅
 14. Household / Kasambahay Payroll MVP ✅ (the household-payroll workspace)
-15. Super Admin console
-16. Usage metering views
-17. Reliability, backups and recovery
+15. Baby Expense Tracker MVP (the baby-expense workspace): local gate passed; staging activation awaiting approval
+16. Super Admin console
+17. Usage metering views
+18. Reliability, backups and recovery
 
 - Phases 6 and 7 are in this order because orders need products to reserve and a cost to snapshot.
 - Expenses come before Reports so the P&L has operating expenses to subtract.

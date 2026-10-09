@@ -3,8 +3,9 @@
 //   { action: "update", expenseId, expectedRevision?, changes: { ...any of the above } }                       expenses.update
 //   { action: "remove", expenseId, reason }                                                                     expenses.delete
 // amount is integer centavos (> 0); date is the business-local day. The
-// operating-expense metrics, createdBy and timestamps are always set by the
-// server; the browser can't send them. Reads go straight to Firestore under
+// totals (Distributor operating-expense metrics, or the Baby budget),
+// createdBy and timestamps are always set by the server; the browser can't
+// send them. A Baby expense may add providerId (a saved provider). Reads go straight to Firestore under
 // the rules (expenses.view).
 
 import { respond, withErrorHandling, requireMethod, parseJsonBody, RequestError } from "./_lib/http.js";
@@ -27,6 +28,10 @@ const STATUS = {
   removed: 409,
   "history-full": 409,
   "reason-required": 400,
+  // Phase 15 (Baby profile)
+  "invalid-category": 400,
+  "invalid-provider": 400,
+  "not-available": 403,
 };
 
 export function createExpensesHandler({ getAdmin: loadAdmin, now = () => new Date() }) {
@@ -48,7 +53,9 @@ export function createExpensesHandler({ getAdmin: loadAdmin, now = () => new Dat
     only(body, action.fields);
     if (body.expectedRevision !== undefined && !Number.isSafeInteger(body.expectedRevision)) throw new RequestError("invalid-request", "Invalid revision.", 400);
 
-    const common = { db, tenant: ctx.tenant, FieldValue: admin.firestore.FieldValue, business: ctx.business, actor: actorOf(ctx) };
+    // The workspace (from the validated snapshot) picks the expense profile:
+    // Distributor operating expenses or Baby spending (Phase 15).
+    const common = { db, tenant: ctx.tenant, FieldValue: admin.firestore.FieldValue, business: ctx.business, workspace: ctx.workspace.templateId, actor: actorOf(ctx) };
     try {
       switch (body.action) {
         case "create":
@@ -56,7 +63,7 @@ export function createExpensesHandler({ getAdmin: loadAdmin, now = () => new Dat
         case "update":
           return respond(200, { success: true, ...(await updateExpense({ ...common, expenseId: body.expenseId, changes: body.changes, expectedRevision: body.expectedRevision ?? null, now: now() })) });
         default:
-          return respond(200, { success: true, ...(await removeExpense({ ...common, expenseId: body.expenseId, reason: body.reason })) });
+          return respond(200, { success: true, ...(await removeExpense({ ...common, expenseId: body.expenseId, reason: body.reason, now: now() })) });
       }
     } catch (err) {
       if (err instanceof ExpenseError) throw new RequestError(err.code, err.message, STATUS[err.code] || 400);

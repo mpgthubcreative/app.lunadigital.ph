@@ -14,6 +14,9 @@ const LIST_ROWS = {
   payrollsToRelease: (p) => ({ id: p.id, title: `${p.staffName} · ${formatCentavos(p.netPay)}`, detail: `${p.periodStart} to ${p.periodEnd} · not yet paid` }),
   awaitingReceipt: (p) => ({ id: p.id, title: `${p.staffName} · ${formatCentavos(p.salary?.amount ?? p.netPay)}`, detail: `Paid ${p.salary?.paidDate ?? ""} · awaiting the employee's confirmation` }),
   advancesNotPaid: (a) => ({ id: a.id, title: `${a.staffName} · ${formatCentavos(a.amount)}`, detail: `${a.date}${a.description ? ` · ${a.description}` : ""} · not yet paid` }),
+  spendingByCategory: (l) => ({ id: l.id, title: `${l.name} · ${formatCentavos(l.spent)} spent`, detail: l.budget === null ? "No category budget" : l.remaining < 0 ? `Budget ${formatCentavos(l.budget)} · over by ${formatCentavos(-l.remaining)}` : `Budget ${formatCentavos(l.budget)} · ${formatCentavos(l.remaining)} left` }),
+  upcomingPayments: (s) => ({ id: s.id, title: `${s.description} · ${formatCentavos(s.amount)}`, detail: `Due ${s.dueDate}${s.payee ? ` · ${s.payee}` : ""}` }),
+  recentExpenses: (e) => ({ id: e.id, title: `${e.categoryName ?? "Expense"} · ${formatCentavos(e.amount)}`, detail: `${e.date}${e.payee ? ` · ${e.payee}` : ""}` }),
   lowStockItems: (p) => ({ id: p.id, title: p.name, detail: `${p.sku} · ${formatQuantity(p.available)} ${UNITS[p.unit]?.label ?? p.unit} available · reorder at ${formatQuantity(p.reorderLevel)}` }),
 };
 
