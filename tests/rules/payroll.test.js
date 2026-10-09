@@ -1,8 +1,9 @@
 // Phase 14 rules: household payroll data (staff, attendance, payrolls,
 // advances) is readable only by members of THAT household with the module's
 // view permission, only in the household-payroll workspace; nothing is
-// browser-writable; receipt links are server-only. A snapshot from before
-// the rollout (no payroll keys) still validates for other modules.
+// browser-writable; receipt links are server-only. Strict step: only
+// household-payroll v2 snapshots carrying every module key are valid; stale,
+// missing or malformed versions and forged modules fail closed.
 
 import { afterAll, beforeAll, describe, it } from "vitest";
 import { assertFails, assertSucceeds } from "@firebase/rules-unit-testing";
@@ -28,14 +29,29 @@ beforeAll(async () => {
     await db.doc("receiptLinks/abc").set({ businessId: H, payrollId: "d1" });
     // Payroll collections in a Distributor business: not reachable (template ceiling).
     for (const c of Object.keys(COLLECTIONS)) await db.doc(`businesses/${A}/${c}/d1`).set({ x: 1 });
-    // A snapshot computed before Phase 14 (no payroll keys) for an old household (v1).
-    const old = businessDoc("Old home", "active", { planId: "growth", workspaceTemplateId: "household-payroll" });
-    for (const k of ["household", "attendance", "payroll", "advances"]) delete old.entitlements.modules[k];
-    old.entitlements.workspaceTemplateVersion = 1;
-    await db.doc("businesses/home-old").set(old);
-    await seedMember(db, "home-old", "owner@home-old", { role: "owner", isAccountOwner: true });
-    await db.doc("businesses/home-old/payrolls/d1").set({ x: 1 });
-    await db.doc("businesses/home-old/settings/general").set({ x: 1 });
+    // Stale / malformed household snapshots and a Distributor with forged household modules.
+    const STALE = {
+      "home-old": (e) => { for (const k of ["household", "attendance", "payroll", "advances"]) delete e.modules[k]; e.workspaceTemplateVersion = 1; },
+      "home-v1": (e) => { e.workspaceTemplateVersion = 1; },
+      "home-nover": (e) => { delete e.workspaceTemplateVersion; },
+      "home-v3": (e) => { e.workspaceTemplateVersion = 3; },
+      "home-vstr": (e) => { e.workspaceTemplateVersion = "2"; },
+      "home-nokeys": (e) => { delete e.modules.payroll; },
+    };
+    for (const [bid, mutate] of Object.entries(STALE)) {
+      const b = businessDoc(bid, "active", { planId: "growth", workspaceTemplateId: "household-payroll" });
+      mutate(b.entitlements);
+      await db.doc(`businesses/${bid}`).set(b);
+      await seedMember(db, bid, `owner@${bid}`, { role: "owner", isAccountOwner: true });
+      await db.doc(`businesses/${bid}/payrolls/d1`).set({ x: 1 });
+      await db.doc(`businesses/${bid}/settings/general`).set({ x: 1 });
+    }
+    const forged = businessDoc("Forged", "active", { planId: "growth", workspaceTemplateId: "distributor" });
+    for (const k of ["household", "attendance", "payroll", "advances"]) forged.entitlements.modules[k] = true;
+    await db.doc("businesses/dist-forged").set(forged);
+    await seedMember(db, "dist-forged", "owner@dist-forged", { role: "owner", isAccountOwner: true });
+    for (const c of Object.keys(COLLECTIONS)) await db.doc(`businesses/dist-forged/${c}/d1`).set({ x: 1 });
+    await db.doc("businesses/dist-forged/orders/d1").set({ x: 1 });
   });
 });
 afterAll(async () => {
@@ -78,9 +94,19 @@ describe("reading household payroll data", () => {
     await assertFails(dbAs(env, "owner@home-a").collection("receiptLinks").get());
   });
 
-  it("staged rollout: a pre-Phase-14 snapshot (no payroll keys) still validates; its payroll stays off", async () => {
-    await assertSucceeds(dbAs(env, "owner@home-old").doc("businesses/home-old/settings/general").get());
-    await assertFails(dbAs(env, "owner@home-old").doc("businesses/home-old/payrolls/d1").get());
+  it("strict: the current household v2 snapshot works", async () => {
+    await assertSucceeds(dbAs(env, `owner@${H}`).doc(`businesses/${H}/payrolls/d1`).get());
+  });
+
+  for (const [bid, what] of [["home-old", "pre-Phase-14 (v1, no household keys)"], ["home-v1", "v1 with every key"], ["home-nover", "missing version"], ["home-v3", "unknown future version"], ["home-vstr", "version as a string"], ["home-nokeys", "v2 missing the payroll key"]]) {
+    it(`strict: ${what} snapshot fails closed (payroll AND settings)`, async () => {
+      await assertFails(dbAs(env, `owner@${bid}`).doc(`businesses/${bid}/payrolls/d1`).get());
+      await assertFails(dbAs(env, `owner@${bid}`).doc(`businesses/${bid}/settings/general`).get());
+    });
+  }
+
+  it("strict: household modules forged into a Distributor snapshot open no payroll data", async () => {
+    for (const c of Object.keys(COLLECTIONS)) await assertFails(dbAs(env, "owner@dist-forged").doc(`businesses/dist-forged/${c}/d1`).get());
   });
 });
 

@@ -28,6 +28,10 @@ const BROKEN = Object.freeze({
   "st-bad-limits": (b) => (b.entitlements.limits.users = "5"),
   "st-bad-feature": (b) => (b.entitlements.features.support = "gold"),
   "st-bad-unbuilt-on": (b) => (b.entitlements.modules.suppliers = true),
+  // Phase 14 strict step: the household keys are required again (a
+  // pre-Phase-14 snapshot is stale everywhere).
+  "st-bad-no-household-keys": (b) => { for (const k of ["household", "attendance", "payroll", "advances"]) delete b.entitlements.modules[k]; },
+  "st-bad-no-payroll-key": (b) => delete b.entitlements.modules.payroll,
 });
 
 const ROLES = Object.freeze({

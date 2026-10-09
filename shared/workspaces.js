@@ -94,9 +94,10 @@ const TEMPLATES = [
   {
     id: "household-payroll",
     // v2 (Phase 14): Household Staff, Attendance, Payroll (deductions,
-    // salary release, receipt confirmation, history) and Advances.
+    // salary release, receipt confirmation, history) and Advances. (v1
+    // snapshots were accepted via upgradingFrom only until every business
+    // was recomputed.)
     version: 2,
-    upgradingFrom: [1],
     name: "Household / Kasambahay Payroll",
     description: "Pay household staff, record what was released and get each payment confirmed by the person who received it.",
     status: "live",

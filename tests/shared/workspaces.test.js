@@ -12,7 +12,7 @@ import {
   snapshotWorkspaceTemplateId,
   isSafeLabel,
 } from "../../shared/workspaces.js";
-import { MODULES, MODULE_IDS, CORE_MODULE_IDS, getModule, isModuleEnabled, canUseModule, resolveNavigation } from "../../shared/modules.js";
+import { MODULES, MODULE_IDS, CORE_MODULE_IDS, ROLLING_OUT_MODULE_IDS, getModule, isModuleEnabled, canUseModule, resolveNavigation } from "../../shared/modules.js";
 import { computeEntitlements, validateEntitlementsSnapshot, ENTITLEMENTS_SCHEMA_VERSION } from "../../shared/entitlements.js";
 import { DASHBOARD_WIDGETS, resolveDashboard, dashboardDocuments, dashboardEmptyState } from "../../shared/dashboard.js";
 import { PLAN_SEED } from "../../shared/plans.seed.js";
@@ -265,6 +265,35 @@ describe("stored snapshot validation fails closed", () => {
     expect(s.workspaceTemplateVersion).toBe(5);
     for (const old of [1, 2, 3]) expect(v({ ...s, workspaceTemplateVersion: old }, "growth", "distributor").ok).toBe(false);
     expect(v({ ...s, workspaceTemplateVersion: 4 }, "growth", "distributor").ok).toBe((WORKSPACE_TEMPLATES.distributor.upgradingFrom ?? []).includes(4));
+  });
+
+  it("Phase 14 strict: household-payroll v2 is the only accepted version; stale or malformed snapshots fail closed", () => {
+    expect(ROLLING_OUT_MODULE_IDS).toEqual([]);
+    expect(WORKSPACE_TEMPLATES["household-payroll"].upgradingFrom).toBeUndefined();
+    const s = ent("household-payroll", "growth");
+    expect(s.workspaceTemplateVersion).toBe(2);
+    expect(v(s, "growth", "household-payroll")).toEqual({ ok: true, problems: [] });
+    for (const bad of [1, 0, 3, 99, "2", null, 2.5]) expect(v({ ...s, workspaceTemplateVersion: bad }, "growth", "household-payroll").ok, String(bad)).toBe(false);
+    const noVersion = structuredClone(s);
+    delete noVersion.workspaceTemplateVersion;
+    expect(v(noVersion, "growth", "household-payroll").ok).toBe(false);
+    // a pre-Phase-14 snapshot (no household keys) is stale now, for every template
+    for (const t of ["household-payroll", "distributor", "baby-expense", "bridal-expense"]) {
+      const old = structuredClone(ent(t, "growth"));
+      for (const k of ["household", "attendance", "payroll", "advances"]) delete old.modules[k];
+      expect(v(old, "growth", t).ok, t).toBe(false);
+    }
+  });
+
+  it("Phase 14 strict: Household modules forged into Distributor, Baby or Bridal snapshots are refused", () => {
+    for (const t of ["distributor", "baby-expense", "bridal-expense"]) {
+      for (const m of ["household", "attendance", "payroll", "advances"]) {
+        const s = structuredClone(ent(t, "growth"));
+        s.modules[m] = true;
+        expect(v(s, "growth", t).ok, `${t}/${m}`).toBe(false);
+      }
+      expect(v(ent(t, "growth"), "growth", t).ok, t).toBe(true);
+    }
   });
 
   it("a distributor snapshot that lost only its template id is not read as distributor", () => {

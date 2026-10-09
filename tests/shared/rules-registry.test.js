@@ -98,7 +98,7 @@ function snapshotChecks(name, text) {
     });
 
     it("module access also requires the workspace to allow the module", () => {
-      expect(src).toContain("workspaceAllows(business, business.entitlements, moduleId)");
+      expect(src).toContain("workspaceAllows(business.entitlements, moduleId)");
     });
   });
 }

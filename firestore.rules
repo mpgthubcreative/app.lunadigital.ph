@@ -118,9 +118,10 @@ service cloud.firestore {
 
     // Keys every snapshot must carry. During a module's staged rollout
     // (shared/modules.js ROLLING_OUT_MODULE_IDS) its key may still be
-    // missing from older snapshots, where it reads as off.
+    // missing from older snapshots, where it reads as off. No rollout is
+    // open now: every key is required.
     function requiredModuleIds() {
-      return ['dashboard', 'orders', 'payments', 'inventory', 'customers', 'reports', 'expenses', 'imports', 'users', 'settings', 'suppliers', 'production', 'returns'];
+      return ['dashboard', 'orders', 'payments', 'inventory', 'customers', 'reports', 'expenses', 'imports', 'household', 'attendance', 'payroll', 'advances', 'users', 'settings', 'suppliers', 'production', 'returns'];
     }
 
     function limitKeys() {
@@ -149,10 +150,10 @@ service cloud.firestore {
         && m.reports is bool
         && m.expenses is bool
         && m.imports is bool
-        && m.get('household', false) is bool
-        && m.get('attendance', false) is bool
-        && m.get('payroll', false) is bool
-        && m.get('advances', false) is bool
+        && m.household is bool
+        && m.attendance is bool
+        && m.payroll is bool
+        && m.advances is bool
         && m.suppliers == false
         && m.production == false
         && m.returns == false;
@@ -192,7 +193,7 @@ service cloud.firestore {
     // OPERATIONAL (built) modules it allows (core included). tests/shared/rules-registry.test.js
     // fails if these drift from the registry.
     function workspaceTemplateVersions() {
-      return {'distributor': [5], 'household-payroll': [1, 2], 'baby-expense': [1], 'bridal-expense': [1]};
+      return {'distributor': [5], 'household-payroll': [2], 'baby-expense': [1], 'bridal-expense': [1]};
     }
 
     function workspaceTemplateModules() {
@@ -216,7 +217,7 @@ service cloud.firestore {
     }
 
     // Is the module allowed by the snapshot's (already validated) workspace?
-    function workspaceAllows(business, ent, moduleId) {
+    function workspaceAllows(ent, moduleId) {
       return moduleId in workspaceTemplateModules()[ent.workspaceTemplateId];
     }
 
@@ -245,7 +246,7 @@ service cloud.firestore {
     function moduleEnabled(bid, moduleId) {
       let business = get(businessPath(bid)).data;
       return business.entitlements.modules.get(moduleId, false) == true
-        && workspaceAllows(business, business.entitlements, moduleId);
+        && workspaceAllows(business.entitlements, moduleId);
     }
 
     // THE module gate: active membership (+ subscription) AND the exact
