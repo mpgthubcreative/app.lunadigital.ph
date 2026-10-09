@@ -8,22 +8,28 @@
 import { getFirestoreLite } from "../../lib/firebase.js";
 import { listLowStock } from "../inventory/data.js";
 import { listRecentOrders } from "../orders/data.js";
+import { listAttendance, listPayrolls, listAdvances } from "../household/data.js";
 import { combineDashboardDocs } from "@shared/dashboard.js";
 
-// Ready list widgets -> their (small, limited) query.
+// Ready list widgets -> their (small, limited) query. ctx: { today }.
+const first = (page) => page.rows;
 const LIST_FETCHERS = {
   recentOrders: (businessId) => listRecentOrders(businessId, 5),
   lowStockItems: (businessId) => listLowStock(businessId, 5),
+  attendanceToday: (businessId, { today }) => listAttendance(businessId, { from: today, to: today }, { pageSize: 10 }).then(first),
+  payrollsToRelease: (businessId) => listPayrolls(businessId, { status: "draft" }).then((p) => p.rows.slice(0, 5)),
+  awaitingReceipt: (businessId) => listPayrolls(businessId, { receiptStatus: "awaiting" }).then((p) => p.rows.slice(0, 5)),
+  advancesNotPaid: (businessId) => listAdvances(businessId, { status: "not_yet_paid" }).then((p) => p.rows.slice(0, 5)),
 };
 
 // widgets: ready list widgets -> { [widgetId]: { status, rows } }
-export async function fetchDashboardLists(businessId, widgets) {
+export async function fetchDashboardLists(businessId, widgets, ctx = {}) {
   const entries = await Promise.all(
     widgets
       .filter((w) => LIST_FETCHERS[w.id])
       .map(async (w) => {
         try {
-          return [w.id, { status: "ok", rows: await LIST_FETCHERS[w.id](businessId) }];
+          return [w.id, { status: "ok", rows: await LIST_FETCHERS[w.id](businessId, ctx) }];
         } catch (err) {
           console.error(`dashboard: list ${w.id} failed:`, err && err.code);
           return [w.id, { status: "error", rows: [] }];

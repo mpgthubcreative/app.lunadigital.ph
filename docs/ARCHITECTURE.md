@@ -638,7 +638,7 @@ These apply to every phase from Phase 12 on. Each module adopts them when it's b
 
 **7. Distributor Dashboard Excel download (built in Phase 12.5):** reflects the selected range. Possible sheets are Summary, Sales, Products, Customers, Payments and Expenses, including only the sheets and fields the user may access. A Staff user without financial permission never gets sales, COGS, profit or expense amounts through an export.
 
-**8–15. Household / Kasambahay payroll (future workspace; nothing built yet).**
+**8–15. Household / Kasambahay payroll (built in Phase 14, see "Household / Kasambahay Payroll").**
 - **Modules:** Dashboard, Household Staff, Attendance, Payroll, Salary Payments, Employee Receipt Confirmation, Advances, Deductions, Payroll History, Reports, Excel Downloads.
 - **Filtered Excel exports** of each. Example: Employee = Maria, Period = Oct 1–15 → her attendance and payroll for that period.
 - **Daily attendance line items:** `Date | Day | Status | Daily Wage | Payable Amount | Notes`. Statuses are Present, Absent and Official Leave.
@@ -1041,6 +1041,92 @@ Delivery would run **after** the transaction commits, never inside it.
 - **Not planned:** analytics, SMS, chat apps, webhooks, campaigns.
 - **No audit-log entries** for reads; the inbox is its own history.
 
+## Household / Kasambahay Payroll (Phase 14)
+
+The `household-payroll` workspace template (v2, live) adds four modules. They are operational only in this template; a Distributor business never gets them, and a payroll business never gets Distributor modules.
+
+| Module | Screen | Data (`businesses/{bid}/…`) | Permissions |
+|---|---|---|---|
+| `household` | Household Staff | `householdStaff/{id}`: name, position, daily wage, pay cycle, status, start date | `household.view`, `household.manage` |
+| `attendance` | Attendance (by day / by employee) | `attendance/{staffId}_{day}`: status, wage snapshot, payable, amount, history | `attendance.view`, `attendance.edit` |
+| `payroll` | Payroll (history = Paid filter) | `payrolls/{staffId}_{periodStart}`: counts, base, deductions, net, salary, receipt | `payroll.view`, `payroll.manage`, `payroll.release` |
+| `advances` | Advances | `advances/{id}`: amount, Not Yet Paid / Paid, release details, deduction link | `advances.view`, `advances.manage` |
+
+Owner and Manager get every payroll permission. The Staff role template gets none; it is Distributor-oriented, and household roles can be added as data later.
+
+### Your decisions (2026-10-09)
+- **Pay cycle per employee:** weekly (Mon–Sun), semi-monthly (1–15, 16–end) or monthly. `shared/payroll.js` `periodFor`.
+- **Advances are deducted in full, automatically:** every Paid advance not yet deducted goes onto the person's next payroll.
+- **Receipt confirmation by one-time link:** no employee login.
+
+### Rules and calculation (Luna computes; nobody types base pay)
+- **Statuses:** Present and Official Leave are payable. Absent isn't, and neither is a day nobody marked (shown as "Not marked").
+- **Each line keeps the wage it was marked at.** Base Pay = the sum of each payable day's wage (Daily Wage × Payable Days when the wage didn't change). Net Pay = Base Pay − deductions.
+- **Inline edits:** an attendance change (Present ▾ → Absent) records previous → new status, who and when. It also moves the unpaid payroll for that period in the same transaction (a per-line delta).
+- **Locked when paid:** once the salary is paid, the period's attendance is locked (`payroll-released`).
+- **Preparing a payroll:** it's idempotent per person and period, a period must match the person's cycle, and a future period is refused. Days are counted from the attendance lines, and every Paid, not-yet-deducted advance is deducted.
+- **Marking an advance Paid while an unpaid payroll exists** adds the deduction to that payroll at once.
+- **"Deduct next payroll"** moves an advance's deduction to the following payroll, for when the pay can't cover it. Deleting an unpaid payroll returns its advances.
+- **Manual deductions** (description and amount) can be added or removed while the payroll is unpaid.
+- **Paying the salary** (`payroll.release`):
+  - It's refused before the period's last day, and refused when net pay is below 0.
+  - It records the method, reference and paid date for the net pay, in full.
+  - It marks the deducted advances as deducted.
+  - Receipt becomes "Awaiting confirmation".
+- **Salary paid ≠ receipt confirmed:** they are separate states (`status` and `receiptStatus`).
+
+### The one-time receipt link (public, no login)
+- **Issuing:** paying the salary returns a token once (24 random bytes, base64url). Only its SHA-256 hash is stored, in `receiptLinks/{hash}` (top level, server-only, no rule) and on the payroll.
+- **The link:** `/receipt#<token>`. The token is in the URL fragment, so the browser never sends it as part of the page request. The page posts it to `POST /api/receipt` `{action: "view" | "confirm", token}`.
+- **What the employee sees:** only the business name, their name, the period, the amount, the method and the paid date. No ids, no other records.
+- **Validity:**
+  - one payroll
+  - only the current link (a new link replaces it, and the old one stops working)
+  - 14 days
+  - confirmable once
+- **Errors:** every invalid token gets the same 404 "isn't valid" answer; an expired link gets 410.
+- **On confirmation:** only the receipt fields change (`receiptStatus` → confirmed, `receiptConfirmedAt`, `receiptConfirmedVia: "employee-link"`, and a history line attributed to the employee via the secure link). The salary and payroll status are untouched, so a confirmation can never pay twice. The `payroll.receipt_confirmed` notification goes to members with `payroll.view` (Notifications Core reuse).
+
+### Concurrency
+- **Same-document conflicts:** attendance edits and a salary release both touch the payroll document, and preparing payrolls read and write the advance documents they deduct, so Firestore serializes them.
+- **The per-person lock:** preparing a payroll, marking an advance paid, moving an advance and deleting a draft also write the person's staff document. That makes an advance paid at the moment a payroll is prepared land in that payroll.
+- **Tested on the real emulator:**
+  - parallel attendance marking and flipping (the payroll always equals a fresh recalculation from its lines)
+  - a release racing attendance edits
+  - advances paid while a payroll is prepared
+  - two periods prepared at once
+  - the same period prepared 6 times
+  - one link confirmed 6 times
+- **Not demonstrable on the emulator:** the emulator serializes these transactions, so mutation tests can't show the per-person lock's effect (mutants P12 and P18 survive). In production it removes the "paid during preparation → next payroll" timing case. Double deduction is prevented independently by the advance documents' own read/write conflict.
+
+### Exports, dashboard, notifications
+- **Excel**, through the Export Core (`data.export` + the module's view permission), with the same list specs as the screens:
+  - Household Staff
+  - Attendance (employee, status, date range)
+  - Payroll (employee, salary, receipt, period range), with Deductions and the Attendance lines of the exported periods (one attendance query, no query per payroll)
+  - Advances
+
+  For example, Employee = Maria with periods from Oct 1 to Oct 1 gives her payroll, its deduction and the 15 attendance lines behind it.
+- **Payroll Dashboard:** list widgets for Attendance today, Payroll not yet paid, Awaiting receipt confirmation and Advances not yet paid. No metric documents.
+- **Notifications:** `payroll.receipt_confirmed` (category `payroll`, optional). Salary-due and similar scheduled reminders remain deferred (no scheduler).
+
+### Staged rollout (new module ids)
+New module ids would make every existing snapshot invalid until it's recomputed. The rollout therefore runs in two steps:
+1. **Compatible step.** The four ids are in `ROLLING_OUT_MODULE_IDS`:
+   - `validateEntitlementsSnapshot` and both rule files accept snapshots without their keys (missing = off), through `requiredModuleIds()` and `m.get('payroll', false) is bool`.
+   - The template accepts v1 and v2.
+   - Deploy the rules and code, run `seed-plans --overwrite` (the plans gain the four module keys), then run `recompute-entitlements --all`.
+2. **Strict step.** Empty `ROLLING_OUT_MODULE_IDS`, require every key again, and drop template v1. `tests/shared/rules-registry.test.js` checks that both rule files agree with the registry in each step.
+
+### Not built (later)
+- **Payroll reports**, beyond the Excel downloads.
+- **Outstanding-advance balances** and partial repayment.
+- **Other adjustments:** overtime, holiday premiums, 13th month.
+- **Government contributions:** SSS, PhilHealth, Pag-IBIG.
+- **Scheduled reminders:** salary due, receipt not yet confirmed.
+- **Household-specific role templates.**
+- **Correcting a paid payroll:** it is locked.
+
 ## Performance
 
 - The dashboard reads at most four summary documents (see above), plus small limited list queries once Orders and Inventory exist.
@@ -1101,9 +1187,10 @@ On Orders, Reference and Proof show "—" until Payments (Phase 8) fills them in
 12. Imports ✅
 12.5. Dashboard filters + Excel Export Core ✅
 13. Notifications ✅
-14. Super Admin console
-15. Usage metering views
-16. Reliability, backups and recovery
+14. Household / Kasambahay Payroll MVP ✅ (the household-payroll workspace)
+15. Super Admin console
+16. Usage metering views
+17. Reliability, backups and recovery
 
 - Phases 6 and 7 are in this order because orders need products to reserve and a cost to snapshot.
 - Expenses come before Reports so the P&L has operating expenses to subtract.

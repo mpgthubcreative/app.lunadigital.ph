@@ -112,7 +112,7 @@ export function mount(container, session, { fetchDocuments = fetchMetricDocument
     const failed = () => Object.fromEntries(plan.documents.map((d) => [d.source, { status: "error" }]));
     const readyLists = plan.widgets.filter((w) => w.kind === "list" && w.ready);
     const failedLists = () => Object.fromEntries(readyLists.map((w) => [w.id, { status: "error", rows: [] }]));
-    listsOnce = listsOnce || (readyLists.length ? safe(() => fetchLists(session.business.id, readyLists), failedLists) : Promise.resolve({}));
+    listsOnce = listsOnce || (readyLists.length ? safe(() => fetchLists(session.business.id, readyLists, { today }), failedLists) : Promise.resolve({}));
     Promise.all([safe(() => fetchDocuments(session.business.id, plan.documents), failed), listsOnce]).then(([docs, lists]) => {
       if (!alive || seq !== state.seq) return;
       state.lists = lists;

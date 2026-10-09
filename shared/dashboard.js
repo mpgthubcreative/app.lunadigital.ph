@@ -43,6 +43,11 @@ export const DASHBOARD_WIDGETS = Object.freeze([
   // ---- Lists: one small, tenant-scoped, limited query each, once ready ----
   { id: "recentOrders", section: "lists", kind: "list", label: "Recent orders", source: "list", ready: true, permission: "orders.view", modules: ["orders"], query: { collection: "orders", orderBy: ["createdAt", "desc"], limit: 5 }, empty: "Orders entered in Luna will appear here." },
   { id: "lowStockItems", section: "lists", kind: "list", label: "Low-stock products (now)", source: "list", ready: true, permission: "inventory.view", modules: ["inventory"], query: { collection: "products", where: ["isLowStock", "==", true], limit: 5 }, empty: "Products at or below their reorder level will appear here." },
+  // ---- Household payroll (Phase 14): small live lists ----
+  { id: "attendanceToday", section: "lists", kind: "list", label: "Attendance today", source: "list", ready: true, permission: "attendance.view", modules: ["attendance"], query: { collection: "attendance", where: ["date", "==", "today"], limit: 10 }, empty: "Today's attendance will appear here once it's marked." },
+  { id: "payrollsToRelease", section: "lists", kind: "list", label: "Payroll not yet paid", source: "list", ready: true, permission: "payroll.view", modules: ["payroll"], query: { collection: "payrolls", where: ["status", "==", "draft"], limit: 5 }, empty: "Prepared payrolls waiting to be paid will appear here." },
+  { id: "awaitingReceipt", section: "lists", kind: "list", label: "Awaiting receipt confirmation", source: "list", ready: true, permission: "payroll.view", modules: ["payroll"], query: { collection: "payrolls", where: ["receiptStatus", "==", "awaiting"], limit: 5 }, empty: "Paid salaries the employee hasn't confirmed yet will appear here." },
+  { id: "advancesNotPaid", section: "lists", kind: "list", label: "Advances not yet paid", source: "list", ready: true, permission: "advances.view", modules: ["advances"], query: { collection: "advances", where: ["status", "==", "not_yet_paid"], limit: 5 }, empty: "Advances recorded but not yet released will appear here." },
   { id: "recentActivity", section: "lists", kind: "list", label: "Recent activity", source: "list", ready: false, permission: "dashboard.view", modules: [], query: null, empty: "Staff actions and alerts will appear here." },
 ]);
 

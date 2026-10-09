@@ -45,6 +45,11 @@ export const PLAN_SEED = Object.freeze({
       suppliers: false,
       production: false,
       returns: false,
+      // Phase 14 household payroll (operational only in that workspace).
+      household: true,
+      attendance: true,
+      payroll: true,
+      advances: true,
     },
     features: {
       reportsLevel: "basic",
@@ -86,6 +91,11 @@ export const PLAN_SEED = Object.freeze({
       suppliers: false,
       production: false,
       returns: false,
+      // Phase 14 household payroll (operational only in that workspace).
+      household: true,
+      attendance: true,
+      payroll: true,
+      advances: true,
     },
     features: {
       reportsLevel: "advanced",
@@ -127,6 +137,11 @@ export const PLAN_SEED = Object.freeze({
       suppliers: false,
       production: false,
       returns: false,
+      // Phase 14 household payroll (operational only in that workspace).
+      household: true,
+      attendance: true,
+      payroll: true,
+      advances: true,
     },
     features: {
       reportsLevel: "advanced",

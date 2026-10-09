@@ -4,8 +4,9 @@
 // schemas and refuses anything else. Columns and queries live with the
 // server code for each dataset (netlify/functions/_lib/exports/).
 //
-// New workspaces add their own descriptors (e.g. payroll: module "payroll")
-// when their modules are built; none are defined before then.
+// Each workspace adds descriptors for its own modules when they are built
+// (Phase 14: household payroll). The module gate keeps them inside their
+// workspace: a Distributor can never download payroll, and the reverse.
 
 import { filter, EXPORT_PERMISSION } from "./exports.js";
 import { FULFILLMENT_STATUSES } from "./orders.js";
@@ -14,6 +15,7 @@ import { ORDER_SOURCE_IDS } from "./orders.js";
 import { EXPENSE_CATEGORY_IDS, EXPENSE_METHOD_IDS } from "./expenses.js";
 import { PRODUCT_STATUSES } from "./inventory.js";
 import { CUSTOMER_STATUSES } from "./customers.js";
+import { ATTENDANCE_STATUS_IDS, PAYROLL_STATUSES, RECEIPT_STATUSES, ADVANCE_STATUSES, STAFF_STATUSES } from "./payroll.js";
 
 const range = { from: filter.day(), to: filter.day() };
 const RANGE_LABELS = { from: "From", to: "To" };
@@ -94,6 +96,45 @@ export const EXPORT_DATASETS = Object.freeze({
     // Active expenses only: removed ones are an audit view, not an export.
     filters: { status: filter.oneOf(["active"]), category: filter.oneOf(EXPENSE_CATEGORY_IDS), method: filter.oneOf(EXPENSE_METHOD_IDS), search: filter.text(100), ...range },
     filterLabels: { status: "Status", category: "Category", method: "Method", search: "Search", ...RANGE_LABELS },
+  },
+
+  // ---- Household / Kasambahay Payroll (Phase 14) ----
+  householdStaff: {
+    id: "householdStaff",
+    label: "Household Staff",
+    module: "household",
+    view: ["household.view"],
+    exportPermission: EXPORT_PERMISSION,
+    filters: { status: filter.oneOf(Object.keys(STAFF_STATUSES)) },
+    filterLabels: { status: "Status" },
+  },
+  attendance: {
+    id: "attendance",
+    label: "Attendance",
+    module: "attendance",
+    view: ["attendance.view"],
+    exportPermission: EXPORT_PERMISSION,
+    filters: { staffId: filter.id(), status: filter.oneOf(ATTENDANCE_STATUS_IDS), ...range },
+    filterLabels: { staffId: "Employee", status: "Status", ...RANGE_LABELS },
+  },
+  payroll: {
+    id: "payroll",
+    label: "Payroll",
+    module: "payroll",
+    view: ["payroll.view"],
+    exportPermission: EXPORT_PERMISSION,
+    // from / to: the pay period start.
+    filters: { staffId: filter.id(), status: filter.oneOf(Object.keys(PAYROLL_STATUSES)), receiptStatus: filter.oneOf(Object.keys(RECEIPT_STATUSES)), ...range },
+    filterLabels: { staffId: "Employee", status: "Salary", receiptStatus: "Receipt", from: "Periods from", to: "Periods to" },
+  },
+  advances: {
+    id: "advances",
+    label: "Advances",
+    module: "advances",
+    view: ["advances.view"],
+    exportPermission: EXPORT_PERMISSION,
+    filters: { staffId: filter.id(), status: filter.oneOf(Object.keys(ADVANCE_STATUSES)), ...range },
+    filterLabels: { staffId: "Employee", status: "Status", ...RANGE_LABELS },
   },
 });
 

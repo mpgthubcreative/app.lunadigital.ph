@@ -34,9 +34,10 @@ describe("registry", () => {
     }
   });
 
-  it("only Distributor is live; the other three are architected, not built", () => {
+  it("Distributor and (Phase 14) Household Payroll are live; Bridal and Baby are architected, not built", () => {
     expect(WORKSPACE_TEMPLATES.distributor.status).toBe("live");
-    for (const id of NON_DISTRIBUTOR) expect(WORKSPACE_TEMPLATES[id].status).toBe("planned");
+    expect(WORKSPACE_TEMPLATES["household-payroll"].status).toBe("live");
+    for (const id of ["bridal-expense", "baby-expense"]) expect(WORKSPACE_TEMPLATES[id].status).toBe("planned");
   });
 
   it("is frozen: nothing can be changed at runtime", () => {
@@ -122,7 +123,10 @@ describe("planned modules are roadmap metadata only", () => {
 
   it("the future domains are recorded (payroll receipt confirmation, wedding tasks, guests/RSVP)", () => {
     const ids = (t) => WORKSPACE_TEMPLATES[t].plannedModules.map((p) => p.id);
-    expect(ids("household-payroll")).toEqual(expect.arrayContaining(["household-staff", "payroll", "salary-payments", "receipt-confirmation"]));
+    // Phase 14 built Household Staff, Attendance, Payroll (incl. salary payments,
+    // receipt confirmation, deductions, history) and Advances; Reports stay planned.
+    expect(ids("household-payroll")).toEqual(["payroll-reports"]);
+    expect(WORKSPACE_TEMPLATES["household-payroll"].modules).toEqual(["dashboard", "users", "settings", "household", "attendance", "payroll", "advances"]);
     expect(ids("bridal-expense")).toEqual(expect.arrayContaining(["wedding-tasks", "guests", "rsvp", "wedding-suppliers"]));
     expect(ids("baby-expense")).toEqual(expect.arrayContaining(["baby-budget", "milestones"]));
   });
@@ -157,7 +161,7 @@ describe("effective modules = core + (template allows ∩ (override ?? plan))", 
   it("Distributor: core + the built modules the plan includes; every unbuilt module false", () => {
     for (const planId of Object.keys(PLAN_SEED)) {
       const e = ent("distributor", planId);
-      for (const id of MODULE_IDS) expect(e.modules[id], `${planId}/${id}`).toBe(CORE_MODULE_IDS.includes(id) || (BUILT.includes(id) && PLAN_SEED[planId].modules[id] === true));
+      for (const id of MODULE_IDS) expect(e.modules[id], `${planId}/${id}`).toBe(CORE_MODULE_IDS.includes(id) || (BUILT.includes(id) && WORKSPACE_TEMPLATES.distributor.modules.includes(id) && PLAN_SEED[planId].modules[id] === true));
       expect(Object.keys(e.modules).filter((k) => e.modules[k])).toEqual(["dashboard", "orders", "payments", "inventory", "customers", "reports", "expenses", "imports", "users", "settings"]);
     }
   });
@@ -170,6 +174,15 @@ describe("effective modules = core + (template allows ∩ (override ?? plan))", 
         for (const m of CORE_MODULE_IDS) expect(e.modules[m]).toBe(true);
       }
     }
+  });
+
+  it("Household Payroll modules exist in code but only the household-payroll workspace gets them (Distributor, Baby, Bridal never)", () => {
+    const HOUSEHOLD = ["household", "attendance", "payroll", "advances"];
+    for (const t of ["distributor", "baby-expense", "bridal-expense"]) {
+      for (const planId of Object.keys(PLAN_SEED)) for (const m of HOUSEHOLD) expect(ent(t, planId).modules[m], `${t}/${planId}/${m}`).toBe(false);
+      for (const m of HOUSEHOLD) expect(() => ent(t, "pro", { modules: { [m]: true } }), `${t}/${m}`).toThrow(/isn't allowed/);
+    }
+    for (const m of HOUSEHOLD) expect(ent("household-payroll", "growth").modules[m]).toBe(true);
   });
 
   it("plan allowing Orders doesn't bypass the workspace; workspace allowing Orders doesn't bypass the plan", () => {
@@ -314,7 +327,7 @@ describe("navigation", () => {
   it("non-Distributor workspaces get no Distributor navigation, and their own names", () => {
     expect(nav("bridal-expense", "owner")).toEqual(["/ Wedding Dashboard", "/users Users", "/settings Settings"]);
     expect(nav("baby-expense", "owner")).toEqual(["/ Baby Dashboard", "/users Users", "/settings Settings"]);
-    expect(nav("household-payroll", "owner")).toEqual(["/ Payroll Dashboard", "/users Users", "/settings Settings"]);
+    expect(nav("household-payroll", "owner")).toEqual(["/ Payroll Dashboard", "/attendance Attendance", "/payroll Payroll", "/advances Advances", "/household-staff Household Staff", "/users Users", "/settings Settings"]);
   });
 
   it("roles still differ inside a workspace (staff: no Users/Settings)", () => {
@@ -335,8 +348,13 @@ describe("dashboard", () => {
     expect(ids("distributor", "staff")).toEqual(["ordersToday", "unpaidOrders", "pendingFulfillment", "lowStock", "recentOrders", "lowStockItems", "recentActivity"]);
   });
 
-  it("non-Distributor: no widgets, so no metric document or list is ever requested", () => {
-    for (const t of NON_DISTRIBUTOR) {
+  it("Household Payroll: only its own list widgets, never a metric document", () => {
+    expect(ids("household-payroll")).toEqual(["attendanceToday", "payrollsToRelease", "awaitingReceipt", "advancesNotPaid"]);
+    expect(dashboardDocuments(resolveDashboard(access("household-payroll")), "2026-10-08")).toEqual([]);
+  });
+
+  it("Bridal / Baby: no widgets, so no metric document or list is ever requested", () => {
+    for (const t of ["bridal-expense", "baby-expense"]) {
       expect(ids(t)).toEqual([]);
       expect(dashboardDocuments(resolveDashboard(access(t)), "2026-10-08")).toEqual([]);
       expect(dashboardEmptyState(ent(t)).title).toMatch(/being prepared/);

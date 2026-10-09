@@ -243,7 +243,7 @@ describe("C. order ready", () => {
   });
 
   it("there is no 'payment overdue' rule (no due dates exist)", () => {
-    expect(Object.keys(NOTIFICATION_TYPES).sort()).toEqual(["inventory.low_stock", "order.ready", "payment.awaiting_verification"]);
+    expect(Object.keys(NOTIFICATION_TYPES).sort()).toEqual(["inventory.low_stock", "order.ready", "payment.awaiting_verification", "payroll.receipt_confirmed"]);
   });
 });
 
@@ -348,8 +348,13 @@ describe("isolation, workspaces, permissions", () => {
       await createBusiness({ ...world, name: tpl, planId: "pro", workspaceTemplateId: tpl, businessId: `biz-${tpl}` });
       const entitlements = docAt(`businesses/biz-${tpl}`).entitlements;
       const member = { status: "active", permissions: resolvePermissions("owner") };
-      for (const type of Object.keys(NOTIFICATION_TYPES)) expect(isEligibleRecipient(type, { entitlements, member }), `${tpl}/${type}`).toBe(false);
+      for (const type of ["payment.awaiting_verification", "inventory.low_stock", "order.ready"]) expect(isEligibleRecipient(type, { entitlements, member }), `${tpl}/${type}`).toBe(false);
+      // Phase 14: payroll notifications exist only where Payroll does.
+      expect(isEligibleRecipient("payroll.receipt_confirmed", { entitlements, member }), tpl).toBe(tpl === "household-payroll");
     }
+    const distributor = docAt("businesses/biz-a").entitlements;
+    expect(isEligibleRecipient("payroll.receipt_confirmed", { entitlements: distributor, member: { status: "active", permissions: resolvePermissions("owner") } })).toBe(false);
+    expect(Object.keys(NOTIFICATION_TYPES)).toContain("payroll.receipt_confirmed");
   });
 
   it("a business without in-app notifications in its package, or with the module off, gets none", async () => {

@@ -170,6 +170,12 @@ async function startApp() {
 }
 
 function boot() {
+  // Phase 14: the employee's salary receipt page needs no login (the token
+  // in the URL fragment is the only credential, checked by the server).
+  if (window.location.pathname === "/receipt") {
+    import("./receipt.js").then((m) => m.renderReceiptPage(root));
+    return;
+  }
   if (!isFirebaseConfigured()) {
     renderAccessProblem(root, {
       title: "Luna isn't configured",

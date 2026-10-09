@@ -92,9 +92,9 @@ describe("dashboardDocuments: a fixed, tiny read set", () => {
     expect(docs).toHaveLength(2);
   });
 
-  it("list widgets issue no query until their data exists (Phase 7: recent orders + low stock)", () => {
+  it("list widgets issue no query until their data exists (Phase 7: recent orders + low stock; Phase 14: payroll lists)", () => {
     const ready = DASHBOARD_WIDGETS.filter((x) => x.kind === "list" && x.ready).map((w) => w.id);
-    expect(ready).toEqual(["recentOrders", "lowStockItems"]);
+    expect(ready).toEqual(["recentOrders", "lowStockItems", "attendanceToday", "payrollsToRelease", "awaitingReceipt", "advancesNotPaid"]);
     for (const w of DASHBOARD_WIDGETS.filter((x) => x.kind === "list" && x.query)) expect(w.query.limit).toBeLessThanOrEqual(10);
   });
 

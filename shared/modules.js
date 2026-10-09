@@ -38,6 +38,12 @@ export const MODULES = Object.freeze([
   { id: "expenses", label: "Expenses", path: "/expenses", icon: "expenses", permission: "expenses.view", available: true, collections: { expenses: "expenses.view" }, storage: {} },
   // Built in Phase 12 (Distributor Products + Customers imports).
   { id: "imports", label: "Imports", path: "/imports", icon: "imports", permission: "imports.run", available: true, collections: { imports: "imports.run" }, storage: { imports: "imports.run" } },
+  // Built in Phase 14 (Household / Kasambahay Payroll). Operational only in
+  // the household-payroll template.
+  { id: "household", label: "Household Staff", path: "/household-staff", icon: "staff", permission: "household.view", available: true, collections: { householdStaff: "household.view" }, storage: {} },
+  { id: "attendance", label: "Attendance", path: "/attendance", icon: "calendar", permission: "attendance.view", available: true, collections: { attendance: "attendance.view" }, storage: {} },
+  { id: "payroll", label: "Payroll", path: "/payroll", icon: "payroll", permission: "payroll.view", available: true, collections: { payrolls: "payroll.view" }, storage: {} },
+  { id: "advances", label: "Advances", path: "/advances", icon: "advance", permission: "advances.view", available: true, collections: { advances: "advances.view" }, storage: {} },
   { id: "users", label: "Users", path: "/users", icon: "users", permission: "users.view", available: true, core: true, collections: { members: "users.view" }, storage: {} },
   { id: "settings", label: "Settings", path: "/settings", icon: "settings", permission: "settings.view", available: true, core: true, collections: { settings: "settings.view" }, storage: {} },
 
@@ -49,6 +55,11 @@ export const MODULES = Object.freeze([
 ]);
 
 export const MODULE_IDS = Object.freeze(MODULES.map((m) => m.id));
+// Modules registered in the CURRENT release whose snapshot key may still be
+// missing from snapshots computed before it (staged rollout, see
+// docs/ARCHITECTURE.md "Activating a module"): a missing key reads as false.
+// Emptied once recompute-entitlements has run everywhere.
+export const ROLLING_OUT_MODULE_IDS = Object.freeze(["household", "attendance", "payroll", "advances"]);
 export const CORE_MODULE_IDS = Object.freeze(MODULES.filter((m) => m.core).map((m) => m.id));
 // Modules a plan or override can switch on or off.
 export const SELLABLE_MODULE_IDS = Object.freeze(MODULES.filter((m) => !m.core).map((m) => m.id));

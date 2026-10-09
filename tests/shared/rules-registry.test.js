@@ -6,7 +6,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, it, expect } from "vitest";
-import { MODULES, MODULE_IDS, CORE_MODULE_IDS } from "../../shared/modules.js";
+import { MODULES, MODULE_IDS, CORE_MODULE_IDS, ROLLING_OUT_MODULE_IDS } from "../../shared/modules.js";
 import { LIMIT_KEYS, FEATURE_KEYS, FEATURE_DEFINITIONS } from "../../shared/plans.seed.js";
 import { EXPORT_ONLY_PERMISSIONS } from "../../shared/tenancy.js";
 import { PLAN_ID_PATTERN } from "../../shared/entitlements.js";
@@ -52,8 +52,16 @@ function snapshotChecks(name, text) {
     it("every module flag is type-checked; core modules must be true", () => {
       for (const id of MODULE_IDS) {
         const mod = MODULES.find((m) => m.id === id);
-        expect(src, id).toContain(CORE_MODULE_IDS.includes(id) ? `m.${id} == true` : mod.available ? `m.${id} is bool` : `m.${id} == false`);
+        // A module still rolling out may be absent from older snapshots.
+        const expected = CORE_MODULE_IDS.includes(id) ? `m.${id} == true` : !mod.available ? `m.${id} == false` : ROLLING_OUT_MODULE_IDS.includes(id) ? `m.get('${id}', false) is bool` : `m.${id} is bool`;
+        expect(src, id).toContain(expected);
       }
+    });
+
+    it("required snapshot keys = every module except those still rolling out", () => {
+      expect(listReturnedBy(text, "requiredModuleIds")).toEqual(MODULE_IDS.filter((id) => !ROLLING_OUT_MODULE_IDS.includes(id)));
+      expect(src).toContain("m.keys().hasAll(requiredModuleIds())");
+      expect(src).toContain("m.keys().hasOnly(moduleIds())");
     });
 
     it("every limit is checked as a non-negative int", () => {

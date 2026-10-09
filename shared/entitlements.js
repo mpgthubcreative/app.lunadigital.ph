@@ -30,7 +30,7 @@
 // in the template's plannedModules, never in a snapshot.
 
 import { LIMIT_KEYS, FEATURE_KEYS, isValidFeatureValue } from "./plans.seed.js";
-import { MODULE_IDS, CORE_MODULE_IDS, SELLABLE_MODULE_IDS, getModule } from "./modules.js";
+import { MODULE_IDS, CORE_MODULE_IDS, SELLABLE_MODULE_IDS, ROLLING_OUT_MODULE_IDS, getModule } from "./modules.js";
 import { getWorkspaceTemplate, acceptedTemplateVersions, ENTITLEMENTS_SCHEMA_VERSION } from "./workspaces.js";
 
 export { ENTITLEMENTS_SCHEMA_VERSION };
@@ -191,7 +191,8 @@ export function validateEntitlementsSnapshot(snapshot, expectedPlanId, expectedT
 
   if (!isPlainObject(snapshot.modules)) problems.push("modules must be an object");
   else {
-    for (const id of MODULE_IDS) if (typeof snapshot.modules[id] !== "boolean") problems.push(`modules.${id} must be a boolean`);
+    // A module still rolling out may be absent (= off) from an older snapshot.
+    for (const id of MODULE_IDS) if (typeof snapshot.modules[id] !== "boolean" && !(ROLLING_OUT_MODULE_IDS.includes(id) && !(id in snapshot.modules))) problems.push(`modules.${id} must be a boolean`);
     for (const id of Object.keys(snapshot.modules)) if (!MODULE_IDS.includes(id)) problems.push(`unknown module ${id}`);
     for (const id of CORE_MODULE_IDS) if (snapshot.modules[id] !== true) problems.push(`core module ${id} must be enabled`);
     for (const id of MODULE_IDS) {

@@ -475,3 +475,24 @@ label.check {
   gap: var(--space-2);
   margin-bottom: var(--space-2);
 }
+
+/* ---------- Public salary receipt page (Phase 14) ---------- */
+.receipt-page {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: var(--space-4);
+  background: var(--bg);
+}
+.receipt-card {
+  width: min(420px, 100%);
+  padding: var(--space-5);
+}
+.receipt-card .btn {
+  width: 100%;
+  margin-top: var(--space-3);
+}
+.select-compact {
+  min-height: 30px;
+  padding: 2px 6px;
+}

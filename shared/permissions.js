@@ -67,6 +67,18 @@ export const PERMISSIONS = Object.freeze({
 
   "imports.run": { module: "imports", group: "Imports", label: "Run spreadsheet imports" },
 
+  // Phase 14: Household / Kasambahay Payroll.
+  "household.view": { module: "household", group: "Household Staff", label: "View household staff and daily wages" },
+  "household.manage": { module: "household", group: "Household Staff", label: "Add and edit household staff" },
+  "attendance.view": { module: "attendance", group: "Attendance", label: "View attendance" },
+  "attendance.edit": { module: "attendance", group: "Attendance", label: "Mark and change attendance" },
+  "payroll.view": { module: "payroll", group: "Payroll", label: "View payroll and payroll history" },
+  "payroll.manage": { module: "payroll", group: "Payroll", label: "Prepare payroll and manage deductions" },
+  // Releasing a salary moves money and issues the receipt link.
+  "payroll.release": { module: "payroll", group: "Payroll", label: "Release salaries and issue receipt links" },
+  "advances.view": { module: "advances", group: "Advances", label: "View advances" },
+  "advances.manage": { module: "advances", group: "Advances", label: "Record advances and mark them paid" },
+
   "users.view": { module: "users", group: "Users", label: "View team members" },
   "users.manage": { module: "users", group: "Users", label: "Invite and manage team members" },
 

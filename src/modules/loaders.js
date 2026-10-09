@@ -15,6 +15,11 @@ export const MODULE_LOADERS = {
   imports: () => import("./imports/index.js"),
   users: () => import("./users/index.js"),
   settings: () => import("./settings/index.js"),
+  // Phase 14: Household / Kasambahay Payroll.
+  household: () => import("./household/index.js"),
+  attendance: () => import("./attendance/index.js"),
+  payroll: () => import("./payroll/index.js"),
+  advances: () => import("./advances/index.js"),
   // Not a module in shared/modules.js: the core Notifications page (Phase 13).
   notifications: () => import("./notifications/index.js"),
 };

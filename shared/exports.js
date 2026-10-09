@@ -47,6 +47,8 @@ export const filter = Object.freeze({
   day: () => ({ type: "day" }),
   text: (max = 100) => ({ type: "text", max }),
   flag: () => ({ type: "bool" }),
+  // A record id (e.g. one staff member): letters and digits only.
+  id: () => ({ type: "id" }),
 });
 
 // Validates `raw` against a dataset's filter schema. Unknown keys, wrong
@@ -72,6 +74,9 @@ export function validateExportFilters(descriptor, raw, { today = null } = {}) {
       if (typeof value !== "string" || value.length > rule.max) throw new ExportError("invalid-filters", `Invalid ${key}`);
       const t = value.trim();
       if (t) out[key] = t;
+    } else if (rule.type === "id") {
+      if (typeof value !== "string" || !/^[A-Za-z0-9]{8,40}$/.test(value)) throw new ExportError("invalid-filters", `Invalid ${key}`);
+      out[key] = value;
     } else if (rule.type === "bool") {
       if (value !== true) throw new ExportError("invalid-filters", `Invalid ${key}`);
       out[key] = true;

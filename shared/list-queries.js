@@ -102,6 +102,48 @@ export function expensesQuery(f = {}) {
   return { parts: [{ where, orderBy: [["date", "desc"], [ID, "desc"]] }] };
 }
 
+// ---------- Household payroll (Phase 14) ----------
+
+// filters: { status? } (active by default)
+export function householdStaffQuery(f = {}) {
+  return { parts: [{ where: [["status", "==", f.status || "active"]], orderBy: [["nameLower", "asc"], [ID, "asc"]] }] };
+}
+
+// filters: { staffId?, status?, from?, to? } (business-local days). One
+// person's timesheet reads oldest first; a day / range across everyone too.
+export function attendanceQuery(f = {}) {
+  const where = [];
+  if (f.staffId) where.push(["staffId", "==", f.staffId]);
+  if (f.status) where.push(["status", "==", f.status]);
+  if (f.from && f.to && f.from === f.to) where.push(["date", "==", f.from]);
+  else {
+    if (f.from) where.push(["date", ">=", f.from]);
+    if (f.to) where.push(["date", "<=", f.to]);
+  }
+  return { parts: [{ where, orderBy: [["date", "asc"], [ID, "asc"]] }] };
+}
+
+// filters: { staffId?, status?, receiptStatus?, from?, to? } on the period start; newest first.
+export function payrollsQuery(f = {}) {
+  const where = [];
+  if (f.staffId) where.push(["staffId", "==", f.staffId]);
+  if (f.status) where.push(["status", "==", f.status]);
+  if (f.receiptStatus) where.push(["receiptStatus", "==", f.receiptStatus]);
+  if (f.from) where.push(["periodStart", ">=", f.from]);
+  if (f.to) where.push(["periodStart", "<=", f.to]);
+  return { parts: [{ where, orderBy: [["periodStart", "desc"], [ID, "desc"]] }] };
+}
+
+// filters: { staffId?, status?, from?, to? } on the advance date; newest first.
+export function advancesQuery(f = {}) {
+  const where = [];
+  if (f.staffId) where.push(["staffId", "==", f.staffId]);
+  if (f.status) where.push(["status", "==", f.status]);
+  if (f.from) where.push(["date", ">=", f.from]);
+  if (f.to) where.push(["date", "<=", f.to]);
+  return { parts: [{ where, orderBy: [["date", "desc"], [ID, "desc"]] }] };
+}
+
 // Merges search parts: by id, then keep, then sort.
 export function mergeParts(spec, partRows) {
   const seen = new Map();

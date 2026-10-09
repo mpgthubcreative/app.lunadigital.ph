@@ -40,6 +40,7 @@ export const NOTIFICATION_CATEGORIES = Object.freeze({
   payments: { label: "Payments awaiting verification", mandatory: true },
   inventory: { label: "Low stock", mandatory: false },
   orders: { label: "Orders ready", mandatory: false },
+  payroll: { label: "Salary receipt confirmations", mandatory: false },
 });
 export const NOTIFICATION_CATEGORY_IDS = Object.freeze(Object.keys(NOTIFICATION_CATEGORIES));
 
@@ -61,6 +62,14 @@ export const NOTIFICATION_TYPES = Object.freeze({
     permissions: ["inventory.view", "inventory.receive"],
     excludeActor: false,
     action: { label: "View inventory", route: "/inventory" },
+  },
+  // Phase 14: the employee confirmed receiving their salary (public link).
+  "payroll.receipt_confirmed": {
+    category: "payroll",
+    module: "payroll",
+    permissions: ["payroll.view"],
+    excludeActor: false,
+    action: { label: "View payroll", route: "/payroll" },
   },
   "order.ready": {
     category: "orders",

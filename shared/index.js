@@ -27,3 +27,4 @@ export * from "./reports.js";
 // write spreadsheets import them directly, in their own lazy chunk.)
 export * from "./imports.js";
 export * from "./notifications.js";
+export * from "./payroll.js";

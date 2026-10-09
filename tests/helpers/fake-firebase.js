@@ -119,6 +119,7 @@ const OPS = {
   ">": (a, b) => a !== undefined && a > b,
   ">=": (a, b) => a !== undefined && a >= b,
   in: (a, b) => b.includes(a),
+  "array-contains": (a, b) => Array.isArray(a) && a.includes(b),
 };
 const valueOf = (snap, field) => (field === DOC_ID ? snap.id : snap._data[field] instanceof Date ? snap._data[field].getTime() : snap._data[field]);
 const cmp = (a, b) => (a === b ? 0 : a === undefined ? -1 : b === undefined ? 1 : a < b ? -1 : 1);

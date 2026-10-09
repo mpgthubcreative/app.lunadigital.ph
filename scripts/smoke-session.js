@@ -324,6 +324,22 @@ const checks = [
     (await post("notifications", { action: "delete" }, { as: "owner.a" })).status === 400 &&
     (await post("notifications", { action: "preferences", preferences: { payments: { inApp: false } } }, { as: "owner.a" })).body.error === "mandatory-notification"],
   ["staff.a can mark its own notifications read", async () => (await post("notifications", { action: "readAll" }, { as: "staff.a" })).status === 200],
+
+  // Phase 14: household payroll (a Distributor business has none of it).
+  ["payroll endpoints without a token → 401", async () => (await post("payroll", { action: "prepare" })).status === 401 && (await post("attendance", { action: "set" })).status === 401],
+  ["owner.a (Distributor) can't use payroll, attendance, advances or household staff (403)", async () => {
+    const r = await Promise.all([post("household-staff", { action: "create", staff: { name: "x", dailyWage: 1, payCycle: "weekly" } }, { as: "owner.a" }), post("attendance", { action: "set", staffId: "aaaaaaaaaaaa", date: "2026-10-01", status: "present" }, { as: "owner.a" }), post("payroll", { action: "prepare", staffId: "aaaaaaaaaaaa", periodStart: "2026-10-01" }, { as: "owner.a" }), post("advances", { action: "create", advance: { staffId: "aaaaaaaaaaaa", date: "2026-10-01", amount: 1 } }, { as: "owner.a" })]);
+    return r.every((x) => x.status === 403);
+  }],
+  ["owner.a can't read payroll collections in its Distributor business (403)", async () => (await fsGet("owner.a", `businesses/${A}/payrolls/x`)) === 403 && (await fsQuery("owner.a", `businesses/${A}`, "attendance")) === 403],
+  ["public receipt endpoint: unknown token → 404 with a plain message; extra fields → 400", async () => {
+    const bad = await post("receipt", { action: "view", token: "NotARealTokenNotARealToken01" });
+    return bad.status === 404 && bad.body.message === "This link isn't valid. Ask your employer for a new one." && (await post("receipt", { action: "view", token: "x", businessId: A })).status === 400;
+  }],
+  ["the receipt page is served without login", async () => {
+    const res = await fetch(`${baseUrl}/receipt`);
+    return res.status === 200 && /<div id="app"/.test(await res.text());
+  }],
 ];
 
 console.log(`Smoke-testing ${baseUrl}\n`);

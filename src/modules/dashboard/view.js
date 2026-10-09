@@ -4,12 +4,16 @@
 // from the documents. Nothing is invented: a missing document or field is
 // "No data yet", never 0.
 
-import { resolveDashboard, dashboardDocuments, widgetValue, businessDate, formatQuantity, UNITS, isWidgetLive, FULFILLMENT_STATUSES } from "@shared/index.js";
+import { resolveDashboard, dashboardDocuments, widgetValue, businessDate, formatQuantity, UNITS, isWidgetLive, FULFILLMENT_STATUSES, ATTENDANCE_STATUSES } from "@shared/index.js";
 import { formatCentavos, formatNumber } from "../../lib/format.js";
 
 // Row shapes per list widget (only fields everyone allowed to see the list may see).
 const LIST_ROWS = {
   recentOrders: (o) => ({ id: o.id, title: `${o.orderNumber} · ${o.customer?.name ?? ""}`, detail: `${o.itemCount} item(s) · ${FULFILLMENT_STATUSES[o.fulfillmentStatus]?.label ?? o.fulfillmentStatus}` }),
+  attendanceToday: (a) => ({ id: a.id, title: a.staffName, detail: ATTENDANCE_STATUSES[a.status]?.label ?? a.status }),
+  payrollsToRelease: (p) => ({ id: p.id, title: `${p.staffName} · ${formatCentavos(p.netPay)}`, detail: `${p.periodStart} to ${p.periodEnd} · not yet paid` }),
+  awaitingReceipt: (p) => ({ id: p.id, title: `${p.staffName} · ${formatCentavos(p.salary?.amount ?? p.netPay)}`, detail: `Paid ${p.salary?.paidDate ?? ""} · awaiting the employee's confirmation` }),
+  advancesNotPaid: (a) => ({ id: a.id, title: `${a.staffName} · ${formatCentavos(a.amount)}`, detail: `${a.date}${a.description ? ` · ${a.description}` : ""} · not yet paid` }),
   lowStockItems: (p) => ({ id: p.id, title: p.name, detail: `${p.sku} · ${formatQuantity(p.available)} ${UNITS[p.unit]?.label ?? p.unit} available · reorder at ${formatQuantity(p.reorderLevel)}` }),
 };
 

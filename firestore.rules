@@ -113,6 +113,13 @@ service cloud.firestore {
     // (shared/modules.js) and LIMIT_DEFINITIONS / FEATURE_DEFINITIONS
     // (shared/plans.seed.js); tests/shared/rules-registry.test.js checks.
     function moduleIds() {
+      return ['dashboard', 'orders', 'payments', 'inventory', 'customers', 'reports', 'expenses', 'imports', 'household', 'attendance', 'payroll', 'advances', 'users', 'settings', 'suppliers', 'production', 'returns'];
+    }
+
+    // Keys every snapshot must carry. During a module's staged rollout
+    // (shared/modules.js ROLLING_OUT_MODULE_IDS) its key may still be
+    // missing from older snapshots, where it reads as off.
+    function requiredModuleIds() {
       return ['dashboard', 'orders', 'payments', 'inventory', 'customers', 'reports', 'expenses', 'imports', 'users', 'settings', 'suppliers', 'production', 'returns'];
     }
 
@@ -128,7 +135,7 @@ service cloud.firestore {
     function validModules(m) {
       return m is map
         && m.keys().hasOnly(moduleIds())
-        && m.keys().hasAll(moduleIds())
+        && m.keys().hasAll(requiredModuleIds())
         && m.dashboard == true
         && m.users == true
         && m.settings == true
@@ -142,6 +149,10 @@ service cloud.firestore {
         && m.reports is bool
         && m.expenses is bool
         && m.imports is bool
+        && m.get('household', false) is bool
+        && m.get('attendance', false) is bool
+        && m.get('payroll', false) is bool
+        && m.get('advances', false) is bool
         && m.suppliers == false
         && m.production == false
         && m.returns == false;
@@ -181,13 +192,13 @@ service cloud.firestore {
     // OPERATIONAL (built) modules it allows (core included). tests/shared/rules-registry.test.js
     // fails if these drift from the registry.
     function workspaceTemplateVersions() {
-      return {'distributor': [5], 'household-payroll': [1], 'baby-expense': [1], 'bridal-expense': [1]};
+      return {'distributor': [5], 'household-payroll': [1, 2], 'baby-expense': [1], 'bridal-expense': [1]};
     }
 
     function workspaceTemplateModules() {
       return {
         'distributor': ['dashboard', 'users', 'settings', 'orders', 'payments', 'inventory', 'customers', 'expenses', 'reports', 'imports'],
-        'household-payroll': ['dashboard', 'users', 'settings'],
+        'household-payroll': ['dashboard', 'users', 'settings', 'household', 'attendance', 'payroll', 'advances'],
         'baby-expense': ['dashboard', 'users', 'settings'],
         'bridal-expense': ['dashboard', 'users', 'settings']
       };
@@ -291,6 +302,12 @@ service cloud.firestore {
       match /financialMetrics/{day}     { allow read: if canAccessModule(bid, 'dashboard', 'dashboard.financials'); }
       match /reports/{id}               { allow read: if canAccessModule(bid, 'reports', 'reports.view'); }
       match /settings/{section}         { allow read: if canAccessModule(bid, 'settings', 'settings.view'); }
+
+      // Phase 14: Household / Kasambahay Payroll.
+      match /householdStaff/{id}        { allow read: if canAccessModule(bid, 'household', 'household.view'); }
+      match /attendance/{id}            { allow read: if canAccessModule(bid, 'attendance', 'attendance.view'); }
+      match /payrolls/{id}              { allow read: if canAccessModule(bid, 'payroll', 'payroll.view'); }
+      match /advances/{id}              { allow read: if canAccessModule(bid, 'advances', 'advances.view'); }
 
       match /imports/{id} {
         allow read: if canAccessModule(bid, 'imports', 'imports.run');
