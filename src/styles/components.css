@@ -2032,3 +2032,7 @@ tr.is-saving {
 .stat-grid + .page-actions {
   margin: var(--space-3) 0 var(--space-4);
 }
+
+.card-body > .filters {
+  padding: 0;
+}

@@ -39,6 +39,11 @@ beforeEach(async () => {
   };
   await add("wowner", W, "owner");
   await add("wstaff", W, "staff");
+  {
+    const x = await ensureAuthUser({ auth: world.auth, email: "wviewer@del.test", name: "wviewer" });
+    await addMember({ ...world, businessId: W, uid: x.uid, email: x.email, name: "wviewer", roleTemplate: "manager", permissionOverrides: { revoke: ["tasks.manage", "vendors.manage"] } });
+    u.wviewer = x.uid;
+  }
   await add("bowner", B, "owner");
   await add("bstaff", B, "staff");
   await add("howner", H, "owner");
@@ -68,6 +73,7 @@ describe("wedding task: delete (no money attached)", () => {
     const t = (await api("tasks", u.wowner, W, { action: "create", task: { title: "Done thing" } })).body.taskId;
     await api("tasks", u.wowner, W, { action: "setStatus", taskId: t, status: "completed" });
     expect((await api("tasks", u.wstaff, W, { action: "delete", taskId: t })).status).toBe(403);
+    expect((await api("tasks", u.wviewer, W, { action: "delete", taskId: t })).status).toBe(403); // can view, can't manage
     expect((await api("tasks", u.wowner, W, { action: "delete", taskId: t })).status).toBe(200);
     expect(doc(`businesses/${W}/taskTotals/current`)).toMatchObject({ total: 0, open: 0, completed: 0 });
     expect((await api("tasks", u.wowner, W, { action: "delete", taskId: t })).status).toBe(404);

@@ -1533,6 +1533,72 @@ Columns by screen:
 
 On Orders, Reference and Proof show "—" until Payments (Phase 8) fills them in.
 
+Phase 18.5 replaces the "View details" buttons and phone behavior above with the patterns below. The rules (compact rows, safe inline edits, Adjust, permissions) are unchanged.
+
+## Information architecture and the Luna UI system (Phase 18.5)
+
+### Permanent rule: every tab answers a different question
+- **Dashboard = Monitor:** "What is happening, and what needs my attention?" It shows a few figures, a Needs attention list, short summaries, and links into the page that owns each record. It never repeats a full dataset.
+- **Operational modules = Work:** fast daily work, with actionable rows, filters, inline actions and quick edits.
+- **Reports = Analyze:** "What happened over time, and why?" It holds charts, comparisons, financial relationships and the detailed tables.
+- Reusing a small summary is fine (for example 4 low-stock SKUs on the Dashboard). The full table belongs to one tab (Inventory).
+
+| Workspace | Tab | Question it answers |
+|---|---|---|
+| Distributor | Dashboard | What is happening in my store right now? (Total sales, total orders, unpaid; needs attention; inventory summary; order status + recent orders with inline Payment ▾ / Fulfillment ▾) |
+| | Orders | What orders do we need to process? |
+| | Payments | What has been received, and what still needs verification? (Unpaid orders link to Orders) |
+| | Inventory | What stock do we have, and what needs attention? |
+| | Customers | Who buys from us, and what is our account relationship? |
+| | Operating Expenses | What operating costs are we recording? |
+| | Reports | How is the business performing, and why? (Sales → COGS → Gross profit → Operating expenses → Estimated operating profit) |
+| Household | Dashboard | What needs my attention with household payroll? |
+| | Attendance | Who worked, and which days are payable? |
+| | Payroll | How much should each person receive? Opens on "To pay"; **Paid history** (released + receipt status) is the History step |
+| | Advances | What was advanced, and what is still to be deducted? |
+| Baby | Dashboard | Where are we with our budget, and what is coming up? (Upcoming ≠ Spent, drawn apart) |
+| | Budget / Expenses / Payment Schedule / Providers | What did we allocate / actually spend / still expect to pay / who do we pay? |
+| Bridal | Dashboard | Are we on track? (budget hero, needs attention, payments coming up, tasks, RSVP, supplier summary) |
+| | Tasks → Guests → Suppliers → Supplier Payments → Budget / Expenses | What's left to do / who's coming / who we work with / what we owe and when / committed vs spent vs left |
+
+- **Navigation follows the story:** the sidebar is grouped Overview / Work / Analyze / Manage (Imports, Users and Settings sit under Manage). Bridal is reordered to Tasks, Guests, Suppliers, Payments, Budget, Expenses.
+- **Dashboard workbook:** the Dashboard's Excel follows what the Dashboard shows (store pulse). Profitability is the Reports workbook.
+
+### Shared primitives (`src/components/ui.js`, `src/components/charts.js`)
+- **Building blocks:** KPI strip, Needs attention, section with a "View all ›" link, count tiles, item list, segmented control, progress bar, row ⋯ menu, skeleton, and the phone row summary (`mobileCell`).
+- **Filter bar:** search + 1–3 quick filters + "More filters", with removable chips. Filters apply on change, and Download Excel still exports the **applied** filters (Filter → View → Download).
+- **Charts:** waterfall, stacked columns, grouped columns and a 100% share bar. They are inline SVG sized with attributes and colored with CSS classes, because the CSP forbids `style=""`.
+  - Charts draw only aggregates the server already computed. `GET /api/reports` series rows now carry `cogs` for financial viewers.
+- **Workspace accents** (`[data-workspace]`): Distributor indigo, Household sage, Baby teal, Bridal dusty rose. They appear only on progress bars, the selected navigation item and small highlights. Status colors are universal.
+
+### Layout and phones
+- **Desktop and tablet:** grouped sidebar (icon rail at 720–1099px). Secondary columns step aside below 1000px.
+- **Phone (<720px):** a bottom tab bar with Dashboard + the template's `mobileTabs` (three ids, validated against the navigation) + More (a sheet with everything else and Sign out).
+  - Tables become 2–3 line records. The `.rows` table class plus the `.m-only` summary cell show the summary, then the inline controls (`data-m="ctl"`), then ›.
+- **Rows and details:** tapping a row opens its details as a side panel (a bottom sheet on phones). One primary action per page.
+- **Preview harness:** a dev-only tool (`preview/`, not tracked) builds the real screens with fixture data from the real handlers, for 1280 / 820 / 390px checks.
+
+### Corrections: easy to find, never erasing accountability
+| Record | Correction | Where |
+|---|---|---|
+| Order (open, unpaid) / (pending) / (fulfilled) | Delete / Cancel (reason) / Correct | details ⋯ (unchanged) |
+| Customer payment | Void (reason) | details ⋯ (unchanged); Verify is inline |
+| Product, Customer | Delete if never used, else Deactivate | details / ⋯ (unchanged) |
+| Expense (all workspaces) | Remove (reason) | details (unchanged) |
+| **Household staff** | **Delete if no attendance / payroll / advances**, else Deactivate | ⋯ (new) |
+| **Baby provider** | **Delete if no expenses / scheduled payments**, else Deactivate | ⋯ (new) |
+| **Wedding supplier** | **Delete if no supplier payment of any status / expenses**, else Deactivate | details (new); the agreed amount leaves the contracted total |
+| **Wedding task** | **Delete** (no money attached) | details (new); task totals adjusted |
+| **Budget category** (Baby, Wedding) | Delete if never used, else Deactivate | ⋯ (Baby's moved out of the Deactivate dialog; Wedding's server action is now reachable) |
+| Released salary, paid advance | none | not in 18.5; reversal needs a separate domain decision |
+
+The new deletes run their "never used" check in the same transaction as the delete, write an audit snapshot (`staff.deleted`, `provider.deleted`, `supplier.deleted`, `task.deleted`), use the module's manage permission, and return 409 `…-in-use` otherwise (tests: `tests/functions/safe-deletes.test.js`).
+
+### Not built in 18.5 (by decision)
+- The 13th Month Pay / Bonus model is designed (a separate payroll-record kind; `earnings[]` lines on regular payrolls) but is not implemented, pending its own approval.
+- No new Reports module for Baby or Bridal.
+- The Imports, Users, Settings and Super Admin console screens keep their layouts under the new shell and tokens.
+
 ## Build phases
 
 1. Foundation ✅
@@ -1555,6 +1621,7 @@ On Orders, Reference and Proof show "—" until Payments (Phase 8) fills them in
 16. Bridal / Wedding Command Center MVP ✅ (the bridal-expense workspace)
 17. Luna Super Admin console (operators, provisioning, plans, overrides, subscription, tenant configuration): local gate passed; staging awaiting approval
 18. Usage metering (shared meter registry, storage accounting, warnings, history, limit overrides, recount) ✅
+18.5. UX/UI simplification, information architecture, visual polish and mobile redesign: local gate in progress
 19. Reliability, backups and recovery
 
 - Phases 6 and 7 are in this order because orders need products to reserve and a cost to snapshot.

@@ -296,6 +296,16 @@ describe("Household: the payroll pulse", () => {
   });
 });
 
+describe("Household: a period ending today", () => {
+  it("is the current period (in progress), not 'ready to release'", async () => {
+    const s0 = sessionFixture({ workspaceTemplateId: "household-payroll" });
+    await show(s0, {}, { payrollsToRelease: [{ id: "a", staffName: "Maria", periodStart: "2026-09-23", periodEnd: "2026-10-08", netPay: 500000, present: 10, officialLeave: 0, absent: 0 }], awaitingReceipt: [], attendanceToday: [], advancesNotPaid: [], advancesToDeduct: [] }, {}, { "count:activeStaff": 1 });
+    expect(container.querySelector('[data-attention="release"]')).toBeNull();
+    expect(widget("nextPayroll").textContent).toMatch(/Next payroll/);
+    expect(sectionOf("period").textContent).toMatch(/Maria/);
+  });
+});
+
 describe("Baby: budget and what's coming up", () => {
   const B = () => sessionFixture({ workspaceTemplateId: "baby-expense" });
   it("Total / Spent / Remaining with a spent-vs-scheduled bar: Upcoming is never counted as spent", async () => {

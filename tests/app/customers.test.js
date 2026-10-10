@@ -56,6 +56,22 @@ describe("Customers page", () => {
     expect(container.querySelector(`[data-customer="${abc.id}"]`).textContent).toMatch(/ABC Store.*ABC Trading.*0917 123 4567.*3.*₱24,500\.00.*₱6,000\.00.*BA-20261008-003.*Active/s);
   });
 
+  it("filter chips: none at the default (Active); Inactive shows a chip; × goes back to Active", async () => {
+    const d = deps();
+    mountCustomers(container, session("staff"), d);
+    await flush();
+    expect(container.querySelector('[data-chip="status"]')).toBeNull();
+    const form = container.querySelector('[data-role="filters"]');
+    form.elements.status.value = "inactive";
+    form.dispatchEvent(new Event("submit", { cancelable: true, bubbles: true }));
+    await flush();
+    expect(container.querySelector('[data-chip="status"]').textContent).toMatch(/Inactive/);
+    container.querySelector('[data-clear-filter="status"]').click();
+    await flush();
+    expect(container.querySelector('[data-role="filters"]').elements.status.value).toBe("active");
+    expect(container.querySelector('[data-chip="status"]')).toBeNull();
+  });
+
   it("View details: contact, stats, order history and plain-language activity", async () => {
     const d = deps();
     mountCustomers(container, session("staff"), d);
