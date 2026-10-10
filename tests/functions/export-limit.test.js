@@ -17,7 +17,7 @@ vi.mock("../../shared/xlsx.js", async (importOriginal) => {
 
 const { writeXlsx, readXlsx } = await import("../../shared/xlsx.js");
 const { createExportsHandler } = await import("../../netlify/functions/exports.js");
-const { EXPORT_MAX_ROWS, TOO_MANY_ROWS_MESSAGE } = await import("../../shared/exports.js");
+const { EXPORT_MAX_ROWS, TOO_MANY_ROWS_MESSAGE, reportRows } = await import("../../shared/exports.js");
 const { buildWorld, request } = await import("../helpers/tenants.js");
 
 const NOW = new Date("2026-10-08T06:00:00Z");
@@ -66,8 +66,11 @@ describe(`export limit at its real value (${EXPORT_MAX_ROWS.toLocaleString("en-U
     const res = await exportOrders({ from: "2026-10-01", to: "2026-10-31" });
     expect(res.statusCode).toBe(200);
     expect(res.headers["X-Luna-Export-Rows"]).toBe(String(EXPORT_MAX_ROWS));
-    const rows = readXlsx(new Uint8Array(Buffer.from(res.body, "base64")), { sheet: "Orders", maxRows: EXPORT_MAX_ROWS + 10 }).rows;
+    // Phase 18.6: one sheet, an Order row + a Line row per order, under a title block.
+    const all = reportRows(readXlsx(new Uint8Array(Buffer.from(res.body, "base64")), { sheet: "Orders", maxRows: 2 * EXPORT_MAX_ROWS + 20 }).rows);
+    const rows = [all[0], ...all.slice(1).filter((r) => r[0] === "Order")];
     expect(rows.length - 1).toBe(EXPORT_MAX_ROWS);
+    expect(all.length - 1).toBe(2 * EXPORT_MAX_ROWS);
     const numbers = rows.slice(1).map((r) => r[rows[0].indexOf("Order #")]);
     expect(new Set(numbers).size).toBe(EXPORT_MAX_ROWS);
     expect(writeXlsx).toHaveBeenCalledTimes(1);

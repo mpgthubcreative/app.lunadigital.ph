@@ -9,6 +9,10 @@
 // percentage; informational counters are plain numbers (no fake bars);
 // file storage is a current total; history (last 12 months) is loaded on
 // request from GET /api/usage.
+// Phase 18.6: the figures were the ones captured at sign-in, so an Excel
+// download (counted by the server) didn't show until the page was
+// reloaded. Settings now asks the server for the CURRENT usage every time
+// it opens and redraws the meters.
 
 import { accessPolicy, MODULES, FEATURE_DEFINITIONS, LIMIT_KEYS, LIMIT_METER, LIMIT_DEFINITIONS, METERS, MONTHLY_METER_IDS, isEnforced, meterApplies } from "@shared/index.js";
 import { html, render } from "../../lib/html.js";
@@ -44,9 +48,11 @@ function historyTable(rows, entitlements) {
     <p class="stat-hint">— = not measured that month. File storage and active users are current totals (above), not monthly.</p>`;
 }
 
-function packageCards(session) {
+const ACTIVITY_TEXT = { exportsGenerated: (n) => `${formatNumber(n)} this month`, rowsExported: (n) => `${formatNumber(n)} rows this month` };
+
+function packageCards(session, fresh = null) {
   const { modules, limits, features } = session.entitlements;
-  const values = session.usage?.values || {};
+  const values = fresh?.current || session.usage?.values || {};
   // Sellable, built modules only; core modules are in every package.
   const sellable = MODULES.filter((m) => m.available && !m.core);
   const activity = activityMeters(session.entitlements);
@@ -79,8 +85,8 @@ function packageCards(session) {
     ${activity.length
       ? card({
           title: "Activity this month",
-          body: html`<dl class="dl" data-role="activity">${activity.map((id) => html`<dt title="${METERS[id].definition}">${METERS[id].label}</dt><dd>${formatNumber(values[id] ?? 0)}</dd>`)}</dl>
-            <p class="stat-hint">For information only: these aren't limits on your package.</p>`,
+          body: html`<dl class="dl" data-role="activity">${activity.map((id) => html`<dt title="${METERS[id].definition}">${METERS[id].label}</dt><dd data-meter="${id}">${(ACTIVITY_TEXT[id] || formatNumber)(values[id] ?? 0)}</dd>`)}</dl>
+            <p class="stat-hint">For information only: no limit on your package. ${fresh ? "Up to date." : "Updating…"}</p>`,
         })
       : ""}
     ${card({
@@ -119,17 +125,29 @@ export function mount(container, session) {
             ${seesPackage ? html`<p class="stat-hint">To change your package, contact Luna.</p>` : ""}
           `,
         })}
-        ${seesPackage ? packageCards(session) : ""}
+        <div data-role="package" class="grid-span">${seesPackage ? packageCards(session) : ""}</div>
       </div>
     `
   );
+  // Fresh figures from the server (an export or upload since sign-in shows now).
+  if (seesPackage)
+    Promise.resolve()
+      .then(() => api("usage"))
+      .then((r) => {
+        if (!r || !r.current) return;
+        const box = container.querySelector('[data-role="package"]');
+        if (box) render(box, packageCards(session, r));
+      })
+      .catch(() => {
+        /* keep the sign-in figures */
+      });
 
   container.onclick = async (e) => {
     if (e.target.closest("[data-act]")?.dataset.act !== "history") return;
     const box = container.querySelector('[data-role="history"]');
     render(box, html`<p class="stat-hint">Loading…</p>`);
     try {
-      const r = await api("/api/usage");
+      const r = await api("usage");
       render(box, historyTable(r.history, session.entitlements));
     } catch (err) {
       render(box, html`<p class="stat-hint">Couldn't load the history: ${err.message || "try again"}.</p><button type="button" class="btn btn-compact" data-act="history">Try again</button>`);

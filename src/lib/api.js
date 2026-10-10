@@ -39,7 +39,7 @@ export async function api(path, { method = "GET", body } = {}) {
 
   let response;
   try {
-    response = await fetch(`/api/${path.replace(/^\//, "")}`, {
+    response = await fetch(`/api/${path.replace(/^\/?(?:api\/)?/, "")}`, {
       method,
       headers,
       body: body === undefined ? undefined : JSON.stringify(body),
@@ -78,7 +78,7 @@ export async function apiDownload(path, body) {
   if (businessId) headers[BUSINESS_SELECTOR_HEADER] = businessId;
   let response;
   try {
-    response = await fetch(`/api/${path.replace(/^\//, "")}`, { method: "POST", headers, body: JSON.stringify(body) });
+    response = await fetch(`/api/${path.replace(/^\/?(?:api\/)?/, "")}`, { method: "POST", headers, body: JSON.stringify(body) });
   } catch {
     throw new ApiError(0, "network-error", "Can't reach Luna. Check your connection and try again.");
   }

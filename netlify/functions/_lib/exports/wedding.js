@@ -7,8 +7,9 @@
 // (categoryName); the workbook shows the category's CURRENT name, falling
 // back to that snapshot. Supplier names on expenses / payments stay the
 // snapshot, so history reads as it was paid.
-
-import { pairsSheet, tableSheet } from "../../../../shared/exports.js";
+// Phase 18.6: ONE worksheet per download; `total: true` columns get a
+// totals row. The Wedding Dashboard's live sections are rows of the
+// dashboard's single table (weddingDashboardRows).
 import { expensesQuery, categoriesQuery, weddingSuppliersQuery, supplierPaymentsQuery, weddingTasksQuery, guestsQuery } from "../../../../shared/list-queries.js";
 import { EXPENSE_METHODS } from "../../../../shared/expenses.js";
 import { BUDGET_DOC_ID, CATEGORY_STATUSES, budgetLines, sortCategories } from "../../../../shared/baby.js";
@@ -26,18 +27,18 @@ const categoryOf = (names) => (r) => names.get(r.category) ?? r.categoryName ?? 
 export const WEDDING_BUDGET_COLUMNS = [
   { header: "Category", format: "text", width: 24, value: (l) => l.name },
   { header: "Status", format: "text", width: 10, value: (l) => label(CATEGORY_STATUSES, l.status) },
-  { header: "Budget", format: "money", width: 14, value: (l) => l.budget },
-  { header: "Spent", format: "money", width: 14, value: (l) => l.spent },
-  { header: "Remaining", format: "money", width: 14, value: (l) => l.remaining },
+  { header: "Budget", format: "money", width: 14, total: true, value: (l) => l.budget },
+  { header: "Spent", format: "money", width: 14, total: true, value: (l) => l.spent },
+  { header: "Remaining", format: "money", width: 14, total: true, value: (l) => l.remaining },
   { header: "% used", format: "percent", width: 9, value: (l) => (l.percentUsed === null ? null : l.percentUsed / 100) },
-  { header: "Upcoming", format: "money", width: 14, value: (l) => l.upcoming },
+  { header: "Upcoming", format: "money", width: 14, total: true, value: (l) => l.upcoming },
 ];
 
 export const weddingExpenseColumns = (names) => [
   { header: "Date", format: "date", width: 12, value: (e) => e.date },
   { header: "Category", format: "text", width: 20, value: categoryOf(names) },
   { header: "Supplier / payee", format: "text", width: 24, value: (e) => e.payee },
-  { header: "Amount", format: "money", width: 13, value: (e) => e.amount },
+  { header: "Amount", format: "money", width: 13, total: true, value: (e) => e.amount },
   { header: "Method", format: "text", width: 14, value: (e) => label(EXPENSE_METHODS, e.method) },
   { header: "Reference", format: "text", width: 16, value: (e) => e.reference },
   { header: "From a supplier payment", format: "bool", width: 12, value: (e) => Boolean(e.supplierPaymentId) },
@@ -47,10 +48,10 @@ export const weddingExpenseColumns = (names) => [
 export const SUPPLIER_COLUMNS = [
   { header: "Supplier", format: "text", width: 26, value: (s) => s.name },
   { header: "Service", format: "text", width: 18, value: (s) => label(SUPPLIER_SERVICES, s.service) },
-  { header: "Agreed", format: "money", width: 13, value: (s) => s.agreedAmount },
-  { header: "Paid", format: "money", width: 13, value: (s) => s.paid ?? 0 },
-  { header: "Balance", format: "money", width: 13, value: (s) => supplierBalance(s) },
-  { header: "Upcoming", format: "money", width: 13, value: (s) => s.upcoming ?? 0 },
+  { header: "Agreed", format: "money", width: 13, total: true, value: (s) => s.agreedAmount },
+  { header: "Paid", format: "money", width: 13, total: true, value: (s) => s.paid ?? 0 },
+  { header: "Balance", format: "money", width: 13, total: true, value: (s) => supplierBalance(s) },
+  { header: "Upcoming", format: "money", width: 13, total: true, value: (s) => s.upcoming ?? 0 },
   { header: "Next due", format: "date", width: 12, value: (s) => s.nextDue },
   { header: "Contact person", format: "text", width: 18, value: (s) => s.contactPerson },
   { header: "Phone", format: "text", width: 16, value: (s) => s.phone },
@@ -67,8 +68,9 @@ export const paymentColumns = (names) => [
   { header: "Category", format: "text", width: 20, value: categoryOf(names) },
   { header: "Amount", format: "money", width: 13, value: (p) => p.amount },
   { header: "Status", format: "text", width: 11, value: (p) => label(SUPPLIER_PAYMENT_STATUSES, p.status) },
+  { header: "Upcoming (not paid)", format: "money", width: 13, total: true, value: (p) => (p.status === "upcoming" ? p.amount : null) },
   { header: "Paid date", format: "date", width: 12, value: (p) => p.paidDate },
-  { header: "Paid amount", format: "money", width: 13, value: (p) => p.paidAmount },
+  { header: "Paid amount", format: "money", width: 13, total: true, value: (p) => p.paidAmount },
   { header: "Method", format: "text", width: 14, value: (p) => (p.method ? label(EXPENSE_METHODS, p.method) : "") },
   { header: "Reference", format: "text", width: 16, value: (p) => p.reference },
   { header: "Notes", format: "text", width: 30, value: (p) => p.notes },
@@ -90,9 +92,9 @@ export const GUEST_COLUMNS = [
   { header: "Guest", format: "text", width: 26, value: (g) => g.name },
   { header: "Group", format: "text", width: 18, value: (g) => g.group },
   { header: "Side", format: "text", width: 14, value: (g) => label(GUEST_SIDES, g.side) },
-  { header: "Party size", format: "integer", width: 10, value: (g) => g.partySize },
+  { header: "Party size", format: "integer", width: 10, total: true, value: (g) => g.partySize },
   { header: "RSVP", format: "text", width: 14, value: (g) => label(RSVP_STATUSES, g.rsvp) },
-  { header: "Confirmed guests", format: "integer", width: 10, value: (g) => g.confirmed ?? 0 },
+  { header: "Confirmed guests", format: "integer", width: 10, total: true, value: (g) => g.confirmed ?? 0 },
   { header: "Invitation sent", format: "date", width: 12, value: (g) => g.invitationSent },
   { header: "RSVP date", format: "date", width: 12, value: (g) => g.rsvpDate },
   { header: "Contact", format: "text", width: 20, value: (g) => g.contact },
@@ -115,55 +117,59 @@ export function weddingBudgetPairs(doc, now) {
   ];
 }
 
-async function weddingBudget({ filters, timezone, now, readRows, readByIds }) {
+const pesos = (c) => (c === null || c === undefined ? "not set" : `₱${(c / 100).toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`);
+async function weddingBudget({ filters, readRows, readByIds }) {
   const [doc, cats] = await Promise.all([readBudget(readByIds), categoryNames(readRows)]);
   const lines = budgetLines(doc, cats.rows).filter((l) => (!filters.category || l.id === filters.category) && (!filters.status || l.status === filters.status));
-  return { rowCount: lines.length, sheets: [pairsSheet({ name: "Wedding Budget", timezone, rows: weddingBudgetPairs(doc, now) }), tableSheet({ name: "Category Budget", columns: WEDDING_BUDGET_COLUMNS, rows: lines, timezone })], note: "Spent, Remaining and the supplier balance are computed by Luna, as of export time." };
+  const w = weddingSummary(doc);
+  return { rowCount: lines.length, table: { name: "Wedding Budget", columns: WEDDING_BUDGET_COLUMNS, rows: lines }, note: `Total wedding budget ${pesos(w.total)} · spent ${pesos(w.spent)} · remaining ${pesos(w.remaining)} · upcoming ${pesos(w.upcoming)} · supplier balance ${pesos(w.supplierBalance)}. Computed by Luna, as of export time.` };
 }
 
-async function weddingExpenses({ filters, timezone, readRows }) {
+async function weddingExpenses({ filters, readRows }) {
   const [rows, cats] = await Promise.all([readRows("expenses", expensesQuery({ ...filters, status: "active" })), categoryNames(readRows)]);
-  return { rowCount: rows.length, sheets: [tableSheet({ name: "Wedding Expenses", columns: weddingExpenseColumns(cats.name), rows, timezone })] };
+  return { rowCount: rows.length, table: { name: "Wedding Expenses", columns: weddingExpenseColumns(cats.name), rows } };
 }
 
-async function weddingSuppliers({ filters, timezone, readRows }) {
+async function weddingSuppliers({ filters, readRows }) {
   const rows = await readRows("weddingSuppliers", weddingSuppliersQuery(filters));
-  return { rowCount: rows.length, sheets: [tableSheet({ name: "Wedding Suppliers", columns: SUPPLIER_COLUMNS, rows, timezone })], note: "Paid = the supplier's active Wedding Expenses. Balance = agreed − paid (only with an agreement)." };
+  return { rowCount: rows.length, table: { name: "Wedding Suppliers", columns: SUPPLIER_COLUMNS, rows }, note: "Paid = the supplier's active Wedding Expenses. Balance = agreed − paid (only with an agreement)." };
 }
 
-async function supplierPayments({ filters, timezone, readRows }) {
+async function supplierPayments({ filters, readRows }) {
   const [rows, cats] = await Promise.all([readRows("supplierPayments", supplierPaymentsQuery(filters)), categoryNames(readRows)]);
-  return { rowCount: rows.length, sheets: [tableSheet({ name: "Supplier Payments", columns: paymentColumns(cats.name), rows, timezone })], note: "Upcoming payments are commitments, not spending: they count as spent only once marked Paid." };
+  return { rowCount: rows.length, table: { name: "Supplier Payments", columns: paymentColumns(cats.name), rows }, note: "Upcoming payments are commitments, not spending: they count as spent only once marked Paid." };
 }
 
-async function weddingTasks({ filters, timezone, today, readRows }) {
+async function weddingTasks({ filters, today, readRows }) {
   const rows = await readRows("weddingTasks", weddingTasksQuery(filters, { today }));
-  return { rowCount: rows.length, sheets: [tableSheet({ name: "Wedding Tasks", columns: taskColumns(today), rows, timezone })], note: `Overdue / due soon are worked out against the business's today (${today}); they are never stored.` };
+  return { rowCount: rows.length, table: { name: "Wedding Tasks", columns: taskColumns(today), rows }, note: `Overdue / due soon are worked out against the business's today (${today}); they are never stored.` };
 }
 
-async function guests({ filters, timezone, readRows }) {
+async function guests({ filters, readRows }) {
   const rows = await readRows("guests", guestsQuery(filters));
-  return { rowCount: rows.length, sheets: [tableSheet({ name: "Guests & RSVP", columns: GUEST_COLUMNS, rows, timezone })], note: "Party size = invited people; Confirmed guests = people who said they're attending." };
+  return { rowCount: rows.length, table: { name: "Guests & RSVP", columns: GUEST_COLUMNS, rows }, note: "Party size = invited people; Confirmed guests = people who said they're attending." };
 }
 
-// The Wedding Dashboard workbook's extra sheets (summaries.js), each only
-// with its view permission. Never a Distributor or Baby sheet.
-export async function weddingDashboardSheets({ filters, permissions, timezone, today, readRows, readByIds }) {
+// The Wedding Dashboard's live sections as rows of the dashboard's single
+// table (summaries.js): { section, period, item, count, amount, note },
+// each only with its view permission. Never a Distributor or Baby row.
+export async function weddingDashboardRows({ filters, permissions, today, readRows, readByIds }) {
   const can = (p) => permissions[p] === true;
-  const sheets = [];
-  let rowCount = 0;
+  const rows = [];
   const cats = can("budget.view") || can("expenses.view") || can("vendorpayments.view") ? await categoryNames(readRows) : { rows: [], name: new Map() };
-  const table = (name, columns, rows) => {
-    rowCount += rows.length;
-    sheets.push(tableSheet({ name, columns, rows, timezone }));
-  };
-  if (can("budget.view")) table("Category Budget", WEDDING_BUDGET_COLUMNS, budgetLines(await readBudget(readByIds), cats.rows));
-  if (can("expenses.view")) table("Expenses", weddingExpenseColumns(cats.name), await readRows("expenses", expensesQuery({ status: "active", from: filters.from, to: filters.to })));
-  if (can("vendors.view")) table("Supplier Balances", SUPPLIER_COLUMNS, await readRows("weddingSuppliers", weddingSuppliersQuery({ status: "active" })));
-  if (can("vendorpayments.view")) table("Upcoming Payments", paymentColumns(cats.name), await readRows("supplierPayments", supplierPaymentsQuery({ status: "upcoming" })));
-  if (can("tasks.view")) table("Tasks", taskColumns(today), await readRows("weddingTasks", weddingTasksQuery({ state: "open" })));
-  if (can("guests.view")) table("Guests & RSVP", GUEST_COLUMNS, await readRows("guests", guestsQuery({})));
-  return { sheets, rowCount };
+  if (can("budget.view"))
+    for (const l of budgetLines(await readBudget(readByIds), cats.rows)) rows.push({ section: "Category budget (now)", item: l.name, amount: l.spent, note: l.budget === null ? "Spent · no budget" : `Spent of ${pesos(l.budget)} · ${l.remaining < 0 ? `over by ${pesos(-l.remaining)}` : `${pesos(l.remaining)} left`}` });
+  if (can("expenses.view"))
+    for (const e of await readRows("expenses", expensesQuery({ status: "active", from: filters.from, to: filters.to }))) rows.push({ section: "Expenses in the period", period: e.date, item: `${categoryOf(cats.name)(e)}${e.payee ? ` · ${e.payee}` : ""}`, amount: e.amount, note: e.notes ?? null });
+  if (can("vendors.view"))
+    for (const s of await readRows("weddingSuppliers", weddingSuppliersQuery({ status: "active" }))) rows.push({ section: "Supplier balances (now)", item: s.name, amount: supplierBalance(s), note: `Agreed ${pesos(s.agreedAmount)} · paid ${pesos(s.paid ?? 0)}` });
+  if (can("vendorpayments.view"))
+    for (const p of await readRows("supplierPayments", supplierPaymentsQuery({ status: "upcoming" }))) rows.push({ section: "Upcoming supplier payments", period: p.dueDate, item: `${p.supplierName} · ${p.description}`, amount: p.amount, note: "Not spent yet" });
+  if (can("tasks.view"))
+    for (const t of await readRows("weddingTasks", weddingTasksQuery({ state: "open" }))) rows.push({ section: "Open tasks", period: t.dueDate, item: t.title, note: [label(TASK_STATUSES, t.status), TIMING[taskTiming(t, today)] ?? null, t.assignee ?? null].filter(Boolean).join(" · ") });
+  if (can("guests.view"))
+    for (const g of await readRows("guests", guestsQuery({}))) rows.push({ section: "Guests & RSVP", item: g.name, count: g.confirmed ?? 0, note: `${label(RSVP_STATUSES, g.rsvp)} · party of ${g.partySize}` });
+  return rows;
 }
 
 export const WEDDING_BUILDERS = Object.freeze({ weddingBudget, weddingExpenses, weddingSuppliers, supplierPayments, weddingTasks, guests });

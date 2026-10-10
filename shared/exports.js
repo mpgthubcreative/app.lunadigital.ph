@@ -167,6 +167,55 @@ export function tableSheet({ name, columns, rows, timezone }) {
   };
 }
 
+// ---------- Phase 18.6: ONE worksheet per download ----------
+//
+// Every Luna Excel file is a single sheet:
+//   row 1        title (report and business)
+//   rows 2..     a few information lines (filters, who / when, notes)
+//   (blank)
+//   ONE header row: bold, frozen, with filters
+//   data rows    real numbers (pesos), real Excel dates
+//   Total row    only for columns marked `total: true`, summing the cells
+//                above. Reports that mix record types (an order and its
+//                lines, a payroll and its deductions) put each amount in its
+//                own column, so a total never adds the same money twice.
+// columns: [{ header, format, width?, value(row), total? }]
+export function reportSheet({ name, title, info = [], columns, rows, timezone, totalLabel = "Total" }) {
+  const head = [[title], ...info.filter(Boolean).map((line) => [line]), []];
+  const data = rows.map((r) => columns.map((c) => cellValue(c.format, c.value(r), timezone)));
+  const hasTotals = rows.length > 0 && columns.some((c) => c.total);
+  const totals = hasTotals
+    ? columns.map((c, i) => {
+        if (i === 0 && !c.total) return totalLabel;
+        if (!c.total) return null;
+        const sum = data.reduce((t, row) => (typeof row[i] === "number" ? t + row[i] : t), 0);
+        // Pesos to the centavo (no floating-point tails like 0.30000000000000004).
+        return c.format === "money" ? Math.round(sum * 100) / 100 : sum;
+      })
+    : null;
+  const headerRow = head.length;
+  return {
+    name,
+    headerRow,
+    titleRows: [0],
+    filter: true,
+    print: true,
+    ...(totals ? { totalRow: headerRow + 1 + data.length } : {}),
+    columns: columns.map((c) => ({ format: SHEET_FORMAT[c.format] || "text", width: c.width || Math.max(10, Math.min(40, c.header.length + 4)) })),
+    rows: [...head, columns.map((c) => c.header), ...data, ...(totals ? [totals] : [])],
+  };
+}
+
+// The rows under the header of a reportSheet as read back by readXlsx
+// (tests and imports): [headers, ...rows] without the title block and the
+// totals row.
+export function reportRows(sheetRows) {
+  const h = sheetRows.findIndex((r, i) => i > 0 && Array.isArray(r) && r.filter((v) => v !== "" && v !== null && v !== undefined).length > 1);
+  const out = h < 0 ? [] : sheetRows.slice(h);
+  const last = out.at(-1);
+  return last && last[0] === "Total" ? out.slice(0, -1) : out;
+}
+
 // Label/value sheet (summaries and the export information sheet).
 export function pairsSheet({ name, rows, timezone }) {
   return {

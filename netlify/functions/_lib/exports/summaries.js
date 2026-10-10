@@ -1,34 +1,52 @@
 // Summary workbooks (Phase 12.5): Dashboard and Reports. Both read only
-// the existing summary documents (no transaction lists) and reuse the
-// screens' own logic, so a workbook matches what the screen shows:
+// the existing summary documents (no transaction lists, apart from the
+// Baby / Wedding live sections) and reuse the screens' own logic, so a
+// workbook matches what the screen shows:
 //   Dashboard  the visible widgets (resolveDashboard) over the selected
 //              period (dashboardDocuments + combineDashboardDocs +
-//              widgetValue) and, on a separate sheet, the CURRENT gauges.
+//              widgetValue) and the CURRENT gauges.
 //   Reports    buildReport() itself: sections and money exactly as the
 //              Reports API would return them to this caller.
+//
+// Phase 18.6: ONE worksheet per download. Summaries have many kinds of
+// figures, so each is a "long" table: one row per figure with a Section
+// column (filter on it), the period, the item, and the value in the column
+// for its kind (a count, a quantity, a peso amount...). No totals row:
+// rows of different sections don't add up.
 
-import { pairsSheet, tableSheet } from "../../../../shared/exports.js";
 import { resolveDashboard, dashboardDocuments, dashboardCounts, widgetSourceKey, combineDashboardDocs, widgetValue } from "../../../../shared/dashboard.js";
 import { rangePlan } from "../../../../shared/reports.js";
 import { PAYMENT_METHODS } from "../../../../shared/payments.js";
 import { EXPENSE_METHODS, expenseCategoryLabel } from "../../../../shared/expenses.js";
-import { UNITS } from "../../../../shared/quantity.js";
+import { UNITS, formatQuantity } from "../../../../shared/quantity.js";
 import { buildReport } from "../reports.js";
 import { snapshotWorkspaceTemplateId, workspaceSectionLabel } from "../../../../shared/workspaces.js";
 import { expensesQuery, scheduledPaymentsQuery, categoriesQuery } from "../../../../shared/list-queries.js";
-import { BUDGET_DOC_ID, budgetLines, sortCategories } from "../../../../shared/baby.js";
-import { CATEGORY_BUDGET_COLUMNS, babyExpenseColumns, scheduleColumns } from "./baby.js";
-import { weddingDashboardSheets } from "./wedding.js";
+import { BUDGET_DOC_ID, sortCategories, payerTotals, upcomingPart } from "../../../../shared/baby.js";
+import { weddingDashboardRows } from "./wedding.js";
 
 const NO_DATA = "No data yet";
-const fmt = (w) => (w.format === "money" ? "money" : "integer");
-// [label, format, value, note]; a missing value is "No data yet", never 0.
-const pair = (label, format, value, note) => (value === null || value === undefined ? [label, "text", NO_DATA, note] : [label, format, value, note]);
 const period = (from, to) => (from === to ? from : `${from} to ${to}`);
+
+// The dashboard's columns: a value goes in Count or Amount by its format.
+const DASHBOARD_COLUMNS = [
+  { header: "Section", format: "text", width: 26, value: (r) => r.section },
+  { header: "Period / date", format: "text", width: 22, value: (r) => r.period ?? null },
+  { header: "Item", format: "text", width: 34, value: (r) => r.item },
+  { header: "Count", format: "integer", width: 10, value: (r) => r.count ?? null },
+  { header: "Amount", format: "money", width: 14, value: (r) => r.amount ?? null },
+  { header: "Note", format: "text", width: 44, value: (r) => r.note ?? null },
+];
+// A widget's value as a row: money -> Amount, else Count; missing -> "No data yet".
+const widgetRow = (section, w, value, extra = {}) => {
+  const base = { section, item: w.label, period: extra.period ?? null };
+  if (value === null || value === undefined) return { ...base, note: NO_DATA };
+  return { ...base, ...(w.format === "money" ? { amount: value } : { count: value }), note: extra.note ?? null };
+};
 
 // ---------- Dashboard ----------
 
-async function dashboard({ tenant, filters, permissions, entitlements, timezone, now, today, readByIds, readRows }) {
+async function dashboard({ tenant, filters, permissions, entitlements, now, today, readByIds, readRows }) {
   const { from, to } = filters;
   const widgets = resolveDashboard({ entitlements, permissions }).filter((w) => w.kind === "stat" && w.format !== "list");
   const periodWidgets = widgets.filter((w) => w.section === "period");
@@ -49,68 +67,47 @@ async function dashboard({ tenant, filters, permissions, entitlements, timezone,
     return widgetValue(w, combineDashboardDocs(w.source, (ids || r.ids).map((id) => r.docs.get(id) ?? null)));
   };
 
-  const summary = pairsSheet({
-    name: "Summary",
-    timezone,
-    rows: [["Selected period", "text", period(from, to), "Business-local days, inclusive"], ...periodWidgets.map((w) => pair(w.label, fmt(w), valueFor(w), w.hint || ""))],
-  });
-  const buckets = rangePlan(from, to).buckets;
-  const activity = tableSheet({
-    name: "Period activity",
-    timezone,
-    columns: [{ header: buckets.length && buckets[0].period.length === 7 ? "Month" : "Day", format: "text", width: 12, value: (b) => b.period }, ...periodWidgets.map((w) => ({ header: w.label, format: fmt(w), width: 16, value: (b) => valueFor(w, b.docs) }))],
-    rows: buckets,
-  });
-  const sheets = [summary, activity];
   const workspace = snapshotWorkspaceTemplateId(entitlements);
-  if (currentWidgets.length) {
-    sheets.push(
-      pairsSheet({
-        name: workspaceSectionLabel(workspace, "current", "Current operations").slice(0, 31),
-        timezone,
-        rows: [["As of", "datetime", now, "Live figures at export time, NOT for the selected period"], ...currentWidgets.map((w) => pair(w.label, fmt(w), valueFor(w), "Current"))],
-      })
-    );
-  }
+  const rows = [];
+  const range = period(from, to);
+  for (const w of periodWidgets) rows.push(widgetRow("Selected period", w, valueFor(w), { period: range, note: w.hint || null }));
+  const buckets = rangePlan(from, to).buckets;
+  const byLabel = buckets.length && buckets[0].period.length === 7 ? "By month" : "By day";
+  if (buckets.length > 1) for (const b of buckets) for (const w of periodWidgets) rows.push(widgetRow(byLabel, w, valueFor(w, b.docs), { period: b.period }));
+  const nowLabel = workspaceSectionLabel(workspace, "current", "Current operations");
+  for (const w of currentWidgets) rows.push(widgetRow(`${nowLabel} (now)`, w, valueFor(w), { note: w.hint || "As of export time" }));
+
   if (workspace === "bridal-expense") {
-    const wedding = await weddingDashboardSheets({ filters, permissions, timezone, today, readRows, readByIds });
-    sheets.push(...wedding.sheets);
-    return { rowCount: periodWidgets.length + buckets.length + currentWidgets.length + wedding.rowCount, sheets, note: "Selected-period spending comes from Luna's daily spending summaries. The wedding plan (budget, supplier balances, tasks, RSVPs) is live at export time." };
+    rows.push(...(await weddingDashboardRows({ filters, permissions, today, readRows, readByIds })));
+    return { rowCount: rows.length, table: { name: "Dashboard", columns: DASHBOARD_COLUMNS, rows }, note: "Selected-period spending comes from Luna's daily spending summaries. The wedding plan (budget, supplier balances, tasks, RSVPs) is live at export time." };
   }
   if (workspace === "baby-expense") {
-    const baby = await babyDashboardSheets({ filters, permissions, timezone, readRows, readByIds });
-    sheets.push(...baby.sheets);
-    return { rowCount: periodWidgets.length + buckets.length + currentWidgets.length + baby.rowCount, sheets, note: "Selected-period spending comes from Luna's daily spending summaries. The current budget, category budgets and upcoming payments are live at export time." };
+    rows.push(...(await babyDashboardRows({ filters, permissions, readRows, readByIds })));
+    return { rowCount: rows.length, table: { name: "Dashboard", columns: DASHBOARD_COLUMNS, rows }, note: "Who paid and what's still to pay are live at export time. A shared expense is split by payer, never counted twice." };
   }
-  return { rowCount: periodWidgets.length + buckets.length + currentWidgets.length, sheets, note: "Selected-period figures come from Luna's daily summaries (the same as Reports). Current operations are live at export time." };
+  return { rowCount: rows.length, table: { name: "Dashboard", columns: DASHBOARD_COLUMNS, rows }, note: "Selected-period figures come from Luna's daily summaries (the same as Reports). Current operations are live at export time." };
 }
 
-// Baby Dashboard (Phase 15) extra sheets, each only with its view
-// permission: Category Budget (now), the selected period's Expenses, and
-// the Upcoming Payments (now). Never a Distributor sheet.
-async function babyDashboardSheets({ filters, permissions, timezone, readRows, readByIds }) {
+// Baby Dashboard (Phase 18.6): who paid (now), the period's expenses and
+// what's still to pay (now), each only with its view permission. Never a
+// Distributor row.
+async function babyDashboardRows({ filters, permissions, readRows, readByIds }) {
   const can = (p) => permissions[p] === true;
-  const sheets = [];
-  let rowCount = 0;
+  const rows = [];
   const cats = can("budget.view") || can("expenses.view") || can("schedule.view") ? sortCategories(await readRows("expenseCategories", categoriesQuery())) : [];
   const names = new Map(cats.map((c) => [c.id, c.name]));
+  const catOf = (r) => names.get(r.category) ?? r.categoryName ?? "";
   if (can("budget.view")) {
     const doc = (await readByIds("budgets", [BUDGET_DOC_ID])).get(BUDGET_DOC_ID) ?? null;
-    const lines = budgetLines(doc, cats);
-    rowCount += lines.length;
-    sheets.push(tableSheet({ name: "Category Budget", columns: CATEGORY_BUDGET_COLUMNS, rows: lines, timezone }));
+    for (const p of payerTotals(doc)) rows.push({ section: "Who paid (now)", item: p.name, amount: p.amount, note: p.key ? null : "Expenses recorded without a payer" });
   }
-  if (can("expenses.view")) {
-    const rows = await readRows("expenses", expensesQuery({ status: "active", from: filters.from, to: filters.to }));
-    rowCount += rows.length;
-    sheets.push(tableSheet({ name: "Expenses", columns: babyExpenseColumns(names), rows, timezone }));
-  }
-  if (can("schedule.view")) {
-    const rows = await readRows("scheduledPayments", scheduledPaymentsQuery({ status: "upcoming" }));
-    rowCount += rows.length;
-    sheets.push(tableSheet({ name: "Upcoming Payments", columns: scheduleColumns(names), rows, timezone }));
-  }
-  return { sheets, rowCount };
+  if (can("expenses.view"))
+    for (const e of await readRows("expenses", expensesQuery({ status: "active", from: filters.from, to: filters.to })))
+      rows.push({ section: "Expenses in the period", period: e.date, item: `${catOf(e)}${e.payee ? ` · ${e.payee}` : ""}`, amount: e.amount, note: [e.notes, Array.isArray(e.paidBy) && e.paidBy.length ? `Paid by ${e.paidBy.map((p) => p.name).join(" + ")}` : null].filter(Boolean).join(" · ") || null });
+  if (can("schedule.view"))
+    for (const s of await readRows("scheduledPayments", scheduledPaymentsQuery({ status: "upcoming" })))
+      rows.push({ section: "Still to pay (now)", period: s.dueDate, item: `${s.description} · ${catOf(s)}`, amount: upcomingPart(s), note: (s.paidAmount ?? 0) > 0 ? "Part paid: only the unpaid part" : null });
+  return rows;
 }
 
 // ---------- Reports ----------
@@ -119,110 +116,64 @@ const payMethod = (k) => PAYMENT_METHODS[k]?.label ?? k;
 const expMethod = (k) => EXPENSE_METHODS[k]?.label ?? k;
 const unitLabel = (u) => UNITS[u]?.label ?? u ?? "";
 
-async function reports({ db, tenant, filters, permissions, entitlements, timezone }) {
+// One aligned header for every report section; money columns only for
+// callers who may see money (buildReport already hides it otherwise).
+const reportColumns = (fin) => [
+  { header: "Section", format: "text", width: 22, value: (r) => r.section },
+  { header: "Period / date", format: "text", width: 14, value: (r) => r.period ?? null },
+  { header: "Item", format: "text", width: 32, value: (r) => r.item },
+  { header: "Count", format: "integer", width: 9, value: (r) => r.count ?? null },
+  { header: "Quantity", format: "quantity", width: 10, value: (r) => r.qty ?? null },
+  ...(fin
+    ? [
+        { header: "Net sales", format: "money", width: 13, value: (r) => r.netSales ?? null },
+        { header: "Cost of products sold (COGS)", format: "money", width: 15, value: (r) => r.cogs ?? null },
+        { header: "Gross profit", format: "money", width: 13, value: (r) => r.grossProfit ?? null },
+        { header: "Amount", format: "money", width: 13, value: (r) => r.amount ?? null },
+        { header: "Percent", format: "percent", width: 9, value: (r) => r.percent ?? null },
+      ]
+    : []),
+  { header: "Note", format: "text", width: 40, value: (r) => r.note ?? null },
+];
+
+async function reports({ db, tenant, filters, permissions, entitlements }) {
   const { from, to } = filters;
   const r = await buildReport({ db, tenant, from, to, permissions, entitlements });
   const fin = r.access.financials === true;
   const o = r.overview;
-  const sheets = [];
-  let rows = 0;
-  const table = (name, columns, data) => {
-    if (!data) return;
-    rows += data.length;
-    sheets.push(tableSheet({ name, columns, rows: data, timezone }));
-  };
-
-  sheets.push(
-    pairsSheet({
-      name: "Overview",
-      timezone,
-      rows: [
-        ["Period", "text", period(from, to), "Business-local days, inclusive"],
-        pair("Orders created", "integer", o.ordersCreated),
-        pair("Fulfilled orders", "integer", o.fulfilledOrders),
-        pair("Cancelled orders", "integer", o.cancelledOrders),
-        ...(fin
-          ? [
-              pair("Gross sales", "money", o.grossSales),
-              pair("Discounts", "money", o.discounts),
-              pair("Returns", "money", o.returns),
-              pair("Net sales", "money", o.netSales, "Gross sales − discounts − returns"),
-              pair("COGS", "money", o.cogs),
-              pair("Gross profit", "money", o.grossProfit),
-              pair("Gross margin", "percent", o.grossMarginPct === null ? null : o.grossMarginPct / 100),
-              pair("Average order value", "money", o.averageOrderValue),
-              pair("Operating expenses", "money", o.operatingExpenses),
-              pair("Estimated operating profit", "money", o.estimatedOperatingProfit, "Gross profit − operating expenses (not net income)"),
-              pair("Payments received", "money", o.paymentsReceived),
-            ]
-          : []),
-        ...(r.payments ? [pair("Unpaid orders (now)", "integer", r.payments.unpaidOrdersNow, "Current, not for the period"), ...(fin ? [pair("Unpaid balance (now)", "money", r.payments.unpaidBalanceNow, "Current, not for the period")] : [])] : []),
-      ],
-    })
-  );
-  table(
-    "Sales",
-    [
-      { header: r.range.granularity === "month" ? "Month" : "Day", format: "text", width: 12, value: (s) => s.period },
-      { header: "Orders created", format: "integer", value: (s) => s.ordersCreated },
-      { header: "Fulfilled orders", format: "integer", value: (s) => s.fulfilledOrders },
-      ...(fin
-        ? [
-            { header: "Net sales", format: "money", value: (s) => s.netSales },
-            { header: "Gross profit", format: "money", value: (s) => s.grossProfit },
-            { header: "Operating expenses", format: "money", value: (s) => s.operatingExpenses },
-            { header: "Payments received", format: "money", value: (s) => s.paymentsReceived },
-          ]
-        : []),
-    ],
-    r.series
-  );
-  if (r.products)
-    table(
-      "Products",
-      [
-        { header: "SKU", format: "text", width: 14, value: (p) => p.sku },
-        { header: "Product", format: "text", width: 30, value: (p) => p.name },
-        { header: "Unit", format: "text", width: 8, value: (p) => unitLabel(p.unit) },
-        { header: "Qty sold", format: "quantity", value: (p) => p.qty },
-        ...(fin ? [{ header: "Net sales", format: "money", value: (p) => p.netSales }, { header: "COGS", format: "money", value: (p) => p.cogs }, { header: "Gross profit", format: "money", value: (p) => p.grossProfit }] : []),
-      ],
-      r.products.rows
-    );
-  if (r.customers)
-    table(
-      "Customers",
-      [
-        { header: "Customer", format: "text", width: 28, value: (c) => (c.walkIn ? "Walk-in orders" : c.name) },
-        { header: "Orders", format: "integer", value: (c) => c.orders },
-        ...(fin ? [{ header: "Net sales", format: "money", value: (c) => c.netSales }, { header: "Outstanding balance (now)", format: "money", width: 20, value: (c) => (c.walkIn ? null : c.outstandingBalanceNow) }] : []),
-        { header: "Last order #", format: "text", value: (c) => c.lastOrderNumber },
-      ],
-      r.customers.rows
-    );
-  if (r.payments)
-    table(
-      "Payments",
-      [{ header: "Method", format: "text", width: 16, value: (m) => payMethod(m.method) }, { header: "Payments", format: "integer", value: (m) => m.count }, ...(fin ? [{ header: "Amount", format: "money", value: (m) => m.amount }] : [])],
-      r.payments.methods
-    );
-  if (r.expenses) {
-    table("Expenses by category", [{ header: "Category", format: "text", width: 20, value: (c) => expenseCategoryLabel(c.key) }, { header: "Expenses", format: "integer", value: (c) => c.count }, { header: "Amount", format: "money", value: (c) => c.amount }], r.expenses.categories);
-    table("Expenses by method", [{ header: "Method", format: "text", width: 16, value: (m) => expMethod(m.key) }, { header: "Expenses", format: "integer", value: (m) => m.count }, { header: "Amount", format: "money", value: (m) => m.amount }], r.expenses.methods);
+  const range = period(from, to);
+  const rows = [];
+  const ov = (item, key, value, note = null) => rows.push({ section: "Overview", period: range, item, ...(value === null || value === undefined ? { note: [NO_DATA, note].filter(Boolean).join(" · ") } : { [key]: value, note }) });
+  ov("Orders created", "count", o.ordersCreated);
+  ov("Fulfilled orders", "count", o.fulfilledOrders);
+  ov("Cancelled orders", "count", o.cancelledOrders);
+  if (fin) {
+    ov("Gross sales", "amount", o.grossSales);
+    ov("Discounts", "amount", o.discounts);
+    ov("Returns", "amount", o.returns);
+    ov("Net sales", "netSales", o.netSales, "Gross sales − discounts − returns");
+    ov("Cost of products sold (COGS)", "cogs", o.cogs, "The cost recorded when each order was fulfilled");
+    ov("Gross profit", "grossProfit", o.grossProfit, "Net sales − cost of products sold");
+    ov("Gross margin", "percent", o.grossMarginPct === null ? null : o.grossMarginPct / 100);
+    ov("Average order value", "amount", o.averageOrderValue);
+    ov("Operating expenses", "amount", o.operatingExpenses);
+    ov("Estimated operating profit", "amount", o.estimatedOperatingProfit, "Gross profit − operating expenses (an estimate, not net income)");
+    ov("Payments received", "amount", o.paymentsReceived);
   }
-  if (r.lowStock)
-    table(
-      "Low stock (now)",
-      [
-        { header: "SKU", format: "text", width: 14, value: (p) => p.sku },
-        { header: "Product", format: "text", width: 30, value: (p) => p.name },
-        { header: "Available", format: "quantity", value: (p) => p.available },
-        { header: "Reorder level", format: "quantity", value: (p) => p.reorderLevel },
-      ],
-      r.lowStock
-    );
+  if (r.payments) {
+    rows.push({ section: "Overview", item: "Unpaid orders (now)", count: r.payments.unpaidOrdersNow, note: "Current, not for the period" });
+    if (fin) rows.push({ section: "Overview", item: "Unpaid balance (now)", amount: r.payments.unpaidBalanceNow, note: "Current, not for the period" });
+  }
+  const by = r.range.granularity === "month" ? "Sales by month" : "Sales by day";
+  for (const s of r.series || []) rows.push({ section: by, period: s.period, item: `${s.ordersCreated ?? 0} created · ${s.fulfilledOrders ?? 0} fulfilled`, count: s.fulfilledOrders, ...(fin ? { netSales: s.netSales, cogs: s.netSales === null || s.netSales === undefined || s.grossProfit === null || s.grossProfit === undefined ? null : s.cogs ?? s.netSales - s.grossProfit, grossProfit: s.grossProfit, amount: s.operatingExpenses, note: s.paymentsReceived ? `Amount = operating expenses · payments received ₱${(s.paymentsReceived / 100).toFixed(2)}` : "Amount = operating expenses" } : {}) });
+  for (const p of r.products?.rows || []) rows.push({ section: "Products", item: `${p.sku} · ${p.name}`, qty: p.qty, note: unitLabel(p.unit), ...(fin ? { netSales: p.netSales, cogs: p.cogs, grossProfit: p.grossProfit } : {}) });
+  for (const c of r.customers?.rows || []) rows.push({ section: "Customers", item: c.walkIn ? "Walk-in orders" : c.name, count: c.orders, ...(fin ? { netSales: c.netSales, amount: c.walkIn ? null : c.outstandingBalanceNow } : {}), note: [c.lastOrderNumber ? `Last order ${c.lastOrderNumber}` : null, fin && !c.walkIn ? "Amount = outstanding balance now" : null].filter(Boolean).join(" · ") || null });
+  for (const m of r.payments?.methods || []) rows.push({ section: "Payments by method", item: payMethod(m.method), count: m.count, ...(fin ? { amount: m.amount } : {}) });
+  for (const c of r.expenses?.categories || []) rows.push({ section: "Expenses by category", item: expenseCategoryLabel(c.key), count: c.count, amount: c.amount });
+  for (const m of r.expenses?.methods || []) rows.push({ section: "Expenses by method", item: expMethod(m.key), count: m.count, amount: m.amount });
+  for (const p of r.lowStock || []) rows.push({ section: "Low stock (now)", item: `${p.sku} · ${p.name}`, qty: p.available, note: `Stock left · reorder at ${formatQuantity(p.reorderLevel)}` });
   const capped = [r.products, r.customers].some((s) => s && s.rows && s.total > s.rows.length);
-  return { rowCount: rows, sheets, note: `Same figures and sections as the Reports page for this range.${capped ? " Products and Customers list the top 50, as on the page." : ""}` };
+  return { rowCount: rows.length, table: { name: "Reports", columns: reportColumns(fin), rows }, note: `Same figures and sections as the Reports page for this range. Filter the Section column.${capped ? " Products and Customers list the top 50, as on the page." : ""}` };
 }
 
 export const SUMMARY_BUILDERS = Object.freeze({ dashboard, reports });

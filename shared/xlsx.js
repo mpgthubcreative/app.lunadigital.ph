@@ -173,14 +173,18 @@ const cleanSheetName = (name, used) => {
 
 // Number formats a column may declare (cell values stay plain numbers).
 const NUMBER_STYLES = Object.freeze({ money: 2, integer: 3, percent: 4, date: 5, datetime: 6 });
+// Phase 18.6: bold variants for a totals row (same number formats), and a title.
+const BOLD_STYLES = Object.freeze({ text: 1, money: 8, integer: 9, number: 1, percent: 10, date: 1, datetime: 1 });
+const TITLE_STYLE = 7;
 export const XLSX_COLUMN_FORMATS = Object.freeze(["text", "number", ...Object.keys(NUMBER_STYLES)]);
 
 const STYLES_XML =
   `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">` +
-  `<numFmts count="2"><numFmt numFmtId="166" formatCode="yyyy-mm-dd"/><numFmt numFmtId="167" formatCode="yyyy-mm-dd hh:mm"/></numFmts>` +
-  `<fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><name val="Calibri"/></font></fonts>` +
+  // Money is Philippine peso: ₱1,234.50 / -₱1,234.50 (Phase 18.6).
+  `<numFmts count="3"><numFmt numFmtId="166" formatCode="yyyy-mm-dd"/><numFmt numFmtId="167" formatCode="yyyy-mm-dd hh:mm"/><numFmt numFmtId="168" formatCode="&quot;₱&quot;#,##0.00;-&quot;₱&quot;#,##0.00"/></numFmts>` +
+  `<fonts count="3"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="14"/><name val="Calibri"/></font></fonts>` +
   `<fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills><borders count="1"><border/></borders><cellStyleXfs count="1"><xf/></cellStyleXfs>` +
-  `<cellXfs count="7"><xf fontId="0"/><xf fontId="1" applyFont="1"/><xf fontId="0" numFmtId="4" applyNumberFormat="1"/><xf fontId="0" numFmtId="3" applyNumberFormat="1"/><xf fontId="0" numFmtId="10" applyNumberFormat="1"/><xf fontId="0" numFmtId="166" applyNumberFormat="1"/><xf fontId="0" numFmtId="167" applyNumberFormat="1"/></cellXfs></styleSheet>`;
+  `<cellXfs count="11"><xf fontId="0"/><xf fontId="1" applyFont="1"/><xf fontId="0" numFmtId="168" applyNumberFormat="1"/><xf fontId="0" numFmtId="3" applyNumberFormat="1"/><xf fontId="0" numFmtId="10" applyNumberFormat="1"/><xf fontId="0" numFmtId="166" applyNumberFormat="1"/><xf fontId="0" numFmtId="167" applyNumberFormat="1"/><xf fontId="2" applyFont="1"/><xf fontId="1" numFmtId="168" applyFont="1" applyNumberFormat="1"/><xf fontId="1" numFmtId="3" applyFont="1" applyNumberFormat="1"/><xf fontId="1" numFmtId="10" applyFont="1" applyNumberFormat="1"/></cellXfs></styleSheet>`;
 
 const coreXml = (meta) =>
   `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">` +
@@ -190,7 +194,13 @@ const coreXml = (meta) =>
   `</cp:coreProperties>`;
 
 // sheets: [{ name, rows: (string|number|null)[][], header?: true,
-//            columns?: [{ format?: "text"|"number"|"money"|"integer"|"percent"|"date"|"datetime", width? }] }]
+//            columns?: [{ format?: "text"|"number"|"money"|"integer"|"percent"|"date"|"datetime", width? }],
+//            Phase 18.6 (one worksheet per report):
+//            headerRow?: index of THE header row (default 0): bold, frozen below
+//            titleRows?: row indexes shown as a title (bold, larger)
+//            filter?: true -> AutoFilter on the header row and the rows under it
+//            totalRow?: index of a totals row (bold, same number formats)
+//            print?: true -> landscape, fit all columns on one page wide }]
 // meta (optional): { title, creator, created: Date } -> document properties.
 // -> Uint8Array .xlsx. Numbers stay numbers (styled by their column's
 // format; dates are Excel serials, see shared/exports.js excelSerial); everything else is an
@@ -216,30 +226,52 @@ export function writeXlsx(sheets, meta = null) {
     "xl/styles.xml": strToU8(STYLES_XML),
   };
   if (meta) files["docProps/core.xml"] = strToU8(coreXml(meta));
+  const filterNames = [];
   sheets.forEach((s, i) => {
     const header = s.header !== false;
+    const headerRow = header ? (Number.isSafeInteger(s.headerRow) && s.headerRow >= 0 ? s.headerRow : 0) : -1;
+    const titles = new Set(Array.isArray(s.titleRows) ? s.titleRows : []);
+    const totalRow = Number.isSafeInteger(s.totalRow) ? s.totalRow : -1;
     const columns = Array.isArray(s.columns) ? s.columns : [];
     const numberStyle = columns.map((c) => (c && NUMBER_STYLES[c.format] ? ` s="${NUMBER_STYLES[c.format]}"` : ""));
+    const boldStyle = columns.map((c) => ` s="${BOLD_STYLES[c?.format] ?? 1}"`);
     const rows = s.rows || [];
+    const width = Math.max(1, columns.length, ...rows.map((r) => (r || []).length));
     const body = rows
       .map((row, r) => {
-        const head = header && r === 0;
+        const head = r === headerRow;
+        const style = (c, num) => (titles.has(r) ? ` s="${TITLE_STYLE}"` : head ? ' s="1"' : r === totalRow ? (num ? boldStyle[c] : ' s="1"') : num ? numberStyle[c] || "" : "");
         const cells = (row || [])
           .map((v, c) => {
             const ref = `${colName(c)}${r + 1}`;
             if (v === null || v === undefined || v === "") return "";
-            if (typeof v === "number" && Number.isFinite(v)) return `<c r="${ref}"${head ? ' s="1"' : numberStyle[c] || ""}><v>${v}</v></c>`;
-            return `<c r="${ref}"${head ? ' s="1"' : ""} t="inlineStr"><is><t xml:space="preserve">${encodeXml(safeCellText(v))}</t></is></c>`;
+            if (typeof v === "number" && Number.isFinite(v)) return `<c r="${ref}"${style(c, true)}><v>${v}</v></c>`;
+            return `<c r="${ref}"${style(c, false)} t="inlineStr"><is><t xml:space="preserve">${encodeXml(safeCellText(v))}</t></is></c>`;
           })
           .join("");
         return `<row r="${r + 1}">${cells}</row>`;
       })
       .join("");
-    const views = header && rows.length > 1 ? '<sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>' : "";
+    const split = headerRow + 1;
+    const views = header && rows.length > split ? `<sheetViews><sheetView workbookViewId="0"><pane ySplit="${split}" topLeftCell="A${split + 1}" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>` : "";
     const widths = columns.some((c) => c && c.width)
       ? `<cols>${columns.map((c, k) => (c && c.width ? `<col min="${k + 1}" max="${k + 1}" width="${Math.min(80, Math.max(4, Number(c.width) || 10))}" customWidth="1"/>` : "")).join("")}</cols>`
       : "";
-    files[`xl/worksheets/sheet${i + 1}.xml`] = strToU8(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">${views}${widths}<sheetData>${body}</sheetData></worksheet>`);
+    // AutoFilter over the header and its data rows (the totals row stays out).
+    const lastData = (totalRow > headerRow ? totalRow - 1 : rows.length - 1) + 1;
+    const range = header && s.filter ? `A${split}:${colName(width - 1)}${Math.max(split, lastData)}` : null;
+    if (range) filterNames.push({ sheet: i, name: names[i], range });
+    const filter = range ? `<autoFilter ref="${range}"/>` : "";
+    const sheetPr = s.print ? '<sheetPr><pageSetUpPr fitToPage="1"/></sheetPr>' : "";
+    const page = s.print ? '<pageMargins left="0.4" right="0.4" top="0.5" bottom="0.5" header="0.3" footer="0.3"/><pageSetup orientation="landscape" fitToWidth="1" fitToHeight="0"/>' : "";
+    files[`xl/worksheets/sheet${i + 1}.xml`] = strToU8(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">${sheetPr}${views}${widths}<sheetData>${body}</sheetData>${filter}${page}</worksheet>`);
   });
+  // Excel expects a hidden _FilterDatabase name for each AutoFilter.
+  if (filterNames.length) {
+    const quote = (n) => `'${n.replace(/'/g, "''")}'`;
+    const abs = (range) => range.replace(/([A-Z]+)(\d+)/g, "$$$1$$$2");
+    const defined = `<definedNames>${filterNames.map((f) => `<definedName name="_xlnm._FilterDatabase" localSheetId="${f.sheet}" hidden="1">${encodeXml(`${quote(f.name)}!${abs(f.range)}`)}</definedName>`).join("")}</definedNames>`;
+    files["xl/workbook.xml"] = strToU8(new TextDecoder().decode(files["xl/workbook.xml"]).replace("</sheets>", `</sheets>${defined}`));
+  }
   return zipSync(files, { level: 6 });
 }

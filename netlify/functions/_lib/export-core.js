@@ -13,15 +13,18 @@
 //               the export once it passes EXPORT_MAX_ROWS (no truncation).
 //               Builders read restricted data (costs, money) only when the
 //               caller may receive it; they never fetch-then-hide.
-//   4. file     writeXlsx (shared/xlsx.js: formula-safe text, no formulas)
-//               plus an "Export info" sheet (business, filters, rows, who,
-//               when in the business timezone) and document properties.
+//   4. file     writeXlsx (shared/xlsx.js: formula-safe text, no formulas).
+//               Phase 18.6: ONE worksheet (shared/exports.js reportSheet):
+//               title, information lines (business, filters, rows, who,
+//               when in the business timezone, notes), one frozen header
+//               row with filters, the rows, and a totals row where a sum
+//               means something. Document properties as before.
 //   5. trace    one small auditLog entry (dataset, filters, row count; no
 //               exported data) and usage/{month} exportsGenerated /
 //               rowsExported counters for future metering (no limits yet).
 
 import { writeXlsx } from "../../../shared/xlsx.js";
-import { EXPORT_MAX_ROWS, ExportError, TOO_MANY_ROWS_MESSAGE, validateExportFilters, canExport, describeFilters, pairsSheet, exportFileName } from "../../../shared/exports.js";
+import { EXPORT_MAX_ROWS, ExportError, TOO_MANY_ROWS_MESSAGE, validateExportFilters, canExport, describeFilters, reportSheet, exportFileName } from "../../../shared/exports.js";
 import { ID, mergeParts } from "../../../shared/list-queries.js";
 import { businessDate } from "../../../shared/metrics.js";
 import { monthKey } from "./usage.js";
@@ -103,21 +106,23 @@ export async function runExport({ db, ctx, admin, descriptor, builder, rawFilter
   });
 
   const actor = { uid: ctx.uid, name: ctx.user?.name || "", email: ctx.user?.email || "" };
-  const info = pairsSheet({
-    name: "Export info",
-    timezone: business.timezone,
-    rows: [
-      ["Business", "text", business.name],
-      ["Data", "text", descriptor.label],
-      ["Filters", "text", describeFilters(descriptor, filters)],
-      ["Rows", "integer", built.rowCount],
-      ["Exported by", "text", actor.name || actor.email || actor.uid],
-      ["Exported at", "datetime", now, `Business time (${business.timezone})`],
-      ["Source", "text", "Luna Business OS", built.note || "Generated from Luna's records at the time of export."],
-    ],
-  });
   const fileName = exportFileName(descriptor.label, { from: filters.from ?? null, to: filters.to ?? null, day: today });
-  const bytes = writeXlsx([...built.sheets, info], { title: `${descriptor.label} — ${business.name}`, created: now });
+  const stampText = new Intl.DateTimeFormat("en-PH", { timeZone: business.timezone, dateStyle: "medium", timeStyle: "short" }).format(now);
+  // ONE worksheet (Phase 18.6). The information that used to be on an
+  // "Export info" sheet is the title block above the table.
+  const sheet = reportSheet({
+    name: built.table.name || descriptor.label,
+    title: `${descriptor.label} · ${business.name}`,
+    info: [
+      `Filters: ${describeFilters(descriptor, filters)}`,
+      `${built.rowCount} ${built.rowCount === 1 ? "record" : "records"} · exported by ${actor.name || actor.email || actor.uid} on ${stampText} (business time, ${business.timezone})`,
+      built.note || "Generated from Luna's records at the time of export.",
+    ],
+    columns: built.table.columns,
+    rows: built.table.rows,
+    timezone: business.timezone,
+  });
+  const bytes = writeXlsx([sheet], { title: `${descriptor.label} — ${business.name}`, created: now });
 
   const FieldValue = admin.firestore.FieldValue;
   const stamp = FieldValue.serverTimestamp();

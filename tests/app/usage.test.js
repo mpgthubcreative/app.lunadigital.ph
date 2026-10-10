@@ -56,13 +56,23 @@ describe("Settings usage (owner)", () => {
     expect(activity.textContent).not.toMatch(/Payroll|Guests/); // not this workspace's meters
   });
 
+  it("Phase 18.6: opening Settings fetches the CURRENT usage (an Excel download since sign-in shows)", async () => {
+    api.mockResolvedValue({ current: { ...owner().usage.values, exportsGenerated: 15 }, storage: null, history: [] });
+    mountSettings(el, owner());
+    expect(el.querySelector('[data-meter="exportsGenerated"]').textContent).toBe("14 this month"); // from sign-in
+    await flush();
+    expect(api).toHaveBeenCalledWith("usage");
+    expect(el.querySelector('[data-meter="exportsGenerated"]').textContent).toBe("15 this month");
+    expect(el.querySelector('[data-role="activity"]').parentElement.textContent).toMatch(/no limit on your package\. Up to date\./);
+  });
+
   it("history loads on request; a month with no recorded usage says so (never zeros)", async () => {
     const periods = previousPeriods("2026-10", 12);
     api.mockResolvedValue({ history: historyRows(periods, periods.map((p) => (p === "2026-10" ? { ordersCreated: 420, timezone: "Asia/Manila" } : null))) });
     mountSettings(el, owner());
     el.querySelector('[data-act="history"]').click();
     await flush();
-    expect(api).toHaveBeenCalledWith("/api/usage");
+    expect(api).toHaveBeenCalledWith("usage");
     const table = el.querySelector('[data-role="usage-history"]');
     expect(table.querySelector('[data-period="2026-10"]').textContent).toMatch(/420/);
     expect(table.querySelector('[data-period="2026-09"]').textContent).toMatch(/No recorded usage/);

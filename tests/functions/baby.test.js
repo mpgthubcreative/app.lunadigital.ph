@@ -14,6 +14,7 @@ import { buildWorld, request, clearInboxes } from "../helpers/tenants.js";
 import { notificationId } from "../../shared/notifications.js";
 import { budgetSummary, budgetLines, payerTotals } from "../../shared/baby.js";
 import { readXlsx } from "../../shared/xlsx.js";
+import { reportRows } from "../../shared/exports.js";
 
 const NOW = new Date("2026-10-16T04:00:00Z"); // Oct 16, 12:00 Manila
 const B = "biz-baby";
@@ -373,43 +374,60 @@ describe("Excel downloads (Export Core)", () => {
     const res = await createExportsHandler(deps())({ ...request({ uid, businessId, method: "POST" }), body: JSON.stringify({ dataset, filters }) });
     return res.statusCode === 200 ? { status: 200, bytes: new Uint8Array(Buffer.from(res.body, "base64")), headers: res.headers } : { status: res.statusCode, body: JSON.parse(res.body) };
   }
-  const sheet = (bytes, name) => readXlsx(bytes, { sheet: name }).rows;
+  // Phase 18.6: one worksheet per download; [header, ...rows] under its title block.
+  const sheet = (bytes, name) => {
+    expect(() => readXlsx(bytes, { sheet: "Export info" })).toThrow();
+    return reportRows(readXlsx(bytes, { sheet: name }).rows);
+  };
+  const rawSheet = (bytes, name) => readXlsx(bytes, { sheet: name }).rows;
 
   it("Category = Medical: only matching Baby Expenses, every page, Baby columns only, formula-safe", async () => {
     const c = await scenarioBudget();
     for (let i = 0; i < 30; i++) await expense({ category: c.medical, amount: 1000 + i });
-    await expense({ category: c.nursery, amount: 99999, payee: "=HYPERLINK(\"http://x\")" });
+    await expense({ category: c.nursery, amount: 99999, payee: "=HYPERLINK(\"http://x\")", paidBy: [{ name: "Mom", amount: 60000 }, { name: "Dad", amount: 39999 }] });
     const r = await download(u.camille, "babyExpenses", { category: c.medical });
     expect(r.status).toBe(200);
     const rows = sheet(r.bytes, "Baby Expenses");
-    expect(rows[0]).toEqual(["Date", "Category", "Provider / payee", "Amount", "Method", "Reference", "Recurring", "From payment schedule", "Notes"]);
+    expect(rows[0]).toEqual(["Date paid", "Category", "What it was for", "Amount", "Paid by", "Provider", "Paid to (payee)", "Payment method", "Reference", "Recurring", "From payment schedule"]);
     expect(rows.slice(1)).toHaveLength(30);
     expect(rows.slice(1).every((row) => row[1] === "Medical")).toBe(true);
     const all = sheet((await download(u.camille, "babyExpenses")).bytes, "Baby Expenses");
     const evil = all.find((row) => row[3] === "999.99");
-    expect(typeof evil[2]).toBe("string");
-    expect(evil[2]).not.toMatch(/^=/);
+    expect(typeof evil[6]).toBe("string");
+    expect(evil[6]).not.toMatch(/^=/);
+    expect(evil[4]).toBe("Mom ₱600.00 + Dad ₱399.99"); // one row; shares shown, counted once
     expect(JSON.stringify(all)).not.toMatch(/COGS|Gross|Profit|Sales/i);
   });
 
-  it("Budget, Providers and Payment Schedule downloads; the dashboard workbook has Baby sheets only", async () => {
+  it("Budget = the full Baby report (categories, paid expenses, still to pay) without double counting; Providers; Payment Schedule; dashboard", async () => {
     const c = await scenarioBudget();
-    await expense({ category: c.medical, amount: 1000000 });
+    await expense({ category: c.medical, amount: 1000000, paidBy: [{ name: "Mom", amount: 1000000 }], notes: "Check-up" });
     await api("providers", u.camille, { action: "create", provider: { name: "Baby Company", type: "baby_store" } });
     await api("schedule", u.camille, { action: "create", payment: { description: "Hospital deposit", category: c.medical, amount: 2000000, dueDate: "2026-12-15" } });
 
     const b = await download(u.camille, "budget");
-    expect(sheet(b.bytes, "Category Budget").slice(1).map((row) => [row[0], row[2], row[3], row[4]])).toEqual([["Medical", "60000", "10000", "50000"], ["Nursery", "40000", "0", "40000"], ["Clothing", "10000", "0", "10000"], ["Savings buffer", "40000", "0", "40000"]]);
+    const report = sheet(b.bytes, "Baby budget");
+    const h = report[0];
+    expect(h).toEqual(["Record", "Date", "Category", "Description / item", "Category budget", "Total spent", "Remaining budget", "Payment amount", "Still to pay", "Payment status", "Payment method", "Paid by", "Provider", "Payee", "Due date", "Date paid", "Reference", "Notes"]);
+    const of = (type) => report.slice(1).filter((r) => r[0] === type);
+    expect(of("Category").map((r) => [r[2], r[4], r[5], r[6]])).toEqual([["Medical", "60000", "10000", "50000"], ["Nursery", "40000", "0", "40000"], ["Clothing", "10000", "0", "10000"], ["Savings buffer", "40000", "0", "40000"]]);
+    expect(of("Expense").map((r) => [r[2], r[3], r[7], r[9], r[11]])).toEqual([["Medical", "Check-up", "10000", "Paid", "Mom"]]);
+    expect(of("Still to pay").map((r) => [r[3], r[8], r[9]])).toEqual([["Hospital deposit", "20000", "Upcoming"]]);
+    // Totals: budget 150,000; spent (categories) = paid (expenses) = 10,000; still to pay 20,000.
+    const total = rawSheet(b.bytes, "Baby budget").at(-1);
+    expect([total[0], total[4], total[5], total[7], total[8]]).toEqual(["Total", "150000", "10000", "10000", "20000"]);
     expect(sheet((await download(u.camille, "providers", { type: "baby_store" })).bytes, "Providers").slice(1).map((row) => row[0])).toEqual(["Baby Company"]);
-    expect(sheet((await download(u.camille, "paymentSchedule", { status: "upcoming" })).bytes, "Payment Schedule").slice(1).map((row) => row[1])).toEqual(["Hospital deposit"]);
+    const sched = sheet((await download(u.camille, "paymentSchedule", { status: "upcoming" })).bytes, "Payment Schedule");
+    expect(sched.slice(1).map((row) => [row[1], row[6]])).toEqual([["Hospital deposit", "20000"]]);
 
     const d = await download(u.camille, "dashboard", { from: "2026-10-01", to: "2026-10-16" });
     expect(d.status).toBe(200);
-    for (const name of ["Summary", "Period activity", "Current budget", "Category Budget", "Expenses", "Upcoming Payments", "Export info"]) expect(readXlsx(d.bytes, { sheet: name }).sheetName).toBe(name);
-    expect(() => readXlsx(d.bytes, { sheet: "Current operations" })).toThrow();
-    expect(sheet(d.bytes, "Expenses").slice(1).map((row) => row[3])).toEqual(["10000"]);
-    expect(sheet(d.bytes, "Upcoming Payments").slice(1).map((row) => row[1])).toEqual(["Hospital deposit"]);
-    expect(JSON.stringify(sheet(d.bytes, "Summary"))).not.toMatch(/COGS|Gross|Profit|Sales/i);
+    const rows = sheet(d.bytes, "Dashboard");
+    const sec = (name) => rows.slice(1).filter((r) => r[0] === name);
+    expect(sec("Who paid (now)").map((r) => [r[2], r[4]])).toEqual([["Mom", "10000"]]);
+    expect(sec("Expenses in the period").map((r) => r[4])).toEqual(["10000"]);
+    expect(sec("Still to pay (now)").map((r) => r[2])).toEqual(["Hospital deposit · Medical"]);
+    expect(JSON.stringify(rows)).not.toMatch(/COGS|Gross|Profit|Sales|Current operations/i);
   });
 
   it("Baby datasets are closed to Distributor / Household, and Distributor's Expenses dataset is closed to Baby", async () => {

@@ -14,7 +14,7 @@ import { tenantDb } from "../../netlify/functions/_lib/tenant-db.js";
 import { createBusiness, addMember, ensureAuthUser, updateOverrides } from "../../netlify/functions/_lib/provisioning.js";
 import { ordersQuery } from "../../shared/list-queries.js";
 import { EXPORT_DATASETS } from "../../shared/export-datasets.js";
-import { validateExportFilters, canExport, exportFileName, ExportError } from "../../shared/exports.js";
+import { validateExportFilters, canExport, exportFileName, ExportError, reportRows } from "../../shared/exports.js";
 import { readXlsx } from "../../shared/xlsx.js";
 import { resolvePermissions } from "../../shared/permissions.js";
 import { FieldPath } from "../helpers/fake-firebase.js";
@@ -37,8 +37,23 @@ async function call(uid, body, businessId) {
   if (res.statusCode === 200) return { status: 200, headers: res.headers, bytes: new Uint8Array(Buffer.from(res.body, "base64")) };
   return { status: res.statusCode, body: JSON.parse(res.body) };
 }
-const sheet = (bytes, name) => readXlsx(bytes, { sheet: name, maxRows: 20000 }).rows;
+// Phase 18.6: every download is ONE worksheet named `name`, with a title
+// block above its single header row (and maybe a Total row). This returns
+// [header, ...data rows].
+const sheet = (bytes, name) => {
+  const wb = readXlsx(bytes, { sheet: name, maxRows: 20000 });
+  expect(() => readXlsx(bytes, { sheet: "Export info" })).toThrow(); // no second sheet
+  return reportRows(wb.rows);
+};
 const col = (rows, header) => rows.slice(1).map((r) => r[rows[0].indexOf(header)]);
+// Rows of one record type (Orders: "Order" / "Line"), header kept.
+const records = (rows, type) => [rows[0], ...rows.slice(1).filter((r) => r[rows[0].indexOf("Record")] === type)];
+// A long summary table: { item: value } for one Section (value from Count, Quantity, a money column or Note).
+const section = (rows, name) => {
+  const h = rows[0];
+  const pick = (r) => ["Count", "Quantity", "Net sales", "Cost of products sold (COGS)", "Gross profit", "Amount", "Percent", "Note"].map((k) => h.indexOf(k)).filter((i) => i >= 0).map((i) => r[i]).find((v) => v !== "" && v !== undefined);
+  return Object.fromEntries(rows.slice(1).filter((r) => r[0] === name).map((r) => [r[h.indexOf("Item")], pick(r)]));
+};
 async function member(key, roleTemplate, overrides = {}, businessId = "biz-a") {
   const u = await ensureAuthUser({ auth: world.auth, email: `${key}@t.test`, name: key });
   await addMember({ ...world, businessId, uid: u.uid, email: u.email, name: key, roleTemplate, permissionOverrides: overrides });
@@ -134,7 +149,8 @@ describe("POST /api/exports — access", () => {
     const denied = await call(world.uids.ownera, body, "biz-b");
     expect(denied).toMatchObject({ status: 403, body: { error: "business-access-denied" } });
     const mine = await call(world.uids.ownera, body);
-    expect(col(sheet(mine.bytes, "Orders"), "Order #")).toEqual(["ORD-00001"]);
+    expect(col(records(sheet(mine.bytes, "Orders"), "Order"), "Order #")).toEqual(["ORD-00001"]);
+    expect(Buffer.from(mine.bytes).toString("latin1")).not.toContain("B-SECRET");
   });
   it("a disabled module, a workspace without it, a missing view permission: refused", async () => {
     await updateOverrides({ ...world, businessId: "biz-a", set: { modules: { expenses: false } }, actor: "t", reason: "off" });
@@ -173,15 +189,29 @@ describe("Orders: filter -> view -> download", () => {
     order(101, { pay: "paid", ful: "pending" });
     order(102, { day: "2026-09-30" });
     const r = await call(world.uids.ownera, { dataset: "orders", filters: { paymentStatus: "paid", fulfillmentStatus: "fulfilled", from: "2026-10-01", to: "2026-10-31" } });
-    const rows = sheet(r.bytes, "Orders");
-    expect(rows[0]).toEqual(["Order #", "Order date", "Created", "Customer", "Phone", "Items", "Lines", "Subtotal", "Discount", "Total", "Amount paid", "Balance", "Payment", "Fulfillment", "Source", "Last payment ref", "COGS", "Gross profit"]);
+    const all = sheet(r.bytes, "Orders");
+    expect(all[0]).toEqual(["Record", "Order #", "Order date", "Created", "Customer", "Phone", "Came from", "Source note", "SKU", "Product", "Quantity", "Unit", "Unit price", "Line amount", "Line cost (COGS)", "Order subtotal", "Discount", "Order total", "Amount paid", "Balance", "Payment", "Fulfillment", "Last payment ref", "Gross profit", "Notes"]);
+    // One sheet: each order row followed by its line rows.
+    const rows = records(all, "Order");
     expect(rows).toHaveLength(61);
+    expect(records(all, "Line")).toHaveLength(61);
     expect(new Set(col(rows, "Order #"))).toEqual(new Set(Array.from({ length: 60 }, (_, i) => `ORD-${String(i + 1).padStart(5, "0")}`)));
-    expect(new Set(col(rows, "Total"))).toEqual(new Set(["123.45"]));
+    expect(new Set(col(rows, "Order total"))).toEqual(new Set(["123.45"]));
     expect(new Set(col(rows, "Payment"))).toEqual(new Set(["Paid"]));
+    expect(new Set(col(rows, "Came from"))).toEqual(new Set(["Phone"]));
     expect(col(rows, "Order date")[0]).toBe("46298"); // 2026-10-03 as an Excel date
-    expect(col(rows, "COGS")[0]).toBe("74.07");
-    expect(sheet(r.bytes, "Order lines")).toHaveLength(61);
+    expect(col(records(all, "Line"), "Line cost (COGS)")[0]).toBe("74.07");
+    expect(col(rows, "Gross profit")[0]).toBe("49.38");
+    // Order money only on order rows, line money only on line rows: totals never double count.
+    expect(col(rows, "Line amount").every((v) => v === "")).toBe(true);
+    expect(col(records(all, "Line"), "Order total").every((v) => v === "")).toBe(true);
+    const raw = readXlsx(r.bytes, { sheet: "Orders", maxRows: 20000 }).rows;
+    const total = raw.at(-1);
+    expect(total[0]).toBe("Total");
+    expect(total[all[0].indexOf("Order total")]).toBe(String(Math.round(60 * 123.45 * 100) / 100));
+    expect(total[all[0].indexOf("Line amount")]).toBe(String(Math.round(60 * 123.45 * 100) / 100));
+    expect(raw[0][0]).toMatch(/^Orders · Biz A$/);
+    expect(raw[1][0]).toMatch(/^Filters: /);
     expect(r.headers["Content-Disposition"]).toContain("Luna_Orders_2026-10-01_to_2026-10-31.xlsx");
     expect(r.headers["X-Luna-Export-Rows"]).toBe("60");
   });
@@ -193,9 +223,8 @@ describe("Orders: filter -> view -> download", () => {
     world.db.getAll = (...refs) => (reads.push(...refs.map((r) => r.path)), getAll(...refs));
     const m = await member("nofin", "manager", { revoke: ["dashboard.financials"] });
     const rows = sheet((await call(m, { dataset: "orders" })).bytes, "Orders");
-    expect(rows[0]).not.toContain("COGS");
+    expect(rows[0]).not.toContain("Line cost (COGS)");
     expect(rows[0]).not.toContain("Gross profit");
-    expect(sheet((await call(m, { dataset: "orders" })).bytes, "Order lines")[0]).not.toContain("Line COGS");
     expect(reads.filter((p) => p.includes("/orderCosts/"))).toEqual([]);
   });
 });
@@ -212,9 +241,12 @@ describe("Inventory, Products, Customers, Payments, Expenses", () => {
   it("inventory honours category + low-stock filters; costs only with inventory.costs (never read without)", async () => {
     const all = sheet((await call(world.uids.ownera, { dataset: "inventory", filters: { category: "FROZEN" } })).bytes, "Inventory");
     expect(col(all, "SKU")).toEqual(["T-1", "W-1"]);
-    expect(col(all, "On hand")).toEqual(["1", "12.5"]);
+    expect(col(all, "In stock")).toEqual(["1", "12.5"]);
+    expect(col(all, "Stock left")).toEqual(["1", "10"]);
+    expect(col(all, "Set aside for orders")).toEqual(["0", "2.5"]);
     expect(col(all, "Average cost")).toEqual(["140", "150"]);
-    expect(col(all, "Inventory value (est.)")).toEqual(["140", "1875"]);
+    expect(col(all, "Profit per unit (est.)")).toEqual(["59", "100.5"]);
+    expect(col(all, "Stock value (est.)")).toEqual(["140", "1875"]);
     expect(col(sheet((await call(world.uids.ownera, { dataset: "inventory", filters: { lowOnly: true } })).bytes, "Inventory"), "SKU")).toEqual(["T-1"]);
     const reads = [];
     const getAll = world.db.getAll.bind(world.db);
@@ -222,13 +254,16 @@ describe("Inventory, Products, Customers, Payments, Expenses", () => {
     const noCost = await member("nocost", "manager", { revoke: ["inventory.costs"] });
     const rows = sheet((await call(noCost, { dataset: "inventory" })).bytes, "Inventory");
     expect(rows[0]).not.toContain("Average cost");
-    expect(rows[0]).not.toContain("Inventory value (est.)");
+    expect(rows[0]).not.toContain("Stock value (est.)");
+    expect(rows[0]).not.toContain("Profit per unit (est.)");
     expect(reads).toEqual([]);
   });
 
-  it("products: the product list (no stock or cost); search = name prefix or exact SKU; status", async () => {
+  it("products: the product list with cost price and profit per unit for cost holders only; search; status", async () => {
     const rows = sheet((await call(world.uids.ownera, { dataset: "products", filters: { search: "w" } })).bytes, "Products");
-    expect(rows).toEqual([["SKU", "Product", "Category", "Unit", "Selling price", "Reorder level", "Status"], ["W-1", "Wings", "Frozen", "kg", "250.5", "5", "Active"]]);
+    expect(rows).toEqual([["SKU", "Product", "Category", "Unit", "Selling price", "Cost price (average)", "Profit per unit (est.)", "Reorder level", "Status"], ["W-1", "Wings", "Frozen", "kg", "250.5", "150", "100.5", "5", "Active"]]);
+    const noCost = await member("nocost2", "manager", { revoke: ["inventory.costs"] });
+    expect(sheet((await call(noCost, { dataset: "products", filters: { search: "w" } })).bytes, "Products")[0]).toEqual(["SKU", "Product", "Category", "Unit", "Selling price", "Reorder level", "Status"]);
     expect(col(sheet((await call(world.uids.ownera, { dataset: "products", filters: { search: "t-1" } })).bytes, "Products"), "SKU")).toEqual(["T-1"]);
     expect(col(sheet((await call(world.uids.ownera, { dataset: "products", filters: { status: "inactive" } })).bytes, "Products"), "SKU")).toEqual(["S-1"]);
   });
@@ -284,11 +319,11 @@ describe("Dashboard and Reports workbooks", () => {
     seed("metrics/current", ops({ unpaidOrders: 4, pendingFulfillment: 3, lowStockProducts: 7 }));
     seed("financialMetrics/current", { receivablesOutstanding: 300000 });
   });
-  const pairs = (rows) => Object.fromEntries(rows.slice(1).map((r) => [r[0], r[1]]));
-
-  it("Dashboard = Reports for the same range; period vs current operations kept apart", async () => {
+  it("Dashboard = Reports for the same range; period vs current operations kept apart (one sheet, Section column)", async () => {
     const r = await call(world.uids.ownera, { dataset: "dashboard", filters: { from: "2026-10-07", to: "2026-10-08" } });
-    const s = pairs(sheet(r.bytes, "Summary"));
+    const rows = sheet(r.bytes, "Dashboard");
+    expect(rows[0]).toEqual(["Section", "Period / date", "Item", "Count", "Amount", "Note"]);
+    const s = section(rows, "Selected period");
     const ctx = await ctxFor(world.uids.ownera);
     const rep = await buildReport({ db: world.db, tenant: A, from: "2026-10-07", to: "2026-10-08", permissions: ctx.permissions, entitlements: ctx.entitlements });
     expect(s["Net sales"]).toBe(String(rep.overview.netSales / 100));
@@ -298,37 +333,38 @@ describe("Dashboard and Reports workbooks", () => {
     expect(s.Orders).toBe("3");
     expect(s.Fulfilled).toBeDefined();
     expect(s["Current unpaid balance"]).toBeUndefined(); // not a period figure
-    const cur = sheet(r.bytes, "Current operations");
-    expect(cur[1][2]).toMatch(/NOT for the selected period/);
-    expect(pairs(cur)["Current unpaid balance"]).toBe("3000");
-    expect(pairs(cur)["Current low stock"]).toBe("7");
-    expect(sheet(r.bytes, "Period activity").map((x) => x[0])).toEqual(["Day", "2026-10-07", "2026-10-08"]);
+    const cur = section(rows, "Current operations (now)");
+    expect(cur["Current unpaid balance"]).toBe("3000");
+    expect(cur["Current low stock"]).toBe("7");
+    expect([...new Set(rows.slice(1).filter((x) => x[0] === "By day").map((x) => x[1]))]).toEqual(["2026-10-07", "2026-10-08"]);
     expect(r.headers["Content-Disposition"]).toContain("Luna_Dashboard_2026-10-07_to_2026-10-08.xlsx");
   });
 
   it("a period with no summaries says No data yet, never 0; staff-like viewers get no money", async () => {
-    const s = pairs(sheet((await call(world.uids.ownera, { dataset: "dashboard", filters: { from: "2026-09-01", to: "2026-09-30" } })).bytes, "Summary"));
+    const s = section(sheet((await call(world.uids.ownera, { dataset: "dashboard", filters: { from: "2026-09-01", to: "2026-09-30" } })).bytes, "Dashboard"), "Selected period");
     expect(s["Net sales"]).toBe("No data yet");
     expect(s.Orders).toBe("No data yet");
     const viewer = await member("dashonly", "staff", { grant: ["data.export"] });
     const v = await call(viewer, { dataset: "dashboard", filters: { from: "2026-10-07", to: "2026-10-08" } });
-    const sv = pairs(sheet(v.bytes, "Summary"));
-    expect(sv.Orders).toBe("3");
-    expect(sv["Net sales"]).toBeUndefined();
-    expect(JSON.stringify(sheet(v.bytes, "Current operations"))).not.toContain("unpaid balance");
+    const rows = sheet(v.bytes, "Dashboard");
+    expect(section(rows, "Selected period").Orders).toBe("3");
+    expect(section(rows, "Selected period")["Net sales"]).toBeUndefined();
+    expect(JSON.stringify(rows)).not.toContain("unpaid balance");
   });
 
-  it("Reports workbook: sections the caller may see; no money sheets/columns without dashboard.financials", async () => {
-    const full = await call(world.uids.ownera, { dataset: "reports", filters: { from: "2026-10-07", to: "2026-10-08" } });
-    expect(pairs(sheet(full.bytes, "Overview"))["Net sales"]).toBe("15000");
-    expect(sheet(full.bytes, "Sales")[0]).toContain("Net sales");
+  it("Reports workbook: sections the caller may see; no money columns without dashboard.financials", async () => {
+    const full = sheet((await call(world.uids.ownera, { dataset: "reports", filters: { from: "2026-10-07", to: "2026-10-08" } })).bytes, "Reports");
+    expect(section(full, "Overview")["Net sales"]).toBe("15000");
+    expect(section(full, "Overview")["Cost of products sold (COGS)"]).toBe("9000");
+    expect(full[0]).toContain("Net sales");
+    expect(full.slice(1).filter((x) => x[0] === "Sales by day")).toHaveLength(2);
     await updateOverrides({ ...world, businessId: "biz-a", set: { limits: { users: 10 } }, actor: "t", reason: "room for test members" });
     const m = await member("repnofin", "manager", { revoke: ["dashboard.financials"] });
-    const r = await call(m, { dataset: "reports", filters: { from: "2026-10-07", to: "2026-10-08" } });
-    const ov = pairs(sheet(r.bytes, "Overview"));
+    const rows = sheet((await call(m, { dataset: "reports", filters: { from: "2026-10-07", to: "2026-10-08" } })).bytes, "Reports");
+    const ov = section(rows, "Overview");
     expect(ov["Orders created"]).toBe("3");
-    for (const k of ["Net sales", "COGS", "Gross profit", "Payments received", "Unpaid balance (now)"]) expect(ov[k]).toBeUndefined();
-    expect(sheet(r.bytes, "Sales")[0]).toEqual(["Day", "Orders created", "Fulfilled orders"]);
+    for (const k of ["Net sales", "Cost of products sold (COGS)", "Gross profit", "Payments received", "Unpaid balance (now)"]) expect(ov[k]).toBeUndefined();
+    expect(rows[0]).toEqual(["Section", "Period / date", "Item", "Count", "Quantity", "Note"]);
     const noExport = await member("repnoexp", "manager", { revoke: ["reports.export"] });
     expect((await call(noExport, { dataset: "reports", filters: { from: "2026-10-07", to: "2026-10-08" } })).status).toBe(403);
   });

@@ -18,6 +18,7 @@ import { buildWorld, request } from "../helpers/tenants.js";
 import { notificationId } from "../../shared/notifications.js";
 import { weddingSummary, rsvpSummary, supplierBalance, SUGGESTED_WEDDING_CATEGORIES } from "../../shared/wedding.js";
 import { readXlsx } from "../../shared/xlsx.js";
+import { reportRows } from "../../shared/exports.js";
 
 const NOW = new Date("2026-10-16T04:00:00Z"); // Oct 16, 12:00 Manila
 const W = "biz-wed";
@@ -361,8 +362,10 @@ describe("Excel downloads (Export Core)", () => {
     const res = await createExportsHandler({ getAdmin: async () => world, now: () => NOW })({ ...request({ uid, businessId, method: "POST" }), body: JSON.stringify({ dataset, filters }) });
     return res.statusCode === 200 ? { status: 200, bytes: new Uint8Array(Buffer.from(res.body, "base64")) } : { status: res.statusCode, body: JSON.parse(res.body) };
   }
+  // Phase 18.6: one worksheet; rows under its single header, as objects.
   const rows = (bytes, name) => {
-    const r = readXlsx(bytes, { sheet: name, maxRows: 20000 }).rows;
+    expect(() => readXlsx(bytes, { sheet: "Export info" })).toThrow();
+    const r = reportRows(readXlsx(bytes, { sheet: name, maxRows: 20000 }).rows);
     return r.slice(1).map((x) => Object.fromEntries(r[0].map((h, i) => [h, x[i]])));
   };
 
@@ -392,11 +395,11 @@ describe("Excel downloads (Export Core)", () => {
     expect(gx[0].Guest.startsWith("'=")).toBe(true);
     const ex = rows((await download(u.camille, "weddingExpenses", { supplierId: s })).bytes, "Wedding Expenses");
     expect(ex.map((r) => r["Supplier / payee"])).toEqual(["ABC Photo Studio"]);
-    const bx = rows((await download(u.camille, "weddingBudget")).bytes, "Category Budget");
+    const bx = rows((await download(u.camille, "weddingBudget")).bytes, "Wedding Budget");
     expect(bx.find((r) => r.Category === "Photo / Video")).toMatchObject({ Spent: "20000" });
   });
 
-  it("the Wedding Dashboard workbook: Summary, current plan, Budget, Expenses, Supplier Balances, Upcoming Payments, Tasks, Guests / RSVP", async () => {
+  it("the Wedding Dashboard workbook: ONE sheet with the plan, budget, expenses, supplier balances, upcoming payments, tasks and guests as sections", async () => {
     const cats = await setup();
     const s = await photographer(cats);
     ok(await markPaid(await schedule(s, cats["Photo / Video"], 2000000, "2026-10-15")));
@@ -404,10 +407,13 @@ describe("Excel downloads (Export Core)", () => {
     ok(await api("tasks", u.camille, { action: "create", task: { title: "Later", dueDate: "2026-12-01" } }), 201);
     const d = await download(u.camille, "dashboard", { from: "2026-10-01", to: "2026-10-16" });
     expect(d.status).toBe(200);
-    for (const name of ["Summary", "Period activity", "Wedding plan", "Category Budget", "Expenses", "Supplier Balances", "Upcoming Payments", "Tasks", "Guests & RSVP", "Export info"]) expect(readXlsx(d.bytes, { sheet: name }).sheetName, name).toBe(name);
-    const plan = Object.fromEntries(readXlsx(d.bytes, { sheet: "Wedding plan" }).rows.map((r) => [r[0], r[1]]));
+    const all = rows(d.bytes, "Dashboard");
+    const sections = new Set(all.map((r) => r.Section));
+    for (const name of ["Selected period", "Wedding plan (now)", "Category budget (now)", "Expenses in the period", "Supplier balances (now)", "Open tasks"]) expect(sections.has(name), name).toBe(true);
+    expect(sections.has("Upcoming supplier payments")).toBe(false); // the only payment was paid: an empty section has no rows
+    const plan = Object.fromEntries(all.filter((r) => r.Section === "Wedding plan (now)").map((r) => [r.Item, r.Amount || r.Count]));
     expect(plan).toMatchObject({ "Total spent": "20000", "Supplier balance": "60000", "Open tasks": "2", "Overdue tasks": "1" });
-    expect(JSON.stringify(readXlsx(d.bytes, { sheet: "Summary" }).rows)).not.toMatch(/COGS|Gross|Profit|Sales/i);
+    expect(JSON.stringify(all)).not.toMatch(/COGS|Gross|Profit|Sales/i);
   });
 
   it("Wedding datasets are closed to Distributor / Household / Baby; Baby datasets closed to Bridal", async () => {

@@ -15,6 +15,7 @@ import { notificationId } from "../../shared/notifications.js";
 import { addDays } from "../../shared/metrics.js";
 import { createExportsHandler } from "../../netlify/functions/exports.js";
 import { readXlsx } from "../../shared/xlsx.js";
+import { reportRows } from "../../shared/exports.js";
 
 const NOW = new Date("2026-10-16T04:00:00Z"); // Oct 16, 12:00 Manila
 const H = "biz-home";
@@ -352,9 +353,13 @@ describe("Excel downloads (Phase 12.5 Export Core)", () => {
     const res = await createExportsHandler({ getAdmin: async () => world, now: () => clock })({ ...request({ uid, businessId, method: "POST" }), body: JSON.stringify({ dataset, filters }) });
     return res.statusCode === 200 ? { status: 200, bytes: new Uint8Array(Buffer.from(res.body, "base64")), headers: res.headers } : { status: res.statusCode, body: JSON.parse(res.body) };
   }
-  const sheet = (bytes, name) => readXlsx(bytes, { sheet: name }).rows;
+  // Phase 18.6: one worksheet; [header, ...rows] under its title block.
+  const sheet = (bytes, name) => {
+    expect(() => readXlsx(bytes, { sheet: "Export info" })).toThrow();
+    return reportRows(readXlsx(bytes, { sheet: name }).rows);
+  };
 
-  it("Employee = Maria, Periods Oct 1-15 -> her payroll, its deduction and the 15 attendance lines behind it", async () => {
+  it("Employee = Maria, Periods Oct 1-15 -> ONE sheet: her payroll row, its deduction and the 15 attendance days", async () => {
     const id = await maria();
     const other = await maria({ name: "Rosa" });
     await markPeriod(id, "2026-10-01", OCT_1_15);
@@ -365,25 +370,31 @@ describe("Excel downloads (Phase 12.5 Export Core)", () => {
     await api("payroll", u.mom, { action: "prepare", staffId: other, periodStart: "2026-10-01" });
     const r = await xport(u.mom, "payroll", { staffId: id, from: "2026-10-01", to: "2026-10-01" });
     expect(r.status).toBe(200);
-    const p = sheet(r.bytes, "Payroll");
-    expect(p).toHaveLength(2);
-    const row = Object.fromEntries(p[0].map((h, i) => [h, p[1][i]]));
-    expect(row).toMatchObject({ Employee: "Maria", Present: "10", "Official Leave": "2", Absent: "3", "Payable days": "12", "Base pay": "7200", Deductions: "500", "Net pay": "6700", Salary: "Not yet paid" });
-    expect(sheet(r.bytes, "Deductions").slice(1).map((d) => d[4])).toEqual(["500"]);
-    const lines = sheet(r.bytes, "Attendance").slice(1);
-    expect(lines).toHaveLength(15);
-    expect(lines.every((l) => l[2] === "Maria")).toBe(true);
-    expect(lines[0].slice(0, 6)).toEqual(["46296", "Thu", "Maria", "Present", "600", "600"]);
+    const all = sheet(r.bytes, "Payroll");
+    const h = all[0];
+    const of = (type) => all.slice(1).filter((x) => x[0] === type).map((x) => Object.fromEntries(h.map((k, i) => [k, x[i]])));
+    expect(of("Payroll")).toHaveLength(1);
+    expect(of("Payroll")[0]).toMatchObject({ Employee: "Maria", "Employee ID": id, "Employment status": "Active", Present: "10", "Paid leave": "2", Absent: "3", "Basic pay": "7200", "Advances deducted": "500", "Gross pay": "7200", "Net pay": "6700", "Owner payment": "Not paid", "Advance balance left (now)": "500" });
+    expect(of("Advance deduction").map((d) => d["Line amount"])).toEqual(["500"]);
+    const days = of("Attendance");
+    expect(days).toHaveLength(15);
+    expect(days.every((l) => l.Employee === "Maria")).toBe(true);
+    expect([days[0].Date, days[0].Item, days[0]["Line amount"]]).toEqual(["46296", "Thu · Present", "600"]);
+    // Totals add the Payroll row only (details sit in Line amount, untotalled).
+    const total = readXlsx(r.bytes, { sheet: "Payroll" }).rows.at(-1);
+    expect([total[0], total[h.indexOf("Basic pay")], total[h.indexOf("Net pay")], total[h.indexOf("Line amount")] ?? ""]).toEqual(["Total", "7200", "6700", ""]);
   });
 
   it("attendance and advances follow their filters; staff and advances download", async () => {
     const id = await maria();
     await markPeriod(id, "2026-10-01", OCT_1_15);
     const abs = await xport(u.dad, "attendance", { staffId: id, status: "absent", from: "2026-10-01", to: "2026-10-15" });
-    expect(sheet(abs.bytes, "Attendance").slice(1).map((l) => l[3])).toEqual(["Absent", "Absent", "Absent"]);
+    expect(sheet(abs.bytes, "Attendance").slice(1).map((l) => l[4])).toEqual(["Absent", "Absent", "Absent"]);
     await api("advances", u.mom, { action: "create", advance: { staffId: id, date: "2026-10-05", amount: 50000 } });
-    expect(sheet((await xport(u.mom, "advances", { status: "not_yet_paid" })).bytes, "Advances").slice(1)[0][4]).toBe("Approved, not released");
-    expect(sheet((await xport(u.mom, "householdStaff", {})).bytes, "Household Staff").slice(1)[0].slice(0, 3)).toEqual(["Maria", "Kasambahay", "600"]);
+    const adv = sheet((await xport(u.mom, "advances", { status: "not_yet_paid" })).bytes, "Advances");
+    expect(adv.slice(1)[0][adv[0].indexOf("Status")]).toBe("Approved, not released");
+    const staff = sheet((await xport(u.mom, "householdStaff", {})).bytes, "Household Staff");
+    expect(staff.slice(1)[0].slice(0, 4)).toEqual(["Maria", id, "Kasambahay", "600"]);
   });
 
   it("refused: household staff role (no data.export / views), a Distributor business, bad filters", async () => {
