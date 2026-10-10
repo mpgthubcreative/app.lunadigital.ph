@@ -1,10 +1,12 @@
-// Payments: one payment per compact row (Luna's operational-table standard).
-//   Date/Time | Order # | Customer | Amount | Method | Reference | Proof | Status | View
-// View holds the payment's activity and, by permission, Edit / Verify and
-// "⋯ More" -> Remove payment. Every write is POST /api/payments.
+// Payments = Work (Phase 18.5): "What has been received, and what still
+// needs verification?" One payment per compact row:
+//   Date/Time | Order # | Customer | Amount | Method | Reference | Proof | Status (+ Verify) | ›
+// Unpaid ORDERS belong to Orders (linked from here). The row opens the
+// payment's activity and, by permission, Edit / Verify and "⋯ More" ->
+// Remove payment. Every write is POST /api/payments.
 
 import { html, render } from "../../lib/html.js";
-import { pageHeader, emptyState, badge } from "../../components/ui.js";
+import { pageHeader, emptyState, badge, filterBar, bindFilterBar, mobileCell, openButton, bindRowOpen, skeleton } from "../../components/ui.js";
 import { confirmDialog, toast as defaultToast } from "../../components/feedback.js";
 import { api as defaultApi } from "../../lib/api.js";
 import { formatCentavos } from "../../lib/format.js";
@@ -46,7 +48,9 @@ export function mount(container, session, { data = defaultData, api = defaultApi
   const businessId = session.business.id;
   const currency = session.business.currency || "PHP";
   const timezone = session.business.timezone;
-  const state = { filters: {}, cursors: [], rows: [], hasMore: false, loading: true, error: null };
+  // The Dashboard links here as ?state=for_verification.
+  const urlState = new URLSearchParams(typeof location === "undefined" ? "" : location.search).get("state");
+  const state = { filters: urlState && Object.hasOwn(PAYMENT_STATES, urlState) ? { state: urlState } : {}, cursors: [], rows: [], hasMore: false, loading: true, error: null };
   let alive = true;
 
   async function load() {
@@ -65,52 +69,65 @@ export function mount(container, session, { data = defaultData, api = defaultApi
     if (alive) draw();
   }
 
-  const opt = (v, l, sel) => html`<option value="${v}" ${sel === v ? "selected" : ""}>${l}</option>`;
-
   function draw() {
     if (!alive) return;
     const rows = state.rows.map((p) => paymentRow(p, { currency, timezone }));
+    const f = state.filters;
+    const filtered = Object.keys(f).length > 0;
     render(
       container,
       html`
-        ${pageHeader({ title: "Payments", subtitle: "Every payment recorded against an order." })}
-        <form class="section card filters filters-inline" data-role="filters">
-          <select class="select" name="state" aria-label="Status">${opt("", "Any status", state.filters.state || "")}${Object.entries(PAYMENT_STATES).map(([k, v]) => opt(k, v.label, state.filters.state))}</select>
-          <select class="select" name="method" aria-label="Method">${opt("", "Any method", state.filters.method || "")}${PAYMENT_METHOD_IDS.map((k) => opt(k, PAYMENT_METHODS[k].label, state.filters.method))}</select>
-          <input class="input" type="date" name="from" value="${state.filters.from || ""}" aria-label="Received from" />
-          <input class="input" type="date" name="to" value="${state.filters.to || ""}" aria-label="Received to" />
-          <button type="submit" class="btn">Apply</button>
-          ${mayExport(session, "payments") ? html`${exportButton("payments")}<span class="stat-hint" data-role="export-hint">${exportHint}</span>` : ""}
-        </form>
-        <section class="section card">
+        ${pageHeader({ title: "Payments", subtitle: "Money received against orders, and what still needs verification.", actions: html`<a class="btn btn-ghost" href="/orders?paymentStatus=unpaid" data-link>Unpaid orders ›</a>` })}
+        ${filterBar({
+          fields: [
+            { name: "state", label: "Status", type: "select", primary: true, all: "Any status", options: Object.entries(PAYMENT_STATES).map(([k, v]) => [k, v.label]), value: f.state },
+            { name: "method", label: "Method", type: "select", primary: true, all: "Any method", options: PAYMENT_METHOD_IDS.map((k) => [k, PAYMENT_METHODS[k].label]), value: f.method },
+            { name: "from", label: "Received from", type: "date", value: f.from },
+            { name: "to", label: "Received to", type: "date", value: f.to },
+          ],
+          end: mayExport(session, "payments") ? html`<span class="visually-hidden" data-role="export-hint">${exportHint}</span>${exportButton("payments")}` : "",
+        })}
+        <section class="card">
           ${state.error
             ? emptyState({ title: "Couldn't load", body: state.error })
             : state.loading
-              ? emptyState({ title: "Loading…" })
+              ? skeleton(6)
               : !rows.length
-                ? emptyState({ iconName: "payments", title: "No payments", body: "Payments recorded on orders appear here." })
-                : html`<div class="table-wrap"><table class="table table-compact" data-role="payments">
-                    <thead><tr><th>Date/Time</th><th>Order #</th><th>Customer</th><th class="num">Amount</th><th class="col-secondary">Method</th><th>Reference</th><th class="col-secondary">Proof</th><th>Status</th><th></th></tr></thead>
+                ? emptyState({ iconName: "payments", title: filtered ? "No payments match these filters" : "No payments", body: filtered ? "Remove a filter to see more." : "Payments recorded on orders appear here." })
+                : html`<div class="table-wrap"><table class="table table-compact rows" data-role="payments">
+                    <thead><tr><th class="m-only"></th><th>Date/Time</th><th>Order #</th><th>Customer</th><th class="num">Amount</th><th class="col-secondary">Method</th><th>Reference</th><th class="col-secondary">Proof</th><th>Status</th><th><span class="visually-hidden">Details</span></th></tr></thead>
                     <tbody>${rows.map(
-                      (r) => html`<tr data-payment="${r.id}">
-                        <td>${r.when}</td><td>${r.orderNumber}</td><td>${r.customer}</td><td class="num">${r.amount}</td>
+                      (r) => html`<tr data-payment="${r.id}" data-open>
+                        ${mobileCell({ title: `${r.orderNumber} · ${r.customer}`, sub: `${r.when} · ${r.method}${r.reference !== "—" ? ` · ${r.reference}` : ""}`, end: r.amount })}
+                        <td>${r.when}</td><td class="cell-strong">${r.orderNumber}</td><td>${r.customer}</td><td class="num">${r.amount}</td>
                         <td class="col-secondary">${r.method}</td><td>${r.reference}</td>
                         <td class="col-secondary">${r.hasProof ? html`<button type="button" class="cell-edit" data-act="proof" data-id="${r.id}">View screenshot</button>` : "—"}</td>
-                        <td>${badge(PAYMENT_STATES[r.state]?.label ?? r.state, STATE_TONE[r.state] || "neutral")}</td>
-                        <td class="row-actions"><button type="button" class="btn btn-compact" data-act="view" data-id="${r.id}">View</button></td>
+                        <td data-m="ctl"><span class="row-actions">${badge(PAYMENT_STATES[r.state]?.label ?? r.state, STATE_TONE[r.state] || "neutral")}${canVerify && r.state === "for_verification" ? html`<button type="button" class="btn btn-compact" data-act="quick-verify" data-id="${r.id}">Verify</button>` : ""}</span></td>
+                        <td class="row-actions" data-m="more">${openButton(r.id, `View payment for ${r.orderNumber}`, { act: "view" })}</td>
                       </tr>`
                     )}</tbody></table></div>
-                  <div class="modal-footer">
-                    <button type="button" class="btn" data-act="prev" ${state.cursors.length ? "" : "disabled"}>Previous</button>
-                    <button type="button" class="btn" data-act="next" ${state.hasMore ? "" : "disabled"}>Next</button>
+                  <div class="pager">
+                    <button type="button" class="btn btn-ghost" data-act="prev" ${state.cursors.length ? "" : "disabled"}>‹ Previous</button>
+                    <button type="button" class="btn btn-ghost" data-act="next" ${state.hasMore ? "" : "disabled"}>Next ›</button>
                   </div>`}
         </section>`
     );
   }
 
+  // The same confirm-then-verify as the details panel.
+  async function verify(p) {
+    if (!(await confirmDialog({ title: "Mark this payment verified?", body: `${formatCentavos(p.amount, currency)} via ${methodLabel(p.method)}${p.reference ? `, ref ${p.reference}` : ""}.`, confirmLabel: "Mark verified" }))) return null;
+    try {
+      return await api("payments", { method: "POST", body: { action: "verify", paymentId: p.id } });
+    } catch (err) {
+      toast(err.message, "danger");
+      return null;
+    }
+  }
+
   function openView(p) {
     const backdrop = document.createElement("div");
-    backdrop.className = "modal-backdrop";
+    backdrop.className = "modal-backdrop is-panel";
     document.body.appendChild(backdrop);
     const close = () => backdrop.remove();
     const live = p.state !== "voided";
@@ -154,15 +171,7 @@ export function mount(container, session, { data = defaultData, api = defaultApi
       if (act === "edit") return run(() => editPaymentDialog({ payment: p, api, currency }), "Payment updated");
       if (act === "remove") return run(() => removePaymentDialog({ payment: p, api, currency }), "Payment removed");
       if (act === "verify") {
-        return run(async () => {
-          if (!(await confirmDialog({ title: "Mark this payment verified?", body: `${formatCentavos(p.amount, currency)} via ${methodLabel(p.method)}${p.reference ? `, ref ${p.reference}` : ""}.`, confirmLabel: "Mark verified" }))) return null;
-          try {
-            return await api("payments", { method: "POST", body: { action: "verify", paymentId: p.id } });
-          } catch (err) {
-            toast(err.message, "danger");
-            return null;
-          }
-        }, "Payment verified");
+        return run(() => verify(p), "Payment verified");
       }
       return undefined;
     });
@@ -177,6 +186,13 @@ export function mount(container, session, { data = defaultData, api = defaultApi
         return showProof({ api, paymentId: p.id, title: `Screenshot · ${p.orderNumber}` });
       case "view":
         return openView(p);
+      case "quick-verify":
+        return verify(p).then((r) => {
+          if (r) {
+            toast("Payment verified", "success");
+            load();
+          }
+        });
       case "next":
         state.cursors.push(state.rows.at(-1));
         return load();
@@ -204,10 +220,14 @@ export function mount(container, session, { data = defaultData, api = defaultApi
   container.addEventListener("click", onClick);
   container.addEventListener("submit", onSubmit);
   const unbindExport = bindExport(container, () => ({ ...state.filters }), { toast, deps: exportDeps });
+  const unbindFilters = bindFilterBar(container);
+  const unbindRows = bindRowOpen(container, { act: "view" });
   load();
   return () => {
     alive = false;
     unbindExport();
+    unbindFilters();
+    unbindRows();
     container.removeEventListener("click", onClick);
     container.removeEventListener("submit", onSubmit);
   };

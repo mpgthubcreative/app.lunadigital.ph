@@ -7,7 +7,7 @@
 
 import { html, render } from "../../lib/html.js";
 import { exportButton, bindExport, mayExport, exportHint } from "../../lib/export.js";
-import { pageHeader, emptyState, badge } from "../../components/ui.js";
+import { pageHeader, emptyState, badge, filterBar, bindFilterBar, mobileCell, openButton, bindRowOpen, skeleton } from "../../components/ui.js";
 import { formDialog } from "../../components/form-dialog.js";
 import { toast as defaultToast } from "../../components/feedback.js";
 import { api as defaultApi } from "../../lib/api.js";
@@ -132,37 +132,39 @@ export function mount(container, session, { data = defaultData, api = defaultApi
     render(
       container,
       html`
-        ${pageHeader({ title, subtitle: "Rent, utilities, delivery, salaries and the other costs of running the business.", actions: can.create ? html`<button type="button" class="btn btn-primary" data-act="new">Add expense</button>` : "" })}
-        <form class="section card filters filters-inline" data-role="filters">
-          <input class="input" type="date" name="from" value="${f.from || ""}" aria-label="From" />
-          <input class="input" type="date" name="to" value="${f.to || ""}" aria-label="To" />
-          <select class="select" name="category" aria-label="Category">${opt("", "Any category", f.category || "")}${CATEGORY_OPTIONS.map((c) => opt(c.value, c.label, f.category))}</select>
-          <select class="select" name="method" aria-label="Method">${opt("", "Any method", f.method || "")}${METHOD_OPTIONS.map((m) => opt(m.value, m.label, f.method))}</select>
-          <input class="input" name="search" placeholder="Payee or reference" value="${f.search || ""}" autocomplete="off" aria-label="Search payee or reference" />
-          <select class="select" name="status" aria-label="Show">${opt("active", "Active", f.status)}${opt("removed", "Removed", f.status)}</select>
-          <button type="submit" class="btn">Apply</button>
-          ${mayExport(session, "expenses") && (f.status || "active") === "active" ? html`${exportButton("expenses")}<span class="stat-hint" data-role="export-hint">${exportHint}</span>` : ""}
-        </form>
-        <section class="section card">
+        ${pageHeader({ title, subtitle: "The costs of running the business: rent, utilities, delivery, salaries and more.", actions: can.create ? html`<button type="button" class="btn btn-primary" data-act="new">+ Add expense</button>` : "" })}
+        ${filterBar({
+          fields: [
+            { name: "search", label: "Payee or reference", type: "search", primary: true, value: f.search },
+            { name: "category", label: "Category", type: "select", primary: true, all: "Any category", options: CATEGORY_OPTIONS.map((c) => [c.value, c.label]), value: f.category },
+            { name: "method", label: "Method", type: "select", all: "Any method", options: METHOD_OPTIONS.map((m) => [m.value, m.label]), value: f.method },
+            { name: "from", label: "From", type: "date", value: f.from },
+            { name: "to", label: "To", type: "date", value: f.to },
+            { name: "status", label: "Show", type: "select", def: "active", options: [["active", "Active"], ["removed", "Removed"]], value: f.status || "active" },
+          ],
+          end: mayExport(session, "expenses") && (f.status || "active") === "active" ? html`<span class="visually-hidden" data-role="export-hint">${exportHint}</span>${exportButton("expenses")}` : "",
+        })}
+        <section class="card">
           ${state.error
             ? emptyState({ title: "Couldn't load", body: state.error })
             : state.loading
-              ? emptyState({ title: "Loading…" })
+              ? skeleton(6)
               : !rows.length
                 ? emptyState({ iconName: "expenses", title: "No expenses", body: "Expenses you add appear here and in the dashboard's Operating expenses." })
-                : html`<div class="table-wrap"><table class="table table-compact" data-role="expenses">
-                    <thead><tr><th>Date</th><th>Category</th><th>Vendor / Payee</th><th class="col-secondary">Method</th><th class="col-secondary">Reference</th><th class="num">Amount</th><th class="col-secondary">Recurring</th><th></th></tr></thead>
+                : html`<div class="table-wrap"><table class="table table-compact rows" data-role="expenses">
+                    <thead><tr><th class="m-only"></th><th>Date</th><th>Category</th><th>Vendor / Payee</th><th class="col-secondary">Method</th><th class="col-secondary">Reference</th><th class="num">Amount</th><th class="col-secondary">Recurring</th><th><span class="visually-hidden">Details</span></th></tr></thead>
                     <tbody>${rows.map(
-                      (r) => html`<tr data-expense="${r.id}">
+                      (r) => html`<tr data-expense="${r.id}" data-open>
+                        ${mobileCell({ title: r.payee !== "—" ? r.payee : r.category, sub: `${r.category} · ${r.date}${r.method ? ` · ${r.method}` : ""}`, end: r.amount })}
                         <td>${r.date}</td><td>${r.category}</td><td>${r.payee}</td>
                         <td class="col-secondary">${r.method}</td><td class="col-secondary">${r.reference}</td>
                         <td class="num">${r.amount}</td><td class="col-secondary">${r.recurring}</td>
-                        <td class="row-actions"><button type="button" class="btn btn-compact" data-act="view" data-id="${r.id}">View details</button></td>
+                        <td class="row-actions" data-m="more">${openButton(r.id, `View details of the ${r.category} expense on ${r.date}`, { act: "view" })}</td>
                       </tr>`
                     )}</tbody></table></div>
-                  <div class="modal-footer">
-                    <button type="button" class="btn" data-act="prev" ${state.cursors.length ? "" : "disabled"}>Previous</button>
-                    <button type="button" class="btn" data-act="next" ${state.hasMore ? "" : "disabled"}>Next</button>
+                  <div class="pager">
+                    <button type="button" class="btn btn-ghost" data-act="prev" ${state.cursors.length ? "" : "disabled"}>‹ Previous</button>
+                    <button type="button" class="btn btn-ghost" data-act="next" ${state.hasMore ? "" : "disabled"}>Next ›</button>
                   </div>`}
         </section>`
     );
@@ -177,7 +179,7 @@ export function mount(container, session, { data = defaultData, api = defaultApi
 
   function openView(e) {
     const backdrop = document.createElement("div");
-    backdrop.className = "modal-backdrop";
+    backdrop.className = "modal-backdrop is-panel";
     document.body.appendChild(backdrop);
     const close = () => backdrop.remove();
     const active = e.status === "active";
@@ -257,12 +259,16 @@ export function mount(container, session, { data = defaultData, api = defaultApi
   };
   container.addEventListener("click", onClick);
   container.addEventListener("submit", onSubmit);
+  const unbindFilters = bindFilterBar(container);
+  const unbindRows = bindRowOpen(container, { act: "view" });
   // Active expenses only (removed ones are not exported).
   const unbindExport = bindExport(container, () => ({ ...state.filters, status: "active" }), { toast, deps: exportDeps });
   load();
   return () => {
     alive = false;
     unbindExport();
+    unbindFilters();
+    unbindRows();
     container.removeEventListener("click", onClick);
     container.removeEventListener("submit", onSubmit);
   };

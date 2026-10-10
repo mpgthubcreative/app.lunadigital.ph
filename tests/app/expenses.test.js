@@ -52,8 +52,8 @@ describe("Expenses page", () => {
     mount(container, session(), deps());
     await flush();
     expect(container.querySelector("h1, .page-title").textContent).toMatch(/Operating Expenses/);
-    expect([...container.querySelectorAll("thead th")].map((th) => th.textContent.trim())).toEqual(["Date", "Category", "Vendor / Payee", "Method", "Reference", "Amount", "Recurring", ""]);
-    expect(container.querySelector(`[data-expense="${rent.id}"]`).textContent).toMatch(/Oct 8, 2026.*Rent.*Landlord.*Bank Transfer.*—.*₱25,000\.00.*Yes.*View details/s);
+    expect([...container.querySelectorAll("thead th")].map((th) => th.textContent.trim())).toEqual(["", "Date", "Category", "Vendor / Payee", "Method", "Reference", "Amount", "Recurring", "Details"]);
+    expect(container.querySelector(`[data-expense="${rent.id}"]`).textContent).toMatch(/Oct 8, 2026.*Rent.*Landlord.*Bank Transfer.*—.*₱25,000\.00.*Yes/s);
   });
 
   it("filters are sent to the paginated query (never the whole history)", async () => {

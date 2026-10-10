@@ -213,8 +213,38 @@ describe("Payments page", () => {
   it("one compact row per payment with the standard columns", async () => {
     mountPayments(container, session("staff"), pdeps());
     await flush();
-    expect([...container.querySelectorAll("thead th")].map((th) => th.textContent.trim())).toEqual(["Date/Time", "Order #", "Customer", "Amount", "Method", "Reference", "Proof", "Status", ""]);
+    expect([...container.querySelectorAll("thead th")].map((th) => th.textContent.trim())).toEqual(["", "Date/Time", "Order #", "Customer", "Amount", "Method", "Reference", "Proof", "Status", "Details"]);
     expect(container.querySelector('[data-payment="pay1"]').textContent).toMatch(/ORD-1042.*ABC Store.*₱2,450\.00.*GCash.*918273645.*View screenshot.*Verified/s);
+  });
+
+  it("Verify sits in the row for payments waiting on it (verifiers only), behind the same confirmation", async () => {
+    mountPayments(container, session("staff"), pdeps());
+    await flush();
+    expect(container.querySelector('[data-act="quick-verify"]')).toBeNull();
+    document.body.innerHTML = '<main id="content"></main>';
+    container = document.getElementById("content");
+    const d = pdeps();
+    mountPayments(container, session("owner"), d);
+    await flush();
+    expect(container.querySelector('[data-payment="pay1"] [data-act="quick-verify"]')).toBeNull(); // already verified
+    container.querySelector('[data-payment="pay2"] [data-act="quick-verify"]').click();
+    await flush();
+    document.querySelector('[data-action="confirm"]').click();
+    await flush();
+    expect(d.api).toHaveBeenCalledWith("payments", { method: "POST", body: { action: "verify", paymentId: "pay2" } });
+  });
+
+  it("a Dashboard link (?state=for_verification) opens the list already filtered, shown as a chip", async () => {
+    window.history.replaceState({}, "", "/payments?state=for_verification");
+    const d = pdeps();
+    mountPayments(container, session("owner"), d);
+    await flush();
+    expect(d.data.listPayments.mock.calls[0][1].filters).toEqual({ state: "for_verification" });
+    expect(container.querySelector('[data-chip="state"]').textContent).toMatch(/For verification/);
+    container.querySelector('[data-clear-filter="state"]').click();
+    await flush();
+    expect(d.data.listPayments.mock.calls.at(-1)[1].filters).toEqual({});
+    window.history.replaceState({}, "", "/");
   });
 
   it("activity reads in plain language", () => {

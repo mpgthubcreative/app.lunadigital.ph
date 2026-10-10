@@ -183,7 +183,9 @@ export function skeleton(lines = 4) {
 
 // ---------- Filter bar ----------
 // fields: [{ name, label, type: "select"|"date"|"search", options?: [[v,l]],
-//            all?: "Any status", primary?: true, value }]
+//            all?: "Any status", primary?: true, value, def? }]
+// `def`: a field that always has a value (e.g. status "active"): no "Any"
+// option, no chip while it is at its default, and clearing resets to it.
 // Primary fields sit in the toolbar and apply on change; the rest live under
 // "More filters". Active filters show as removable chips. The form keeps
 // data-role="filters" so each screen's submit handler (and Download Excel,
@@ -191,11 +193,11 @@ export function skeleton(lines = 4) {
 export function filterBar({ fields, open = false, end = "", count = null, role = "filters" }) {
   const primary = fields.filter((f) => f.primary);
   const more = fields.filter((f) => !f.primary);
-  const active = fields.filter((f) => f.value !== undefined && f.value !== null && f.value !== "");
+  const active = fields.filter((f) => f.value !== undefined && f.value !== null && f.value !== "" && f.value !== f.def);
   const control = (f) => {
     if (f.type === "select")
-      return html`<select class="select" name="${f.name}" aria-label="${f.label}">
-        <option value="">${f.all || `Any ${f.label.toLowerCase()}`}</option>
+      return html`<select class="select" name="${f.name}" aria-label="${f.label}" ${f.def !== undefined ? html`data-default="${f.def}"` : ""}>
+        ${f.def !== undefined ? "" : html`<option value="">${f.all || `Any ${f.label.toLowerCase()}`}</option>`}
         ${f.options.map(([v, l]) => html`<option value="${v}" ${String(f.value ?? "") === String(v) ? "selected" : ""}>${l}</option>`)}
       </select>`;
     if (f.type === "search") return html`<input class="input grow" type="search" name="${f.name}" value="${f.value ?? ""}" placeholder="${f.placeholder || f.label}" aria-label="${f.label}" autocomplete="off" />`;
@@ -252,7 +254,7 @@ export function bindFilterBar(root) {
       return;
     }
     const name = clear.dataset.clearFilter;
-    for (const el of form.elements) if (el.name && (name === "*" || el.name === name)) el.value = "";
+    for (const el of form.elements) if (el.name && (name === "*" || el.name === name)) el.value = el.dataset.default ?? "";
     submit(form);
   };
   root.addEventListener("change", onChange);

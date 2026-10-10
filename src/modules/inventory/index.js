@@ -1,5 +1,6 @@
-// Inventory: one product = one compact row (Luna's operational-table
-// standard). Safe fields are edited in place (selling price, reorder level,
+// Inventory = Work (Phase 18.5): "What stock do we have, and what needs
+// attention?" One product = one compact row (Luna's operational-table
+// standard); phones show a 2-line record with Adjust. Safe fields are edited in place (selling price, reorder level,
 // status); stock is never typed over, only changed through Adjust (a signed
 // quantity + reason, logged by the server). Everything else lives in
 // View details: the full record, receiving, editing, delete-if-unused and
@@ -16,7 +17,7 @@
 
 import { html, render } from "../../lib/html.js";
 import { exportButton, bindExport, mayExport, exportHint } from "../../lib/export.js";
-import { pageHeader, emptyState, badge } from "../../components/ui.js";
+import { pageHeader, emptyState, badge, filterBar, bindFilterBar, mobileCell, openButton, bindRowOpen, skeleton } from "../../components/ui.js";
 import { formDialog } from "../../components/form-dialog.js";
 import { confirmDialog, toast as defaultToast } from "../../components/feedback.js";
 import { api as defaultApi } from "../../lib/api.js";
@@ -48,7 +49,9 @@ export function mount(container, session, { data = defaultData, api = defaultApi
   };
   const businessId = session.business.id;
   const currency = session.business.currency || "PHP";
-  const state = { status: "active", lowOnly: false, search: "", category: "", cursors: [], rows: [], costs: {}, hasMore: false, loading: true, error: null };
+  // The Dashboard links here as ?low=1 (low stock only).
+  const lowFromUrl = new URLSearchParams(typeof location === "undefined" ? "" : location.search).get("low") === "1";
+  const state = { status: "active", lowOnly: lowFromUrl, search: "", category: "", cursors: [], rows: [], costs: {}, hasMore: false, loading: true, error: null };
   let alive = true;
 
   async function load() {
@@ -79,19 +82,22 @@ export function mount(container, session, { data = defaultData, api = defaultApi
         </select>`
       : r.status === "active" ? badge("Active", "success") : badge("Inactive", "neutral");
     const primary = can.adjust ? html`<button type="button" class="btn btn-compact" data-act="${r.hasMovements ? "adjust" : "opening"}" data-id="${r.id}">${r.hasMovements ? "Adjust" : "Opening"}</button>` : "";
-    return html`<tr data-product="${r.id}" class="${r.isLowStock ? "row-warning" : ""}">
-      <td>${r.sku}</td>
-      <td>${r.name}${r.isLowStock ? html` ${badge("Low", "warning")}` : ""}</td>
+    const low = r.isLowStock ? html` ${badge("Low", "warning")}` : "";
+    return html`<tr data-product="${r.id}" class="${r.isLowStock ? "row-warning" : ""}" data-open>
+      ${mobileCell({ title: r.name, sub: `${r.sku} · ${r.reserved} reserved · ${r.price}`, end: html`${r.available} <small>${r.unit} available</small>` })}
+      <td class="cell-strong">${r.sku}</td>
+      <td>${r.name}${low}</td>
       <td class="col-secondary">${r.category}</td>
       <td class="col-secondary">${r.unit}</td>
-      <td class="num">${r.onHand}</td>
+      <td class="num" data-col="onHand">${r.onHand}</td>
       <td class="num col-secondary">${r.reserved}</td>
-      <td class="num">${r.available}</td>
+      <td class="num cell-strong">${r.available}</td>
       ${can.costs ? html`<td class="num col-secondary" data-col="avgCost">${r.avgCost}</td><td class="num col-secondary" data-col="value">${r.value}</td>` : ""}
       <td class="num col-secondary" data-col="reorder">${editable("edit-reorder", r.id, r.reorderLevel, `Edit reorder level of ${r.name}`)}</td>
       <td class="num" data-col="price">${editable("edit-price", r.id, r.price, `Edit selling price of ${r.name}`)}</td>
       <td data-col="status">${statusCell}</td>
-      <td class="row-actions">${primary}<button type="button" class="btn btn-compact" data-act="details" data-id="${r.id}">View details</button></td>
+      <td class="row-actions" data-m="ctl">${primary}</td>
+      <td class="row-actions" data-m="more">${openButton(r.id, `View details of ${r.name}`, { act: "details" })}</td>
     </tr>`;
   }
 
@@ -103,42 +109,37 @@ export function mount(container, session, { data = defaultData, api = defaultApi
       html`
         ${pageHeader({
           title: "Inventory",
-          subtitle: "Products, stock on hand, reservations and movements.",
-          actions: can.manage ? html`<button type="button" class="btn btn-primary" data-act="new">New product</button>` : "",
+          subtitle: "Stock you have, what's reserved for orders, and what's running low.",
+          actions: can.manage ? html`<button type="button" class="btn btn-primary" data-act="new">+ New product</button>` : "",
         })}
-        <form class="section card filters filters-inline" data-role="filters">
-          <input class="input" name="search" value="${state.search}" placeholder="Search name or exact SKU" aria-label="Search name or exact SKU" autocomplete="off" />
-          <input class="input" name="category" value="${state.category}" placeholder="Category" aria-label="Category (exact)" autocomplete="off" />
-          <select class="select" name="status" aria-label="Status">
-            <option value="active" ${state.status === "active" ? "selected" : ""}>Active</option>
-            <option value="inactive" ${state.status === "inactive" ? "selected" : ""}>Inactive</option>
-          </select>
-          <select class="select" name="low" aria-label="Show">
-            <option value="all" ${state.lowOnly ? "" : "selected"}>All products</option>
-            <option value="low" ${state.lowOnly ? "selected" : ""}>Low stock only</option>
-          </select>
-          <button type="submit" class="btn">Apply</button>
-          ${mayExport(session, "inventory") ? html`${exportButton("products", "Product list (Excel)")}${exportButton("inventory", "Stock levels (Excel)")}<span class="stat-hint" data-role="export-hint">${exportHint}</span>` : ""}
-        </form>
-        <section class="section card">
+        ${filterBar({
+          fields: [
+            { name: "search", label: "Search name or exact SKU", type: "search", primary: true, value: state.search },
+            { name: "low", label: "Stock", type: "select", primary: true, all: "All stock levels", options: [["low", "Low stock only"]], value: state.lowOnly ? "low" : "" },
+            { name: "status", label: "Status", type: "select", all: "Active products", options: [["inactive", "Inactive products"]], value: state.status === "inactive" ? "inactive" : "" },
+            { name: "category", label: "Category (exact)", type: "search", value: state.category },
+          ],
+          end: mayExport(session, "inventory") ? html`<span class="visually-hidden" data-role="export-hint">${exportHint}</span>${exportButton("products", "Product list (Excel)")}${exportButton("inventory", "Stock levels (Excel)")}` : "",
+        })}
+        <section class="card">
           ${state.error
             ? emptyState({ title: "Couldn't load", body: state.error })
             : state.loading
-              ? emptyState({ title: "Loading…" })
+              ? skeleton(6)
               : !rows.length
                 ? emptyState({ iconName: "inventory", title: "No products", body: state.search ? "Nothing matches that search." : can.manage ? "Add your first product to start tracking stock." : "Products added by your team appear here." })
-                : html`<div class="table-wrap"><table class="table table-compact" data-role="products">
+                : html`<div class="table-wrap"><table class="table table-compact rows" data-role="products">
                     <thead><tr>
-                      <th>SKU</th><th>Product</th><th class="col-secondary">Category</th><th class="col-secondary">Unit</th>
+                      <th class="m-only"></th><th>SKU</th><th>Product</th><th class="col-secondary">Category</th><th class="col-secondary">Unit</th>
                       <th class="num">On hand</th><th class="num col-secondary">Reserved</th><th class="num">Available</th>
                       ${can.costs ? html`<th class="num col-secondary">Avg cost</th><th class="num col-secondary">Value (est.)</th>` : ""}
-                      <th class="num col-secondary">Reorder at</th><th class="num">Price</th><th>Status</th><th></th>
+                      <th class="num col-secondary">Reorder at</th><th class="num">Price</th><th>Status</th><th><span class="visually-hidden">Actions</span></th><th><span class="visually-hidden">Details</span></th>
                     </tr></thead>
                     <tbody>${rows.map(rowCells)}</tbody>
                   </table></div>
-                  <div class="modal-footer">
-                    <button type="button" class="btn" data-act="prev" ${state.cursors.length ? "" : "disabled"}>Previous</button>
-                    <button type="button" class="btn" data-act="next" ${state.hasMore ? "" : "disabled"}>Next</button>
+                  <div class="pager">
+                    <button type="button" class="btn btn-ghost" data-act="prev" ${state.cursors.length ? "" : "disabled"}>‹ Previous</button>
+                    <button type="button" class="btn btn-ghost" data-act="next" ${state.hasMore ? "" : "disabled"}>Next ›</button>
                   </div>`}
         </section>
       `
@@ -264,7 +265,7 @@ export function mount(container, session, { data = defaultData, api = defaultApi
   // ---- View details: full record, actions, paginated history ----
   async function openDetails(p) {
     const backdrop = document.createElement("div");
-    backdrop.className = "modal-backdrop";
+    backdrop.className = "modal-backdrop is-panel";
     document.body.appendChild(backdrop);
     const r = productRow(p, state.costs[p.id], { seesCosts: can.costs, currency });
     const rows = [];
@@ -381,7 +382,7 @@ export function mount(container, session, { data = defaultData, api = defaultApi
     event.preventDefault();
     const form = event.target;
     state.search = form.elements.search.value;
-    state.status = form.elements.status.value;
+    state.status = form.elements.status.value || "active";
     state.lowOnly = form.elements.low.value === "low";
     state.category = form.elements.category.value.trim();
     state.cursors = [];
@@ -390,6 +391,8 @@ export function mount(container, session, { data = defaultData, api = defaultApi
   container.addEventListener("click", onClick);
   container.addEventListener("change", onChange);
   container.addEventListener("submit", onSubmit);
+  const unbindFilters = bindFilterBar(container);
+  const unbindRows = bindRowOpen(container, { act: "details" });
   // Both downloads use the APPLIED filters (what the list shows), every page.
   const unbindExport = bindExport(container, () => Object.fromEntries([["status", state.status], ["lowOnly", state.lowOnly], ["search", state.search.trim()], ["category", state.category]].filter(([, v]) => v)), { toast, deps: exportDeps });
   load();
@@ -397,6 +400,8 @@ export function mount(container, session, { data = defaultData, api = defaultApi
   return () => {
     alive = false;
     unbindExport();
+    unbindFilters();
+    unbindRows();
     container.removeEventListener("click", onClick);
     container.removeEventListener("change", onChange);
     container.removeEventListener("submit", onSubmit);

@@ -1,5 +1,8 @@
-// Orders: the day-to-day control sheet. One compact row per order:
-//   Order # | Time | Customer | Items | Total | Reference | Proof | Payment ▾ | Fulfillment ▾ | View details
+// Orders = Work (Phase 18.5): "What orders do we need to process?"
+// One compact row per order (desktop):
+//   Order # (+time) | Customer (+items) | Total | Reference | Proof | Payment ▾ | Fulfillment ▾ | ›
+// Phones show a 2-3 line record (number · customer · total, then the two
+// inline controls). Tapping a row opens its details panel.
 // Payment and Fulfillment are separate inline controls:
 //   Payment ▾       Paid / Partially paid open a small "record payment"
 //                   popover; on a "For verification" order, Paid = verify.
@@ -11,7 +14,8 @@
 // Permissions decide every control; the server re-checks all of it.
 
 import { html, render } from "../../lib/html.js";
-import { pageHeader, emptyState, badge } from "../../components/ui.js";
+import { pageHeader, emptyState, badge, filterBar, bindFilterBar, mobileCell, openButton, bindRowOpen, skeleton } from "../../components/ui.js";
+import { orderPermissions, paymentCell, fulfillmentCell, inlineOrderActions } from "./inline.js";
 import { formDialog } from "../../components/form-dialog.js";
 import { confirmDialog, toast as defaultToast } from "../../components/feedback.js";
 import { api as defaultApi } from "../../lib/api.js";
@@ -36,21 +40,14 @@ const defaultDeps = {
 
 export function mount(container, session, { data = defaultDeps.data, payments = { listOrderPayments: defaultDeps.listOrderPayments }, searchProducts = defaultDeps.searchProducts, searchCustomers = defaultDeps.searchCustomers, api = defaultApi, toast = defaultToast, exportDeps = {} } = {}) {
   const perms = session.member.permissions;
-  const can = {
-    create: perms["orders.create"] === true,
-    update: perms["orders.update"] === true,
-    fulfill: perms["orders.fulfill"] === true,
-    cancel: perms["orders.cancel"] === true,
-    correct: perms["orders.correct"] === true,
-    financials: perms["dashboard.financials"] === true,
-    viewPayments: perms["payments.view"] === true,
-    recordPayment: perms["payments.record"] === true,
-    verifyPayment: perms["payments.verify"] === true,
-  };
+  const can = orderPermissions(perms);
   const businessId = session.business.id;
   const currency = session.business.currency || "PHP";
   const timezone = session.business.timezone;
-  const state = { filters: {}, cursors: [], rows: [], hasMore: false, loading: true, error: null };
+  // Links from the Dashboard open a filtered list (e.g. ?fulfillmentStatus=ready).
+  const fromUrl = new URLSearchParams(typeof location === "undefined" ? "" : location.search);
+  const initial = Object.fromEntries([["fulfillmentStatus", FULFILLMENT_STATUSES], ["paymentStatus", PAYMENT_STATUSES], ["source", ORDER_SOURCES]].filter(([k, allowed]) => fromUrl.get(k) && Object.hasOwn(allowed, fromUrl.get(k))).map(([k]) => [k, fromUrl.get(k)]));
+  const state = { filters: initial, cursors: [], rows: [], hasMore: false, loading: true, error: null };
   let alive = true;
   const editorDeps = { searchProducts: (term) => searchProducts(businessId, term), searchCustomers: (term) => searchCustomers(businessId, term), getProducts: (ids) => data.getProducts(businessId, ids), api };
 
@@ -70,141 +67,59 @@ export function mount(container, session, { data = defaultDeps.data, payments = 
     if (alive) draw();
   }
 
-  const opts = (entries, selected, allLabel) => html`<option value="">${allLabel}</option>${entries.map(([v, l]) => html`<option value="${v}" ${selected === v ? "selected" : ""}>${l}</option>`)}`;
-
-  // ---- inline controls ----
-  function paymentCell(o) {
-    if (!can.recordPayment || o.fulfillmentStatus === "cancelled") return badge(paymentLabel(o.paymentStatus), PAYMENT_TONE[o.paymentStatus] || "neutral");
-    return html`<select class="select select-compact" data-act="payment" data-id="${o.id}" aria-label="Payment status of ${o.orderNumber}">
-      ${Object.entries(PAYMENT_STATUSES).map(([k, v]) => html`<option value="${k}" ${o.paymentStatus === k ? "selected" : ""}>${v.label}</option>`)}
-    </select>`;
-  }
-
-  function fulfillmentCell(o) {
-    if (!can.fulfill || !isOpenFulfillment(o.fulfillmentStatus)) return badge(fulfillmentLabel(o.fulfillmentStatus), FULFILLMENT_TONE[o.fulfillmentStatus] || "neutral");
-    const choices = Object.entries(FULFILLMENT_STATUSES).filter(([k]) => k !== "cancelled" || can.cancel);
-    return html`<select class="select select-compact" data-act="fulfillment" data-id="${o.id}" aria-label="Fulfillment of ${o.orderNumber}">
-      ${choices.map(([k, v]) => html`<option value="${k}" ${o.fulfillmentStatus === k ? "selected" : ""}>${v.label}</option>`)}
-    </select>`;
-  }
-
   function draw() {
     if (!alive) return;
     const f = state.filters;
+    const filtered = Object.keys(f).length > 0;
     render(
       container,
       html`
-        ${pageHeader({ title: "Orders", subtitle: "Orders from Messenger, Facebook, Viber, phone and walk-ins.", actions: can.create ? html`<button type="button" class="btn btn-primary" data-act="new">New order</button>` : "" })}
-        <form class="section card filters filters-inline" data-role="filters">
-          <select class="select" name="fulfillmentStatus" aria-label="Fulfillment">${opts(Object.entries(FULFILLMENT_STATUSES).map(([k, v]) => [k, v.label]), f.fulfillmentStatus, "Any fulfillment")}</select>
-          <select class="select" name="paymentStatus" aria-label="Payment">${opts(Object.entries(PAYMENT_STATUSES).map(([k, v]) => [k, v.label]), f.paymentStatus, "Any payment")}</select>
-          <select class="select" name="source" aria-label="Source">${opts(ORDER_SOURCE_IDS.map((k) => [k, ORDER_SOURCES[k].label]), f.source, "Any source")}</select>
-          <input class="input" type="date" name="from" value="${f.from || ""}" aria-label="From (order date)" />
-          <input class="input" type="date" name="to" value="${f.to || ""}" aria-label="To (order date)" />
-          <button type="submit" class="btn">Apply</button>
-          ${mayExport(session, "orders") ? html`${exportButton("orders")}<span class="stat-hint" data-role="export-hint">${exportHint}</span>` : ""}
-        </form>
-        <section class="section card">
+        ${pageHeader({ title: "Orders", subtitle: "What needs processing: take payment and move each order along, right in its row.", actions: can.create ? html`<button type="button" class="btn btn-primary" data-act="new">+ New order</button>` : "" })}
+        ${filterBar({
+          fields: [
+            { name: "fulfillmentStatus", label: "Fulfillment", type: "select", primary: true, all: "Any fulfillment", options: Object.entries(FULFILLMENT_STATUSES).map(([k, v]) => [k, v.label]), value: f.fulfillmentStatus },
+            { name: "paymentStatus", label: "Payment", type: "select", primary: true, all: "Any payment", options: Object.entries(PAYMENT_STATUSES).map(([k, v]) => [k, v.label]), value: f.paymentStatus },
+            { name: "source", label: "Source", type: "select", all: "Any source", options: ORDER_SOURCE_IDS.map((k) => [k, ORDER_SOURCES[k].label]), value: f.source },
+            { name: "from", label: "From (order date)", type: "date", value: f.from },
+            { name: "to", label: "To (order date)", type: "date", value: f.to },
+          ],
+          end: mayExport(session, "orders") ? html`<span class="visually-hidden" data-role="export-hint">${exportHint}</span>${exportButton("orders")}` : "",
+        })}
+        <section class="card">
           ${state.error
             ? emptyState({ title: "Couldn't load", body: state.error })
             : state.loading
-              ? emptyState({ title: "Loading…" })
+              ? skeleton(6)
               : !state.rows.length
-                ? emptyState({ iconName: "orders", title: "No orders", body: can.create ? "Create the first order from a chat or call." : "Orders appear here as your team enters them." })
-                : html`<div class="table-wrap"><table class="table table-compact" data-role="orders">
-                    <thead><tr><th>Order #</th><th>Time</th><th>Customer</th><th class="col-secondary">Items</th><th class="num">Total</th><th class="col-secondary">Reference</th><th class="col-secondary">Proof</th><th>Payment</th><th>Fulfillment</th><th></th></tr></thead>
+                ? emptyState({ iconName: "orders", title: filtered ? "No orders match these filters" : "No orders", body: filtered ? "Remove a filter to see more." : can.create ? "Create the first order from a chat or call." : "Orders appear here as your team enters them." })
+                : html`<div class="table-wrap"><table class="table table-compact rows" data-role="orders">
+                    <thead><tr><th class="m-only"></th><th>Order #</th><th>Customer</th><th class="num">Total</th><th class="col-secondary">Reference</th><th class="col-secondary">Proof</th><th>Payment</th><th>Fulfillment</th><th><span class="visually-hidden">Details</span></th></tr></thead>
                     <tbody>${state.rows.map((o) => {
                       const r = orderRow(o, { currency, timezone });
-                      return html`<tr data-order="${r.id}">
-                        <td>${r.number}</td>
-                        <td>${r.when}</td><td>${r.customer}</td><td class="col-secondary">${r.items}</td>
+                      return html`<tr data-order="${r.id}" data-open>
+                        ${mobileCell({ title: `${r.number} · ${r.customer}`, sub: `${r.when} · ${r.items}`, end: r.total })}
+                        <td><span class="cell-strong">${r.number}</span><span class="cell-sub">${r.when}</span></td>
+                        <td>${r.customer}<span class="cell-sub">${r.items}</span></td>
                         <td class="num">${r.total}</td>
                         <td class="col-secondary" data-col="reference">${r.reference}</td>
                         <td class="col-secondary" data-col="proof">${r.proofPaymentId && can.viewPayments ? html`<button type="button" class="cell-edit" data-act="proof" data-payment="${r.proofPaymentId}" data-id="${r.id}">View screenshot</button>` : "—"}</td>
-                        <td data-col="payment">${paymentCell(o)}</td>
-                        <td data-col="fulfillment">${fulfillmentCell(o)}</td>
-                        <td class="row-actions"><button type="button" class="btn btn-compact" data-act="open" data-id="${r.id}">View details</button></td>
+                        <td data-col="payment" data-m="ctl">${paymentCell(o, can)}</td>
+                        <td data-col="fulfillment" data-m="ctl">${fulfillmentCell(o, can)}</td>
+                        <td class="row-actions" data-m="more">${openButton(r.id, `View details of ${r.number}`)}</td>
                       </tr>`;
                     })}</tbody>
                   </table></div>
-                  <div class="modal-footer">
-                    <button type="button" class="btn" data-act="prev" ${state.cursors.length ? "" : "disabled"}>Previous</button>
-                    <button type="button" class="btn" data-act="next" ${state.hasMore ? "" : "disabled"}>Next</button>
+                  <div class="pager">
+                    <button type="button" class="btn btn-ghost" data-act="prev" ${state.cursors.length ? "" : "disabled"}>‹ Previous</button>
+                    <button type="button" class="btn btn-ghost" data-act="next" ${state.hasMore ? "" : "disabled"}>Next ›</button>
                   </div>`}
         </section>
       `
     );
   }
 
-  // Payment ▾: Paid / Partially paid record a payment; Paid on a
-  // for-verification order verifies its pending payments.
-  async function onPaymentChoice(o, choice, select) {
-    const reset = () => {
-      if (select) select.value = o.paymentStatus;
-    };
-    try {
-      if (choice === "paid" && o.paymentStatus === "for_verification" && can.verifyPayment) {
-        const pending = (await payments.listOrderPayments(businessId, o.id)).filter((p) => p.state === "for_verification");
-        const total = pending.reduce((s, p) => s + p.amount, 0);
-        const ok = await confirmDialog({ title: `Verify payment for ${o.orderNumber}?`, body: `${pending.length} payment(s), ${formatCentavos(total, currency)}${pending[0]?.reference ? `, ref ${pending[0].reference}` : ""}.`, confirmLabel: "Mark verified" });
-        if (!ok) return reset();
-        for (const p of pending) await api("payments", { method: "POST", body: { action: "verify", paymentId: p.id } });
-        toast("Payment verified", "success");
-        return load();
-      }
-      if ((choice === "paid" || choice === "partial") && (o.balance ?? o.total) > 0) {
-        const result = await recordPaymentDialog({ order: o, api, currency, fullBalance: choice === "paid" });
-        if (!result) return reset();
-        toast("Payment recorded", "success");
-        return load();
-      }
-      toast("Payment status follows the recorded payments. Open View details to change a payment.", "neutral");
-      return reset();
-    } catch (err) {
-      toast(err.message || "Couldn't update the payment.", "danger");
-      return reset();
-    }
-  }
-
-  // Fulfillment ▾
-  async function onFulfillmentChoice(o, choice, select) {
-    const reset = () => {
-      if (select) select.value = o.fulfillmentStatus;
-    };
-    try {
-      if (isOpenFulfillment(choice)) {
-        await api("orders", { method: "POST", body: { action: "stage", orderId: o.id, stage: choice } });
-        toast(`${o.orderNumber}: ${fulfillmentLabel(choice)}`, "success");
-        return load();
-      }
-      if (choice === "fulfilled") {
-        const ok = await confirmDialog({ title: `Fulfill ${o.orderNumber}?`, body: "Stock leaves inventory and the sale counts toward today.", confirmLabel: "Mark fulfilled" });
-        if (!ok) return reset();
-        await api("orders", { method: "POST", body: { action: "fulfill", orderId: o.id } });
-        toast("Order fulfilled", "success");
-        return load();
-      }
-      if (choice === "cancelled") {
-        const result = await cancelDialog(o);
-        if (!result) return reset();
-        toast("Order cancelled", "success");
-        return load();
-      }
-      return reset();
-    } catch (err) {
-      toast(err.message || "Couldn't update the order.", "danger");
-      return reset();
-    }
-  }
-
-  const cancelDialog = (order) =>
-    formDialog({
-      title: `Cancel ${order.orderNumber}`,
-      intro: "Reserved stock is released. The order stays in history.",
-      fields: [{ name: "reason", label: "Reason", type: "textarea", required: true }],
-      submitLabel: "Cancel order",
-      onSubmit: (v) => api("orders", { method: "POST", body: { action: "cancel", orderId: order.id, reason: v.reason } }),
-    });
+  // Payment ▾ / Fulfillment ▾: the shared engine (./inline.js), same as the Dashboard.
+  const { onPaymentChoice, onFulfillmentChoice, cancelDialog } = inlineOrderActions({ can, api, toast, currency, businessId, listOrderPayments: payments.listOrderPayments, reload: () => load() });
 
   // ---- View details ----
   async function openDetail(orderId) {
@@ -224,7 +139,7 @@ export function mount(container, session, { data = defaultDeps.data, payments = 
       return;
     }
     const backdrop = document.createElement("div");
-    backdrop.className = "modal-backdrop";
+    backdrop.className = "modal-backdrop is-panel";
     document.body.appendChild(backdrop);
     const close = () => backdrop.remove();
     const open = isOpenFulfillment(order.fulfillmentStatus);
@@ -410,10 +325,14 @@ export function mount(container, session, { data = defaultDeps.data, payments = 
   container.addEventListener("submit", onSubmit);
   // Download = the APPLIED filters (what the list shows), every page.
   const unbindExport = bindExport(container, () => ({ ...state.filters }), { toast, deps: exportDeps });
+  const unbindFilters = bindFilterBar(container);
+  const unbindRows = bindRowOpen(container);
   load();
   return () => {
     alive = false;
     unbindExport();
+    unbindFilters();
+    unbindRows();
     container.removeEventListener("click", onClick);
     container.removeEventListener("change", onChange);
     container.removeEventListener("submit", onSubmit);

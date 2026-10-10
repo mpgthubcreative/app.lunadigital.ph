@@ -226,8 +226,9 @@ describe("list", () => {
   it("columns, filters and cursor pagination", async () => {
     const d = await show(session("staff"), deps({ hasMore: true }));
     const headers = [...container.querySelectorAll("thead th")].map((th) => th.textContent.trim());
-    expect(headers).toEqual(["Order #", "Time", "Customer", "Items", "Total", "Reference", "Proof", "Payment", "Fulfillment", ""]);
-    expect(container.querySelector(`[data-order="${pendingOrder.id}"] [data-act="open"]`).textContent).toBe("View details");
+    // Phase 18.5: time and items sit under the number and customer (8 columns, not 10); the first is the phone summary.
+    expect(headers).toEqual(["", "Order #", "Customer", "Total", "Reference", "Proof", "Payment", "Fulfillment", "Details"]);
+    expect(container.querySelector(`[data-order="${pendingOrder.id}"] [data-act="open"]`).getAttribute("aria-label")).toMatch(/^View details of /);
     expect(container.textContent).toMatch(/Chicken Wings × 5 kg/);
     container.querySelector('[data-act="next"]').click();
     await flush();

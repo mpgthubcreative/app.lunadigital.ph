@@ -50,7 +50,8 @@ async function show(s, deps = fakes()) {
 }
 const row = (id) => container.querySelector(`[data-product="${id}"]`);
 const headers = () => [...container.querySelectorAll("thead th")].map((th) => th.textContent.trim());
-const rowButtons = (id) => [...row(id).querySelectorAll("button")].map((b) => b.textContent.trim());
+// The details opener is an icon button (its accessible name says what it does).
+const rowButtons = (id) => [...row(id).querySelectorAll("button")].map((b) => (b.dataset.act === "details" ? (b.getAttribute("aria-label").startsWith("View details") ? "View details" : "?") : b.textContent.trim()));
 const lastForm = () => [...document.querySelectorAll(".modal-backdrop form")].at(-1);
 const fill = (values) => {
   const form = lastForm();
@@ -61,7 +62,7 @@ const fill = (values) => {
 describe("compact rows and cost visibility", () => {
   it("one row per product with the standard columns; owner also sees cost columns", async () => {
     const deps = await show(session("owner"));
-    expect(headers()).toEqual(["SKU", "Product", "Category", "Unit", "On hand", "Reserved", "Available", "Avg cost", "Value (est.)", "Reorder at", "Price", "Status", ""]);
+    expect(headers()).toEqual(["", "SKU", "Product", "Category", "Unit", "On hand", "Reserved", "Available", "Avg cost", "Value (est.)", "Reorder at", "Price", "Status", "Actions", "Details"]);
     expect(container.querySelectorAll("tbody tr")).toHaveLength(2);
     expect(row("p1").querySelector('[data-col="avgCost"]').textContent).toBe("₱53.33");
     expect(row("p1").querySelector('[data-col="value"]').textContent).toBe("₱7,466.67");
@@ -70,7 +71,7 @@ describe("compact rows and cost visibility", () => {
 
   it("staff see quantities but no cost, and cost documents are never requested", async () => {
     const deps = await show(session("staff"));
-    expect(headers()).toEqual(["SKU", "Product", "Category", "Unit", "On hand", "Reserved", "Available", "Reorder at", "Price", "Status", ""]);
+    expect(headers()).toEqual(["", "SKU", "Product", "Category", "Unit", "On hand", "Reserved", "Available", "Reorder at", "Price", "Status", "Actions", "Details"]);
     expect(container.textContent).not.toMatch(/53\.33|7,466/);
     expect(deps.data.loadCostDocs).not.toHaveBeenCalled();
   });
@@ -105,7 +106,7 @@ describe("row actions follow permissions", () => {
 
   it("there is no way to type over stock on hand", async () => {
     await show(session("owner"));
-    const onHandCell = row("p1").children[4];
+    const onHandCell = row("p1").querySelector('[data-col="onHand"]');
     expect(onHandCell.textContent).toBe("140");
     expect(onHandCell.querySelector("input, button, select")).toBeNull();
   });

@@ -7,7 +7,7 @@
 
 import { html, render } from "../../lib/html.js";
 import { exportButton, bindExport, mayExport, exportHint } from "../../lib/export.js";
-import { pageHeader, emptyState, badge } from "../../components/ui.js";
+import { pageHeader, emptyState, badge, filterBar, bindFilterBar, mobileCell, openButton, bindRowOpen, skeleton } from "../../components/ui.js";
 import { formDialog } from "../../components/form-dialog.js";
 import { confirmDialog, toast as defaultToast } from "../../components/feedback.js";
 import { api as defaultApi } from "../../lib/api.js";
@@ -107,37 +107,37 @@ export function mount(container, session, { data = defaultData, api = defaultApi
     render(
       container,
       html`
-        ${pageHeader({ title: session.config?.terminology?.customer?.plural ?? "Customers", subtitle: "Stores and buyers you sell to, with their orders and balances.", actions: canManage ? html`<button type="button" class="btn btn-primary" data-act="new">New customer</button>` : "" })}
-        <form class="section card filters filters-inline" data-role="filters">
-          <input class="input" name="search" placeholder="Search by name" value="${state.search}" autocomplete="off" aria-label="Search customers" />
-          <select class="select" name="status" aria-label="Status">
-            ${Object.entries(CUSTOMER_STATUSES).map(([k, v]) => html`<option value="${k}" ${state.status === k ? "selected" : ""}>${v.label}</option>`)}
-          </select>
-          <button type="submit" class="btn">Apply</button>
-          ${mayExport(session, "customers") ? html`${exportButton("customers")}<span class="stat-hint" data-role="export-hint">${exportHint}</span>` : ""}
-        </form>
-        <section class="section card">
+        ${pageHeader({ title: session.config?.terminology?.customer?.plural ?? "Customers", subtitle: "Who buys from you: their orders, what they still owe, and their history.", actions: canManage ? html`<button type="button" class="btn btn-primary" data-act="new">+ New ${(session.config?.terminology?.customer?.singular ?? "customer").toLowerCase()}</button>` : "" })}
+        ${filterBar({
+          fields: [
+            { name: "search", label: "Search by name", type: "search", primary: true, value: state.search },
+            { name: "status", label: "Status", type: "select", primary: true, def: "active", options: Object.entries(CUSTOMER_STATUSES).map(([k, v]) => [k, v.label]), value: state.status },
+          ],
+          end: mayExport(session, "customers") ? html`<span class="visually-hidden" data-role="export-hint">${exportHint}</span>${exportButton("customers")}` : "",
+        })}
+        <section class="card">
           ${state.error
             ? emptyState({ title: "Couldn't load", body: state.error })
             : state.loading
-              ? emptyState({ title: "Loading…" })
+              ? skeleton(6)
               : !rows.length
                 ? emptyState({ iconName: "customers", title: state.search ? "No match" : "No customers yet", body: state.search ? "Try another name." : "Add the stores and buyers you sell to." })
-                : html`<div class="table-wrap"><table class="table table-compact" data-role="customers">
-                    <thead><tr><th>Customer</th><th class="col-secondary">Company</th><th class="col-secondary">Phone</th><th class="num">Orders</th><th class="num col-secondary">Total ordered</th><th class="num">Balance</th><th class="col-secondary">Last order</th><th>Status</th><th></th></tr></thead>
+                : html`<div class="table-wrap"><table class="table table-compact rows" data-role="customers">
+                    <thead><tr><th class="m-only"></th><th>Customer</th><th class="col-secondary">Company</th><th class="col-secondary">Phone</th><th class="num">Orders</th><th class="num col-secondary">Total ordered</th><th class="num">Balance</th><th class="col-secondary">Last order</th><th>Status</th><th><span class="visually-hidden">Details</span></th></tr></thead>
                     <tbody>${rows.map(
-                      (r) => html`<tr data-customer="${r.id}">
-                        <td>${r.name}</td><td class="col-secondary">${r.company}</td><td class="col-secondary">${r.phone}</td>
+                      (r) => html`<tr data-customer="${r.id}" data-open>
+                        ${mobileCell({ title: r.name, sub: [r.company, `${r.orders} orders`, r.lastOrder !== "—" ? `last ${r.lastOrder}` : ""].filter(Boolean).join(" · "), end: r.balance, endSub: r.hasBalance ? "owes" : "balance" })}
+                        <td class="cell-strong">${r.name}</td><td class="col-secondary">${r.company}</td><td class="col-secondary">${r.phone}</td>
                         <td class="num">${r.orders}</td><td class="num col-secondary">${r.totalOrdered}</td>
                         <td class="num" data-col="balance">${r.hasBalance ? html`<strong>${r.balance}</strong>` : r.balance}</td>
                         <td class="col-secondary">${r.lastOrder}</td>
                         <td>${badge(CUSTOMER_STATUSES[r.status]?.label ?? r.status, STATUS_TONE[r.status] || "neutral")}</td>
-                        <td class="row-actions"><button type="button" class="btn btn-compact" data-act="view" data-id="${r.id}">View details</button></td>
+                        <td class="row-actions" data-m="more">${openButton(r.id, `View details of ${r.name}`, { act: "view" })}</td>
                       </tr>`
                     )}</tbody></table></div>
-                  <div class="modal-footer">
-                    <button type="button" class="btn" data-act="prev" ${state.cursors.length ? "" : "disabled"}>Previous</button>
-                    <button type="button" class="btn" data-act="next" ${state.hasMore ? "" : "disabled"}>Next</button>
+                  <div class="pager">
+                    <button type="button" class="btn btn-ghost" data-act="prev" ${state.cursors.length ? "" : "disabled"}>‹ Previous</button>
+                    <button type="button" class="btn btn-ghost" data-act="next" ${state.hasMore ? "" : "disabled"}>Next ›</button>
                   </div>`}
         </section>`
     );
@@ -152,7 +152,7 @@ export function mount(container, session, { data = defaultData, api = defaultApi
 
   async function openView(c) {
     const backdrop = document.createElement("div");
-    backdrop.className = "modal-backdrop";
+    backdrop.className = "modal-backdrop is-panel";
     document.body.appendChild(backdrop);
     const close = () => backdrop.remove();
     const view = { orders: null, ordersError: false };
@@ -273,11 +273,15 @@ export function mount(container, session, { data = defaultData, api = defaultApi
   };
   container.addEventListener("click", onClick);
   container.addEventListener("submit", onSubmit);
+  const unbindFilters = bindFilterBar(container);
+  const unbindRows = bindRowOpen(container, { act: "view" });
   const unbindExport = bindExport(container, () => Object.fromEntries([["status", state.status], ["search", state.search.trim()]].filter(([, v]) => v)), { toast, deps: exportDeps });
   load();
   return () => {
     alive = false;
     unbindExport();
+    unbindFilters();
+    unbindRows();
     container.removeEventListener("click", onClick);
     container.removeEventListener("submit", onSubmit);
   };

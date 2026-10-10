@@ -154,7 +154,8 @@ describe("⋯ More holds cancel and delete for open orders", () => {
     mount(container, session("owner"), deps());
     await flush();
     const headers = [...container.querySelectorAll("thead th")].map((th) => th.textContent.trim());
-    expect(headers).toEqual(["Order #", "Time", "Customer", "Items", "Total", "Reference", "Proof", "Payment", "Fulfillment", ""]);
-    expect([...container.querySelectorAll(`[data-order="${fulfilledOrder.id}"] button`)].map((b) => b.textContent.trim())).toEqual(["View details"]);
+    // Phase 18.5: time and items sit under the number and customer (8 columns, not 10); the first is the phone summary.
+    expect(headers).toEqual(["", "Order #", "Customer", "Total", "Reference", "Proof", "Payment", "Fulfillment", "Details"]);
+    expect([...container.querySelectorAll(`[data-order="${fulfilledOrder.id}"] button`)].map((b) => b.getAttribute("aria-label") ?? b.textContent.trim())).toEqual([`View details of ${fulfilledOrder.orderNumber}`]);
   });
 });

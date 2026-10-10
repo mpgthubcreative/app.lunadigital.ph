@@ -52,8 +52,8 @@ describe("Customers page", () => {
   it("one compact row per customer with the standard columns", async () => {
     mountCustomers(container, session("staff"), deps());
     await flush();
-    expect([...container.querySelectorAll("thead th")].map((th) => th.textContent.trim())).toEqual(["Customer", "Company", "Phone", "Orders", "Total ordered", "Balance", "Last order", "Status", ""]);
-    expect(container.querySelector(`[data-customer="${abc.id}"]`).textContent).toMatch(/ABC Store.*ABC Trading.*0917 123 4567.*3.*₱24,500\.00.*₱6,000\.00.*BA-20261008-003.*Active.*View details/s);
+    expect([...container.querySelectorAll("thead th")].map((th) => th.textContent.trim())).toEqual(["", "Customer", "Company", "Phone", "Orders", "Total ordered", "Balance", "Last order", "Status", "Details"]);
+    expect(container.querySelector(`[data-customer="${abc.id}"]`).textContent).toMatch(/ABC Store.*ABC Trading.*0917 123 4567.*3.*₱24,500\.00.*₱6,000\.00.*BA-20261008-003.*Active/s);
   });
 
   it("View details: contact, stats, order history and plain-language activity", async () => {
