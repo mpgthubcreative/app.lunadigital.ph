@@ -1932,3 +1932,12 @@ tr.is-saving {
     flex: 1 1 100%;
   }
 }
+
+/* Toolbar-style filter forms (Baby / Bridal / legacy forms on the new pattern) */
+.filter-toolbar .input:not([type="date"]) {
+  flex: 1 1 200px;
+}
+
+.filter-toolbar .select {
+  max-width: 220px;
+}

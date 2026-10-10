@@ -28,7 +28,7 @@ beforeEach(() => {
 });
 const lastForm = () => [...document.querySelectorAll(".modal-backdrop form")].at(-1);
 const submit = (form) => form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
-const cells = (role) => [...container.querySelectorAll(`[data-role="${role}"] tbody tr`)].map((tr) => [...tr.cells].map((c) => c.textContent.trim().replace(/\s+/g, " ")));
+const cells = (role) => [...container.querySelectorAll(`[data-role="${role}"] tbody tr`)].map((tr) => [...tr.cells].filter((c) => !c.classList.contains("m-only")).map((c) => c.textContent.trim().replace(/\s+/g, " ")));
 
 const CATS = [
   { id: "catPhotoVid01", name: "Photo / Video", budget: 8000000, status: "active", order: 50, revision: 1 },
@@ -207,5 +207,47 @@ describe("Wedding Dashboard (Phase 18.5): are we on track?", () => {
     expect(container.querySelector('[data-section="rsvp"]').textContent).toContain("4 awaiting (1 invitation)");
     expect(container.querySelector('[data-attention="rsvp"]')).not.toBeNull();
     expect(container.textContent).not.toMatch(/Gross|COGS|Profit|Sales|Baby/);
+  });
+});
+
+describe("Phase 18.5 corrections: Delete what was added by mistake", () => {
+  const panel = () => document.querySelector('[data-role="details"]');
+
+  it("Tasks: details → Delete asks first, then sends one delete", async () => {
+    const data = fakeData();
+    mountTasks(container, wedding(), { data, now: NOW, toast: () => {}, confirm: async () => true });
+    await flush();
+    container.querySelector('[data-task="taskChurch001"] [data-act="view"]').click();
+    panel().querySelector('[data-act="delete"]').click();
+    await flush();
+    expect(data.tasksApi).toHaveBeenCalledWith({ action: "delete", taskId: "taskChurch001" });
+  });
+
+  it("Suppliers: Delete is offered only when nothing was paid or scheduled (the server re-checks)", async () => {
+    const fresh = { ...SUP, id: "supFreshOne01", name: "New Florist", paid: 0, upcoming: 0, upcomingCount: 0, nextDue: null };
+    const data = fakeData({ listSuppliers: vi.fn(async () => ({ rows: [SUP, fresh], hasMore: false })) });
+    mountSuppliers(container, wedding(), { data, now: NOW, toast: () => {}, confirm: async () => true });
+    await flush();
+    container.querySelector('[data-supplier="supABCphoto01"] [data-act="view"]').click();
+    expect(panel().querySelector('[data-act="delete"]')).toBeNull(); // has payments: deactivate only
+    panel().querySelector('[data-act="close"]').click();
+    container.querySelector('[data-supplier="supFreshOne01"] [data-act="view"]').click();
+    panel().querySelector('[data-act="delete"]').click();
+    await flush();
+    expect(data.suppliersApi).toHaveBeenCalledWith({ action: "delete", supplierId: "supFreshOne01" });
+  });
+
+  it("Wedding Budget: ⋯ Delete for a never-used category (cancel sends nothing)", async () => {
+    const data = fakeData();
+    let answer = false;
+    mountBudget(container, wedding(), { data, toast: () => {}, confirm: async () => answer });
+    await flush();
+    container.querySelector('[data-act="delete"][data-id="catVenue00001"]').click();
+    await flush();
+    expect(data.budgetApi).not.toHaveBeenCalledWith({ action: "deleteCategory", categoryId: "catVenue00001" });
+    answer = true;
+    container.querySelector('[data-act="delete"][data-id="catVenue00001"]').click();
+    await flush();
+    expect(data.budgetApi).toHaveBeenCalledWith({ action: "deleteCategory", categoryId: "catVenue00001" });
   });
 });

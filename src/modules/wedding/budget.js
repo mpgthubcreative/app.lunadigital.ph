@@ -6,9 +6,9 @@
 // Wedding Expenses and supplier agreements; nobody types them.
 
 import { html, render } from "../../lib/html.js";
-import { pageHeader, emptyState, badge, statCard } from "../../components/ui.js";
+import { pageHeader, emptyState, badge, statCard, skeleton, mobileCell, openButton, bindRowOpen, bindFilterBar, rowMenu, bindRowMenus } from "../../components/ui.js";
 import { formDialog } from "../../components/form-dialog.js";
-import { toast as defaultToast } from "../../components/feedback.js";
+import { toast as defaultToast, confirmDialog } from "../../components/feedback.js";
 import { formatCentavos } from "../../lib/format.js";
 import { exportButton, bindExport, mayExport, exportHint } from "../../lib/export.js";
 import { CATEGORY_STATUSES, SUGGESTED_WEDDING_CATEGORIES, budgetLines, weddingSummary } from "@shared/index.js";
@@ -23,7 +23,7 @@ const categoryFields = (c = {}) => [
   { name: "budget", label: "Category budget (₱, optional)", value: pesosText(c.budget), inputmode: "decimal", hint: "Leave blank for no budget on this category." },
 ];
 
-export function mount(container, session, { data = defaultData, toast = defaultToast, exportDeps = {} } = {}) {
+export function mount(container, session, { data = defaultData, toast = defaultToast, exportDeps = {}, confirm = confirmDialog } = {}) {
   const canManage = session.member.permissions["budget.manage"] === true;
   const businessId = session.business.id;
   const currency = session.business.currency || "PHP";
@@ -58,7 +58,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
       html`
         ${pageHeader({ title: "Wedding Budget", subtitle: "Your wedding budget by category. Luna works out what's spent, what's left and what you still owe suppliers." })}
         ${state.error
-          ? html`<section class="section card">${emptyState({ title: "Couldn't load", body: state.error })}</section>`
+          ? html`<section class="card">${emptyState({ title: "Couldn't load", body: state.error })}</section>`
           : html`
             <section class="section" data-section="current">
               <h2 class="section-title">Wedding plan · as of now</h2>
@@ -71,25 +71,25 @@ export function mount(container, session, { data = defaultData, toast = defaultT
               </div>
               ${canManage ? html`<div class="page-actions"><button type="button" class="btn btn-primary" data-act="total">${s.total === null ? "Set wedding budget" : "Edit wedding budget"}</button></div>` : ""}
             </section>
-            <form class="section card filters filters-inline" data-role="filters">
+            <form class="filter-form toolbar filter-toolbar" data-role="filters" data-auto-apply>
               <select class="select" name="category" aria-label="Category">${opt("", "All categories", state.category)}${state.categories.map((c) => opt(c.id, c.name, state.category))}</select>
               <select class="select" name="status" aria-label="Status">${opt("", "Active and inactive", state.status)}${Object.entries(CATEGORY_STATUSES).map(([k, v]) => opt(k, v.label, state.status))}</select>
-              <button type="submit" class="btn">Apply</button>
+              <button type="submit" class="visually-hidden" tabindex="-1">Apply</button>
               ${canManage ? html`<button type="button" class="btn" data-act="new-category">Add category</button>` : ""}
-              ${mayExport(session, "weddingBudget") ? html`${exportButton("weddingBudget")}<span class="stat-hint">${exportHint}</span>` : ""}
+              ${mayExport(session, "weddingBudget") ? html`<span class="toolbar-end">${exportButton("weddingBudget")}<span class="visually-hidden">${exportHint}</span></span>` : ""}
             </form>
-            <section class="section card">
+            <section class="card">
               ${state.loading
-                ? emptyState({ title: "Loading…" })
+                ? skeleton(5)
                 : !state.categories.length
                   ? html`${emptyState({ iconName: "budget", title: "No categories yet", body: `Categories are your budget's lines, e.g. ${SUGGESTED_WEDDING_CATEGORIES.slice(0, 5).join(", ")}.` })}
                       ${canManage ? html`<div class="page-actions"><button type="button" class="btn btn-primary" data-act="suggested">Add suggested wedding categories</button></div>` : ""}`
                   : !lines.length
                     ? emptyState({ title: "No matching categories" })
-                    : html`<div class="table-wrap"><table class="table table-compact" data-role="categories">
-                        <thead><tr><th>Category</th><th class="num">Budget</th><th class="num">Spent</th><th class="num">Remaining</th><th class="num col-secondary">% used</th><th class="num col-secondary">Upcoming</th><th>Status</th><th></th></tr></thead>
+                    : html`<div class="table-wrap"><table class="table table-compact rows" data-role="categories">
+                        <thead><tr><th class="m-only"></th><th>Category</th><th class="num">Budget</th><th class="num">Spent</th><th class="num">Remaining</th><th class="num col-secondary">% used</th><th class="num col-secondary">Upcoming</th><th>Status</th><th></th></tr></thead>
                         <tbody>${lines.map(
-                          (l) => html`<tr data-category="${l.id}">
+                          (l) => html`<tr data-category="${l.id}">${mobileCell({ title: l.name, sub: l.budget === null || l.budget === undefined ? `${money(l.spent, currency)} spent · no budget` : `${money(l.spent, currency)} of ${money(l.budget, currency)}${l.upcoming ? ` · ${money(l.upcoming, currency)} scheduled` : ""}`, end: l.remaining === null ? "—" : l.remaining < 0 ? `Over ${money(-l.remaining, currency)}` : money(l.remaining, currency), endSub: l.remaining === null ? "" : l.remaining < 0 ? "" : "left" })}
                             <td>${l.name}</td>
                             <td class="num">${money(l.budget, currency)}</td>
                             <td class="num">${money(l.spent, currency)}</td>
@@ -97,15 +97,12 @@ export function mount(container, session, { data = defaultData, toast = defaultT
                             <td class="num col-secondary">${l.percentUsed === null ? "—" : `${l.percentUsed}%`}</td>
                             <td class="num col-secondary">${l.upcoming ? money(l.upcoming, currency) : "—"}</td>
                             <td>${badge(CATEGORY_STATUSES[l.status]?.label ?? l.status, l.status === "active" ? "success" : "neutral")}</td>
-                            <td class="row-actions">${canManage
-                              ? html`<button type="button" class="btn btn-compact" data-act="edit" data-id="${l.id}">Edit</button>
-                                  <button type="button" class="btn btn-compact" data-act="status" data-id="${l.id}">${l.status === "active" ? "Deactivate" : "Reactivate"}</button>`
-                              : ""}</td>
+                            <td class="row-actions" data-m="more">${canManage ? rowMenu(l.id, [{ act: "edit", label: "Edit" }, { act: "status", label: l.status === "active" ? "Deactivate" : "Reactivate" }, ...((state.categories.find((x) => x.id === l.id)?.useCount ?? 0) > 0 ? [] : [{ sep: true }, { act: "delete", label: "Delete (never used)", danger: true }])], { label: `Actions for ${l.name}` }) : ""}</td>
                           </tr>`
                         )}</tbody></table></div>
                         <p class="stat-hint" data-role="allocated">Allocated to active categories: ${money(allocated, currency)}${s.total === null ? "" : ` of ${money(s.total, currency)} (${allocated > s.total ? `${money(allocated - s.total, currency)} over the total` : `${money(s.total - allocated, currency)} not allocated`})`}</p>`}
             </section>
-            ${history.length ? html`<section class="section card"><h2 class="card-title">Recent budget changes</h2><ul class="list activity" data-role="budget-history">${history.map((l) => html`<li>${l}</li>`)}</ul></section>` : ""}`}
+            ${history.length ? html`<section class="card"><h2 class="card-title">Recent budget changes</h2><ul class="list activity" data-role="budget-history">${history.map((l) => html`<li>${l}</li>`)}</ul></section>` : ""}`}
       `
     );
   }
@@ -145,6 +142,11 @@ export function mount(container, session, { data = defaultData, toast = defaultT
         });
       } else if (el.dataset.act === "status" && c) {
         r = await data.budgetApi({ action: "setCategoryStatus", categoryId: c.id, status: c.status === "active" ? "inactive" : "active" });
+      } else if (el.dataset.act === "delete" && c) {
+        // Phase 18.5: the existing never-used category delete, now visible in ⋯ (the server re-checks).
+        if (!(await confirm({ title: `Delete ${c.name}?`, body: "Nothing has used this category, so it can be deleted. Categories with expenses or supplier payments can only be deactivated.", confirmLabel: "Delete", danger: true }))) return;
+        r = await data.budgetApi({ action: "deleteCategory", categoryId: c.id });
+        message = `${c.name} deleted.`;
       } else return;
       if (r && !r.unchanged) toast(message, "success");
       if (r) load();
@@ -162,6 +164,9 @@ export function mount(container, session, { data = defaultData, toast = defaultT
   };
   container.addEventListener("click", onClick);
   container.addEventListener("submit", onSubmit);
+  const unbindFilters = bindFilterBar(container);
+  const unbindRows = bindRowOpen(container, { act: "view" });
+  const unbindMenus = bindRowMenus(container);
   const unbindExport = bindExport(container, () => Object.fromEntries(Object.entries({ category: state.category, status: state.status }).filter(([, v]) => v)), { toast, deps: exportDeps });
   load();
   return () => {
@@ -169,5 +174,8 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     container.removeEventListener("click", onClick);
     container.removeEventListener("submit", onSubmit);
     unbindExport();
+    unbindFilters();
+    unbindRows();
+    unbindMenus();
   };
 }

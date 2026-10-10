@@ -21,7 +21,7 @@ export const activityLines = (history, timezone) => (history || []).map((h) => [
 // and footer buttons [{ act, label, danger? }]. onAction(act) -> true closes.
 export function detailsDialog({ title, badgeHtml = "", rows, activity = [], actions = [], onAction }) {
   const backdrop = document.createElement("div");
-  backdrop.className = "modal-backdrop";
+  backdrop.className = "modal-backdrop is-panel";
   document.body.appendChild(backdrop);
   const close = () => backdrop.remove();
   render(

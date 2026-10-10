@@ -86,7 +86,7 @@ describe("Budget & Categories", () => {
     expect(card("spent")).toMatch(/22,000/);
     expect(card("remaining")).toMatch(/128,000/);
     expect(card("upcoming")).toMatch(/20,000/);
-    const rows = [...container.querySelectorAll('[data-role="categories"] tbody tr')].map((tr) => [...tr.cells].slice(0, 4).map((c) => c.textContent.trim()));
+    const rows = [...container.querySelectorAll('[data-role="categories"] tbody tr')].map((tr) => [...tr.cells].filter((c) => !c.classList.contains("m-only")).slice(0, 4).map((c) => c.textContent.trim()));
     expect(rows[0]).toEqual(["Medical", "₱60,000.00", "₱10,000.00", "₱50,000.00"]);
     expect(rows[1]).toEqual(["Nursery", "₱40,000.00", "₱12,000.00", "₱28,000.00"]);
     expect(container.querySelector('[data-role="budget-history"]').textContent).toMatch(/Camille • Budget changed ₱150,000 → ₱180,000/);
@@ -104,17 +104,15 @@ describe("Budget & Categories", () => {
     expect(data.budgetApi).toHaveBeenCalledWith({ action: "setTotal", total: 18000000, expectedRevision: 3 });
   });
 
-  it("an unused category offers delete; a used one only deactivates", async () => {
+  it("⋯ Deactivate is one click; ⋯ Delete only appears for an unused category and asks first", async () => {
     const data = fakeData();
-    mountBudget(container, baby(), { data, toast: () => {} });
+    mountBudget(container, baby(), { data, toast: () => {}, confirm: async () => true });
     await flush();
     container.querySelector('[data-act="status"][data-id="catMedical0001"]').click();
     await flush();
     expect(data.budgetApi).toHaveBeenCalledWith({ action: "setCategoryStatus", categoryId: "catMedical0001", status: "inactive" });
-    container.querySelector('[data-act="status"][data-id="catClothes0001"]').click();
-    const form = lastForm();
-    setField(form, "choice", "delete");
-    submit(form);
+    expect(container.querySelector('[data-act="delete"][data-id="catMedical0001"]')).toBeNull(); // used: deactivate only
+    container.querySelector('[data-act="delete"][data-id="catClothes0001"]').click();
     await flush();
     expect(data.budgetApi).toHaveBeenCalledWith({ action: "deleteCategory", categoryId: "catClothes0001" });
   });
@@ -140,7 +138,7 @@ describe("Baby Expenses", () => {
   it("compact rows with the family's category names; no Distributor categories offered", async () => {
     mountExpenses(container, baby(), { data: fakeData(), now: NOW, toast: () => {} });
     await flush();
-    const cells = [...container.querySelectorAll('[data-role="expenses"] tbody tr td')].map((td) => td.textContent.trim());
+    const cells = [...container.querySelectorAll('[data-role="expenses"] tbody tr td:not(.m-only)')].map((td) => td.textContent.trim());
     expect(cells.slice(0, 3)).toEqual(["Oct 10, 2026", "Nursery", "Baby Company"]);
     const cats = [...container.querySelectorAll('select[name="category"] option')].map((o) => o.textContent);
     expect(cats).toEqual(["Any category", "Medical", "Nursery", "Clothing"]);
@@ -186,7 +184,7 @@ describe("Payment Schedule", () => {
     const toast = vi.fn();
     mountSchedule(container, baby(), { data, now: NOW, toast });
     await flush();
-    const cells = [...container.querySelectorAll('[data-role="schedule"] tbody tr td')].map((td) => td.textContent.trim());
+    const cells = [...container.querySelectorAll('[data-role="schedule"] tbody tr td:not(.m-only)')].map((td) => td.textContent.trim());
     expect(cells.slice(0, 2)).toEqual(["Dec 15, 2026", "Hospital deposit"]);
     container.querySelector('[data-act="pay"]').click();
     const form = lastForm();
@@ -222,7 +220,7 @@ describe("Providers", () => {
     const data = fakeData();
     mountProviders(container, baby(), { data, toast: () => {} });
     await flush();
-    expect([...container.querySelectorAll('[data-role="providers"] tbody td')].map((td) => td.textContent.trim()).slice(0, 2)).toEqual(["ABC Women's Clinic", "Medical / Clinic"]);
+    expect([...container.querySelectorAll('[data-role="providers"] tbody td:not(.m-only)')].map((td) => td.textContent.trim()).slice(0, 2)).toEqual(["ABC Women's Clinic", "Medical / Clinic"]);
     container.querySelector('[data-act="status"]').click();
     await flush();
     expect(data.providersApi).toHaveBeenCalledWith({ action: "setStatus", providerId: "provABCclinic01", status: "inactive" });
@@ -255,5 +253,16 @@ describe("Baby Dashboard (Phase 18.5): where are we with the budget, and what is
     expect(container.querySelector('[data-section="upcoming"]').textContent).toMatch(/Hospital deposit.*₱20,000.00/s);
     expect(container.querySelector('[data-section="recent"]').textContent).toMatch(/Baby Company/);
     expect(container.textContent).not.toMatch(/Gross|COGS|Profit|Sales/);
+  });
+});
+
+describe("Phase 18.5 corrections: Providers ⋯ Delete", () => {
+  it("asks first, then sends one delete; staff without providers.manage get no menu", async () => {
+    const data = fakeData();
+    mountProviders(container, baby(), { data, toast: () => {}, confirm: async () => true });
+    await flush();
+    container.querySelector('.menu-item[data-act="delete"]').click();
+    await flush();
+    expect(data.providersApi).toHaveBeenCalledWith({ action: "delete", providerId: "provABCclinic01" });
   });
 });

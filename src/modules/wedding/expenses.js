@@ -7,7 +7,7 @@
 // refused (money still to be paid belongs in Supplier Payments).
 
 import { html, render } from "../../lib/html.js";
-import { pageHeader, emptyState, badge } from "../../components/ui.js";
+import { pageHeader, emptyState, badge, statCard, skeleton, mobileCell, openButton, bindRowOpen, bindFilterBar, rowMenu, bindRowMenus } from "../../components/ui.js";
 import { formDialog } from "../../components/form-dialog.js";
 import { toast as defaultToast } from "../../components/feedback.js";
 import { formatCentavos, formatDayId } from "../../lib/format.js";
@@ -88,7 +88,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
       container,
       html`
         ${pageHeader({ title: "Wedding Expenses", subtitle: "What you've paid for the wedding. Payments to a saved supplier count toward its balance.", actions: can.create ? html`<button type="button" class="btn btn-primary" data-act="new">Add expense</button>` : "" })}
-        <form class="section card filters filters-inline" data-role="filters">
+        <form class="filter-form toolbar filter-toolbar" data-role="filters" data-auto-apply>
           <input class="input" type="date" name="from" value="${f.from || ""}" aria-label="From" />
           <input class="input" type="date" name="to" value="${f.to || ""}" aria-label="To" />
           <select class="select" name="category" aria-label="Category">${opt("", "Any category", f.category || "")}${state.categories.map((c) => opt(c.id, c.name, f.category))}</select>
@@ -96,30 +96,27 @@ export function mount(container, session, { data = defaultData, toast = defaultT
           <select class="select" name="method" aria-label="Method">${opt("", "Any method", f.method || "")}${METHOD_OPTIONS.map((m) => opt(m.value, m.label, f.method))}</select>
           <input class="input" name="search" placeholder="Payee or reference" value="${f.search || ""}" autocomplete="off" aria-label="Search payee or reference" />
           <select class="select" name="status" aria-label="Show">${opt("active", "Active", f.status)}${opt("removed", "Removed", f.status)}</select>
-          <button type="submit" class="btn">Apply</button>
-          ${mayExport(session, "weddingExpenses") && (f.status || "active") === "active" ? html`${exportButton("weddingExpenses")}<span class="stat-hint">${exportHint}</span>` : ""}
+          <button type="submit" class="visually-hidden" tabindex="-1">Apply</button>
+          ${mayExport(session, "weddingExpenses") && (f.status || "active") === "active" ? html`<span class="toolbar-end">${exportButton("weddingExpenses")}<span class="visually-hidden">${exportHint}</span></span>` : ""}
         </form>
-        <section class="section card">
+        <section class="card">
           ${state.error
             ? emptyState({ title: "Couldn't load", body: state.error })
             : state.loading
-              ? emptyState({ title: "Loading…" })
+              ? skeleton(5)
               : !state.rows.length
                 ? emptyState({ iconName: "budget", title: "No expenses", body: state.categories.length ? "Expenses you add count against your wedding budget right away." : "Add your wedding budget categories first." })
-                : html`<div class="table-wrap"><table class="table table-compact" data-role="expenses">
-                    <thead><tr><th>Date</th><th>Category</th><th>Supplier / Payee</th><th class="col-secondary">Method</th><th class="col-secondary">Reference</th><th class="num">Amount</th><th></th></tr></thead>
+                : html`<div class="table-wrap"><table class="table table-compact rows" data-role="expenses">
+                    <thead><tr><th class="m-only"></th><th>Date</th><th>Category</th><th>Supplier / Payee</th><th class="col-secondary">Method</th><th class="col-secondary">Reference</th><th class="num">Amount</th><th></th></tr></thead>
                     <tbody>${state.rows.map(
-                      (e) => html`<tr data-expense="${e.id}">
+                      (e) => html`<tr data-expense="${e.id}" data-open>${mobileCell({ title: e.payee || categoryName(n, e), sub: `${categoryName(n, e)} · ${formatDayId(e.date)}`, end: formatCentavos(e.amount, currency) })}
                         <td>${formatDayId(e.date)}</td><td>${categoryName(n, e)}</td><td>${e.payee || "—"}</td>
                         <td class="col-secondary">${methodLabel(e.method)}</td><td class="col-secondary">${e.reference || "—"}</td>
                         <td class="num">${formatCentavos(e.amount, currency)}</td>
-                        <td class="row-actions"><button type="button" class="btn btn-compact" data-act="view" data-id="${e.id}">View details</button></td>
+                        <td class="row-actions" data-m="more">${openButton(e.id, "View details", { act: "view" })}</td>
                       </tr>`
                     )}</tbody></table></div>
-                  <div class="modal-footer">
-                    <button type="button" class="btn" data-act="prev" ${state.cursors.length ? "" : "disabled"}>Previous</button>
-                    <button type="button" class="btn" data-act="next" ${state.hasMore ? "" : "disabled"}>Next</button>
-                  </div>`}
+                  <div class="pager"><button type="button" class="btn btn-ghost" data-act="prev" ${state.cursors.length ? "" : "disabled"}>‹ Previous</button><button type="button" class="btn btn-ghost" data-act="next" ${state.hasMore ? "" : "disabled"}>Next ›</button></div>`}
         </section>`
     );
   }
@@ -233,11 +230,17 @@ export function mount(container, session, { data = defaultData, toast = defaultT
   };
   container.addEventListener("click", onClick);
   container.addEventListener("submit", onSubmit);
+  const unbindFilters = bindFilterBar(container);
+  const unbindRows = bindRowOpen(container, { act: "view" });
+  const unbindMenus = bindRowMenus(container);
   const unbindExport = bindExport(container, () => ({ ...state.filters, status: "active" }), { toast, deps: exportDeps });
   load();
   return () => {
     alive = false;
     unbindExport();
+    unbindFilters();
+    unbindRows();
+    unbindMenus();
     container.removeEventListener("click", onClick);
     container.removeEventListener("submit", onSubmit);
   };

@@ -6,7 +6,7 @@
 // Attending / Declined count invitations. Luna keeps the totals.
 
 import { html, render } from "../../lib/html.js";
-import { pageHeader, emptyState, badge, statCard } from "../../components/ui.js";
+import { pageHeader, emptyState, badge, statCard, skeleton, mobileCell, openButton, bindRowOpen, bindFilterBar, rowMenu, bindRowMenus } from "../../components/ui.js";
 import { formDialog } from "../../components/form-dialog.js";
 import { confirmDialog, toast as defaultToast } from "../../components/feedback.js";
 import { formatDayId, formatNumber } from "../../lib/format.js";
@@ -86,40 +86,37 @@ export function mount(container, session, { data = defaultData, toast = defaultT
             ${statCard({ id: "awaiting", label: "Awaiting RSVP (invitations)", value: formatNumber(t.awaiting), hint: `${t.awaitingSeats} people not yet answered` })}
           </div>
         </section>
-        <form class="section card filters filters-inline" data-role="filters">
+        <form class="filter-form toolbar filter-toolbar" data-role="filters" data-auto-apply>
           <input class="input" name="search" placeholder="Name starts with…" value="${f.search || ""}" autocomplete="off" aria-label="Search name" />
           <select class="select" name="rsvp" aria-label="RSVP">${opt("", "Any RSVP", f.rsvp || "")}${RSVP_OPTIONS.map((r) => opt(r.value, r.label, f.rsvp))}</select>
           <select class="select" name="side" aria-label="Side">${opt("", "Any side", f.side || "")}${SIDE_OPTIONS.map((s) => opt(s.value, s.label, f.side))}</select>
           <select class="select" name="invited" aria-label="Invitation">${opt("", "Invitation: any", f.invited || "")}${opt("sent", "Sent", f.invited)}${opt("not_sent", "Not sent", f.invited)}</select>
-          <button type="submit" class="btn">Apply</button>
-          ${mayExport(session, "guests") ? html`${exportButton("guests")}<span class="stat-hint">${exportHint}</span>` : ""}
+          <button type="submit" class="visually-hidden" tabindex="-1">Apply</button>
+          ${mayExport(session, "guests") ? html`<span class="toolbar-end">${exportButton("guests")}<span class="visually-hidden">${exportHint}</span></span>` : ""}
         </form>
-        <section class="section card">
+        <section class="card">
           ${state.error
             ? emptyState({ title: "Couldn't load", body: state.error })
             : state.loading
-              ? emptyState({ title: "Loading…" })
+              ? skeleton(5)
               : !state.rows.length
                 ? emptyState({ iconName: "users", title: "No guests here", body: "Add each guest or household with its party size, then record RSVPs as they come in." })
-                : html`<div class="table-wrap"><table class="table table-compact" data-role="guests">
-                    <thead><tr><th>Guest</th><th class="col-secondary">Group</th><th class="col-secondary">Side</th><th class="num">Party size</th><th>RSVP</th><th class="num">Confirmed</th><th class="col-secondary">Invitation</th><th></th></tr></thead>
+                : html`<div class="table-wrap"><table class="table table-compact rows" data-role="guests">
+                    <thead><tr><th class="m-only"></th><th>Guest</th><th class="col-secondary">Group</th><th class="col-secondary">Side</th><th class="num">Party size</th><th>RSVP</th><th class="num">Confirmed</th><th class="col-secondary">Invitation</th><th></th></tr></thead>
                     <tbody>${state.rows.map(
-                      (g) => html`<tr data-guest="${g.id}">
+                      (g) => html`<tr data-guest="${g.id}" data-open>${mobileCell({ title: g.name, sub: `${GUEST_SIDES[g.side]?.label ?? g.side} · ${g.partySize} seat${g.partySize === 1 ? "" : "s"}${g.rsvp === "attending" ? ` · ${g.confirmed} confirmed` : ""}`, end: badge(RSVP_STATUSES[g.rsvp]?.label ?? g.rsvp, TONE[g.rsvp] || "neutral") })}
                         <td>${g.name}</td><td class="col-secondary">${g.group || "—"}</td><td class="col-secondary">${GUEST_SIDES[g.side]?.label ?? g.side}</td>
                         <td class="num">${g.partySize}</td>
                         <td>${badge(RSVP_STATUSES[g.rsvp]?.label ?? g.rsvp, TONE[g.rsvp] || "neutral")}</td>
                         <td class="num">${g.rsvp === "attending" ? g.confirmed : "—"}</td>
                         <td class="col-secondary">${g.invitationSent ? `Sent ${formatDayId(g.invitationSent)}` : "Not sent"}</td>
-                        <td class="row-actions">
+                        <td class="row-actions" data-m="more">
                           ${canManage ? html`<button type="button" class="btn btn-compact" data-act="rsvp" data-id="${g.id}">RSVP</button>` : ""}
-                          <button type="button" class="btn btn-compact" data-act="view" data-id="${g.id}">View details</button>
+                          ${openButton(g.id, "View details", { act: "view" })}
                         </td>
                       </tr>`
                     )}</tbody></table></div>
-                  <div class="modal-footer">
-                    <button type="button" class="btn" data-act="prev" ${state.cursors.length ? "" : "disabled"}>Previous</button>
-                    <button type="button" class="btn" data-act="next" ${state.hasMore ? "" : "disabled"}>Next</button>
-                  </div>`}
+                  <div class="pager"><button type="button" class="btn btn-ghost" data-act="prev" ${state.cursors.length ? "" : "disabled"}>‹ Previous</button><button type="button" class="btn btn-ghost" data-act="next" ${state.hasMore ? "" : "disabled"}>Next ›</button></div>`}
         </section>`
     );
   }
@@ -222,11 +219,17 @@ export function mount(container, session, { data = defaultData, toast = defaultT
   };
   container.addEventListener("click", onClick);
   container.addEventListener("submit", onSubmit);
+  const unbindFilters = bindFilterBar(container);
+  const unbindRows = bindRowOpen(container, { act: "view" });
+  const unbindMenus = bindRowMenus(container);
   const unbindExport = bindExport(container, () => ({ ...state.filters }), { toast, deps: exportDeps });
   load();
   return () => {
     alive = false;
     unbindExport();
+    unbindFilters();
+    unbindRows();
+    unbindMenus();
     container.removeEventListener("click", onClick);
     container.removeEventListener("submit", onSubmit);
   };

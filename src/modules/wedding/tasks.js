@@ -6,9 +6,9 @@
 // never stored. Not a project-management board: a focused list.
 
 import { html, render } from "../../lib/html.js";
-import { pageHeader, emptyState, badge } from "../../components/ui.js";
+import { pageHeader, emptyState, badge, statCard, skeleton, mobileCell, openButton, bindRowOpen, bindFilterBar, rowMenu, bindRowMenus } from "../../components/ui.js";
 import { formDialog } from "../../components/form-dialog.js";
-import { toast as defaultToast } from "../../components/feedback.js";
+import { toast as defaultToast, confirmDialog } from "../../components/feedback.js";
 import { formatDayId } from "../../lib/format.js";
 import { exportButton, bindExport, mayExport, exportHint } from "../../lib/export.js";
 import { TASK_STATUSES, TASK_PRIORITIES, SUGGESTED_TASK_CATEGORIES, taskTiming, keyOf, businessDate } from "@shared/index.js";
@@ -32,7 +32,7 @@ export function toTaskInput(v) {
   return { title: v.title.trim(), category: v.category.trim() || null, assignee: v.assignee.trim() || null, dueDate: v.dueDate || null, priority: v.priority, notes: (v.notes || "").trim() || null };
 }
 
-export function mount(container, session, { data = defaultData, toast = defaultToast, now = () => new Date(), exportDeps = {} } = {}) {
+export function mount(container, session, { data = defaultData, toast = defaultToast, now = () => new Date(), exportDeps = {}, confirm = confirmDialog } = {}) {
   const canManage = session.member.permissions["tasks.manage"] === true;
   const businessId = session.business.id;
   const timezone = session.business.timezone;
@@ -74,7 +74,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
       container,
       html`
         ${pageHeader({ title: "Wedding Tasks", subtitle: "Everything still to do before the big day, who's on it and when it's due.", actions: canManage ? html`<button type="button" class="btn btn-primary" data-act="new">Add task</button>` : "" })}
-        <form class="section card filters filters-inline" data-role="filters">
+        <form class="filter-form toolbar filter-toolbar" data-role="filters" data-auto-apply>
           <select class="select" name="state" aria-label="Show">${STATE_OPTIONS.map(([k, l]) => opt(k, l, f.status ? "all" : f.state))}</select>
           <select class="select" name="status" aria-label="Status">${opt("", "Any status", f.status || "")}${Object.entries(TASK_STATUSES).map(([k, s]) => opt(k, s.label, f.status))}</select>
           <input class="input" name="category" placeholder="Category" value="${f.category || ""}" autocomplete="off" aria-label="Category" />
@@ -82,30 +82,27 @@ export function mount(container, session, { data = defaultData, toast = defaultT
           <select class="select" name="priority" aria-label="Priority">${opt("", "Any priority", f.priority || "")}${PRIORITY_OPTIONS.map((p) => opt(p.value, p.label, f.priority))}</select>
           <input class="input" type="date" name="from" value="${f.from || ""}" aria-label="Due from" />
           <input class="input" type="date" name="to" value="${f.to || ""}" aria-label="Due to" />
-          <button type="submit" class="btn">Apply</button>
-          ${mayExport(session, "weddingTasks") ? html`${exportButton("weddingTasks")}<span class="stat-hint">${exportHint}</span>` : ""}
+          <button type="submit" class="visually-hidden" tabindex="-1">Apply</button>
+          ${mayExport(session, "weddingTasks") ? html`<span class="toolbar-end">${exportButton("weddingTasks")}<span class="visually-hidden">${exportHint}</span></span>` : ""}
         </form>
-        <section class="section card">
+        <section class="card">
           ${state.error
             ? emptyState({ title: "Couldn't load", body: state.error })
             : state.loading
-              ? emptyState({ title: "Loading…" })
+              ? skeleton(5)
               : !state.rows.length
                 ? emptyState({ iconName: "tasks", title: f.state === "overdue" ? "Nothing overdue" : "No tasks here", body: "Add the wedding to-dos: requirements, fittings, tastings, deadlines." })
-                : html`<div class="table-wrap"><table class="table table-compact" data-role="tasks">
-                    <thead><tr><th>Task</th><th class="col-secondary">Category</th><th>Assigned to</th><th>Due date</th><th class="col-secondary">Priority</th><th>Status</th><th></th></tr></thead>
+                : html`<div class="table-wrap"><table class="table table-compact rows" data-role="tasks">
+                    <thead><tr><th class="m-only"></th><th>Task</th><th class="col-secondary">Category</th><th>Assigned to</th><th>Due date</th><th class="col-secondary">Priority</th><th>Status</th><th></th></tr></thead>
                     <tbody>${state.rows.map(
-                      (t) => html`<tr data-task="${t.id}">
+                      (t) => html`<tr data-task="${t.id}" data-open>${mobileCell({ title: t.title, sub: [t.assignee || "Unassigned", t.category].filter(Boolean).join(" · "), end: dueCell(t) })}
                         <td>${t.title}</td><td class="col-secondary">${t.category || "—"}</td><td>${t.assignee || "—"}</td>
                         <td>${dueCell(t)}</td><td class="col-secondary">${TASK_PRIORITIES[t.priority]?.label ?? t.priority}</td>
-                        <td>${statusCell(t)}</td>
-                        <td class="row-actions"><button type="button" class="btn btn-compact" data-act="view" data-id="${t.id}">View details</button></td>
+                        <td data-m="ctl">${statusCell(t)}</td>
+                        <td class="row-actions" data-m="more">${openButton(t.id, "View details", { act: "view" })}</td>
                       </tr>`
                     )}</tbody></table></div>
-                  <div class="modal-footer">
-                    <button type="button" class="btn" data-act="prev" ${state.cursors.length ? "" : "disabled"}>Previous</button>
-                    <button type="button" class="btn" data-act="next" ${state.hasMore ? "" : "disabled"}>Next</button>
-                  </div>`}
+                  <div class="pager"><button type="button" class="btn btn-ghost" data-act="prev" ${state.cursors.length ? "" : "disabled"}>‹ Previous</button><button type="button" class="btn btn-ghost" data-act="next" ${state.hasMore ? "" : "disabled"}>Next ›</button></div>`}
         </section>`
     );
   }
@@ -116,8 +113,20 @@ export function mount(container, session, { data = defaultData, toast = defaultT
       badgeHtml: badge(TASK_STATUSES[t.status]?.label ?? t.status, t.status === "completed" ? "success" : "neutral"),
       rows: [["Category", t.category], ["Assigned to", t.assignee], ["Due date", t.dueDate ? formatDayId(t.dueDate) : null], ["Priority", TASK_PRIORITIES[t.priority]?.label], ["Completed", t.completedDate ? `${formatDayId(t.completedDate)}${t.completedBy?.name ? ` · ${t.completedBy.name}` : ""}` : null], ["Notes", t.notes]],
       activity: activityLines(t.history, timezone),
-      actions: canManage ? [{ act: "edit", label: "Edit" }] : [],
+      actions: canManage ? [{ act: "delete", label: "Delete", danger: true }, { act: "edit", label: "Edit" }] : [],
       onAction: async (act) => {
+        if (act === "delete") {
+          if (!(await confirm({ title: `Delete "${t.title}"?`, body: "The task is removed from the list and the task counts. A record of it is kept in the activity log.", confirmLabel: "Delete task", danger: true }))) return false;
+          try {
+            await data.tasksApi({ action: "delete", taskId: t.id });
+            toast("Task deleted.", "success");
+            load();
+            return true;
+          } catch (err) {
+            toast(err.message || "Something went wrong", "danger");
+            return false;
+          }
+        }
         if (act !== "edit") return false;
         try {
           const r = await formDialog({
@@ -204,12 +213,18 @@ export function mount(container, session, { data = defaultData, toast = defaultT
   container.addEventListener("click", onClick);
   container.addEventListener("change", onChange);
   container.addEventListener("submit", onSubmit);
+  const unbindFilters = bindFilterBar(container);
+  const unbindRows = bindRowOpen(container, { act: "view" });
+  const unbindMenus = bindRowMenus(container);
   // The export takes the query filters only (keys, not the typed text).
   const unbindExport = bindExport(container, () => Object.fromEntries(Object.entries(state.filters).filter(([k]) => !["category", "assignee"].includes(k))), { toast, deps: exportDeps });
   load();
   return () => {
     alive = false;
     unbindExport();
+    unbindFilters();
+    unbindRows();
+    unbindMenus();
     container.removeEventListener("click", onClick);
     container.removeEventListener("change", onChange);
     container.removeEventListener("submit", onSubmit);

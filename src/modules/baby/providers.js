@@ -5,9 +5,9 @@
 // payments keep the provider's name as it was when recorded.
 
 import { html, render } from "../../lib/html.js";
-import { pageHeader, emptyState, badge } from "../../components/ui.js";
+import { pageHeader, emptyState, badge, statCard, skeleton, mobileCell, openButton, bindRowOpen, bindFilterBar, rowMenu, bindRowMenus } from "../../components/ui.js";
 import { formDialog } from "../../components/form-dialog.js";
-import { toast as defaultToast } from "../../components/feedback.js";
+import { toast as defaultToast, confirmDialog } from "../../components/feedback.js";
 import { exportButton, bindExport, mayExport, exportHint } from "../../lib/export.js";
 import { PROVIDER_TYPES, PROVIDER_STATUSES } from "@shared/index.js";
 import * as defaultData from "./data.js";
@@ -31,7 +31,7 @@ export function toProviderInput(v) {
   return out;
 }
 
-export function mount(container, session, { data = defaultData, toast = defaultToast, exportDeps = {} } = {}) {
+export function mount(container, session, { data = defaultData, toast = defaultToast, exportDeps = {}, confirm = confirmDialog } = {}) {
   const canManage = session.member.permissions["providers.manage"] === true;
   const businessId = session.business.id;
   const timezone = session.business.timezone;
@@ -63,40 +63,31 @@ export function mount(container, session, { data = defaultData, toast = defaultT
       container,
       html`
         ${pageHeader({ title: "Providers / Vendors", subtitle: "Clinics, shops and services you pay for your baby.", actions: canManage ? html`<button type="button" class="btn btn-primary" data-act="new">Add provider</button>` : "" })}
-        <form class="section card filters filters-inline" data-role="filters">
+        <form class="filter-form toolbar filter-toolbar" data-role="filters" data-auto-apply>
           <input class="input" name="search" placeholder="Name starts with…" value="${f.search || ""}" autocomplete="off" aria-label="Search name" />
           <select class="select" name="type" aria-label="Type">${opt("", "Any type", f.type || "")}${TYPE_OPTIONS.map((t) => opt(t.value, t.label, f.type))}</select>
           <select class="select" name="status" aria-label="Status">${Object.entries(PROVIDER_STATUSES).map(([k, s]) => opt(k, s.label, f.status))}</select>
-          <button type="submit" class="btn">Apply</button>
-          ${mayExport(session, "providers") ? html`${exportButton("providers")}<span class="stat-hint">${exportHint}</span>` : ""}
+          <button type="submit" class="visually-hidden" tabindex="-1">Apply</button>
+          ${mayExport(session, "providers") ? html`<span class="toolbar-end">${exportButton("providers")}<span class="visually-hidden">${exportHint}</span></span>` : ""}
         </form>
-        <section class="section card">
+        <section class="card">
           ${state.error
             ? emptyState({ title: "Couldn't load", body: state.error })
             : state.loading
-              ? emptyState({ title: "Loading…" })
+              ? skeleton(5)
               : !state.rows.length
                 ? emptyState({ iconName: "provider", title: f.status === "active" ? "No providers yet" : "No inactive providers", body: "Save the clinics and shops you pay, then pick them when recording an expense." })
-                : html`<div class="table-wrap"><table class="table table-compact" data-role="providers">
-                    <thead><tr><th>Name</th><th>Type</th><th class="col-secondary">Phone</th><th class="col-secondary">Address / location</th><th>Status</th><th></th></tr></thead>
+                : html`<div class="table-wrap"><table class="table table-compact rows" data-role="providers">
+                    <thead><tr><th class="m-only"></th><th>Name</th><th>Type</th><th class="col-secondary">Phone</th><th class="col-secondary">Address / location</th><th>Status</th><th></th></tr></thead>
                     <tbody>${state.rows.map(
-                      (p) => html`<tr data-provider="${p.id}">
+                      (p) => html`<tr data-provider="${p.id}" data-open>${mobileCell({ title: p.name, sub: [typeLabel(p.type), p.phone].filter(Boolean).join(" · ") })}
                         <td>${p.name}</td><td>${typeLabel(p.type)}</td>
                         <td class="col-secondary">${p.phone || "—"}</td><td class="col-secondary">${p.location || "—"}</td>
                         <td>${badge(PROVIDER_STATUSES[p.status]?.label ?? p.status, p.status === "active" ? "success" : "neutral")}</td>
-                        <td class="row-actions">
-                          ${canManage
-                            ? html`<button type="button" class="btn btn-compact" data-act="edit" data-id="${p.id}">Edit</button>
-                                <button type="button" class="btn btn-compact" data-act="status" data-id="${p.id}">${p.status === "active" ? "Deactivate" : "Reactivate"}</button>`
-                            : ""}
-                          <button type="button" class="btn btn-compact" data-act="view" data-id="${p.id}">View details</button>
-                        </td>
+                        <td class="row-actions" data-m="more">${canManage ? rowMenu(p.id, [{ act: "edit", label: "Edit" }, { act: "status", label: p.status === "active" ? "Deactivate" : "Reactivate" }, { sep: true }, { act: "delete", label: "Delete (added by mistake)", danger: true }], { label: `Actions for ${p.name}` }) : ""}${openButton(p.id, "View details", { act: "view" })}</td>
                       </tr>`
                     )}</tbody></table></div>
-                  <div class="modal-footer">
-                    <button type="button" class="btn" data-act="prev" ${state.cursors.length ? "" : "disabled"}>Previous</button>
-                    <button type="button" class="btn" data-act="next" ${state.hasMore ? "" : "disabled"}>Next</button>
-                  </div>`}
+                  <div class="pager"><button type="button" class="btn btn-ghost" data-act="prev" ${state.cursors.length ? "" : "disabled"}>‹ Previous</button><button type="button" class="btn btn-ghost" data-act="next" ${state.hasMore ? "" : "disabled"}>Next ›</button></div>`}
         </section>`
     );
   }
@@ -125,6 +116,12 @@ export function mount(container, session, { data = defaultData, toast = defaultT
               return Object.keys(changes).length ? data.providersApi({ action: "update", providerId: p.id, expectedRevision: p.revision, changes }) : { unchanged: true };
             },
           });
+          break;
+        case "delete":
+          if (!p) return;
+          if (!(await confirm({ title: `Delete ${p.name}?`, body: "Only for a provider added by mistake. Providers used by expenses or scheduled payments can't be deleted; deactivate them instead.", confirmLabel: "Delete", danger: true }))) return;
+          r = await data.providersApi({ action: "delete", providerId: p.id });
+          message = `${p.name} deleted.`;
           break;
         case "status":
           if (!p) return;
@@ -168,11 +165,17 @@ export function mount(container, session, { data = defaultData, toast = defaultT
   };
   container.addEventListener("click", onClick);
   container.addEventListener("submit", onSubmit);
+  const unbindFilters = bindFilterBar(container);
+  const unbindRows = bindRowOpen(container, { act: "view" });
+  const unbindMenus = bindRowMenus(container);
   const unbindExport = bindExport(container, () => ({ ...state.filters }), { toast, deps: exportDeps });
   load();
   return () => {
     alive = false;
     unbindExport();
+    unbindFilters();
+    unbindRows();
+    unbindMenus();
     container.removeEventListener("click", onClick);
     container.removeEventListener("submit", onSubmit);
   };

@@ -6,7 +6,7 @@
 // click return the same one); only then does Spent go up.
 
 import { html, render } from "../../lib/html.js";
-import { pageHeader, emptyState, badge } from "../../components/ui.js";
+import { pageHeader, emptyState, badge, statCard, skeleton, mobileCell, openButton, bindRowOpen, bindFilterBar, rowMenu, bindRowMenus } from "../../components/ui.js";
 import { formDialog } from "../../components/form-dialog.js";
 import { toast as defaultToast } from "../../components/feedback.js";
 import { formatCentavos, formatDayId } from "../../lib/format.js";
@@ -85,40 +85,37 @@ export function mount(container, session, { data = defaultData, toast = defaultT
       container,
       html`
         ${pageHeader({ title: "Payment Schedule", subtitle: "Deposits and bills still to be paid. They count as spent only once you mark them paid.", actions: canManage ? html`<button type="button" class="btn btn-primary" data-act="new">Schedule payment</button>` : "" })}
-        <form class="section card filters filters-inline" data-role="filters">
+        <form class="filter-form toolbar filter-toolbar" data-role="filters" data-auto-apply>
           <select class="select" name="status" aria-label="Status">${Object.entries(SCHEDULE_STATUSES).map(([k, s]) => opt(k, s.label, f.status))}</select>
           <input class="input" type="date" name="from" value="${f.from || ""}" aria-label="Due from" />
           <input class="input" type="date" name="to" value="${f.to || ""}" aria-label="Due to" />
           <select class="select" name="category" aria-label="Category">${opt("", "Any category", f.category || "")}${state.categories.map((c) => opt(c.id, c.name, f.category))}</select>
           <select class="select" name="providerId" aria-label="Provider">${opt("", "Any provider", f.providerId || "")}${state.providers.map((p) => opt(p.id, p.name, f.providerId))}</select>
-          <button type="submit" class="btn">Apply</button>
-          ${mayExport(session, "paymentSchedule") ? html`${exportButton("paymentSchedule")}<span class="stat-hint">${exportHint}</span>` : ""}
+          <button type="submit" class="visually-hidden" tabindex="-1">Apply</button>
+          ${mayExport(session, "paymentSchedule") ? html`<span class="toolbar-end">${exportButton("paymentSchedule")}<span class="visually-hidden">${exportHint}</span></span>` : ""}
         </form>
-        <section class="section card">
+        <section class="card">
           ${state.error
             ? emptyState({ title: "Couldn't load", body: state.error })
             : state.loading
-              ? emptyState({ title: "Loading…" })
+              ? skeleton(5)
               : !state.rows.length
                 ? emptyState({ iconName: "calendar", title: f.status === "upcoming" ? "No upcoming payments" : "Nothing here", body: "Schedule deposits and due bills so you can see what's still to be paid." })
-                : html`<div class="table-wrap"><table class="table table-compact" data-role="schedule">
-                    <thead><tr><th>Due date</th><th>Description</th><th class="col-secondary">Category</th><th class="col-secondary">Provider / Payee</th><th class="num">Amount</th><th>Status</th><th></th></tr></thead>
+                : html`<div class="table-wrap"><table class="table table-compact rows" data-role="schedule">
+                    <thead><tr><th class="m-only"></th><th>Due date</th><th>Description</th><th class="col-secondary">Category</th><th class="col-secondary">Provider / Payee</th><th class="num">Amount</th><th>Status</th><th></th></tr></thead>
                     <tbody>${state.rows.map(
-                      (s) => html`<tr data-payment="${s.id}">
+                      (s) => html`<tr data-payment="${s.id}" data-open>${mobileCell({ title: s.description, sub: `${s.status === "upcoming" ? "due" : "was due"} ${formatDayId(s.dueDate)}${s.payee ? ` · ${s.payee}` : ""}`, end: formatCentavos(s.status === "paid" ? s.paidAmount ?? s.amount : s.amount, currency) })}
                         <td>${formatDayId(s.dueDate)}</td><td>${s.description}</td>
                         <td class="col-secondary">${categoryName(n, s)}</td><td class="col-secondary">${s.payee || "—"}</td>
                         <td class="num">${formatCentavos(s.status === "paid" ? s.paidAmount ?? s.amount : s.amount, currency)}</td>
-                        <td>${statusBadge(s)}</td>
-                        <td class="row-actions">
+                        <td data-m="ctl">${statusBadge(s)}</td>
+                        <td class="row-actions" data-m="more">
                           ${canPay && s.status === "upcoming" ? html`<button type="button" class="btn btn-compact" data-act="pay" data-id="${s.id}">Mark paid</button>` : ""}
-                          <button type="button" class="btn btn-compact" data-act="view" data-id="${s.id}">View details</button>
+                          ${openButton(s.id, "View details", { act: "view" })}
                         </td>
                       </tr>`
                     )}</tbody></table></div>
-                  <div class="modal-footer">
-                    <button type="button" class="btn" data-act="prev" ${state.cursors.length ? "" : "disabled"}>Previous</button>
-                    <button type="button" class="btn" data-act="next" ${state.hasMore ? "" : "disabled"}>Next</button>
-                  </div>`}
+                  <div class="pager"><button type="button" class="btn btn-ghost" data-act="prev" ${state.cursors.length ? "" : "disabled"}>‹ Previous</button><button type="button" class="btn btn-ghost" data-act="next" ${state.hasMore ? "" : "disabled"}>Next ›</button></div>`}
         </section>`
     );
   }
@@ -262,11 +259,17 @@ export function mount(container, session, { data = defaultData, toast = defaultT
   };
   container.addEventListener("click", onClick);
   container.addEventListener("submit", onSubmit);
+  const unbindFilters = bindFilterBar(container);
+  const unbindRows = bindRowOpen(container, { act: "view" });
+  const unbindMenus = bindRowMenus(container);
   const unbindExport = bindExport(container, () => ({ ...state.filters }), { toast, deps: exportDeps });
   load();
   return () => {
     alive = false;
     unbindExport();
+    unbindFilters();
+    unbindRows();
+    unbindMenus();
     container.removeEventListener("click", onClick);
     container.removeEventListener("submit", onSubmit);
   };
