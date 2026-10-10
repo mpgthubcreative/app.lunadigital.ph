@@ -1499,6 +1499,7 @@ Object storage and Firestore can't commit together, so every stored file goes th
 - **Index:** `storageObjects` (state, expiresAt).
 - **Functions:** `GET /api/usage`. Usage metering is part of existing functions (orders, imports, exports, payments, expenses, schedule, vendor payments, guests, payroll, provisioning, operator).
 - **After deploy:** run a storage recount for each existing business that has payment screenshots.
+- **Staging rollout (2026-10-10, 93ceaff):** index READY (106), CI green, Netlify live, live rules unchanged. The one-time storage recount covered the only business with stored files (demo-distributor-a: 11 screenshots, 0 → 770 bytes, audited). Live probe 46/46 on a temporary business (since deleted). Regressions green. Note: a refused order or import at the monthly limit keeps its existing HTTP status, 403.
 
 ## Security baseline
 
@@ -1553,7 +1554,7 @@ On Orders, Reference and Proof show "—" until Payments (Phase 8) fills them in
 15. Baby Expense Tracker MVP ✅ (the baby-expense workspace)
 16. Bridal / Wedding Command Center MVP ✅ (the bridal-expense workspace)
 17. Luna Super Admin console (operators, provisioning, plans, overrides, subscription, tenant configuration): local gate passed; staging awaiting approval
-18. Usage metering (shared meter registry, storage accounting, warnings, history, limit overrides, recount): local gate passed; staging awaiting approval
+18. Usage metering (shared meter registry, storage accounting, warnings, history, limit overrides, recount) ✅
 19. Reliability, backups and recovery
 
 - Phases 6 and 7 are in this order because orders need products to reserve and a cost to snapshot.
