@@ -1,6 +1,9 @@
 // Baby Expenses (Phase 15): the Expenses Core with the Baby profile, one
 // compact row per expense.
-//   Date | Category | Provider / Payee | Method | Reference | Amount | View details
+//   Date | Category | Paid to | Paid by | Method | Amount | View details
+// Phase 18.6: Provider (who supplied it, a saved directory entry), Payee
+// (who received the money) and Paid by (who funded it, possibly shared)
+// are separate. Reference / recurring live under "More details".
 // Categories are the family's own (Budget & Categories); an expense may be
 // paid to a saved provider (its name is kept on the expense). Completed
 // spending only: future dates are refused (money still to be paid belongs
@@ -13,7 +16,7 @@ import { formDialog } from "../../components/form-dialog.js";
 import { toast as defaultToast } from "../../components/feedback.js";
 import { formatCentavos, formatDayId } from "../../lib/format.js";
 import { exportButton, bindExport, mayExport, exportHint } from "../../lib/export.js";
-import { EXPENSE_METHODS, EXPENSE_METHOD_IDS, parseCentavos, businessDate } from "@shared/index.js";
+import { EXPENSE_METHODS, EXPENSE_METHOD_IDS, parseCentavos, businessDate, parsePaidByText, paidByText } from "@shared/index.js";
 import * as defaultData from "./data.js";
 import { categoryName, optionsOf, activityLines, detailsDialog } from "./common.js";
 
@@ -21,18 +24,26 @@ const methodLabel = (id) => EXPENSE_METHODS[id]?.label ?? id;
 const METHOD_OPTIONS = EXPENSE_METHOD_IDS.map((id) => ({ value: id, label: EXPENSE_METHODS[id].label }));
 const YES_NO = [{ value: "no", label: "No" }, { value: "yes", label: "Yes" }];
 
-function fields(e, { today, categories, providers }) {
+// What the provider snapshot reads as on an older expense (before 18.6 the
+// payee held the provider's name).
+export const providerNameOf = (e) => (e?.providerId ? e.providerName ?? e.payee ?? "Saved provider" : null);
+// "Paid to": the payee, else the provider.
+export const paidToOf = (e) => e?.payee || providerNameOf(e) || "—";
+export const paidByOf = (e) => (Array.isArray(e?.paidBy) && e.paidBy.length ? e.paidBy.map((p) => p.name).join(" + ") : "Not set");
+
+function fields(e, { today, categories, providers, payers }) {
   const active = categories.filter((c) => c.status === "active");
   return [
     { name: "date", label: "Date paid", type: "date", value: e?.date ?? today, max: today, required: true, hint: "Not paid yet? Add it to the Payment Schedule instead." },
-    { name: "category", label: "Category", type: "select", options: optionsOf(active, { include: e ? { value: e.category, label: `${categoryName(new Map(categories.map((c) => [c.id, c.name])), e)} (inactive)` } : null }), value: e?.category ?? active[0]?.id ?? "" },
     { name: "amount", label: "Amount (PHP)", value: e ? (e.amount / 100).toFixed(2) : "", inputmode: "decimal", required: true },
-    { name: "providerId", label: "Provider / vendor (saved)", type: "select", options: optionsOf(providers, { blank: "— None —", include: e?.providerId ? { value: e.providerId, label: e.payee || "Saved provider" } : null }), value: e?.providerId ?? "" },
-    { name: "payee", label: "Or payee name", value: e && !e.providerId ? e.payee ?? "" : "", hint: "Used when no saved provider is chosen." },
+    { name: "category", label: "Category", type: "select", options: optionsOf(active, { include: e ? { value: e.category, label: `${categoryName(new Map(categories.map((c) => [c.id, c.name])), e)} (hidden)` } : null }), value: e?.category ?? active[0]?.id ?? "" },
+    { name: "paidBy", label: "Paid by", value: paidByText(e?.paidBy), placeholder: "e.g. Mom   or   Mom 600, Dad 400", suggestions: payers, hint: "Who paid. Shared it? Write each person's share." },
+    { name: "providerId", label: "Provider (clinic, shop, service)", type: "select", options: optionsOf(providers, { blank: "— None —", include: e?.providerId ? { value: e.providerId, label: providerNameOf(e) } : null }), value: e?.providerId ?? "" },
+    { name: "payee", label: "Paid to", value: e ? (e.payee && e.payee !== providerNameOf(e) ? e.payee : "") : "", placeholder: "Leave blank if you paid the provider", hint: "Who received the money, if not the provider." },
     { name: "method", label: "Payment method", type: "select", options: METHOD_OPTIONS, value: e?.method ?? "cash" },
-    { name: "reference", label: "Reference (OR no., invoice, transfer ref)", value: e?.reference ?? "" },
-    { name: "recurring", label: "Recurring", type: "select", options: YES_NO, value: e?.recurring ? "yes" : "no" },
-    { name: "notes", label: "Notes", type: "textarea", value: e?.notes ?? "" },
+    { name: "notes", label: "What was it for?", type: "textarea", value: e?.notes ?? "", placeholder: "e.g. Monthly check-up, crib, diapers" },
+    { name: "reference", label: "Reference (OR no., invoice, transfer ref)", value: e?.reference ?? "", more: true },
+    { name: "recurring", label: "Recurring", type: "select", options: YES_NO, value: e?.recurring ? "yes" : "no", more: true },
   ];
 }
 
@@ -41,7 +52,8 @@ export function parseBabyExpense(v) {
   if (!(amount > 0)) throw new Error("Enter an amount more than ₱0");
   if (!v.category) throw new Error("Choose a category (add categories on the Budget screen)");
   const providerId = v.providerId || null;
-  return { date: v.date, category: v.category, amount, providerId, payee: providerId ? undefined : v.payee.trim() || null, method: v.method, reference: v.reference.trim() || null, notes: v.notes.trim() || null, recurring: v.recurring === "yes" };
+  const paidBy = parsePaidByText(v.paidBy, amount);
+  return { date: v.date, category: v.category, amount, providerId, payee: v.payee.trim() || null, paidBy, method: v.method, reference: v.reference.trim() || null, notes: v.notes.trim() || null, recurring: v.recurring === "yes" };
 }
 
 export function mount(container, session, { data = defaultData, toast = defaultToast, now = () => new Date(), exportDeps = {} } = {}) {
@@ -51,7 +63,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
   const currency = session.business.currency || "PHP";
   const timezone = session.business.timezone;
   const today = () => businessDate(timezone, now());
-  const state = { filters: { status: "active" }, cursors: [], rows: [], hasMore: false, categories: [], providers: [], loading: true, error: null };
+  const state = { filters: { status: "active" }, cursors: [], rows: [], hasMore: false, categories: [], providers: [], payers: [], loading: true, error: null };
   let alive = true;
   const names = () => new Map(state.categories.map((c) => [c.id, c.name]));
 
@@ -59,13 +71,16 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     state.loading = true;
     draw();
     try {
-      const [cats, provs, page] = await Promise.all([
+      const [cats, provs, page, budget] = await Promise.all([
         state.categories.length ? state.categories : data.listCategories(businessId),
         state.providers.length || !perms["providers.view"] ? state.providers : data.activeProviders(businessId).catch(() => []),
         data.listBabyExpenses(businessId, state.filters, { cursor: state.cursors.at(-1) || null }),
+        // Known payer names, for the Paid by suggestions (budget.view only).
+        state.payers.length || !perms["budget.view"] ? null : data.getBudget(businessId).catch(() => null),
       ]);
       state.categories = cats;
       state.providers = provs;
+      if (budget?.payerNames) state.payers = [...new Set(Object.values(budget.payerNames))].sort();
       state.rows = page.rows;
       state.hasMore = page.hasMore;
       state.error = null;
@@ -89,7 +104,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
         ${pageHeader({ title: "Baby Expenses", subtitle: "What you've paid for: check-ups, nursery, clothes, feeding and more.", actions: can.create ? html`<button type="button" class="btn btn-primary" data-act="new">Add expense</button>` : "" })}
         ${filterBar({
           fields: [
-            { name: "search", label: "Payee or reference", type: "search", primary: true, value: f.search },
+            { name: "search", label: "Paid to or reference", type: "search", primary: true, value: f.search },
             { name: "category", label: "Category", type: "select", primary: true, options: state.categories.map((c) => [c.id, c.name]), value: f.category, all: "Any category" },
             { name: "providerId", label: "Provider", type: "select", primary: false, options: state.providers.map((p) => [p.id, p.name]), value: f.providerId, all: "Any provider" },
             { name: "method", label: "Method", type: "select", primary: false, options: METHOD_OPTIONS.map((m) => [m.value, m.label]), value: f.method, all: "Any method" },
@@ -107,11 +122,11 @@ export function mount(container, session, { data = defaultData, toast = defaultT
               : !state.rows.length
                 ? emptyState({ iconName: "budget", title: "No expenses", body: state.categories.length ? "Expenses you add count against your budget right away." : "Add your budget categories on the Budget screen first." })
                 : html`<div class="table-wrap"><table class="table table-compact rows" data-role="expenses">
-                    <thead><tr><th class="m-only"></th><th>Date</th><th>Category</th><th>Provider / Payee</th><th class="col-secondary">Method</th><th class="col-secondary">Reference</th><th class="num">Amount</th><th></th></tr></thead>
+                    <thead><tr><th class="m-only"></th><th>Date</th><th>Category</th><th>Paid to</th><th>Paid by</th><th class="col-secondary">Method</th><th class="num">Amount</th><th></th></tr></thead>
                     <tbody>${state.rows.map(
-                      (e) => html`<tr data-expense="${e.id}" data-open>${mobileCell({ title: e.payee || categoryName(n, e), sub: `${categoryName(n, e)} · ${formatDayId(e.date)}`, end: formatCentavos(e.amount, currency) })}
-                        <td>${formatDayId(e.date)}</td><td>${categoryName(n, e)}</td><td>${e.payee || "—"}</td>
-                        <td class="col-secondary">${methodLabel(e.method)}</td><td class="col-secondary">${e.reference || "—"}</td>
+                      (e) => html`<tr data-expense="${e.id}" data-open>${mobileCell({ title: e.payee || providerNameOf(e) || categoryName(n, e), sub: `${categoryName(n, e)} · ${formatDayId(e.date)} · ${paidByOf(e)}`, end: formatCentavos(e.amount, currency) })}
+                        <td>${formatDayId(e.date)}</td><td>${categoryName(n, e)}</td><td>${paidToOf(e)}</td><td data-col="paidBy">${paidByOf(e)}</td>
+                        <td class="col-secondary">${methodLabel(e.method)}</td>
                         <td class="num">${formatCentavos(e.amount, currency)}</td>
                         <td class="row-actions" data-m="more">${openButton(e.id, "View details", { act: "view" })}</td>
                       </tr>`
@@ -121,7 +136,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     );
   }
 
-  const ctx = () => ({ today: today(), categories: state.categories, providers: state.providers });
+  const ctx = () => ({ today: today(), categories: state.categories, providers: state.providers, payers: state.payers });
 
   const addDialog = () =>
     formDialog({
@@ -141,9 +156,12 @@ export function mount(container, session, { data = defaultData, toast = defaultT
       onSubmit: (v) => {
         const next = parseBabyExpense(v);
         const changes = {};
+        // A blank "Paid to" on a provider expense means the provider was paid.
+        if (next.payee === null && next.providerId && next.providerId === e.providerId && e.payee === providerNameOf(e)) next.payee = e.payee;
+        const was = { ...e, paidBy: e.paidBy ? e.paidBy.map(({ name, amount }) => ({ name, amount })) : null };
         for (const [k, val] of Object.entries(next)) {
-          if (val === undefined) continue; // payee comes from the saved provider
-          if (k === "recurring" ? Boolean(e.recurring) !== val : (e[k] ?? null) !== (val ?? null)) changes[k] = val;
+          if (val === undefined) continue;
+          if (k === "recurring" ? Boolean(e.recurring) !== val : JSON.stringify(was[k] ?? null) !== JSON.stringify(val ?? null)) changes[k] = val;
         }
         if (!Object.keys(changes).length) return { unchanged: true };
         return data.expensesApi({ action: "update", expenseId: e.id, expectedRevision: e.revision, changes });
@@ -175,7 +193,9 @@ export function mount(container, session, { data = defaultData, toast = defaultT
         ["Date paid", formatDayId(e.date)],
         ["Amount", formatCentavos(e.amount, currency)],
         ["Category", categoryName(names(), e)],
-        ["Provider / payee", e.payee || "—"],
+        ["Paid by", Array.isArray(e.paidBy) && e.paidBy.length > 1 ? e.paidBy.map((p) => `${p.name} ${formatCentavos(p.amount, currency)}`).join(" + ") : paidByOf(e)],
+        ["Provider", providerNameOf(e) || "—"],
+        ["Paid to", paidToOf(e)],
         ["Payment method", methodLabel(e.method)],
         ["Reference", e.reference || "—"],
         ["Recurring", e.recurring ? "Yes" : "No"],
@@ -201,9 +221,22 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     if (!el || !container.contains(el)) return undefined;
     switch (el.dataset.act) {
       case "new":
+        // No budget needed to track spending (Phase 18.6): with no categories
+        // yet, someone who can manage the budget gets the suggested ones
+        // (no budget amounts) and goes straight on to the expense.
         if (!state.categories.some((c) => c.status === "active")) {
-          toast("Add a budget category first (Budget & Categories).", "danger");
-          return undefined;
+          if (perms["budget.manage"] !== true) {
+            toast("Ask the owner to add expense categories first.", "danger");
+            return undefined;
+          }
+          try {
+            await data.budgetApi({ action: "setupCategories" });
+            state.categories = await data.listCategories(businessId);
+          } catch (err) {
+            toast(err.message || "Couldn't add the categories", "danger");
+            return undefined;
+          }
+          if (!state.categories.some((c) => c.status === "active")) return undefined;
         }
         return done("Expense added")(await addDialog());
       case "view":

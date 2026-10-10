@@ -1,9 +1,11 @@
 // Payment Schedule (Phase 15): money expected to be paid later, one
 // compact row per payment.
 //   Due date | Description | Category | Provider / Payee | Amount | Status | Mark paid · View details
-// An Upcoming payment is committed money, not spending. "Mark paid"
-// records exactly ONE Baby Expense (the server makes a retry or a second
-// click return the same one); only then does Spent go up.
+// An Upcoming payment is committed money, not spending. "Pay" records a
+// Baby Expense (the server makes a retry or a second click return the same
+// one); only then does Spent go up. Phase 18.6: a payment can be paid in
+// parts; it stays Upcoming with only the unpaid part counted, until the
+// last part (or a payment marked final) finishes it.
 
 import { html, render } from "../../lib/html.js";
 import { pageHeader, emptyState, badge, statCard, skeleton, mobileCell, openButton, bindRowOpen, bindFilterBar, rowMenu, bindRowMenus, filterBar } from "../../components/ui.js";
@@ -11,12 +13,15 @@ import { formDialog } from "../../components/form-dialog.js";
 import { toast as defaultToast } from "../../components/feedback.js";
 import { formatCentavos, formatDayId } from "../../lib/format.js";
 import { exportButton, bindExport, mayExport, exportHint } from "../../lib/export.js";
-import { SCHEDULE_STATUSES, EXPENSE_METHODS, EXPENSE_METHOD_IDS, parseCentavos, businessDate } from "@shared/index.js";
+import { SCHEDULE_STATUSES, EXPENSE_METHODS, EXPENSE_METHOD_IDS, parseCentavos, businessDate, upcomingPart, parsePaidByText } from "@shared/index.js";
 import * as defaultData from "./data.js";
 import { categoryName, optionsOf, activityLines, detailsDialog } from "./common.js";
 
 const METHOD_OPTIONS = EXPENSE_METHOD_IDS.map((id) => ({ value: id, label: EXPENSE_METHODS[id].label }));
 const TONE = { upcoming: "warning", paid: "success", cancelled: "neutral" };
+// One random key per Pay dialog: a retried request records nothing twice.
+const partKey = () => Array.from(crypto.getRandomValues(new Uint8Array(12)), (b) => "abcdefghijkmnpqrstuvwxyz23456789"[b % 32]).join("");
+const partPaid = (s) => s.status === "upcoming" && (s.paidAmount ?? 0) > 0;
 
 function paymentFields(s, { categories, providers }) {
   const active = categories.filter((c) => c.status === "active");
@@ -75,7 +80,9 @@ export function mount(container, session, { data = defaultData, toast = defaultT
   }
 
   const opt = (v, l, sel) => html`<option value="${v}" ${sel === v ? "selected" : ""}>${l}</option>`;
-  const statusBadge = (s) => (s.status === "upcoming" && s.dueDate < today() ? badge("Overdue", "danger") : badge(SCHEDULE_STATUSES[s.status]?.label ?? s.status, TONE[s.status] || "neutral"));
+  const statusBadge = (s) => (s.status === "upcoming" && s.dueDate < today() ? badge("Overdue", "danger") : partPaid(s) ? badge("Part paid", "info") : badge(SCHEDULE_STATUSES[s.status]?.label ?? s.status, TONE[s.status] || "neutral"));
+  // Upcoming: what's still to pay (and of how much, once part-paid); Paid: what was paid.
+  const amountText = (s) => (s.status === "paid" ? formatCentavos(s.paidAmount ?? s.amount, currency) : partPaid(s) ? `${formatCentavos(upcomingPart(s), currency)} left of ${formatCentavos(s.amount, currency)}` : formatCentavos(s.amount, currency));
 
   function draw() {
     if (!alive) return;
@@ -103,15 +110,15 @@ export function mount(container, session, { data = defaultData, toast = defaultT
               : !state.rows.length
                 ? emptyState({ iconName: "calendar", title: f.status === "upcoming" ? "No upcoming payments" : "Nothing here", body: "Schedule deposits and due bills so you can see what's still to be paid." })
                 : html`<div class="table-wrap"><table class="table table-compact rows" data-role="schedule">
-                    <thead><tr><th class="m-only"></th><th>Due date</th><th>Description</th><th class="col-secondary">Category</th><th class="col-secondary">Provider / Payee</th><th class="num">Amount</th><th>Status</th><th></th></tr></thead>
+                    <thead><tr><th class="m-only"></th><th>Due date</th><th>Description</th><th class="col-secondary">Category</th><th class="col-secondary">Paid to</th><th class="num">Amount</th><th>Status</th><th></th></tr></thead>
                     <tbody>${state.rows.map(
-                      (s) => html`<tr data-payment="${s.id}" data-open>${mobileCell({ title: s.description, sub: `${s.status === "upcoming" ? "due" : "was due"} ${formatDayId(s.dueDate)}${s.payee ? ` · ${s.payee}` : ""}`, end: formatCentavos(s.status === "paid" ? s.paidAmount ?? s.amount : s.amount, currency) })}
+                      (s) => html`<tr data-payment="${s.id}" data-open>${mobileCell({ title: s.description, sub: `${s.status === "upcoming" ? "due" : "was due"} ${formatDayId(s.dueDate)}${s.payee ? ` · ${s.payee}` : ""}`, end: amountText(s) })}
                         <td>${formatDayId(s.dueDate)}</td><td>${s.description}</td>
                         <td class="col-secondary">${categoryName(n, s)}</td><td class="col-secondary">${s.payee || "—"}</td>
-                        <td class="num">${formatCentavos(s.status === "paid" ? s.paidAmount ?? s.amount : s.amount, currency)}</td>
+                        <td class="num" data-col="amount">${amountText(s)}</td>
                         <td data-m="ctl">${statusBadge(s)}</td>
                         <td class="row-actions" data-m="more">
-                          ${canPay && s.status === "upcoming" ? html`<button type="button" class="btn btn-compact" data-act="pay" data-id="${s.id}">Mark paid</button>` : ""}
+                          ${canPay && s.status === "upcoming" ? html`<button type="button" class="btn btn-compact" data-act="pay" data-id="${s.id}">Pay</button>` : ""}
                           ${openButton(s.id, "View details", { act: "view" })}
                         </td>
                       </tr>`
@@ -146,30 +153,37 @@ export function mount(container, session, { data = defaultData, toast = defaultT
       },
     });
 
-  // One expense, once: the server returns the same expense on a retry.
-  const payDialog = (s) =>
-    formDialog({
-      title: `Mark ${s.description} paid`,
-      intro: `This records ONE Baby Expense of the amount paid and removes it from Upcoming.`,
+  // Each payment (full or part) is one expense, recorded once: the dialog's
+  // key makes a retry return the same expense.
+  const payDialog = (s) => {
+    const left = upcomingPart(s);
+    const key = partKey();
+    return formDialog({
+      title: `Pay ${s.description}`,
+      intro: partPaid(s) ? `${formatCentavos(s.paidAmount, currency)} already paid · ${formatCentavos(left, currency)} left to pay.` : `${formatCentavos(left, currency)} to pay. It counts as spent once recorded.`,
       fields: [
+        { name: "amount", label: "Amount paid now (PHP)", value: (left / 100).toFixed(2), inputmode: "decimal", required: true },
+        { name: "final", label: "Is this the full payment?", type: "select", options: [{ value: "yes", label: "Yes, this finishes it" }, { value: "no", label: "No, part payment (the rest stays to pay)" }], value: "yes", hint: "Paid less because the bill was lower? Choose Yes." },
         { name: "paidDate", label: "Date paid", type: "date", value: today(), max: today(), required: true },
-        { name: "amount", label: "Amount paid (PHP)", value: (s.amount / 100).toFixed(2), inputmode: "decimal", required: true, hint: "Change it if the final bill differed." },
+        { name: "paidBy", label: "Paid by", value: "", placeholder: "e.g. Mom   or   Mom 600, Dad 400" },
         { name: "method", label: "Payment method", type: "select", options: METHOD_OPTIONS, value: "cash" },
-        { name: "reference", label: "Reference (OR no., invoice, transfer ref)", value: "" },
+        { name: "reference", label: "Reference (OR no., invoice, transfer ref)", value: "", more: true },
       ],
-      submitLabel: "Mark paid",
+      submitLabel: "Record payment",
       onSubmit: (v) => {
         const amount = parseCentavos(v.amount);
         if (!(amount > 0)) throw new Error("Enter an amount more than ₱0");
-        const payment = { paidDate: v.paidDate, method: v.method, ...(amount !== s.amount ? { amount } : {}), ...(v.reference.trim() ? { reference: v.reference.trim() } : {}) };
+        const paidBy = parsePaidByText(v.paidBy, amount);
+        const payment = { paidDate: v.paidDate, method: v.method, amount, final: v.final !== "no", key, ...(paidBy ? { paidBy } : {}), ...(v.reference.trim() ? { reference: v.reference.trim() } : {}) };
         return data.scheduleApi({ action: "markPaid", scheduleId: s.id, payment });
       },
     });
+  };
 
   const cancelDialog = (s) =>
     formDialog({
       title: `Cancel ${s.description}?`,
-      intro: "It leaves Upcoming payments. Nothing is spent.",
+      intro: partPaid(s) ? "The unpaid part leaves Still to pay. What was already paid stays as spent." : "It leaves Still to pay. Nothing is spent.",
       fields: [{ name: "reason", label: "Reason (optional)", type: "textarea" }],
       submitLabel: "Cancel payment",
       onSubmit: (v) => data.scheduleApi({ action: "cancel", scheduleId: s.id, ...(v.reason.trim() ? { reason: v.reason.trim() } : {}) }),
@@ -177,7 +191,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
 
   const after = (message) => (r) => {
     if (!r) return false;
-    if (!r.unchanged) toast(r.alreadyPaid ? "Already marked paid: no second expense was recorded." : message, "success");
+    if (!r.unchanged) toast(r.alreadyPaid ? "Already recorded: no second expense was made." : r.partPaid ? `Part payment recorded. ${formatCentavos(r.remaining, currency)} still to pay.` : message, "success");
     load();
     return true;
   };
@@ -190,11 +204,13 @@ export function mount(container, session, { data = defaultData, toast = defaultT
       rows: [
         ["Due date", formatDayId(s.dueDate)],
         ["Amount", formatCentavos(s.amount, currency)],
+        ["Still to pay", s.status === "upcoming" ? formatCentavos(upcomingPart(s), currency) : null],
+        ["Paid in parts", Array.isArray(s.parts) && s.parts.length > 1 ? s.parts.map((p) => `${formatDayId(p.date)} ${formatCentavos(p.amount, currency)}`).join(" · ") : null],
         ["Category", categoryName(names(), s)],
-        ["Provider / payee", s.payee || "—"],
+        ["Paid to", s.payee || "—"],
         ["Status", SCHEDULE_STATUSES[s.status]?.label ?? s.status],
         ["Paid on", s.paidDate ? formatDayId(s.paidDate) : null],
-        ["Amount paid", s.paidAmount ? formatCentavos(s.paidAmount, currency) : null],
+        ["Amount paid so far", s.paidAmount ? formatCentavos(s.paidAmount, currency) : null],
         ["Payment method", s.method ? EXPENSE_METHODS[s.method]?.label ?? s.method : null],
         ["Reference", s.reference],
         ["Linked expense", s.expenseId ? "Recorded in Baby Expenses" : null],
@@ -202,12 +218,12 @@ export function mount(container, session, { data = defaultData, toast = defaultT
         ["Notes", s.notes],
       ],
       activity: activityLines(s.history, timezone),
-      actions: upcoming && canManage ? [{ act: "cancel", label: "Cancel payment", danger: true }, { act: "edit", label: "Edit" }, ...(canPay ? [{ act: "pay", label: "Mark paid" }] : [])] : [],
+      actions: upcoming && canManage ? [{ act: "cancel", label: "Cancel payment", danger: true }, { act: "edit", label: "Edit" }, ...(canPay ? [{ act: "pay", label: "Pay" }] : [])] : [],
       onAction: async (act) => {
         try {
           if (act === "edit") return after("Saved.")(await editDialog(s));
           if (act === "cancel") return after("Payment cancelled.")(await cancelDialog(s));
-          if (act === "pay") return after("Marked paid. The expense was recorded.")(await payDialog(s));
+          if (act === "pay") return after("Paid. The expense was recorded.")(await payDialog(s));
         } catch (err) {
           toast(err.message || "Something went wrong", "danger");
         }
@@ -229,7 +245,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
           }
           return after("Payment scheduled.")(await newDialog());
         case "pay":
-          return s ? after("Marked paid. The expense was recorded.")(await payDialog(s)) : undefined;
+          return s ? after("Paid. The expense was recorded.")(await payDialog(s)) : undefined;
         case "view":
           return s ? openView(s) : undefined;
         case "next":

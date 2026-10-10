@@ -84,7 +84,7 @@ describe("dashboardDocuments: a fixed, tiny read set", () => {
 
   it("period widgets live under Selected period; gauges under Current operations", () => {
     // ("count" = a live count as of now, e.g. overdue tasks, Phase 16.)
-    for (const w of DASHBOARD_WIDGETS.filter((x) => x.kind === "stat")) expect(w.section, w.id).toBe(w.source.endsWith("-current") || w.source === "count" ? "current" : "period");
+    for (const w of DASHBOARD_WIDGETS.filter((x) => x.kind === "stat")) expect(w.section, w.id).toBe(w.source.endsWith("-current") || w.source === "count" || w.source === "spending-month" ? "current" : "period");
     for (const w of DASHBOARD_WIDGETS.filter((x) => x.section === "current")) expect(`${w.label} ${w.hint}`).toMatch(/now|Current/i);
   });
 

@@ -22,6 +22,7 @@ export const BABY_STATUS = {
   "too-many-categories": 409,
   "category-in-use": 409,
   "not-upcoming": 409,
+  "budget-total-automatic": 409,
   "invalid-category": 400,
   "invalid-provider": 400,
   "not-available": 403,

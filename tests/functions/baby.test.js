@@ -12,7 +12,7 @@ import { createExportsHandler } from "../../netlify/functions/exports.js";
 import { createBusiness, addMember, ensureAuthUser } from "../../netlify/functions/_lib/provisioning.js";
 import { buildWorld, request, clearInboxes } from "../helpers/tenants.js";
 import { notificationId } from "../../shared/notifications.js";
-import { budgetSummary, budgetLines } from "../../shared/baby.js";
+import { budgetSummary, budgetLines, payerTotals } from "../../shared/baby.js";
 import { readXlsx } from "../../shared/xlsx.js";
 
 const NOW = new Date("2026-10-16T04:00:00Z"); // Oct 16, 12:00 Manila
@@ -65,14 +65,17 @@ async function expense(input, uid = u.camille) {
   expect(r.status, JSON.stringify(r.body)).toBe(201);
   return r.body.expenseId;
 }
-async function setTotal(total, uid = u.camille) {
-  const r = await api("budget", uid, { action: "setTotal", total });
+// Phase 18.6: the Baby total budget is the sum of the category budgets.
+async function setCategoryBudget(categoryId, budgetCentavos, uid = u.camille) {
+  const r = await api("budget", uid, { action: "updateCategory", categoryId, changes: { budget: budgetCentavos } });
   expect(r.status, JSON.stringify(r.body)).toBe(200);
   return r.body;
 }
+// ₱150,000 = Medical 60k + Nursery 40k + Clothing 10k + Savings buffer 40k.
 async function scenarioBudget() {
-  await setTotal(15000000);
-  return { medical: await category("Medical", 6000000), nursery: await category("Nursery", 4000000), clothing: await category("Clothing", 1000000) };
+  const c = { medical: await category("Medical", 6000000), nursery: await category("Nursery", 4000000), clothing: await category("Clothing", 1000000) };
+  c.buffer = await category("Savings buffer", 4000000);
+  return c;
 }
 
 describe("THE live scenario: ₱150,000 budget, Medical ₱60,000, Nursery ₱40,000, Clothing ₱10,000", () => {
@@ -99,12 +102,31 @@ describe("THE live scenario: ₱150,000 budget, Medical ₱60,000, Nursery ₱40
   });
 
   it("a budget change is not spending, recalculates Remaining, and is audited (previous -> new, actor)", async () => {
-    await scenarioBudget();
+    const c = await scenarioBudget();
     const before = summary();
-    await setTotal(18000000);
+    expect(before.total).toBe(15000000); // the sum of the category budgets
+    await setCategoryBudget(c.buffer, 7000000);
     expect(summary()).toMatchObject({ total: 18000000, spent: before.spent, remaining: 18000000 - before.spent });
-    expect(budget().history.at(-1)).toMatchObject({ label: `Budget changed ${P}150,000 → ${P}180,000`, from: 15000000, to: 18000000, actor: { uid: u.camille, name: "camille" } });
+    expect(budget().history.at(-1)).toMatchObject({ label: `Savings buffer budget changed ${P}40,000 → ${P}70,000 · total budget now ${P}180,000`, from: 4000000, to: 7000000, actor: { uid: u.camille, name: "camille" } });
     expect(pathsUnder(`businesses/${B}/spendingMetrics/`)).toEqual([]);
+  });
+
+  it("Phase 18.6: the total can't be typed; it follows category adds, budget edits and deletes", async () => {
+    expect(summary().total).toBeNull(); // no budget yet: expenses are still tracked
+    const r = await api("budget", u.camille, { action: "setTotal", total: 100 });
+    expect(r.status).toBe(409);
+    expect(r.body.error).toBe("budget-total-automatic");
+    const a = await category("Hospital", 8000000);
+    expect(summary().total).toBe(8000000);
+    const b = await category("Clothing"); // no budget: total unchanged
+    expect(summary().total).toBe(8000000);
+    await setCategoryBudget(b, 1000000);
+    expect(summary().total).toBe(9000000);
+    expect((await api("budget", u.camille, { action: "deleteCategory", categoryId: a })).status).toBe(200);
+    expect(summary().total).toBe(1000000);
+    // Hiding a category keeps its budget in the total (its spending still counts).
+    expect((await api("budget", u.camille, { action: "setCategoryStatus", categoryId: b, status: "inactive" })).status).toBe(200);
+    expect(summary().total).toBe(1000000);
   });
 
   it("Baby spending never touches Distributor sinks (no sales, COGS, operating expenses, report rollups)", async () => {
@@ -138,11 +160,15 @@ describe("Baby Expenses: the Expenses Core with Baby rules", () => {
     expect((await api("expenses", u.camille, { action: "create", expense: { date: "2026-10-10", method: "cash", category: c.clothing, amount: 100 } })).body.error).toBe("invalid-category");
   });
 
-  it("a saved provider supplies the payee snapshot, kept after the provider is renamed or deactivated", async () => {
+  it("Provider and Payee are separate; the provider's name is snapshotted, kept after rename or deactivation", async () => {
     const c = await scenarioBudget();
     const p = (await api("providers", u.camille, { action: "create", provider: { name: "ABC Women's Clinic", type: "medical", phone: "0917 000 0000" } })).body.providerId;
-    const id = await expense({ category: c.medical, amount: 250000, providerId: p, payee: "ignored" });
-    expect(docAt(`expenses/${id}`)).toMatchObject({ providerId: p, payee: "ABC Women's Clinic" });
+    // Phase 18.6: the payee (who received the money) can differ from the provider.
+    const other = await expense({ category: c.medical, amount: 100000, providerId: p, payee: "Dr. Reyes (clinic doctor)" });
+    expect(docAt(`expenses/${other}`)).toMatchObject({ providerId: p, providerName: "ABC Women's Clinic", payee: "Dr. Reyes (clinic doctor)" });
+    // No payee given: the provider received the money.
+    const id = await expense({ category: c.medical, amount: 250000, providerId: p });
+    expect(docAt(`expenses/${id}`)).toMatchObject({ providerId: p, providerName: "ABC Women's Clinic", payee: "ABC Women's Clinic" });
     await api("providers", u.camille, { action: "update", providerId: p, changes: { name: "ABC Clinic (new name)" } });
     await api("providers", u.camille, { action: "setStatus", providerId: p, status: "inactive" });
     expect(docAt(`expenses/${id}`).payee).toBe("ABC Women's Clinic");
@@ -175,7 +201,7 @@ describe("Categories", () => {
     expect((await api("budget", u.camille, { action: "deleteCategory", categoryId: c.medical })).body.error).toBe("category-in-use");
     expect((await api("budget", u.camille, { action: "deleteCategory", categoryId: c.clothing })).status).toBe(200);
     expect(docAt(`expenseCategories/${c.clothing}`)).toBeUndefined();
-    expect(budget().categoryCount).toBe(2);
+    expect(budget().categoryCount).toBe(3);
   });
 
   it("a category used only by a scheduled payment can't be deleted either", async () => {
@@ -187,7 +213,7 @@ describe("Categories", () => {
   it("category budget changes are recorded on the budget history", async () => {
     const c = await scenarioBudget();
     await api("budget", u.camille, { action: "updateCategory", categoryId: c.nursery, changes: { budget: 4500000 } });
-    expect(budget().history.at(-1)).toMatchObject({ label: `Nursery budget changed ${P}40,000 → ${P}45,000`, from: 4000000, to: 4500000 });
+    expect(budget().history.at(-1)).toMatchObject({ label: `Nursery budget changed ${P}40,000 → ${P}45,000 · total budget now ${P}155,000`, from: 4000000, to: 4500000 });
   });
 });
 
@@ -290,8 +316,7 @@ describe("Payment Schedule -> exactly one Baby Expense", () => {
 describe("budget threshold alerts (Notifications Core): once per level, never per expense", () => {
   const inbox = (uid, key) => docAt(`members/${uid}/inbox/${notificationId("budget.threshold", key)}`);
   it("75% / 90% / 100% notify once each; later expenses don't repeat; a new budget starts a new episode", async () => {
-    await setTotal(1000000);
-    const c = await category("Medical");
+    const c = await category("Medical", 1000000);
     await expense({ category: c, amount: 700000 });
     expect(pathsUnder(`businesses/${B}/members/${u.camille}/inbox/`)).toHaveLength(0);
     await expense({ category: c, amount: 60000 }); // 76%
@@ -303,7 +328,7 @@ describe("budget threshold alerts (Notifications Core): once per level, never pe
     expect(inbox(u.camille, "2-90")).toBeUndefined();
     expect(inbox(u.paolo, "2-100")).toBeTruthy();
     expect(inbox(u.yaya, "2-100")).toBeUndefined(); // no budget.view
-    await setTotal(2000000); // 53.5%: new episode, nothing yet
+    await setCategoryBudget(c, 2000000); // 53.5%: new episode, nothing yet
     await expense({ category: c, amount: 500000 }); // 78.5%
     expect(inbox(u.camille, "3-75")).toBeTruthy();
   });
@@ -374,7 +399,7 @@ describe("Excel downloads (Export Core)", () => {
     await api("schedule", u.camille, { action: "create", payment: { description: "Hospital deposit", category: c.medical, amount: 2000000, dueDate: "2026-12-15" } });
 
     const b = await download(u.camille, "budget");
-    expect(sheet(b.bytes, "Category Budget").slice(1).map((row) => [row[0], row[2], row[3], row[4]])).toEqual([["Medical", "60000", "10000", "50000"], ["Nursery", "40000", "0", "40000"], ["Clothing", "10000", "0", "10000"]]);
+    expect(sheet(b.bytes, "Category Budget").slice(1).map((row) => [row[0], row[2], row[3], row[4]])).toEqual([["Medical", "60000", "10000", "50000"], ["Nursery", "40000", "0", "40000"], ["Clothing", "10000", "0", "10000"], ["Savings buffer", "40000", "0", "40000"]]);
     expect(sheet((await download(u.camille, "providers", { type: "baby_store" })).bytes, "Providers").slice(1).map((row) => row[0])).toEqual(["Baby Company"]);
     expect(sheet((await download(u.camille, "paymentSchedule", { status: "upcoming" })).bytes, "Payment Schedule").slice(1).map((row) => row[1])).toEqual(["Hospital deposit"]);
 
@@ -418,5 +443,108 @@ describe("Phase 18 usage metering (meter only, never enforced)", () => {
     const r = await api("expenses", u.camille, { action: "remove", expenseId: e, reason: "entered twice" });
     expect(r.status, JSON.stringify(r.body)).toBe(200);
     expect(usage().expensesCreated).toBe(n);
+  });
+});
+
+describe("Phase 18.6: who paid (split shares) and payments paid in parts", () => {
+  const pay = (scheduleId, payment) => api("schedule", u.camille, { action: "markPaid", scheduleId, payment });
+  async function scheduled(c, amount = 2000000) {
+    const r = await api("schedule", u.camille, { action: "create", payment: { description: "Hospital deposit", category: c.medical, amount, dueDate: "2026-12-15" } });
+    expect(r.status, JSON.stringify(r.body)).toBe(201);
+    return r.body.scheduleId;
+  }
+
+  it("a shared purchase counts ONCE in Spent and is split across the payers", async () => {
+    const c = await scenarioBudget();
+    await expense({ category: c.nursery, amount: 1000000, paidBy: [{ name: "Mom", amount: 600000 }, { name: "Dad", amount: 400000 }] });
+    await expense({ category: c.clothing, amount: 200000, paidBy: [{ name: "mom", amount: 200000 }] });
+    await expense({ category: c.clothing, amount: 50000 }); // nobody recorded
+    expect(summary().spent).toBe(1250000);
+    expect(budget().spentByPayer).toEqual({ mom: 800000, dad: 400000 });
+    expect(payerTotals(budget())).toEqual([
+      { key: "mom", name: "mom", amount: 800000 },
+      { key: "dad", name: "Dad", amount: 400000 },
+      { key: null, name: "Not set", amount: 50000 },
+    ]);
+  });
+
+  it("shares must add up to the amount; editing the amount of a single-payer expense moves its share", async () => {
+    const c = await scenarioBudget();
+    const bad = await api("expenses", u.camille, { action: "create", expense: { date: "2026-10-10", method: "cash", category: c.medical, amount: 1000, paidBy: [{ name: "Mom", amount: 600 }, { name: "Dad", amount: 300 }] } });
+    expect(bad.status).toBe(400);
+    expect(bad.body.error).toBe("paid-by-mismatch");
+    const dup = await api("expenses", u.camille, { action: "create", expense: { date: "2026-10-10", method: "cash", category: c.medical, amount: 1000, paidBy: [{ name: "Mom", amount: 500 }, { name: "MOM", amount: 500 }] } });
+    expect(dup.status).toBe(400);
+    const one = await expense({ category: c.medical, amount: 1000, paidBy: [{ name: "Lola Rosa", amount: 1000 }] });
+    expect((await api("expenses", u.camille, { action: "update", expenseId: one, changes: { amount: 1500 } })).status).toBe(200);
+    expect(docAt(`expenses/${one}`).paidBy).toEqual([{ key: "lola_rosa", name: "Lola Rosa", amount: 1500 }]);
+    expect(budget().spentByPayer).toEqual({ lola_rosa: 1500 });
+    const two = await expense({ category: c.medical, amount: 1000, paidBy: [{ name: "Mom", amount: 500 }, { name: "Dad", amount: 500 }] });
+    const r = await api("expenses", u.camille, { action: "update", expenseId: two, changes: { amount: 1200 } });
+    expect(r.body.error).toBe("paid-by-mismatch"); // two people: say who paid the difference
+    expect((await api("expenses", u.camille, { action: "update", expenseId: two, changes: { amount: 1200, paidBy: [{ name: "Mom", amount: 700 }, { name: "Dad", amount: 500 }] } })).status).toBe(200);
+    expect((await api("expenses", u.camille, { action: "remove", expenseId: two, reason: "Entered twice" })).status).toBe(200);
+    expect(budget().spentByPayer).toEqual({ lola_rosa: 1500, mom: 0, dad: 0 });
+  });
+
+  it("a part payment records one expense and leaves only the unpaid part in Upcoming; the last part finishes it", async () => {
+    const c = await scenarioBudget();
+    const id = await scheduled(c);
+    expect(summary()).toMatchObject({ upcoming: 2000000, upcomingCount: 1, spent: 0 });
+    const p1 = await pay(id, { method: "gcash", amount: 500000, final: false, key: "part0001", paidBy: [{ name: "Dad", amount: 500000 }] });
+    expect(p1.status, JSON.stringify(p1.body)).toBe(200);
+    expect(p1.body).toMatchObject({ partPaid: true, remaining: 1500000 });
+    expect(summary()).toMatchObject({ upcoming: 1500000, upcomingCount: 1, spent: 500000 });
+    expect(docAt(`scheduledPayments/${id}`)).toMatchObject({ status: "upcoming", paidAmount: 500000 });
+    // The same dialog retried: nothing new.
+    expect((await pay(id, { method: "gcash", amount: 500000, final: false, key: "part0001" })).body.alreadyPaid).toBe(true);
+    expect(summary()).toMatchObject({ upcoming: 1500000, spent: 500000, expenseCount: 1 });
+    // The rest (default amount = what's unpaid) finishes it.
+    const p2 = await pay(id, { method: "cash", key: "part0002" });
+    expect(p2.body).toMatchObject({ paid: true });
+    expect(summary()).toMatchObject({ upcoming: 0, upcomingCount: 0, spent: 2000000, expenseCount: 2 });
+    expect(docAt(`scheduledPayments/${id}`)).toMatchObject({ status: "paid", paidAmount: 2000000 });
+    expect(docAt(`scheduledPayments/${id}`).parts).toHaveLength(2);
+    expect(budget().spentByPayer).toEqual({ dad: 500000 });
+  });
+
+  it("removing a part puts its money back in Upcoming; cancelling a part-paid payment keeps the paid part as spent", async () => {
+    const c = await scenarioBudget();
+    const id = await scheduled(c);
+    const e1 = (await pay(id, { method: "cash", amount: 800000, final: false, key: "aaaa1111" })).body.expenseId;
+    expect((await api("expenses", u.camille, { action: "remove", expenseId: e1, reason: "Wrong amount" })).status).toBe(200);
+    expect(summary()).toMatchObject({ upcoming: 2000000, upcomingCount: 1, spent: 0 });
+    expect(docAt(`scheduledPayments/${id}`)).toMatchObject({ status: "upcoming", paidAmount: null, parts: [] });
+    await pay(id, { method: "cash", amount: 300000, final: false, key: "bbbb2222" });
+    // Can't edit the amount below what's already paid.
+    expect((await api("schedule", u.camille, { action: "update", scheduleId: id, changes: { amount: 200000 } })).body.error).toBe("invalid-amount");
+    expect((await api("schedule", u.camille, { action: "update", scheduleId: id, changes: { amount: 2500000 } })).status).toBe(200);
+    expect(summary().upcoming).toBe(2200000);
+    expect((await api("schedule", u.camille, { action: "cancel", scheduleId: id, reason: "Covered by insurance" })).status).toBe(200);
+    expect(summary()).toMatchObject({ upcoming: 0, upcomingCount: 0, spent: 300000 });
+  });
+
+  it("a final payment for less than the bill (discount) closes it without leaving money in Upcoming", async () => {
+    const c = await scenarioBudget();
+    const id = await scheduled(c);
+    expect((await pay(id, { method: "cash", amount: 1800000 })).body).toMatchObject({ paid: true });
+    expect(summary()).toMatchObject({ upcoming: 0, upcomingCount: 0, spent: 1800000 });
+  });
+});
+
+describe("Phase 18.6 migration: adopt the category total", () => {
+  it("dry run changes nothing; apply sets total = sum of category budgets, once, with a history line", async () => {
+    const { adoptCategoryTotal } = await import("../../netlify/functions/_lib/baby.js");
+    const { tenantDb } = await import("../../netlify/functions/_lib/tenant-db.js");
+    // A business from before 18.6: typed total ₱150,000, categories adding up to ₱110,000.
+    await world.db.doc(`businesses/${B}/budgets/current`).set({ total: 15000000, spent: 0, alerts: { episode: 1, notified: 0 } }, { merge: true });
+    for (const [id, budgetC] of [["catA0000001", 6000000], ["catB0000001", 5000000], ["catC0000001", null]]) await world.db.doc(`businesses/${B}/expenseCategories/${id}`).set({ name: id, nameLower: id.toLowerCase(), budget: budgetC, status: "active", useCount: 0, revision: 1, order: 10 });
+    const args = { db: world.db, tenant: tenantDb(world.db, B), FieldValue: world.admin.firestore.FieldValue };
+    expect(await adoptCategoryTotal({ ...args })).toMatchObject({ changed: true, from: 15000000, to: 11000000, dryRun: true });
+    expect(budget().total).toBe(15000000);
+    expect(await adoptCategoryTotal({ ...args, dryRun: false })).toMatchObject({ changed: true, to: 11000000 });
+    expect(budget()).toMatchObject({ total: 11000000, totalFrom: "categories" });
+    expect(budget().history.at(-1).label).toBe(`Total budget is now the sum of the category budgets: ${P}150,000 → ${P}110,000`);
+    expect(await adoptCategoryTotal({ ...args, dryRun: false })).toMatchObject({ changed: false });
   });
 });

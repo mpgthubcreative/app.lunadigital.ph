@@ -92,19 +92,21 @@ describe("Budget & Categories", () => {
     expect(container.querySelector('[data-role="budget-history"]').textContent).toMatch(/Camille • Budget changed ₱150,000 → ₱180,000/);
   });
 
-  it("Edit total budget -> Save sends only the total (never spent / remaining)", async () => {
+  it("Phase 18.6: no typed total; it's the sum of category budgets, changed by editing a category", async () => {
     const data = fakeData();
     mountBudget(container, baby(), { data, toast: () => {} });
     await flush();
-    container.querySelector('[data-act="total"]').click();
+    expect(container.querySelector('[data-act="total"]')).toBeNull();
+    expect(container.querySelector('[data-widget="total"]').textContent).toMatch(/Sum of the category budgets/);
+    container.querySelector('[data-act="edit"][data-id="catMedical0001"]').click();
     const form = lastForm();
-    setField(form, "total", "180000");
+    setField(form, "budget", "70000");
     submit(form);
     await flush();
-    expect(data.budgetApi).toHaveBeenCalledWith({ action: "setTotal", total: 18000000, expectedRevision: 3 });
+    expect(data.budgetApi).toHaveBeenCalledWith({ action: "updateCategory", categoryId: "catMedical0001", expectedRevision: expect.any(Number), changes: { budget: 7000000 } });
   });
 
-  it("⋯ Deactivate is one click; ⋯ Delete only appears for an unused category and asks first", async () => {
+  it("each row: Edit, then Delete (unused) or Hide (used); Delete asks first", async () => {
     const data = fakeData();
     mountBudget(container, baby(), { data, toast: () => {}, confirm: async () => true });
     await flush();
@@ -173,13 +175,27 @@ describe("Baby Expenses", () => {
     expect(container.querySelector('[data-export="babyExpenses"]')).not.toBeNull();
   });
 
-  it("parseBabyExpense: a provider means no typed payee", () => {
-    expect(parseBabyExpense({ date: "2026-10-10", category: "c", amount: "5", providerId: "p", payee: "x", method: "cash", reference: "", notes: "", recurring: "no" })).toMatchObject({ providerId: "p", payee: undefined });
+  it("parseBabyExpense: provider, payee and paid by are separate (Phase 18.6)", () => {
+    const base = { date: "2026-10-10", category: "c", amount: "1000", providerId: "p", payee: "Dr. Cruz", method: "cash", reference: "", notes: "", recurring: "no" };
+    expect(parseBabyExpense({ ...base, paidBy: "" })).toMatchObject({ providerId: "p", payee: "Dr. Cruz", paidBy: null });
+    expect(parseBabyExpense({ ...base, paidBy: "Mom" }).paidBy).toEqual([{ name: "Mom", amount: 100000 }]);
+    expect(parseBabyExpense({ ...base, paidBy: "Mom 600, Dad" }).paidBy).toEqual([{ name: "Mom", amount: 60000 }, { name: "Dad", amount: 40000 }]);
+    expect(parseBabyExpense({ ...base, paidBy: "Lola Rosa ₱250.50 + Tito Ben 749.50" }).paidBy).toEqual([{ name: "Lola Rosa", amount: 25050 }, { name: "Tito Ben", amount: 74950 }]);
+    expect(() => parseBabyExpense({ ...base, paidBy: "Mom, Dad" })).toThrow(/each person's share/);
+    expect(() => parseBabyExpense({ ...base, paidBy: "Mom 1000, Dad" })).toThrow(/already cover/);
+  });
+
+  it("the table shows Paid to and Paid by; Reference is no longer a column", async () => {
+    const data = fakeData();
+    mountExpenses(container, baby(), { data, toast: () => {} });
+    await flush();
+    const heads = [...container.querySelectorAll('[data-role="expenses"] thead th')].map((t) => t.textContent.trim());
+    expect(heads).toEqual(["", "Date", "Category", "Paid to", "Paid by", "Method", "Amount", ""]);
   });
 });
 
 describe("Payment Schedule", () => {
-  it("Upcoming row with Mark paid; Mark paid sends one markPaid (amount only if changed)", async () => {
+  it("Upcoming row with Pay; Pay sends one markPaid with the amount, final flag and a retry key", async () => {
     const data = fakeData();
     const toast = vi.fn();
     mountSchedule(container, baby(), { data, now: NOW, toast });
@@ -192,7 +208,23 @@ describe("Payment Schedule", () => {
     submit(form);
     await flush();
     expect(data.scheduleApi).toHaveBeenCalledTimes(1);
-    expect(data.scheduleApi).toHaveBeenCalledWith({ action: "markPaid", scheduleId: "sched000000001", payment: { paidDate: "2026-10-16", method: "bank_transfer" } });
+    expect(data.scheduleApi).toHaveBeenCalledWith({ action: "markPaid", scheduleId: "sched000000001", payment: { paidDate: "2026-10-16", method: "bank_transfer", amount: 2000000, final: true, key: expect.stringMatching(/^[a-z2-9]{12}$/) } });
+  });
+
+  it("Phase 18.6: a part payment with who paid; a part-paid row shows what's left", async () => {
+    const data = fakeData({ listScheduled: vi.fn(async () => ({ rows: [{ ...DEPOSIT, paidAmount: 500000, parts: [{ expenseId: "x", amount: 500000, date: "2026-10-01" }] }], hasMore: false })) });
+    mountSchedule(container, baby(), { data, now: NOW, toast: vi.fn() });
+    await flush();
+    expect(container.querySelector('[data-col="amount"]').textContent).toBe("₱15,000.00 left of ₱20,000.00");
+    expect(container.textContent).toMatch(/Part paid/);
+    container.querySelector('[data-act="pay"]').click();
+    const form = lastForm();
+    setField(form, "amount", "5000");
+    setField(form, "final", "no");
+    setField(form, "paidBy", "Mom 3000, Dad");
+    submit(form);
+    await flush();
+    expect(data.scheduleApi.mock.calls[0][0].payment).toMatchObject({ amount: 500000, final: false, paidBy: [{ name: "Mom", amount: 300000 }, { name: "Dad", amount: 200000 }] });
   });
 
   it("a retry answered 'already paid' says no second expense was recorded", async () => {
@@ -232,27 +264,23 @@ describe("Providers", () => {
   });
 });
 
-describe("Baby Dashboard (Phase 18.5): where are we with the budget, and what is coming up?", () => {
-  it("Total / Spent / Remaining + a spent-vs-scheduled bar (Upcoming ≠ Spent); this month from spendingMetrics; category bars; lists", async () => {
-    const fetchDocuments = vi.fn(async (_b, docs) => Object.fromEntries(docs.map((d) => [d.source, { status: "ok", data: d.source === "spending-day" ? { spent: 1500000, count: 3 } : BUDGET }])));
-    const fetchLists = vi.fn(async () => ({ spendingByCategory: { status: "ok", rows: [{ id: "a", name: "Medical", spent: 1000000, budget: 6000000, remaining: 5000000 }] }, upcomingPayments: { status: "ok", rows: [DEPOSIT] }, recentExpenses: { status: "ok", rows: [EXP] } }));
+describe("Baby Dashboard (Phase 18.6): spent, who paid, coming up", () => {
+  it("reads budgets/current and this month's spending only; works with no budget at all", async () => {
+    const fetchDocuments = vi.fn(async (_b, docs) => Object.fromEntries(docs.map((d) => [d.source, { status: "ok", data: d.source === "spending-month" ? { spent: 1500000, count: 3 } : { spent: 2200000, upcoming: 2000000 } }])));
+    const fetchLists = vi.fn(async () => ({ upcomingPayments: { status: "ok", rows: [DEPOSIT] } }));
     mountDashboard(container, baby(), { fetchDocuments, fetchLists, now: NOW(), toast: () => {} });
     await flush();
-    const collections = fetchDocuments.mock.calls[0][1].map((d) => d.collection).sort();
-    expect(collections).toEqual(["budgets", "spendingMetrics"]);
-    // Budget workspaces open on This month.
-    expect(fetchDocuments.mock.calls[0][1].find((d) => d.source === "spending-day").ids[0]).toBe("2026-10-01");
+    const docs = fetchDocuments.mock.calls[0][1];
+    expect(docs.map((d) => d.collection).sort()).toEqual(["budgets", "spendingMetrics"]);
+    expect(docs.find((d) => d.source === "spending-month").ids).toEqual(["2026-10"]);
     const val = (id) => container.querySelector(`[data-widget="${id}"] .kpi-value`).textContent;
-    expect(val("budgetTotal")).toMatch(/150,000/);
     expect(val("budgetSpent")).toMatch(/22,000/);
-    expect(val("budgetRemaining")).toMatch(/128,000/);
-    const budget = container.querySelector('[data-section="budget"]').textContent;
-    expect(budget).toMatch(/Scheduled, not paid yet: ₱20,000.00/);
-    expect(budget).toMatch(/This month: ₱15,000.00/);
-    expect(container.querySelector('[data-section="categories"] [data-row="a"]').textContent).toMatch(/Medical.*₱10,000.00 of ₱60,000.00/s);
+    expect(val("budgetUpcoming")).toMatch(/20,000/);
+    expect(val("babySpentThisMonth")).toMatch(/15,000/);
+    // Older expenses without a payer show as "Not set" (no total budget needed).
+    expect(container.querySelector('[data-section="payers"]').textContent).toMatch(/Not set\s*₱22,000.00/);
     expect(container.querySelector('[data-section="upcoming"]').textContent).toMatch(/Hospital deposit.*₱20,000.00/s);
-    expect(container.querySelector('[data-section="recent"]').textContent).toMatch(/Baby Company/);
-    expect(container.textContent).not.toMatch(/Gross|COGS|Profit|Sales/);
+    expect(container.textContent).not.toMatch(/Gross|COGS|Profit|Sales|Total budget/);
   });
 });
 

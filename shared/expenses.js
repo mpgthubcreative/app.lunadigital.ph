@@ -30,7 +30,7 @@
 
 import { isDayId } from "./metrics.js";
 import { isCentavos } from "./quantity.js";
-import { isValidRecordId } from "./baby.js";
+import { isValidRecordId, validatePaidBy } from "./baby.js";
 
 export const EXPENSE_SCHEMA_VERSION = 1;
 
@@ -78,7 +78,8 @@ export const EXPENSE_FIELDS = Object.freeze(["date", "category", "amount", "paye
 //               payment an expense was recorded from (never sent by the browser)
 export const EXPENSE_PROFILES = Object.freeze({
   distributor: Object.freeze({ id: "distributor", categories: "fixed", fields: EXPENSE_FIELDS, ref: null, link: null }),
-  "baby-expense": Object.freeze({ id: "baby-expense", categories: "tenant", fields: Object.freeze([...EXPENSE_FIELDS, "providerId"]), ref: "providerId", refLabel: "provider", link: "scheduleId" }),
+  // Phase 18.6: Baby expenses also record who paid (paidBy, split shares).
+  "baby-expense": Object.freeze({ id: "baby-expense", categories: "tenant", fields: Object.freeze([...EXPENSE_FIELDS, "providerId", "paidBy"]), ref: "providerId", refLabel: "provider", link: "scheduleId", payers: true }),
   // Phase 16: Wedding Expenses.
   "bridal-expense": Object.freeze({ id: "bridal-expense", categories: "tenant", fields: Object.freeze([...EXPENSE_FIELDS, "supplierId"]), ref: "supplierId", refLabel: "supplier", link: "supplierPaymentId" }),
 });
@@ -140,6 +141,15 @@ export function validateExpenseInput(input, { partial = false, today, profile = 
     out.method = input.method;
   }
   if (has("reference")) out.reference = text(input.reference, { field: "Reference", max: 60 });
+  // Shares must add up to the amount; on a partial edit without the amount
+  // the server checks the sum against the stored amount.
+  if (profile.payers && has("paidBy")) {
+    try {
+      out.paidBy = validatePaidBy(input.paidBy, out.amount ?? null);
+    } catch (err) {
+      throw new ExpenseError(err.code || "invalid-input", err.message);
+    }
+  }
   if (has("notes")) out.notes = text(input.notes, { field: "Notes", max: 500 });
   if (has("recurring")) {
     if (input.recurring !== undefined && typeof input.recurring !== "boolean") throw new ExpenseError("invalid-input", "Recurring must be yes or no");

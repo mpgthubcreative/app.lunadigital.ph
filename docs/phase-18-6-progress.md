@@ -85,8 +85,8 @@ Recorded so the calculation method is explicit. Not legal advice: confirm with D
 | Stage | Status | Commits | Tests |
 |---|---|---|---|
 | 0 Plan + checkpoint | done | (this file) | n/a |
-| 1 Distributor | pending | | |
-| 2 Baby | pending | | |
+| 1 Distributor | done | fff5cc2 | unit (targeted) green |
+| 2 Baby | done (exports in stage 5) | see git log | unit 1200/1200 |
 | 3 Household access | pending | | |
 | 4 Household payroll | pending | | |
 | 5 Shared | pending | | |
@@ -98,4 +98,8 @@ Recorded so the calculation method is explicit. Not legal advice: confirm with D
 - I can't sign in to staging in a browser with real passwords, so screenshots use the preview harness with realistic data.
 
 ## Next action
-Stage 1: order source box, then inventory labels, then product cost visibility.
+Stage 3: household staff accounts (activation links), attendance requests + approval, leave/rest-day statuses, advance requests.
+
+## Staging steps still to run (stage 7)
+- `scripts/adopt-baby-category-totals.js` dry run, then `--apply`, on staging Baby tenants (demo-baby-a).
+- `resync-permissions --all` after the new role and permission keys land (stage 3).

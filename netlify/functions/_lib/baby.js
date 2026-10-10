@@ -18,7 +18,8 @@
 // second request can't make a second expense. The payment leaves Upcoming
 // and the expense counts as spent in the same transaction.
 
-import { BabyError, BABY_SCHEMA_VERSION, BUDGET_DOC_ID, MAX_CATEGORIES, SUGGESTED_CATEGORIES, CATEGORY_STATUSES, PROVIDER_STATUSES, PROVIDER_TYPES, isValidRecordId, validateCategoryInput, validateBudgetTotal, validateProviderInput, validateScheduleInput, thresholdLevel } from "../../../shared/baby.js";
+import { BabyError, BABY_SCHEMA_VERSION, BUDGET_DOC_ID, MAX_CATEGORIES, SUGGESTED_CATEGORIES, CATEGORY_STATUSES, PROVIDER_STATUSES, PROVIDER_TYPES, isValidRecordId, validateCategoryInput, validateBudgetTotal, validateProviderInput, validateScheduleInput, validatePaidBy, thresholdLevel, totalFromCategories, upcomingPart } from "../../../shared/baby.js";
+import { partsOf } from "./baby-spending.js";
 import { EXPENSE_METHODS } from "../../../shared/expenses.js";
 import { businessDate, isDayId } from "../../../shared/metrics.js";
 import { prepareExpenseCreate } from "./expenses.js";
@@ -56,11 +57,30 @@ async function loadBudget(tx, tenant) {
   return snap.exists ? snap.data() : {};
 }
 
+// Phase 18.6: in the Baby workspace the Total budget is the sum of the
+// category budgets (shared/baby.js totalFromCategories), kept by the server
+// whenever a category's budget changes or a category is added or deleted.
+// Bridal keeps its own typed Total (unchanged).
+const autoTotal = (workspace) => workspace === "baby-expense";
+
+// Inside a category transaction (after its reads): budgets/current fields
+// for the new total. A changed total starts a new alert episode, as a typed
+// change does. `categories` = every category after the change.
+function autoTotalFields(b, categories) {
+  const previous = Number.isSafeInteger(b.total) ? b.total : null;
+  const total = totalFromCategories(categories);
+  if (previous === total && b.totalFrom === "categories") return {};
+  const episode = (int(b.alerts?.episode) || 1) + 1;
+  return { total, alerts: { episode, notified: thresholdLevel(int(b.spent), total) }, totalFrom: "categories" };
+}
+const categoriesOf = async (tx, tenant) => (await tx.get(tenant.collection("expenseCategories"))).docs.map((d) => ({ id: d.id, ...d.data() }));
+
 // ---------- Budget ----------
 
 // Edit -> Save of the total budget. Not spending: Spent never changes here.
 // Starts a new alert episode (levels already reached don't alert again).
-export async function setBudgetTotal({ db, tenant, FieldValue, total, expectedRevision = null, actor }) {
+export async function setBudgetTotal({ db, tenant, FieldValue, total, expectedRevision = null, actor, workspace = null }) {
+  if (autoTotal(workspace)) throw new BabyError("budget-total-automatic", "The total budget is the sum of your category budgets. Change a category's budget instead");
   const value = validateBudgetTotal(total);
   return db.runTransaction(async (tx) => {
     const b = await loadBudget(tx, tenant);
@@ -132,12 +152,13 @@ export async function setupSuggestedCategories({ db, tenant, FieldValue, actor, 
   }, TX_OPTIONS);
 }
 
-export async function createCategory({ db, tenant, FieldValue, input, actor }) {
+export async function createCategory({ db, tenant, FieldValue, input, actor, workspace = null }) {
   const data = validateCategoryInput(input);
   return db.runTransaction(async (tx) => {
     const b = await loadBudget(tx, tenant);
     if (int(b.categoryCount) >= MAX_CATEGORIES) throw new BabyError("too-many-categories", `A budget can have at most ${MAX_CATEGORIES} categories`);
     if (await nameTaken(tx, tenant, data.name)) throw new BabyError("duplicate-category", "A category with that name already exists");
+    const existing = autoTotal(workspace) ? await categoriesOf(tx, tenant) : null;
     const r = categoriesRef(tenant).doc();
     const order = data.order ?? (int(b.categoryCount) + 1) * 10;
     tx.create(r, newCategory(FieldValue, actor, { name: data.name, budget: data.budget ?? null, order }));
@@ -146,6 +167,7 @@ export async function createCategory({ db, tenant, FieldValue, input, actor }) {
       {
         schemaVersion: BABY_SCHEMA_VERSION,
         categoryCount: FieldValue.increment(1),
+        ...(existing ? autoTotalFields(b, [...existing, { id: r.id, budget: data.budget ?? null }]) : {}),
         ...(data.budget !== null && data.budget !== undefined ? { history: appendBudget(b.history, entry(actor, `${data.name} budget set ${peso(data.budget)}`, { field: "category", categoryId: r.id, from: null, to: data.budget })) } : {}),
         updatedAt: FieldValue.serverTimestamp(),
       },
@@ -156,7 +178,7 @@ export async function createCategory({ db, tenant, FieldValue, input, actor }) {
 }
 
 // Edit -> Save: name, budget allocation, position.
-export async function updateCategory({ db, tenant, FieldValue, categoryId, changes, expectedRevision = null, actor }) {
+export async function updateCategory({ db, tenant, FieldValue, categoryId, changes, expectedRevision = null, actor, workspace = null }) {
   const data = validateCategoryInput(changes, { partial: true });
   const cRef = ref(tenant, "expenseCategories", categoryId, "category");
   return db.runTransaction(async (tx) => {
@@ -168,6 +190,7 @@ export async function updateCategory({ db, tenant, FieldValue, categoryId, chang
     const diff = Object.fromEntries(Object.entries(data).filter(([k, v]) => (c[k] ?? null) !== (v ?? null)));
     if (!Object.keys(diff).length) return { categoryId, unchanged: true, revision: c.revision };
     if ("name" in diff && (await nameTaken(tx, tenant, diff.name, categoryId))) throw new BabyError("duplicate-category", "A category with that name already exists");
+    const all = "budget" in diff && autoTotal(workspace) ? await categoriesOf(tx, tenant) : null;
     const labels = [];
     if ("name" in diff) labels.push(`Renamed ${c.name} → ${diff.name}`);
     if ("budget" in diff) labels.push(`Budget changed ${peso(c.budget ?? null)} → ${peso(diff.budget)}`);
@@ -176,7 +199,9 @@ export async function updateCategory({ db, tenant, FieldValue, categoryId, chang
     tx.update(cRef, { ...diff, ...("name" in diff ? { nameLower: lower(diff.name) } : {}), history: append(c.history, entry(actor, labels.join(" · "))), revision: c.revision + 1, updatedBy: who(actor), updatedAt: stamp });
     if ("budget" in diff) {
       const name = diff.name ?? c.name;
-      tx.set(budgetRef(tenant), { schemaVersion: BABY_SCHEMA_VERSION, history: appendBudget(b.history, entry(actor, `${name} budget changed ${peso(c.budget ?? null)} → ${peso(diff.budget)}`, { field: "category", categoryId, from: c.budget ?? null, to: diff.budget })), updatedAt: stamp }, { merge: true });
+      const totals = all ? autoTotalFields(b, all.map((x) => (x.id === categoryId ? { ...x, budget: diff.budget } : x))) : {};
+      const totalNote = "total" in totals ? ` · total budget now ${peso(totals.total)}` : "";
+      tx.set(budgetRef(tenant), { schemaVersion: BABY_SCHEMA_VERSION, ...totals, history: appendBudget(b.history, entry(actor, `${name} budget changed ${peso(c.budget ?? null)} → ${peso(diff.budget)}${totalNote}`, { field: "category", categoryId, from: c.budget ?? null, to: diff.budget })), updatedAt: stamp }, { merge: true });
     }
     return { categoryId, revision: c.revision + 1 };
   }, TX_OPTIONS);
@@ -202,16 +227,17 @@ export async function setCategoryStatus({ db, tenant, FieldValue, categoryId, st
 
 // Only a category nothing ever used (created by mistake); otherwise
 // deactivate it, so no expense or payment is orphaned.
-export async function deleteCategory({ db, tenant, FieldValue, categoryId, actor }) {
+export async function deleteCategory({ db, tenant, FieldValue, categoryId, actor, workspace = null }) {
   const cRef = ref(tenant, "expenseCategories", categoryId, "category");
   return db.runTransaction(async (tx) => {
     const b = await loadBudget(tx, tenant);
     const snap = await tx.get(cRef);
     if (!snap.exists) throw new BabyError("not-found", "Category not found");
     const c = snap.data();
-    if (int(c.useCount) > 0) throw new BabyError("category-in-use", "This category is used by expenses or scheduled payments. Deactivate it instead");
+    if (int(c.useCount) > 0) throw new BabyError("category-in-use", "This category has expenses or payments, so it can't be deleted. Hide it instead");
+    const rest = autoTotal(workspace) ? (await categoriesOf(tx, tenant)).filter((x) => x.id !== categoryId) : null;
     tx.delete(cRef);
-    tx.set(budgetRef(tenant), { schemaVersion: BABY_SCHEMA_VERSION, categoryCount: FieldValue.increment(-1), history: appendBudget(b.history, entry(actor, `Removed unused category ${c.name}`)), updatedAt: FieldValue.serverTimestamp() }, { merge: true });
+    tx.set(budgetRef(tenant), { schemaVersion: BABY_SCHEMA_VERSION, categoryCount: FieldValue.increment(-1), ...(rest ? autoTotalFields(b, rest) : {}), history: appendBudget(b.history, entry(actor, `Removed unused category ${c.name}`)), updatedAt: FieldValue.serverTimestamp() }, { merge: true });
     return { categoryId, deleted: true };
   }, TX_OPTIONS);
 }
@@ -379,6 +405,7 @@ export async function updateScheduledPayment({ db, tenant, FieldValue, scheduleI
     const diff = Object.fromEntries(Object.entries(data).filter(([k, v]) => (s[k] ?? null) !== (v ?? null)));
     if (!Object.keys(diff).length) return { scheduleId, unchanged: true, revision: s.revision };
     const next = { ...s, ...diff };
+    if ("amount" in diff && diff.amount < int(s.paidAmount)) throw new BabyError("invalid-amount", `${peso(int(s.paidAmount))} is already paid: the amount can't be less than that`);
     if ("payee" in diff && next.providerId && !("providerId" in diff)) throw new BabyError("invalid-input", "This payment is linked to a saved provider: change the provider instead of the payee");
     const links = await resolveLinks(tx, tenant, next, s);
     const update = { ...diff };
@@ -390,7 +417,8 @@ export async function updateScheduledPayment({ db, tenant, FieldValue, scheduleI
     const stamp = FieldValue.serverTimestamp();
     tx.update(sRef, { ...update, history: append(s.history, entry(actor, labels.join(" · ") || "Updated")), revision: s.revision + 1, updatedBy: who(actor), updatedAt: stamp });
     if (links.catRef) tx.update(links.catRef, { useCount: FieldValue.increment(1) });
-    if ("amount" in diff || "category" in diff) tx.set(budgetRef(tenant), { schemaVersion: BABY_SCHEMA_VERSION, ...upcomingWrite(FieldValue, [[s.category, -s.amount, 0], [next.category, next.amount, 0]]), updatedAt: stamp }, { merge: true });
+    // Upcoming follows the UNPAID part (Phase 18.6: payments can be part-paid).
+    if ("amount" in diff || "category" in diff) tx.set(budgetRef(tenant), { schemaVersion: BABY_SCHEMA_VERSION, ...upcomingWrite(FieldValue, [[s.category, -upcomingPart(s), 0], [next.category, upcomingPart(next), 0]]), updatedAt: stamp }, { merge: true });
     return { scheduleId, revision: s.revision + 1 };
   }, TX_OPTIONS);
 }
@@ -407,25 +435,43 @@ export async function cancelScheduledPayment({ db, tenant, FieldValue, scheduleI
     if (s.status === "cancelled") return { scheduleId, unchanged: true };
     if (s.status !== "upcoming") throw new BabyError("not-upcoming", "A paid payment can't be cancelled: remove its expense instead");
     const stamp = FieldValue.serverTimestamp();
-    tx.update(sRef, { status: "cancelled", cancelReason: why || null, history: append(s.history, entry(actor, why ? `Cancelled · Reason: ${why}` : "Cancelled")), revision: s.revision + 1, updatedBy: who(actor), updatedAt: stamp });
-    tx.set(budgetRef(tenant), { schemaVersion: BABY_SCHEMA_VERSION, ...upcomingWrite(FieldValue, [[s.category, -s.amount, -1]]), updatedAt: stamp }, { merge: true });
+    // Parts already paid stay as expenses; only the unpaid part leaves Upcoming.
+    const paid = int(s.paidAmount);
+    const what = paid ? `Cancelled the unpaid ${peso(upcomingPart(s))} (${peso(paid)} already paid stays as spent)` : "Cancelled";
+    tx.update(sRef, { status: "cancelled", cancelReason: why || null, history: append(s.history, entry(actor, why ? `${what} · Reason: ${why}` : what)), revision: s.revision + 1, updatedBy: who(actor), updatedAt: stamp });
+    tx.set(budgetRef(tenant), { schemaVersion: BABY_SCHEMA_VERSION, ...upcomingWrite(FieldValue, [[s.category, -upcomingPart(s), -1]]), updatedAt: stamp }, { merge: true });
     return { scheduleId, status: "cancelled" };
   }, TX_OPTIONS);
 }
 
-// Mark Paid -> exactly one Baby Expense (see the header). payment:
-// { paidDate? (default today; never in the future), method, reference?,
-//   amount? (default the scheduled amount: the actual bill may differ) }
-const PAY_FIELDS = ["paidDate", "method", "reference", "amount"];
+// Mark Paid -> Baby Expense(s), exactly once each (see the header).
+// payment: { paidDate? (default today; never in the future), method,
+//   reference?, amount? (default: what's still unpaid), paidBy? (who paid,
+//   shares adding up to the amount), final? (default true: this finishes
+//   the payment even if the bill came out different; false = a part
+//   payment, the rest stays Upcoming), key? (8-16 letters/digits from the
+//   browser, one per "Pay" dialog: a retry of the same part is recognised) }
+// Phase 18.6: a payment can be paid in parts. Each part is ONE expense
+// listed in the payment's `parts`; Upcoming keeps only the unpaid part.
+const PAY_FIELDS = ["paidDate", "method", "reference", "amount", "paidBy", "final", "key"];
+const PART_KEY = /^[A-Za-z0-9]{8,16}$/;
+// The expense id of a part: deterministic, so a retry can't record twice.
+//   no key, first payment  -> the payment id (or "<id>r<n>" after a reopen),
+//                             exactly as before Phase 18.6
+//   with a key             -> "<id>k<key>"
+export const partExpenseId = (scheduleId, attempt, key = null) => (key ? `${scheduleId}k${key}` : expenseIdForPayment(scheduleId, attempt));
+
 export async function markScheduledPaymentPaid(args) {
   try {
     return await markPaidOnce(args);
   } catch (err) {
     // Belt and braces: the deterministic expense id already exists, so a
-    // concurrent request paid it first. Answer with that payment's expense.
+    // concurrent request (or a retry) recorded it first. Answer with it.
     if (err && (err.code === 6 || err.code === "already-exists")) {
       const s = (await scheduleRef(args.tenant, args.scheduleId).get()).data();
-      if (s && s.status === "paid") return { scheduleId: args.scheduleId, expenseId: s.expenseId, alreadyPaid: true };
+      const key = args.payment?.key;
+      const id = s ? partExpenseId(args.scheduleId, int(s.attempt), PART_KEY.test(key ?? "") ? key : null) : null;
+      if (s && (s.status === "paid" || partsOf(s).some((p) => p.expenseId === id))) return { scheduleId: args.scheduleId, expenseId: id ?? s.expenseId, alreadyPaid: true };
     }
     throw err;
   }
@@ -437,16 +483,31 @@ async function markPaidOnce({ db, tenant, FieldValue, business, workspace, sched
   const paidDate = payment.paidDate ?? businessDate(business.timezone, now);
   if (!isDayId(paidDate)) throw new BabyError("invalid-input", "Choose a valid paid date");
   if (!Object.hasOwn(EXPENSE_METHODS, payment.method)) throw new BabyError("invalid-input", "Choose a payment method");
+  if (payment.final !== undefined && typeof payment.final !== "boolean") throw new BabyError("invalid-input", "Invalid payment");
+  if (payment.key !== undefined && !PART_KEY.test(payment.key)) throw new BabyError("invalid-input", "Invalid payment");
+  const paidByInput = validatePaidBy(payment.paidBy, null);
   const sRef = scheduleRef(tenant, scheduleId);
   return db.runTransaction(async (tx) => {
     const snap = await tx.get(sRef);
     if (!snap.exists) throw new BabyError("not-found", "Scheduled payment not found");
     const s = snap.data();
-    // Idempotent: a retry / second click finds it Paid and gets the same expense.
+    const parts = partsOf(s);
+    const expenseId = partExpenseId(scheduleId, int(s.attempt), payment.key ?? null);
+    // Idempotent: a retry / second click of the SAME payment gets the same
+    // expense. A payment already Paid in full stays Paid.
+    if (parts.some((p) => p.expenseId === expenseId)) return { scheduleId, expenseId, alreadyPaid: true };
     if (s.status === "paid") return { scheduleId, expenseId: s.expenseId, alreadyPaid: true };
     if (s.status !== "upcoming") throw new BabyError("not-upcoming", "A cancelled payment can't be marked paid");
-    const amount = payment.amount ?? s.amount;
-    const expenseId = expenseIdForPayment(scheduleId, int(s.attempt));
+    // Without a key only one payment can be recorded this way (the original
+    // single "Mark paid"); part payments need a key per part.
+    if (!payment.key && parts.length) throw new BabyError("invalid-input", "Reload and try again");
+    const unpaid = upcomingPart(s);
+    const amount = payment.amount ?? unpaid;
+    // Paying all of what's left finishes it; less is a part payment unless
+    // the browser says it's final (the bill came out lower).
+    const final = payment.final === false ? amount >= unpaid : true;
+    if (!final && !payment.key) throw new BabyError("invalid-input", "Invalid payment");
+    const paidBy = paidByInput ?? null;
     const plan = await prepareExpenseCreate(tx, {
       tenant,
       business,
@@ -454,33 +515,58 @@ async function markPaidOnce({ db, tenant, FieldValue, business, workspace, sched
       actor,
       now,
       expenseId,
-      link: { scheduleId, label: `Paid scheduled payment ${s.description} ${peso(amount)}` },
-      // Leaves Upcoming in the same budgets/current write as the spending.
-      upcomingDelta: { amount: -s.amount, count: -1, category: s.category },
+      link: { scheduleId, label: final ? `Paid scheduled payment ${s.description} ${peso(amount)}` : `Part payment for ${s.description} ${peso(amount)}` },
+      // Leaves Upcoming in the same budgets/current write as the spending:
+      // all of the unpaid part when final, otherwise the part just paid.
+      upcomingDelta: final ? { amount: -unpaid, count: -1, category: s.category } : { amount: -Math.min(amount, unpaid), count: 0, category: s.category },
       input: {
         date: paidDate,
         category: s.category,
         amount,
         method: payment.method,
-        ...(s.providerId ? { providerId: s.providerId } : { providerId: null, ...(s.payee ? { payee: s.payee } : {}) }),
+        ...(s.providerId ? { providerId: s.providerId, ...(s.payee ? { payee: s.payee } : {}) } : { providerId: null, ...(s.payee ? { payee: s.payee } : {}) }),
         ...(payment.reference ? { reference: payment.reference } : {}),
+        ...(paidBy ? { paidBy: paidBy.map(({ name, amount: a }) => ({ name, amount: a })) } : {}),
         notes: `Scheduled payment: ${s.description}`,
       },
     });
     plan.commit({ FieldValue });
-    meterActivity(tx, { tenant, FieldValue, timezone: business.timezone, now, counts: { scheduledPaymentsPaid: 1 } });
+    if (final) meterActivity(tx, { tenant, FieldValue, timezone: business.timezone, now, counts: { scheduledPaymentsPaid: 1 } });
+    const nextParts = [...parts, { expenseId, amount, date: paidDate, method: payment.method }];
+    const paidAmount = nextParts.reduce((t, p) => t + int(p.amount), 0);
     tx.update(sRef, {
-      status: "paid",
-      expenseId,
-      paidDate,
-      paidAmount: amount,
-      method: payment.method,
-      reference: plan.record.reference ?? null,
-      history: append(s.history, entry(actor, `Marked paid ${peso(amount)} on ${paidDate} (${EXPENSE_METHODS[payment.method].label})`)),
+      parts: nextParts,
+      paidAmount,
+      ...(final ? { status: "paid", expenseId, paidDate, method: payment.method, reference: plan.record.reference ?? null } : {}),
+      history: append(
+        s.history,
+        entry(actor, final ? `Marked paid ${peso(amount)} on ${paidDate} (${EXPENSE_METHODS[payment.method].label})${parts.length ? ` · ${peso(paidAmount)} paid in ${nextParts.length} parts` : ""}` : `Part payment ${peso(amount)} on ${paidDate} (${EXPENSE_METHODS[payment.method].label}) · ${peso(Math.max(0, s.amount - paidAmount))} still to pay`)
+      ),
       revision: s.revision + 1,
       updatedBy: who(actor),
       updatedAt: FieldValue.serverTimestamp(),
     });
-    return { scheduleId, expenseId, paid: true };
+    return { scheduleId, expenseId, paid: final, partPaid: !final, paidAmount, remaining: final ? 0 : Math.max(0, s.amount - paidAmount) };
+  }, TX_OPTIONS);
+}
+
+// ---------- Phase 18.6 migration: Total budget = sum of category budgets ----------
+
+// One Baby business: sets budgets/current.total to the sum of its category
+// budgets (the rule from Phase 18.6 on) and records the change on the
+// budget history. Spending is untouched. Idempotent: a business already on
+// the category total is left alone. dryRun reports without writing.
+export async function adoptCategoryTotal({ db, tenant, FieldValue, actor = { uid: "migration", name: "Luna (Phase 18.6 update)" }, dryRun = true }) {
+  return db.runTransaction(async (tx) => {
+    const b = await loadBudget(tx, tenant);
+    const categories = await categoriesOf(tx, tenant);
+    const fields = autoTotalFields(b, categories);
+    const previous = Number.isSafeInteger(b.total) ? b.total : null;
+    if (!Object.keys(fields).length) return { changed: false, total: previous };
+    if (!dryRun) {
+      const label = previous === fields.total ? `Total budget now follows the category budgets (${peso(fields.total)})` : `Total budget is now the sum of the category budgets: ${peso(previous)} → ${peso(fields.total)}`;
+      tx.set(budgetRef(tenant), { schemaVersion: BABY_SCHEMA_VERSION, ...fields, history: appendBudget(b.history, entry(actor, label, { field: "total", from: previous, to: fields.total })), updatedAt: FieldValue.serverTimestamp() }, { merge: true });
+    }
+    return { changed: true, from: previous, to: fields.total, categories: categories.length, dryRun };
   }, TX_OPTIONS);
 }

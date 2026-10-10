@@ -134,8 +134,9 @@ const TEMPLATES = [
     mobileTabs: ["expenses", "budget", "schedule"],
     dashboard: {
       // Selected period (spending), then the current budget (as of now).
-      widgets: ["babySpent", "babyExpenseCount", "budgetTotal", "budgetSpent", "budgetRemaining", "budgetUpcoming", "spendingByCategory", "upcomingPayments", "recentExpenses"],
-      empty: { title: "Your baby budget is ready", body: "Set your budget and add categories to start tracking spending." },
+      // Phase 18.6: three money cards, who paid, and what's coming up.
+      widgets: ["budgetSpent", "budgetUpcoming", "babySpentThisMonth", "budgetPayers", "upcomingPayments"],
+      empty: { title: "Ready to track baby expenses", body: "Add an expense to start. A budget is optional." },
       sectionLabels: { period: "Spending in the selected period", current: "Current budget" },
     },
     labels: { modules: { dashboard: "Baby Dashboard", budget: "Budget & Categories", expenses: "Baby Expenses", schedule: "Payment Schedule", providers: "Providers / Vendors" } },

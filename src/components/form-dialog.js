@@ -1,5 +1,8 @@
 // Modal form. fields: [{ name, label, type: "text"|"select"|"textarea"|"file",
-// value?, options?: [{ value, label }], hint?, required?, disabled?, inputmode? }].
+// value?, options?: [{ value, label }], hint?, required?, disabled?, inputmode?,
+// placeholder?, suggestions?: [text] (typing suggestions, any text allowed),
+// more? (Phase 18.6: goes in a closed "More details (optional)" section,
+// opened when one of its fields already has a value) }].
 // onSubmit(values) may throw; its message is shown in the dialog and the
 // dialog stays open. Resolves with onSubmit's result, or null if cancelled.
 // All text is escaped by html``.
@@ -19,12 +22,13 @@ function fieldMarkup(f, id) {
     return html`<input class="input" type="file" id="${common.id}" name="${common.name}" accept="${f.accept || ""}" />`;
   }
   if (f.type === "textarea") {
-    return html`<textarea class="input" id="${common.id}" name="${common.name}" rows="2" maxlength="300">${f.value ?? ""}</textarea>`;
+    return html`<textarea class="input" id="${common.id}" name="${common.name}" rows="2" maxlength="300" ${f.placeholder ? html`placeholder="${f.placeholder}"` : ""}>${f.value ?? ""}</textarea>`;
   }
   if (f.type === "date") {
     return html`<input class="input" type="date" id="${common.id}" name="${common.name}" value="${f.value ?? ""}" ${f.max ? html`max="${f.max}"` : ""} ${f.disabled ? "disabled" : ""} />`;
   }
-  return html`<input class="input" id="${common.id}" name="${common.name}" value="${f.value ?? ""}" ${f.inputmode ? html`inputmode="${f.inputmode}"` : ""} ${f.disabled ? "disabled" : ""} autocomplete="off" />`;
+  const list = f.suggestions?.length ? `${id}-list` : "";
+  return html`<input class="input" id="${common.id}" name="${common.name}" value="${f.value ?? ""}" ${f.inputmode ? html`inputmode="${f.inputmode}"` : ""} ${f.placeholder ? html`placeholder="${f.placeholder}"` : ""} ${list ? html`list="${list}"` : ""} ${f.disabled ? "disabled" : ""} autocomplete="off" />${list ? html`<datalist id="${list}">${f.suggestions.map((s) => html`<option value="${s}"></option>`)}</datalist>` : ""}`;
 }
 
 export function formDialog({ title, intro = "", fields, submitLabel = "Save", onSubmit }) {
@@ -32,6 +36,14 @@ export function formDialog({ title, intro = "", fields, submitLabel = "Save", on
     const uid = ++counter;
     const backdrop = document.createElement("div");
     backdrop.className = "modal-backdrop";
+    const fieldBlock = (f) => html`<div class="field">
+                <label for="fd-${uid}-${f.name}">${f.label}${f.required ? " *" : ""}</label>
+                ${fieldMarkup(f, `fd-${uid}-${f.name}`)}
+                ${f.hint ? html`<div class="stat-hint">${f.hint}</div>` : ""}
+              </div>`;
+    const main = fields.filter((f) => !f.more);
+    const more = fields.filter((f) => f.more);
+    const moreOpen = more.some((f) => f.value !== undefined && f.value !== null && f.value !== "" && f.type !== "select");
     render(
       backdrop,
       html`
@@ -39,13 +51,8 @@ export function formDialog({ title, intro = "", fields, submitLabel = "Save", on
           <div class="modal-header"><h2 class="card-title" id="fd-title-${uid}">${title}</h2></div>
           <div class="modal-body">
             ${intro ? html`<p class="stat-note">${intro}</p>` : ""}
-            ${fields.map(
-              (f) => html`<div class="field">
-                <label for="fd-${uid}-${f.name}">${f.label}${f.required ? " *" : ""}</label>
-                ${fieldMarkup(f, `fd-${uid}-${f.name}`)}
-                ${f.hint ? html`<div class="stat-hint">${f.hint}</div>` : ""}
-              </div>`
-            )}
+            ${main.map(fieldBlock)}
+            ${more.length ? html`<details class="form-more" ${moreOpen ? "open" : ""}><summary>More details (optional)</summary>${more.map(fieldBlock)}</details>` : ""}
             <p class="form-error" data-role="error" role="alert" hidden></p>
           </div>
           <div class="modal-footer">

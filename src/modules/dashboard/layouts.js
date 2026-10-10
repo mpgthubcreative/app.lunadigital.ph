@@ -6,7 +6,7 @@
 //
 //   Distributor  "What is happening in my store right now?"
 //   Household    "What needs my attention with household payroll?"
-//   Baby         "Where are we with our budget, and what's coming up?"
+//   Baby         "How much have we spent, who paid, and what's coming up?"
 //   Bridal       "Are we on track?"
 
 import { html } from "../../lib/html.js";
@@ -247,58 +247,53 @@ export function householdDashboard(ctx) {
 
 // ---------- Baby ----------
 
+// Phase 18.6: "How much have we spent, who paid, and what's coming up?"
+// Three money cards (Total spent, Still to pay, Spent this month), one small
+// card per payer, and Coming up. No budget card: a budget is optional, and
+// the Budget screen owns it. Paid (spent) and scheduled (still to pay) are
+// never mixed; a part-paid payment counts only its unpaid part.
 export function babyDashboard(ctx) {
-  const { view, currency, today, periodLabel } = ctx;
+  const { view, currency, today } = ctx;
   const a = access(view);
-  const lines = a.rows("spendingByCategory");
   const upcoming = a.rows("upcomingPayments");
-  const recent = a.rows("recentExpenses");
-  const total = a.num("budgetTotal");
-  const spent = a.num("budgetSpent");
-
-  const attention = [];
-  for (const s of upcoming.filter((x) => x.dueDate && daysUntil(today, x.dueDate) <= 14).slice(0, 3)) attention.push({ id: `due-${s.id}`, tone: daysUntil(today, s.dueDate) < 0 ? "danger" : "warning", text: `${s.description} ${dueText(today, s.dueDate)}`, detail: `${formatCentavos(s.amount, currency)}${s.payee ? ` · ${s.payee}` : ""}`, href: "/payment-schedule" });
-  for (const l of lines.filter((x) => x.budget > 0 && x.spent / x.budget >= 0.9).slice(0, 3)) attention.push({ id: `cat-${l.id}`, tone: l.spent > l.budget ? "danger" : "warning", text: l.spent > l.budget ? `${l.name} is over its budget` : `${l.name} is at ${Math.round((l.spent / l.budget) * 100)}% of its budget`, detail: `${formatCentavos(l.spent, currency)} of ${formatCentavos(l.budget, currency)}`, href: "/budget" });
-  if (total > 0 && spent / total >= 0.8) attention.unshift({ id: "overall", tone: spent > total ? "danger" : "warning", text: spent > total ? "Spending is over the total budget" : `${Math.round((spent / total) * 100)}% of the total budget is spent`, href: "/budget" });
-
-  const withBudget = lines.filter((l) => l.budget > 0).sort((x, y) => y.budget - x.budget);
-  const catRows = withBudget.slice(0, 6).map((l) => ({ id: l.id, label: l.name, value: `${formatCentavos(l.spent, currency)} of ${formatCentavos(l.budget, currency)}`, pct: (l.spent / l.budget) * 100, tone: budgetTone(l.spent, l.budget) }));
-
-  const periodSpent = a.num("babySpent");
+  const payers = a.num("budgetPayers") || [];
+  const items = [kpi(a.card("budgetSpent"), "Total spent", "All paid expenses"), kpi(a.card("budgetUpcoming"), "Still to pay", "Scheduled, not paid yet"), kpi(a.card("babySpentThisMonth"), "Spent this month", "Paid this calendar month")].filter(Boolean);
+  const leftOf = (s) => Math.max(0, (s.amount ?? 0) - (s.paidAmount ?? 0));
   return html`
-    ${budgetHero(a, { total: "budgetTotal", spent: "budgetSpent", remaining: "budgetRemaining", upcoming: "budgetUpcoming" }, { currency, periodSpent, periodLabel })}
-    <div class="split section">
-      <div class="stack">
-        ${section({ title: "Needs attention", id: "attention", body: attentionList(attention, { clear: "All clear. Nothing due in the next two weeks." }) })}
-        ${a.list("spendingByCategory")
-          ? section({
-              title: "Spending by category",
-              id: "categories",
-              link: { href: "/budget", label: "Budget" },
-              body: catRows.length ? barRows(catRows, { role: "category-bars" }) : emptyState({ iconName: "budget", title: "No category budgets yet", body: "Give your categories a budget to see how each one is going." }),
-            })
-          : ""}
-      </div>
-      <div class="stack">
-        ${a.list("upcomingPayments")
-          ? section({
-              title: "Coming up",
-              hint: "scheduled, not spent yet",
-              id: "upcoming",
-              link: { href: "/payment-schedule", label: "Schedule" },
-              body: upcoming.length ? itemList(upcoming.map((s) => ({ id: s.id, title: s.description, sub: `${dueText(today, s.dueDate)}${s.payee ? ` · ${s.payee}` : ""}`, end: formatCentavos(s.amount, currency) })), { role: "upcoming" }) : emptyState({ iconName: "calendar", title: "Nothing scheduled", body: "Add upcoming bills like hospital deposits so they're not forgotten." }),
-            })
-          : ""}
-        ${a.list("recentExpenses")
-          ? section({
-              title: "Recent expenses",
-              id: "recent",
-              link: { href: "/expenses", label: "All expenses" },
-              body: recent.length ? itemList(recent.map((e) => ({ id: e.id, title: e.payee || e.categoryName || "Expense", sub: `${e.categoryName ?? ""} · ${shortDay(e.date)}`, end: formatCentavos(e.amount, currency) })), { role: "recent-expenses" }) : emptyState({ iconName: "expenses", title: "No expenses yet", body: "What you pay for appears here." }),
-            })
-          : ""}
-      </div>
-    </div>
+    ${items.length
+      ? html`<section class="card" data-section="money">
+          <div class="kpis kpis-flat" data-cols="${items.length}" data-role="money-kpis">${items.map(
+            (k) => html`<div class="kpi" data-widget="${k.id}"><div class="kpi-label">${k.label}</div><div class="kpi-value${k.empty ? " is-empty" : ""}">${k.value}</div>${k.hint ? html`<div class="kpi-hint">${k.hint}</div>` : ""}</div>`
+          )}</div>
+        </section>`
+      : ""}
+    ${a.card("budgetPayers")
+      ? section({
+          title: "Who paid",
+          hint: "all paid expenses",
+          id: "payers",
+          link: { href: "/expenses", label: "Expenses" },
+          body: payers.length
+            ? html`<div class="payer-cards" data-role="payers">${payers.map(
+                (p) => html`<div class="payer-card${p.key ? "" : " is-unset"}" data-payer="${p.key ?? "unset"}"><div class="payer-name">${p.name}</div><div class="payer-amount">${formatCentavos(p.amount, currency)}</div></div>`
+              )}</div>`
+            : emptyState({ iconName: "expenses", title: "No payments yet", body: 'When you add an expense, write who paid (e.g. "Mom", or "Mom 600, Dad 400").' }),
+        })
+      : ""}
+    ${a.list("upcomingPayments")
+      ? section({
+          title: "Coming up",
+          hint: "scheduled, not spent yet",
+          id: "upcoming",
+          link: { href: "/payment-schedule", label: "Schedule" },
+          body: upcoming.length
+            ? itemList(
+                upcoming.map((s) => ({ id: s.id, title: s.description, sub: `${dueText(today, s.dueDate)}${s.payee ? ` · ${s.payee}` : ""}${(s.paidAmount ?? 0) > 0 ? ` · ${formatCentavos(s.paidAmount, currency)} already paid` : ""}`, end: formatCentavos(leftOf(s), currency), tone: s.dueDate && daysUntil(today, s.dueDate) < 0 ? "danger" : undefined })),
+                { role: "upcoming" }
+              )
+            : emptyState({ iconName: "calendar", title: "Nothing scheduled", body: "Add upcoming bills like hospital deposits so they're not forgotten." }),
+        })
+      : ""}
   `;
 }
 

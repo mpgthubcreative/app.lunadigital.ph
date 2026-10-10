@@ -30,10 +30,10 @@ const period = (from, to) => (from === to ? from : `${from} to ${to}`);
 
 async function dashboard({ tenant, filters, permissions, entitlements, timezone, now, today, readByIds, readRows }) {
   const { from, to } = filters;
-  const widgets = resolveDashboard({ entitlements, permissions }).filter((w) => w.kind === "stat");
+  const widgets = resolveDashboard({ entitlements, permissions }).filter((w) => w.kind === "stat" && w.format !== "list");
   const periodWidgets = widgets.filter((w) => w.section === "period");
   const currentWidgets = widgets.filter((w) => w.section === "current");
-  const plan = dashboardDocuments(widgets, { from, to });
+  const plan = dashboardDocuments(widgets, { from, to }, today);
   const read = new Map();
   for (const d of plan) read.set(d.source, { ...d, docs: await readByIds(d.collection, d.ids) });
   // Live counts (as of export time), e.g. overdue tasks against the business's today.

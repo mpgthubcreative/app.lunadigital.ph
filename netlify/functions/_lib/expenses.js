@@ -110,7 +110,8 @@ function changeLabels(before, after, categoryLabel) {
     method: (v) => methodLabel(v),
     recurring: (v) => (v ? "Yes" : "No"),
   };
-  const names = { date: "Date", category: "Category", amount: "Amount", payee: "Payee", method: "Method", reference: "Reference", recurring: "Recurring" };
+  show.paidBy = (v) => (Array.isArray(v) && v.length ? v.map((p) => (v.length > 1 ? `${p.name} ${peso(p.amount)}` : p.name)).join(" + ") : "—");
+  const names = { date: "Date", category: "Category", amount: "Amount", payee: "Payee", method: "Method", reference: "Reference", recurring: "Recurring", paidBy: "Paid by", providerName: "Provider" };
   for (const k of Object.keys(after)) {
     if (k === "notes") out.push("Notes updated");
     else if (names[k]) {
@@ -148,6 +149,9 @@ export async function prepareExpenseCreate(tx, { tenant, business, workspace, in
         month: rec.date.slice(0, 7),
         category: rec.category,
         ...(rec.categoryName !== undefined ? { categoryName: rec.categoryName } : {}),
+        // Phase 18.6 (Baby): the saved provider's name snapshot and who paid.
+        ...(rec.providerName !== undefined ? { providerName: rec.providerName } : {}),
+        ...(profile.payers ? { paidBy: rec.paidBy ?? null } : {}),
         amount: rec.amount,
         payee,
         payeeLower: payee ? payee.toLocaleLowerCase("en") : null,
@@ -199,7 +203,8 @@ export async function updateExpense({ db, tenant, FieldValue, business, workspac
     if (expectedRevision !== null && expectedRevision !== e.revision) throw new ExpenseError("stale-expense", "This expense was changed by someone else. Reload and try again");
 
     const diff = {};
-    for (const [k, v] of Object.entries(data)) if ((e[k] ?? null) !== (v ?? null)) diff[k] = v ?? null;
+    // JSON comparison so list fields (paidBy) compare by value.
+    for (const [k, v] of Object.entries(data)) if (JSON.stringify(e[k] ?? null) !== JSON.stringify(v ?? null)) diff[k] = v ?? null;
     if (!Object.keys(diff).length) return { expenseId, unchanged: true, revision: e.revision };
 
     const before = { id: expenseId, ...e };
@@ -207,7 +212,7 @@ export async function updateExpense({ db, tenant, FieldValue, business, workspac
     const update = { ...diff, ...s.fields };
     if ("date" in update) update.month = update.date.slice(0, 7);
     if ("payee" in update) update.payeeLower = update.payee ? update.payee.toLocaleLowerCase("en") : null;
-    const shown = Object.fromEntries(Object.entries(update).filter(([k]) => k in diff || k === "payee"));
+    const shown = Object.fromEntries(Object.entries(update).filter(([k]) => k in diff || k === "payee" || k === "paidBy" || k === "providerName"));
     const was = Object.fromEntries(Object.keys(shown).map((k) => [k, e[k] ?? null]));
     tx.update(ref, {
       ...update,

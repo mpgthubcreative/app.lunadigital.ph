@@ -306,22 +306,32 @@ describe("Household: a period ending today", () => {
   });
 });
 
-describe("Baby: budget and what's coming up", () => {
+describe("Baby: how much have we spent, who paid, and what's coming up? (Phase 18.6)", () => {
   const B = () => sessionFixture({ workspaceTemplateId: "baby-expense" });
-  it("Total / Spent / Remaining with a spent-vs-scheduled bar: Upcoming is never counted as spent", async () => {
-    await show(B(), { "budgets/current": { total: 15000000, spent: 8200000, upcoming: 2800000 } }, {
-      upcomingPayments: [{ id: "s1", description: "Hospital deposit", amount: 2000000, dueDate: "2026-10-12" }],
-      spendingByCategory: [{ id: "c1", name: "Medical", budget: 6000000, spent: 5520000, status: "active" }],
-      recentExpenses: [],
-    });
-    expect(value("budgetTotal")).toBe("₱150,000.00");
-    expect(value("budgetSpent")).toBe("₱82,000.00");
-    expect(value("budgetRemaining")).toBe("₱68,000.00");
-    expect(sectionOf("budget").textContent).toMatch(/Scheduled, not paid yet: ₱28,000.00/);
-    const att = sectionOf("attention").textContent;
-    expect(att).toMatch(/Hospital deposit due in 4 days/);
-    expect(att).toMatch(/Medical is at 92% of its budget/);
-    expect(sectionOf("categories").querySelector('[data-row="c1"]').textContent).toMatch(/₱55,200.00 of ₱60,000.00/);
+  it("three money cards, a card per payer (shared purchases counted once), and Coming up with the unpaid part", async () => {
+    const fetch = await show(
+      B(),
+      {
+        "budgets/current": { total: 15000000, spent: 2450000, upcoming: 1500000, spentByPayer: { mom: 1400000, dad: 850000 }, payerNames: { mom: "Mom", dad: "Dad" } },
+        "spendingMetrics/2026-10": { spent: 600000, count: 3 },
+      },
+      { upcomingPayments: [{ id: "s1", description: "Hospital deposit", amount: 2000000, paidAmount: 500000, dueDate: "2026-10-12", status: "upcoming" }] }
+    );
+    expect(value("budgetSpent")).toBe("₱24,500.00");
+    expect(value("budgetUpcoming")).toBe("₱15,000.00");
+    expect(value("babySpentThisMonth")).toBe("₱6,000.00");
+    // No budget card, no expense count, no recent list, no "needs attention".
+    for (const gone of ["budgetTotal", "budgetRemaining", "babyExpenseCount"]) expect(widget(gone)).toBeFalsy();
+    for (const gone of ["attention", "recent", "categories", "budget"]) expect(sectionOf(gone)).toBeNull();
+    const payers = [...sectionOf("payers").querySelectorAll("[data-payer]")].map((p) => `${p.querySelector(".payer-name").textContent} ${p.querySelector(".payer-amount").textContent}`);
+    expect(payers).toEqual(["Mom ₱14,000.00", "Dad ₱8,500.00", "Not set ₱2,000.00"]);
+    const up = sectionOf("upcoming").textContent.replace(/\s+/g, " ");
+    expect(up).toMatch(/Hospital deposit/);
+    expect(up).toMatch(/₱5,000.00 already paid/);
+    expect(up).toMatch(/₱15,000.00/);
+    // Only this month's spending document is read (no period filter).
+    expect(fetch.mock.calls[0][1].find((d) => d.collection === "spendingMetrics").ids).toEqual(["2026-10"]);
+    expect(container.querySelector('[data-role="period"]')).toBeNull();
     expect(container.textContent).not.toMatch(/COGS|Gross profit/);
   });
 });

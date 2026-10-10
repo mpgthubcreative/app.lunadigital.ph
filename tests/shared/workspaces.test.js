@@ -474,8 +474,11 @@ describe("dashboard", () => {
   });
 
   it("Baby (Phase 15): only Baby widgets; reads spendingMetrics + budgets/current, never a Distributor metric", () => {
-    expect(ids("baby-expense")).toEqual(["babySpent", "babyExpenseCount", "budgetTotal", "budgetSpent", "budgetRemaining", "budgetUpcoming", "spendingByCategory", "upcomingPayments", "recentExpenses"]);
-    const cols = dashboardDocuments(resolveDashboard(access("baby-expense")), "2026-10-08").map((d) => d.collection);
+    // Phase 18.6: Total spent, Still to pay, Spent this month, Who paid, Coming up.
+    expect(ids("baby-expense")).toEqual(["budgetSpent", "budgetUpcoming", "babySpentThisMonth", "budgetPayers", "upcomingPayments"]);
+    const docs = dashboardDocuments(resolveDashboard(access("baby-expense")), "2026-10-08");
+    expect(docs.find((d) => d.collection === "spendingMetrics").ids).toEqual(["2026-10"]); // the current month only
+    const cols = docs.map((d) => d.collection);
     expect(cols.sort()).toEqual(["budgets", "spendingMetrics"]);
   });
 });

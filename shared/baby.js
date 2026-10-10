@@ -175,6 +175,113 @@ export function validateScheduleInput(input, { partial = false } = {}) {
   return out;
 }
 
+// ---------- Who paid (Phase 18.6) ----------
+
+// An expense's "Paid by": one or more people (custom names: Mom, Dad, Lola
+// Rosa…) and how much each put in. The parts must add up to the expense,
+// so a purchase two people shared is counted ONCE in Total spent and split
+// across their payer totals. Stored as [{ key, name, amount }]; `key` is a
+// normalized name (the payer total's map key), `name` the display text.
+// null = not recorded (older expenses): shown as "Not set".
+export const MAX_PAYERS_PER_EXPENSE = 5;
+export const PAYER_NOT_SET = "Not set";
+
+export function payerKey(name) {
+  const k = String(name ?? "")
+    .normalize("NFKD")
+    .replace(/[̀-ͯ]/g, "")
+    .toLocaleLowerCase("en")
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 40);
+  return k || null;
+}
+
+// Validates the shape; the sum check needs the expense amount (amount =
+// null skips it: a partial edit checks it once the amount is known).
+export function validatePaidBy(list, amount = null) {
+  if (list === undefined || list === null || (Array.isArray(list) && !list.length)) return null;
+  if (!Array.isArray(list)) throw new BabyError("invalid-input", "Invalid Paid by");
+  if (list.length > MAX_PAYERS_PER_EXPENSE) throw new BabyError("invalid-input", `At most ${MAX_PAYERS_PER_EXPENSE} people can share one expense`);
+  const seen = new Set();
+  const out = list.map((p) => {
+    if (!p || typeof p !== "object" || Array.isArray(p)) throw new BabyError("invalid-input", "Invalid Paid by");
+    for (const k of Object.keys(p)) if (!["name", "amount"].includes(k)) throw new BabyError("invalid-input", "Invalid Paid by");
+    const name = text(p.name, { field: "Paid by name", max: 40, required: true });
+    const key = payerKey(name);
+    if (!key) throw new BabyError("invalid-input", "Use letters or numbers in the payer's name");
+    if (seen.has(key)) throw new BabyError("invalid-input", `${name} is listed twice`);
+    seen.add(key);
+    if (!isCentavos(p.amount) || p.amount <= 0) throw new BabyError("invalid-amount", `${name}'s share must be more than ₱0`);
+    return { key, name, amount: p.amount };
+  });
+  if (amount !== null) checkPaidBySum(out, amount);
+  return out;
+}
+
+export function checkPaidBySum(paidBy, amount) {
+  if (!paidBy) return;
+  const sum = paidBy.reduce((s, p) => s + p.amount, 0);
+  if (sum !== amount) throw new BabyError("paid-by-mismatch", `The shares add up to ₱${(sum / 100).toFixed(2)}, not the expense amount ₱${(amount / 100).toFixed(2)}`);
+}
+
+// The expense form's single "Paid by" box: "Mom" (paid it all) or
+// "Mom 600, Dad 400" (shares). One name without an amount takes whatever
+// the others didn't cover. Returns [{ name, amount }] (centavos) or null
+// for an empty box; throws BabyError with a plain message otherwise.
+export function parsePaidByText(value, amount) {
+  const t = typeof value === "string" ? value.trim() : "";
+  if (!t) return null;
+  const parts = t.split(/\s*(?:,|;|\+|&|\band\b)\s*/i).filter(Boolean);
+  const rows = parts.map((p) => {
+    const m = /^(.*?)\s*(?:₱|php|p)?\s*([\d,]+(?:\.\d{1,2})?)$/i.exec(p);
+    if (m && m[1].trim()) return { name: m[1].trim(), amount: Math.round(Number(m[2].replace(/,/g, "")) * 100) };
+    return { name: p.trim(), amount: null };
+  });
+  const open = rows.filter((r) => r.amount === null);
+  if (open.length > 1) throw new BabyError("invalid-input", 'Add each person\'s share, e.g. "Mom 600, Dad 400"');
+  if (open.length === 1) {
+    if (!Number.isSafeInteger(amount) || amount <= 0) throw new BabyError("invalid-input", "Enter the amount first");
+    const rest = amount - rows.reduce((s, r) => s + (r.amount ?? 0), 0);
+    if (rest <= 0) throw new BabyError("paid-by-mismatch", "The shares already cover the whole amount");
+    open[0].amount = rest;
+  }
+  return rows;
+}
+
+// The inverse, to show / pre-fill the box.
+export function paidByText(list) {
+  if (!Array.isArray(list) || !list.length) return "";
+  if (list.length === 1) return list[0].name;
+  return list.map((p) => `${p.name} ${Number.isInteger(p.amount / 100) ? p.amount / 100 : (p.amount / 100).toFixed(2)}`).join(", ");
+}
+
+// Payer totals for the Dashboard: one row per payer from
+// budgets/current.spentByPayer (+ payerNames), biggest first, plus "Not
+// set" for spending recorded without a payer (older expenses).
+export function payerTotals(doc) {
+  const d = doc && typeof doc === "object" ? doc : {};
+  const by = d.spentByPayer && typeof d.spentByPayer === "object" ? d.spentByPayer : {};
+  const names = d.payerNames && typeof d.payerNames === "object" ? d.payerNames : {};
+  const rows = Object.entries(by)
+    .filter(([, v]) => Number.isSafeInteger(v) && v !== 0)
+    .map(([key, amount]) => ({ key, name: names[key] || key, amount }))
+    .sort((a, b) => b.amount - a.amount || a.name.localeCompare(b.name));
+  const unset = int(d.spent) - rows.reduce((s, r) => s + r.amount, 0);
+  if (unset > 0) rows.push({ key: null, name: PAYER_NOT_SET, amount: unset });
+  return rows;
+}
+
+// ---------- Scheduled payments paid in parts (Phase 18.6) ----------
+
+// What a scheduled payment still counts in Upcoming: its unpaid part while
+// Upcoming, nothing once Paid or Cancelled. paidAmount = the parts paid so
+// far (each part is one expense).
+export function upcomingPart(s) {
+  if (!s || s.status !== "upcoming") return 0;
+  return Math.max(0, int(s.amount) - int(s.paidAmount));
+}
+
 // ---------- The budget arithmetic ----------
 
 const int = (v) => (Number.isSafeInteger(v) ? v : 0);
@@ -218,6 +325,16 @@ export function budgetLines(doc, categories) {
       percentUsed: budget ? Math.round((spent * 1000) / budget) / 10 : null,
     };
   });
+}
+
+// Phase 18.6 (Baby): the Total budget is the sum of the category budgets
+// (every category, hidden ones included, because their spending still
+// counts in Spent). null when no category has a budget: expenses are still
+// tracked, there's just no budget to compare against.
+export function totalFromCategories(categories) {
+  let total = null;
+  for (const c of categories || []) if (Number.isSafeInteger(c.budget)) total = (total ?? 0) + c.budget;
+  return total;
 }
 
 // Category display order: `order`, then name, then id.
