@@ -606,6 +606,12 @@ a.item:hover {
   overflow-y: auto;
 }
 
+/* Wedding Suppliers: the Scheduled dropdown names a date and amount; keep
+   the row (and its View button) inside the card. */
+[data-role="suppliers"] [data-role="scheduled"] {
+  max-width: 14rem;
+}
+
 /* Wedding dashboard: total of all upcoming payments, above the list. */
 .upcoming-total {
   display: flex;

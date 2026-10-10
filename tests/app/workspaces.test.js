@@ -45,7 +45,7 @@ describe("navigation", () => {
 
   it("Bridal: its own dashboard name, no Orders / Inventory / Payments", () => {
     renderShell(document.getElementById("app"), bridal());
-    expect(navOf()).toEqual(["/ Wedding Dashboard", "/wedding-tasks Wedding Tasks", "/guests Guests & RSVP", "/wedding-suppliers Wedding Suppliers", "/supplier-payments Supplier Payments", "/budget Wedding Budget", "/expenses Wedding Expenses", "/users Users", "/settings Settings"]);
+    expect(navOf()).toEqual(["/ Wedding Dashboard", "/wedding-tasks Wedding Tasks", "/guests Guests & RSVP", "/wedding-suppliers Wedding Suppliers", "/budget Wedding Budget", "/expenses Wedding Expenses", "/users Users", "/settings Settings"]);
   });
 
   it("Bridal staff: roles still apply", () => {

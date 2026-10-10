@@ -17,11 +17,13 @@ import * as defaultData from "./data.js";
 
 const METHOD_OPTIONS = EXPENSE_METHOD_IDS.map((id) => ({ value: id, label: EXPENSE_METHODS[id].label }));
 const TONE = { upcoming: "warning", paid: "success", cancelled: "neutral" };
+// Overdue is derived (an Upcoming payment past its due date), never stored.
+export const statusBadge = (p, today) => (p.status === "upcoming" && p.dueDate < today ? badge("Overdue", "danger") : badge(SUPPLIER_PAYMENT_STATUSES[p.status]?.label ?? p.status, TONE[p.status] || "neutral"));
 
-function paymentFields(p, { categories, suppliers }) {
+function paymentFields(p, { categories, suppliers }, supplier = null) {
   const active = categories.filter((c) => c.status === "active");
   const fields = [];
-  if (!p) fields.push({ name: "supplierId", label: "Supplier", type: "select", options: optionsOf(suppliers), value: suppliers[0]?.id ?? "" });
+  if (!p && !supplier) fields.push({ name: "supplierId", label: "Supplier", type: "select", options: optionsOf(suppliers), value: suppliers[0]?.id ?? "" });
   fields.push(
     { name: "description", label: "Description", value: p?.description ?? "", required: true, hint: "e.g. Reservation fee, Second payment, Balance" },
     { name: "category", label: "Budget category", type: "select", options: optionsOf(active, { blank: p ? null : "— The supplier's category —", include: p ? { value: p.category, label: `${p.categoryName ?? "Category"} (inactive)` } : null }), value: p?.category ?? "" },
@@ -82,8 +84,6 @@ export function mount(container, session, { data = defaultData, toast = defaultT
   }
 
   const opt = (v, l, sel) => html`<option value="${v}" ${sel === v ? "selected" : ""}>${l}</option>`;
-  // Overdue is derived (an Upcoming payment past its due date), never stored.
-  const statusBadge = (p) => (p.status === "upcoming" && p.dueDate < today() ? badge("Overdue", "danger") : badge(SUPPLIER_PAYMENT_STATUSES[p.status]?.label ?? p.status, TONE[p.status] || "neutral"));
 
   function draw() {
     if (!alive) return;
@@ -117,7 +117,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
                         <td>${formatDayId(p.dueDate)}</td><td>${p.supplierName}</td><td>${p.description}</td>
                         <td class="col-secondary">${categoryName(n, p)}</td>
                         <td class="num">${formatCentavos(p.status === "paid" ? p.paidAmount ?? p.amount : p.amount, currency)}</td>
-                        <td data-m="ctl">${statusBadge(p)}</td>
+                        <td data-m="ctl">${statusBadge(p, today())}</td>
                         <td class="row-actions" data-m="more">
                           ${canPay && p.status === "upcoming" ? html`<button type="button" class="btn btn-compact" data-act="pay" data-id="${p.id}">Mark paid</button>` : ""}
                           ${openButton(p.id, "View details", { act: "view" })}
@@ -129,95 +129,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     );
   }
 
-  const ctx = () => ({ categories: state.categories, suppliers: state.suppliers });
-  const newDialog = () =>
-    formDialog({
-      title: "Schedule a supplier payment",
-      intro: "Not spending yet: it shows under Still to pay until you mark it paid. Paid + scheduled can't be more than the supplier's agreed amount.",
-      fields: paymentFields(null, ctx()),
-      onSubmit: (v) => {
-        const p = parseSupplierPayment(v, state.suppliers);
-        if (p.notes === null) delete p.notes;
-        return data.paymentsApi({ action: "create", payment: p });
-      },
-    });
-  const editDialog = (p) =>
-    formDialog({
-      title: `Edit ${p.description}`,
-      fields: paymentFields(p, ctx()),
-      onSubmit: (v) => {
-        const next = parseSupplierPayment({ ...v, category: v.category || p.category });
-        const changes = Object.fromEntries(Object.entries(next).filter(([k, val]) => (p[k] ?? null) !== (val ?? null)));
-        return Object.keys(changes).length ? data.paymentsApi({ action: "update", paymentId: p.id, expectedRevision: p.revision, changes }) : { unchanged: true };
-      },
-    });
-  // One expense, once: the server returns the same expense on a retry.
-  const payDialog = (p) =>
-    formDialog({
-      title: `Mark ${p.description} paid`,
-      intro: `This records ONE Wedding Expense paid to ${p.supplierName} and removes it from Upcoming.`,
-      fields: [
-        { name: "paidDate", label: "Date paid", type: "date", value: today(), max: today(), required: true },
-        { name: "amount", label: "Amount paid (PHP)", value: (p.amount / 100).toFixed(2), inputmode: "decimal", required: true, hint: "Change it if the final bill differed." },
-        { name: "method", label: "Payment method", type: "select", options: METHOD_OPTIONS, value: "bank_transfer" },
-        { name: "reference", label: "Reference (OR no., invoice, transfer ref)", value: "" },
-      ],
-      submitLabel: "Mark paid",
-      onSubmit: (v) => {
-        const amount = parseCentavos(v.amount);
-        if (!(amount > 0)) throw new Error("Enter an amount more than ₱0");
-        const payment = { paidDate: v.paidDate, method: v.method, ...(amount !== p.amount ? { amount } : {}), ...(v.reference.trim() ? { reference: v.reference.trim() } : {}) };
-        return data.paymentsApi({ action: "markPaid", paymentId: p.id, payment });
-      },
-    });
-  const cancelDialog = (p) =>
-    formDialog({
-      title: `Cancel ${p.description}?`,
-      intro: "It leaves Still to pay. Nothing is spent.",
-      fields: [{ name: "reason", label: "Reason (optional)", type: "textarea" }],
-      submitLabel: "Cancel payment",
-      onSubmit: (v) => data.paymentsApi({ action: "cancel", paymentId: p.id, ...(v.reason.trim() ? { reason: v.reason.trim() } : {}) }),
-    });
-  const after = (message) => (r) => {
-    if (!r) return false;
-    if (!r.unchanged) toast(r.alreadyPaid ? "Already marked paid: no second expense was recorded." : message, "success");
-    load();
-    return true;
-  };
-
-  function openView(p) {
-    const upcoming = p.status === "upcoming";
-    detailsDialog({
-      title: `${p.supplierName} · ${p.description}`,
-      badgeHtml: statusBadge(p),
-      rows: [
-        ["Supplier", p.supplierName],
-        ["Due date", formatDayId(p.dueDate)],
-        ["Amount", formatCentavos(p.amount, currency)],
-        ["Category", categoryName(names(), p)],
-        ["Status", SUPPLIER_PAYMENT_STATUSES[p.status]?.label ?? p.status],
-        ["Paid on", p.paidDate ? formatDayId(p.paidDate) : null],
-        ["Amount paid", p.paidAmount ? formatCentavos(p.paidAmount, currency) : null],
-        ["Payment method", p.method ? EXPENSE_METHODS[p.method]?.label ?? p.method : null],
-        ["Reference", p.reference],
-        ["Linked expense", p.expenseId ? "Recorded in Wedding Expenses" : null],
-        ["Cancel reason", p.cancelReason],
-        ["Notes", p.notes],
-      ],
-      activity: activityLines(p.history, timezone),
-      actions: upcoming && canManage ? [{ act: "cancel", label: "Cancel payment", danger: true }, { act: "edit", label: "Edit" }, ...(canPay ? [{ act: "pay", label: "Mark paid" }] : [])] : [],
-      onAction: async (act) => {
-        try {
-          if (act === "edit") return after("Saved.")(await editDialog(p));
-          if (act === "cancel") return after("Payment cancelled.")(await cancelDialog(p));
-          if (act === "pay") return after("Marked paid. The expense was recorded.")(await payDialog(p));
-        } catch (err) {
-          toast(err.message || "Something went wrong", "danger");
-        }
-        return false;
-      },
-    });
-  }
+  const { newDialog, payDialog, openView, after } = paymentActions({ data, currency, timezone, today, canManage, canPay, toast, getCtx: () => ({ categories: state.categories, suppliers: state.suppliers }), reload: () => load() });
 
   const onClick = async (event) => {
     const el = event.target.closest("[data-act]");
@@ -277,4 +189,100 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     container.removeEventListener("click", onClick);
     container.removeEventListener("submit", onSubmit);
   };
+}
+
+// Phase 18.6: the schedule / pay / view dialogs, shared by this page and the
+// Wedding Suppliers page (which schedules and pays from each supplier row).
+export function paymentActions({ data, currency, timezone, today, canManage, canPay, toast, getCtx, reload }) {
+  // supplier: schedule for this supplier (no supplier picker).
+  const newDialog = (supplier = null) =>
+    formDialog({
+      title: supplier ? `Schedule a payment to ${supplier.name}` : "Schedule a supplier payment",
+      intro: "Not spending yet: it shows under Still to pay until you mark it paid. Paid + scheduled can't be more than the supplier's agreed amount.",
+      fields: paymentFields(null, getCtx(), supplier),
+      onSubmit: (v) => {
+        const p = parseSupplierPayment(supplier ? { ...v, supplierId: supplier.id } : v, getCtx().suppliers.concat(supplier ? [supplier] : []));
+        if (p.notes === null) delete p.notes;
+        return data.paymentsApi({ action: "create", payment: p });
+      },
+    });
+  const editDialog = (p) =>
+    formDialog({
+      title: `Edit ${p.description}`,
+      fields: paymentFields(p, getCtx()),
+      onSubmit: (v) => {
+        const next = parseSupplierPayment({ ...v, category: v.category || p.category });
+        const changes = Object.fromEntries(Object.entries(next).filter(([k, val]) => (p[k] ?? null) !== (val ?? null)));
+        return Object.keys(changes).length ? data.paymentsApi({ action: "update", paymentId: p.id, expectedRevision: p.revision, changes }) : { unchanged: true };
+      },
+    });
+  // One expense, once: the server returns the same expense on a retry.
+  const payDialog = (p) =>
+    formDialog({
+      title: `Mark ${p.description} paid`,
+      intro: `This records ONE Wedding Expense paid to ${p.supplierName} and removes it from Upcoming.`,
+      fields: [
+        { name: "paidDate", label: "Date paid", type: "date", value: today(), max: today(), required: true },
+        { name: "amount", label: "Amount paid (PHP)", value: (p.amount / 100).toFixed(2), inputmode: "decimal", required: true, hint: "Change it if the final bill differed." },
+        { name: "method", label: "Payment method", type: "select", options: METHOD_OPTIONS, value: "bank_transfer" },
+        { name: "reference", label: "Reference (OR no., invoice, transfer ref)", value: "" },
+      ],
+      submitLabel: "Mark paid",
+      onSubmit: (v) => {
+        const amount = parseCentavos(v.amount);
+        if (!(amount > 0)) throw new Error("Enter an amount more than ₱0");
+        const payment = { paidDate: v.paidDate, method: v.method, ...(amount !== p.amount ? { amount } : {}), ...(v.reference.trim() ? { reference: v.reference.trim() } : {}) };
+        return data.paymentsApi({ action: "markPaid", paymentId: p.id, payment });
+      },
+    });
+  const cancelDialog = (p) =>
+    formDialog({
+      title: `Cancel ${p.description}?`,
+      intro: "It leaves Still to pay. Nothing is spent.",
+      fields: [{ name: "reason", label: "Reason (optional)", type: "textarea" }],
+      submitLabel: "Cancel payment",
+      onSubmit: (v) => data.paymentsApi({ action: "cancel", paymentId: p.id, ...(v.reason.trim() ? { reason: v.reason.trim() } : {}) }),
+    });
+  const after = (message) => (r) => {
+    if (!r) return false;
+    if (!r.unchanged) toast(r.alreadyPaid ? "Already marked paid: no second expense was recorded." : message, "success");
+    reload();
+    return true;
+  };
+
+  function openView(p) {
+    const upcoming = p.status === "upcoming";
+    detailsDialog({
+      title: `${p.supplierName} · ${p.description}`,
+      badgeHtml: statusBadge(p, today()),
+      rows: [
+        ["Supplier", p.supplierName],
+        ["Due date", formatDayId(p.dueDate)],
+        ["Amount", formatCentavos(p.amount, currency)],
+        ["Category", categoryName(new Map(getCtx().categories.map((c) => [c.id, c.name])), p)],
+        ["Status", SUPPLIER_PAYMENT_STATUSES[p.status]?.label ?? p.status],
+        ["Paid on", p.paidDate ? formatDayId(p.paidDate) : null],
+        ["Amount paid", p.paidAmount ? formatCentavos(p.paidAmount, currency) : null],
+        ["Payment method", p.method ? EXPENSE_METHODS[p.method]?.label ?? p.method : null],
+        ["Reference", p.reference],
+        ["Linked expense", p.expenseId ? "Recorded in Wedding Expenses" : null],
+        ["Cancel reason", p.cancelReason],
+        ["Notes", p.notes],
+      ],
+      activity: activityLines(p.history, timezone),
+      actions: upcoming && canManage ? [{ act: "cancel", label: "Cancel payment", danger: true }, { act: "edit", label: "Edit" }, ...(canPay ? [{ act: "pay", label: "Mark paid" }] : [])] : [],
+      onAction: async (act) => {
+        try {
+          if (act === "edit") return after("Saved.")(await editDialog(p));
+          if (act === "cancel") return after("Payment cancelled.")(await cancelDialog(p));
+          if (act === "pay") return after("Marked paid. The expense was recorded.")(await payDialog(p));
+        } catch (err) {
+          toast(err.message || "Something went wrong", "danger");
+        }
+        return false;
+      },
+    });
+  }
+
+  return { newDialog, editDialog, payDialog, cancelDialog, openView, after };
 }

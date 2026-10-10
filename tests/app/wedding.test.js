@@ -7,7 +7,7 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { mount as mountBudget } from "../../src/modules/wedding/budget.js";
 import { mount as mountExpenses, parseWeddingExpense } from "../../src/modules/wedding/expenses.js";
-import { mount as mountSuppliers, toSupplierInput } from "../../src/modules/wedding/suppliers.js";
+import { mount as mountSuppliers, toSupplierInput, paidState } from "../../src/modules/wedding/suppliers.js";
 import { mount as mountPayments } from "../../src/modules/wedding/payments.js";
 import { mount as mountTasks } from "../../src/modules/wedding/tasks.js";
 import { mount as mountGuests, parseRsvp } from "../../src/modules/wedding/guests.js";
@@ -104,11 +104,70 @@ describe("Wedding Expenses", () => {
 });
 
 describe("Wedding Suppliers", () => {
-  it("compact row: Supplier | Service | Agreed | Paid | Balance | Next due (all computed by Luna)", async () => {
+  it("compact row: Supplier (+ service) | Agreed | Paid | Balance (computed by Luna) | Paid? | Scheduled", async () => {
     mountSuppliers(container, wedding(), { data: fakeData(), now: NOW, toast: () => {} });
     await flush();
-    expect(cells("suppliers")[0].slice(0, 6)).toEqual(["ABC Photo Studio", "Photo / Video", "₱80,000.00", "₱20,000.00", "₱60,000.00", "Dec 1, 2026"]);
+    expect(cells("suppliers")[0].slice(0, 4)).toEqual(["ABC Photo StudioPhoto / Video", "₱80,000.00", "₱20,000.00", "₱60,000.00"]);
+    const paid = container.querySelector('[data-role="paid"]');
+    expect(paid.value).toBe("partly");
+    const sched = container.querySelector('[data-role="scheduled"]');
+    expect([...sched.options].map((o) => o.value)).toEqual(["", PAY.id, "new"]);
+    expect(sched.options[0].textContent).toMatch(/Dec 1, 2026 · ₱30,000\.00/);
+    expect(paidState({ paid: 0, agreedAmount: 100 })).toBe("unpaid");
+    expect(paidState({ paid: 100, agreedAmount: 100 })).toBe("paid");
+    expect(paidState({ paid: 5, agreedAmount: null })).toBe("paid");
     expect(toSupplierInput({ name: "X", service: "venue", agreedAmount: "", categoryId: "", contactPerson: "", phone: "", email: "", location: "", notes: "" })).toMatchObject({ agreedAmount: null, categoryId: null });
+  });
+
+  it("Paid? -> Paid records ONE expense for the unscheduled balance; Unpaid is refused", async () => {
+    const data = fakeData();
+    const toast = vi.fn();
+    mountSuppliers(container, wedding(), { data, now: NOW, toast });
+    await flush();
+    const paid = container.querySelector('[data-role="paid"]');
+    paid.value = "paid";
+    paid.dispatchEvent(new Event("change", { bubbles: true }));
+    await flush();
+    // Balance ₱60,000 − ₱30,000 already scheduled = ₱30,000.
+    expect(lastForm().elements.amount.value).toBe("30000.00");
+    submit(lastForm());
+    await flush();
+    expect(data.expensesApi).toHaveBeenCalledTimes(1);
+    expect(data.expensesApi).toHaveBeenCalledWith({ action: "create", expense: { date: "2026-10-16", category: "catPhotoVid01", amount: 3000000, supplierId: SUP.id, method: "bank_transfer" } });
+    const again = container.querySelector('[data-role="paid"]');
+    again.value = "unpaid";
+    again.dispatchEvent(new Event("change", { bubbles: true }));
+    expect(toast).toHaveBeenCalledWith(expect.stringMatching(/aren't undone here/), "danger");
+    expect(data.expensesApi).toHaveBeenCalledTimes(1);
+  });
+
+  it("Scheduled -> a payment opens it (Mark paid); '+ Schedule a payment' schedules for THIS supplier", async () => {
+    const data = fakeData();
+    mountSuppliers(container, wedding(), { data, now: NOW, toast: () => {} });
+    await flush();
+    const sched = container.querySelector('[data-role="scheduled"]');
+    sched.value = "new";
+    sched.dispatchEvent(new Event("change", { bubbles: true }));
+    await flush();
+    const form = lastForm();
+    expect(form.elements.supplierId).toBeUndefined();
+    form.elements.description.value = "Balance";
+    form.elements.amount.value = "10000";
+    form.elements.dueDate.value = "2027-01-10";
+    submit(form);
+    await flush();
+    expect(data.paymentsApi).toHaveBeenCalledWith({ action: "create", payment: expect.objectContaining({ supplierId: SUP.id, amount: 1000000, dueDate: "2027-01-10", category: "catPhotoVid01" }) });
+  });
+
+  it("no Scheduled column without vendorpayments.view; no Paid? dropdown without expenses.create", async () => {
+    const s = wedding("manager");
+    delete s.member.permissions["vendorpayments.view"];
+    delete s.member.permissions["expenses.create"];
+    mountSuppliers(container, s, { data: fakeData(), now: NOW, toast: () => {} });
+    await flush();
+    expect(container.querySelector('[data-role="scheduled"]')).toBeNull();
+    expect(container.querySelector('[data-role="paid"]')).toBeNull();
+    expect(cells("suppliers")[0][4]).toBe("Partly paid");
   });
 });
 

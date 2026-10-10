@@ -1,6 +1,12 @@
 // Wedding Suppliers (Phase 16): one compact row per supplier.
-//   Supplier | Service | Agreed | Paid | Balance | Next Due | Status | View details
-// Paid, Balance and Next Due are computed by Luna (paid = the supplier's
+//   Supplier (+ service) | Agreed | Paid | Balance | Paid? | Scheduled | View details
+// Phase 18.6: suppliers and their payments live on this one page.
+//   Paid?      Unpaid / Partly paid / Paid. Choosing Paid or Partly paid
+//              records ONE Wedding Expense for the supplier (nothing is
+//              ever un-paid here: a mistake is removed under Expenses).
+//   Scheduled  the supplier's upcoming payments (open one to Mark paid,
+//              Edit or Cancel) and "Schedule a payment..."
+// Paid and Balance are computed by Luna (paid = the supplier's
 // Wedding Expenses; balance = agreed − paid); nobody types them. Not
 // Distributor Customers, not Baby providers.
 
@@ -10,10 +16,21 @@ import { formDialog } from "../../components/form-dialog.js";
 import { toast as defaultToast, confirmDialog } from "../../components/feedback.js";
 import { formatCentavos, formatDayId } from "../../lib/format.js";
 import { exportButton, bindExport, mayExport, exportHint } from "../../lib/export.js";
-import { SUPPLIER_SERVICES, SUPPLIER_STATUSES, supplierBalance, businessDate } from "@shared/index.js";
+import { SUPPLIER_SERVICES, SUPPLIER_STATUSES, EXPENSE_METHODS, EXPENSE_METHOD_IDS, supplierBalance, businessDate, parseCentavos } from "@shared/index.js";
 import { parseBudget } from "../baby/budget.js";
 import { activityLines, detailsDialog, optionsOf } from "../baby/common.js";
+import { paymentActions } from "./payments.js";
 import * as defaultData from "./data.js";
+
+const METHOD_OPTIONS = EXPENSE_METHOD_IDS.map((id) => ({ value: id, label: EXPENSE_METHODS[id].label }));
+// Derived from what's recorded (paid = the supplier's Wedding Expenses).
+export function paidState(s) {
+  const paid = s.paid ?? 0;
+  if (!(paid > 0)) return "unpaid";
+  if (Number.isSafeInteger(s.agreedAmount) && paid < s.agreedAmount) return "partly";
+  return "paid";
+}
+const PAID_STATES = { unpaid: "Unpaid", partly: "Partly paid", paid: "Paid" };
 
 const SERVICE_OPTIONS = Object.entries(SUPPLIER_SERVICES).map(([value, s]) => ({ value, label: s.label }));
 const serviceLabel = (s) => SUPPLIER_SERVICES[s]?.label ?? s;
@@ -38,12 +55,16 @@ export function toSupplierInput(v) {
 }
 
 export function mount(container, session, { data = defaultData, toast = defaultToast, now = () => new Date(), exportDeps = {}, confirm = confirmDialog } = {}) {
-  const canManage = session.member.permissions["vendors.manage"] === true;
+  const perms = session.member.permissions;
+  const canManage = perms["vendors.manage"] === true;
+  const canSchedule = perms["vendorpayments.manage"] === true;
+  const canPay = perms["expenses.create"] === true;
+  const seesPayments = perms["vendorpayments.view"] === true;
   const businessId = session.business.id;
   const currency = session.business.currency || "PHP";
   const timezone = session.business.timezone;
   const today = () => businessDate(timezone, now());
-  const state = { filters: { status: "active" }, cursors: [], rows: [], hasMore: false, categories: [], loading: true, error: null };
+  const state = { filters: { status: "active" }, cursors: [], rows: [], hasMore: false, categories: [], upcoming: [], loading: true, error: null };
   let alive = true;
   const money = (c) => (c === null || c === undefined ? "—" : formatCentavos(c, currency));
 
@@ -51,8 +72,13 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     state.loading = true;
     draw();
     try {
-      const [cats, page] = await Promise.all([state.categories.length || !session.member.permissions["budget.view"] ? state.categories : data.listCategories(businessId).catch(() => []), data.listSuppliers(businessId, state.filters, { cursor: state.cursors.at(-1) || null })]);
+      const [cats, page, upcoming] = await Promise.all([
+        state.categories.length || !perms["budget.view"] ? state.categories : data.listCategories(businessId).catch(() => []),
+        data.listSuppliers(businessId, state.filters, { cursor: state.cursors.at(-1) || null }),
+        seesPayments ? data.listSupplierPayments(businessId, { status: "upcoming" }, { pageSize: 200 }).then((r) => r.rows).catch(() => []) : [],
+      ]);
       state.categories = cats;
+      state.upcoming = upcoming;
       state.rows = page.rows;
       state.hasMore = page.hasMore;
       state.error = null;
@@ -65,7 +91,26 @@ export function mount(container, session, { data = defaultData, toast = defaultT
   }
 
   const opt = (v, l, sel) => html`<option value="${v}" ${sel === v ? "selected" : ""}>${l}</option>`;
-  const nextDueCell = (s) => (s.nextDue ? html`${formatDayId(s.nextDue)}${s.nextDue < today() ? html` ${badge("Overdue", "danger")}` : ""}` : "—");
+  const upcomingOf = (s) => state.upcoming.filter((p) => p.supplierId === s.id).sort((a, b) => (a.dueDate < b.dueDate ? -1 : 1));
+
+  function paidSelect(s) {
+    const cur = paidState(s);
+    if (!canPay || s.status !== "active") return badge(PAID_STATES[cur], cur === "paid" ? "success" : cur === "partly" ? "warning" : "neutral");
+    return html`<select class="select select-compact" data-role="paid" data-id="${s.id}" aria-label="Paid? ${s.name}">${Object.entries(PAID_STATES).map(([k, l]) => html`<option value="${k}" ${k === cur ? "selected" : ""}>${l}</option>`)}</select>`;
+  }
+
+  function scheduledSelect(s) {
+    const list = upcomingOf(s);
+    const t = today();
+    const canAdd = canSchedule && s.status === "active";
+    if (!list.length && !canAdd) return "—";
+    const head = list.length ? `${formatDayId(list[0].dueDate)} · ${money(list[0].amount)}${list.length > 1 ? ` (+${list.length - 1})` : ""}${list[0].dueDate < t ? " · overdue" : ""}` : "None scheduled";
+    return html`<select class="select select-compact" data-role="scheduled" data-id="${s.id}" aria-label="Scheduled payments for ${s.name}">
+      <option value="" selected>${head}</option>
+      ${list.map((p) => html`<option value="${p.id}">${formatDayId(p.dueDate)} · ${p.description} · ${money(p.amount)}${p.dueDate < t ? " (overdue)" : ""}</option>`)}
+      ${canAdd ? html`<option value="new">+ Schedule a payment…</option>` : ""}
+    </select>`;
+  }
 
   function draw() {
     if (!alive) return;
@@ -73,7 +118,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     render(
       container,
       html`
-        ${pageHeader({ title: "Wedding Suppliers", subtitle: "Your venue, caterer, photographer and other suppliers: what you agreed, what you've paid and what's left.", actions: canManage ? html`<button type="button" class="btn btn-primary" data-act="new">Add supplier</button>` : "" })}
+        ${pageHeader({ title: "Wedding Suppliers", subtitle: "Your venue, caterer, photographer and other suppliers: what you agreed, what you've paid, what's scheduled and what's left.", actions: html`${seesPayments ? html`<a class="btn btn-ghost" href="/supplier-payments" data-link>Payment history</a>` : ""}${canManage ? html`<button type="button" class="btn btn-primary" data-act="new">Add supplier</button>` : ""}` })}
         ${filterBar({
           fields: [
             { name: "search", label: "Name starts with…", type: "search", primary: true, value: f.search },
@@ -90,13 +135,13 @@ export function mount(container, session, { data = defaultData, toast = defaultT
               : !state.rows.length
                 ? emptyState({ iconName: "provider", title: f.status === "active" ? "No suppliers yet" : "No inactive suppliers", body: "Add your suppliers and their agreed amounts to track balances and payments." })
                 : html`<div class="table-wrap"><table class="table table-compact rows" data-role="suppliers">
-                    <thead><tr><th class="m-only"></th><th>Supplier</th><th>Service</th><th class="num">Agreed</th><th class="num">Paid</th><th class="num">Balance</th><th>Next due</th><th class="col-secondary">Status</th><th></th></tr></thead>
+                    <thead><tr><th class="m-only"></th><th>Supplier</th><th class="num">Agreed</th><th class="num">Paid</th><th class="num">Balance</th><th>Paid?</th>${seesPayments ? html`<th>Scheduled</th>` : ""}<th></th></tr></thead>
                     <tbody>${state.rows.map(
                       (s) => html`<tr data-supplier="${s.id}" data-open>${mobileCell({ title: s.name, sub: `${serviceLabel(s.service)} · ${money(s.paid ?? 0)} paid`, end: money(supplierBalance(s)), endSub: "balance" })}
-                        <td>${s.name}</td><td>${serviceLabel(s.service)}</td>
+                        <td><span class="cell-strong">${s.name}</span>${s.status === "active" ? "" : html` ${badge(SUPPLIER_STATUSES[s.status]?.label ?? s.status, "neutral")}`}<div class="cell-sub">${serviceLabel(s.service)}</div></td>
                         <td class="num">${money(s.agreedAmount)}</td><td class="num">${money(s.paid ?? 0)}</td><td class="num">${money(supplierBalance(s))}</td>
-                        <td>${nextDueCell(s)}</td>
-                        <td class="col-secondary">${badge(SUPPLIER_STATUSES[s.status]?.label ?? s.status, s.status === "active" ? "success" : "neutral")}</td>
+                        <td data-m="ctl">${paidSelect(s)}</td>
+                        ${seesPayments ? html`<td data-m="ctl">${scheduledSelect(s)}</td>` : ""}
                         <td class="row-actions" data-m="more">${openButton(s.id, "View details", { act: "view" })}</td>
                       </tr>`
                     )}</tbody></table></div>
@@ -166,6 +211,68 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     });
   }
 
+  const pay = paymentActions({ data, currency, timezone, today, canManage: canSchedule, canPay: canSchedule && canPay, toast, getCtx: () => ({ categories: state.categories, suppliers: state.rows }), reload: () => load() });
+
+  // One Wedding Expense paid to this supplier. Full = the balance not
+  // already scheduled (scheduled payments are paid from Scheduled).
+  function recordPayment(s, full) {
+    const balance = supplierBalance(s);
+    const scheduled = upcomingOf(s).reduce((sum, p) => sum + p.amount, 0);
+    const open = balance === null ? null : Math.max(0, balance - scheduled);
+    const active = state.categories.filter((c) => c.status === "active");
+    return formDialog({
+      title: full ? `${s.name}: paid in full` : `${s.name}: record a payment`,
+      intro: `Records ONE Wedding Expense paid to ${s.name}.${scheduled ? ` ${money(scheduled)} is already scheduled: pay those from Scheduled.` : ""}`,
+      fields: [
+        { name: "amount", label: "Amount paid (₱)", value: full && open ? (open / 100).toFixed(2) : "", inputmode: "decimal", required: true, hint: balance === null ? "" : `Balance: ${money(balance)}` },
+        { name: "date", label: "Date paid", type: "date", value: today(), max: today(), required: true },
+        { name: "category", label: "Budget category", type: "select", options: optionsOf(active, { blank: "— Choose —" }), value: s.categoryId ?? "" },
+        { name: "method", label: "Payment method", type: "select", options: METHOD_OPTIONS, value: "bank_transfer" },
+        { name: "reference", label: "Reference (OR no., invoice, transfer ref)", value: "" },
+      ],
+      submitLabel: "Record payment",
+      onSubmit: (v) => {
+        const amount = parseCentavos(v.amount);
+        if (!(amount > 0)) throw new Error("Enter an amount more than ₱0");
+        if (!v.category) throw new Error("Choose a budget category");
+        return data.expensesApi({ action: "create", expense: { date: v.date, category: v.category, amount, supplierId: s.id, method: v.method, ...(v.reference.trim() ? { reference: v.reference.trim() } : {}) } });
+      },
+    });
+  }
+
+  const onChange = async (event) => {
+    const el = event.target;
+    const s = state.rows.find((r) => r.id === el.dataset?.id);
+    if (!s || !container.contains(el)) return;
+    try {
+      if (el.dataset.role === "paid") {
+        const cur = paidState(s);
+        const want = el.value;
+        el.value = cur; // the row repaints from the server after a save
+        if (want === cur && want !== "partly") return;
+        if (want === "unpaid") {
+          toast("Recorded payments aren't undone here. If one was a mistake, remove it under Wedding Expenses.", "danger");
+          return;
+        }
+        const r = await recordPayment(s, want === "paid");
+        if (r) {
+          toast("Payment recorded.", "success");
+          load();
+        }
+      } else if (el.dataset.role === "scheduled") {
+        const want = el.value;
+        el.value = "";
+        if (want === "new") await pay.after("Payment scheduled.")(await pay.newDialog(s));
+        else if (want) {
+          const p = state.upcoming.find((x) => x.id === want);
+          if (p) pay.openView(p);
+        }
+      }
+    } catch (err) {
+      toast(err.message || "Something went wrong", "danger");
+    }
+  };
+
   const onClick = async (event) => {
     const el = event.target.closest("[data-act]");
     if (!el || !container.contains(el) || el.dataset.act === "export") return;
@@ -208,6 +315,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     load();
   };
   container.addEventListener("click", onClick);
+  container.addEventListener("change", onChange);
   container.addEventListener("submit", onSubmit);
   const unbindFilters = bindFilterBar(container);
   const unbindRows = bindRowOpen(container, { act: "view" });
@@ -221,6 +329,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     unbindRows();
     unbindMenus();
     container.removeEventListener("click", onClick);
+    container.removeEventListener("change", onChange);
     container.removeEventListener("submit", onSubmit);
   };
 }

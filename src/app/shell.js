@@ -38,6 +38,8 @@ export const shortLabel = (m, terms = {}) => terms[m.id] ?? SHORT[m.id] ?? m.lab
 
 // Dashboard + up to three phone tabs: the template's choice, filtered by
 // what this member can open, topped up from the navigation order.
+const NAV_HIDDEN = new Set(["vendorpayments"]);
+
 export function mobileTabs(nav, templateId) {
   const usable = new Map(nav.map((m) => [m.id, m]));
   const wanted = getWorkspaceTemplate(templateId)?.mobileTabs || [];
@@ -63,7 +65,11 @@ function businessSwitcher(session, id = "businessSelect") {
 export function renderShell(root, session, handlers = {}) {
   // Tenant terminology (Phase 17) may relabel a module; ids and paths never change.
   const labels = terminologyLabels(session.config);
-  const nav = resolveNavigation({ entitlements: session.entitlements, permissions: session.member.permissions }).map((m) => (labels[m.id] ? { ...m, label: labels[m.id] } : m));
+  // Phase 18.6: Supplier Payments is run from the Wedding Suppliers rows; its
+  // page stays reachable (payment history) but leaves the menu.
+  const nav = resolveNavigation({ entitlements: session.entitlements, permissions: session.member.permissions })
+    .filter((m) => !NAV_HIDDEN.has(m.id))
+    .map((m) => (labels[m.id] ? { ...m, label: labels[m.id] } : m));
   const notifications = canUseNotifications({ entitlements: session.entitlements, permissions: session.member.permissions });
   if (bell) bell.stop();
   bell = null;
