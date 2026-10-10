@@ -57,11 +57,12 @@ async function loadBudget(tx, tenant) {
   return snap.exists ? snap.data() : {};
 }
 
-// Phase 18.6: in the Baby workspace the Total budget is the sum of the
-// category budgets (shared/baby.js totalFromCategories), kept by the server
-// whenever a category's budget changes or a category is added or deleted.
-// Bridal keeps its own typed Total (unchanged).
-const autoTotal = (workspace) => workspace === "baby-expense";
+// Phase 18.6: in the Baby and Wedding workspaces the Total budget is the sum
+// of the category budgets (shared/baby.js totalFromCategories), kept by the
+// server whenever a category's budget changes or a category is added or
+// deleted. Nobody types the total.
+export const AUTO_TOTAL_WORKSPACES = Object.freeze(["baby-expense", "bridal-expense"]);
+const autoTotal = (workspace) => AUTO_TOTAL_WORKSPACES.includes(workspace);
 
 // Inside a category transaction (after its reads): budgets/current fields
 // for the new total. A changed total starts a new alert episode, as a typed

@@ -1,6 +1,8 @@
 // Wedding Budget (Phase 16): the overall wedding budget and one compact row
 // per category (the budget primitive shared with Baby, with wedding words).
-//   Total wedding budget (Edit -> Save) | Spent | Remaining | Upcoming | Supplier balance, as of now
+//   Total wedding budget (= sum of category budgets) | Spent | Budget left | Still to pay | Supplier balance, as of now
+// Phase 18.6: like Baby, the server keeps the total as the category budgets
+// added up; there is no separate total to type.
 //   Category | Budget | Spent | Remaining | % used | Upcoming | Status | Edit · Deactivate
 // Luna computes Spent, Remaining and the supplier balance from the recorded
 // Wedding Expenses and supplier agreements; nobody types them.
@@ -50,7 +52,6 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     const s = weddingSummary(state.budget);
     const all = budgetLines(state.budget, state.categories);
     const lines = all.filter((l) => (!state.status || l.status === state.status) && (!state.category || l.id === state.category));
-    const allocated = all.reduce((sum, l) => sum + (l.status === "active" && l.budget ? l.budget : 0), 0);
     const opt = (v, l, cur) => html`<option value="${v}" ${cur === v ? "selected" : ""}>${l}</option>`;
     const history = activityLines((state.budget?.history || []).slice(-5).reverse(), timezone);
     render(
@@ -63,13 +64,12 @@ export function mount(container, session, { data = defaultData, toast = defaultT
             <section class="section" data-section="current">
               <h2 class="section-title">Wedding plan · as of now</h2>
               <div class="stat-grid">
-                ${statCard({ id: "total", label: "Total wedding budget", value: s.total === null ? "Not set" : money(s.total, currency), empty: s.total === null })}
+                ${statCard({ id: "total", label: "Total wedding budget", value: s.total === null ? "No budget yet" : money(s.total, currency), hint: "Sum of the category budgets", empty: s.total === null })}
                 ${statCard({ id: "spent", label: "Total spent", value: money(s.spent, currency), hint: `${s.expenseCount} expense${s.expenseCount === 1 ? "" : "s"}` })}
-                ${statCard({ id: "remaining", label: "Budget left", value: s.remaining === null ? "—" : money(s.remaining, currency), hint: s.percentUsed === null ? "Set a total budget" : `${s.percentUsed}% used`, empty: s.remaining === null })}
+                ${statCard({ id: "remaining", label: "Budget left", value: s.remaining === null ? "—" : money(s.remaining, currency), hint: s.percentUsed === null ? "Give a category a budget" : `${s.percentUsed}% used`, empty: s.remaining === null })}
                 ${statCard({ id: "upcoming", label: "Still to pay", value: money(s.upcoming, currency), hint: "Scheduled, not spent yet" })}
                 ${statCard({ id: "balance", label: "Supplier balance", value: money(s.supplierBalance, currency), hint: "Still owed on supplier agreements" })}
               </div>
-              ${canManage ? html`<div class="page-actions"><button type="button" class="btn btn-primary" data-act="total">${s.total === null ? "Set wedding budget" : "Edit wedding budget"}</button></div>` : ""}
             </section>
             <form class="filter-form toolbar filter-toolbar" data-role="filters" data-auto-apply>
               <select class="select" name="category" aria-label="Category">${opt("", "All categories", state.category)}${state.categories.map((c) => opt(c.id, c.name, state.category))}</select>
@@ -100,7 +100,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
                             <td class="row-actions" data-m="more">${canManage ? rowMenu(l.id, [{ act: "edit", label: "Edit" }, { act: "status", label: l.status === "active" ? "Deactivate" : "Reactivate" }, ...((state.categories.find((x) => x.id === l.id)?.useCount ?? 0) > 0 ? [] : [{ sep: true }, { act: "delete", label: "Delete (never used)", danger: true }])], { label: `Actions for ${l.name}` }) : ""}</td>
                           </tr>`
                         )}</tbody></table></div>
-                        <p class="stat-hint" data-role="allocated">Allocated to active categories: ${money(allocated, currency)}${s.total === null ? "" : ` of ${money(s.total, currency)} (${allocated > s.total ? `${money(allocated - s.total, currency)} over the total` : `${money(s.total - allocated, currency)} not allocated`})`}</p>`}
+                        <p class="stat-hint" data-role="allocated">Total wedding budget = the category budgets added up${s.total === null ? "" : ` (${money(s.total, currency)})`}. Deactivated categories still count: their spending is real.</p>`}
             </section>
             ${history.length ? html`<section class="card"><h2 class="card-title">Recent budget changes</h2><ul class="list activity" data-role="budget-history">${history.map((l) => html`<li>${l}</li>`)}</ul></section>` : ""}`}
       `
@@ -114,16 +114,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     try {
       let r = null;
       let message = "Saved.";
-      if (el.dataset.act === "total") {
-        const s = weddingSummary(state.budget);
-        r = await formDialog({
-          title: s.total === null ? "Set wedding budget" : "Edit wedding budget",
-          intro: "Changing the budget isn't spending: Luna recalculates what's left.",
-          fields: [{ name: "total", label: "Total wedding budget (₱)", value: pesosText(s.total), inputmode: "decimal", hint: "Leave blank to clear the budget." }],
-          onSubmit: (v) => data.budgetApi({ action: "setTotal", total: parseBudget(v.total, "total budget"), expectedRevision: state.budget?.revision ?? 0 }),
-        });
-        message = "Budget saved.";
-      } else if (el.dataset.act === "new-category") {
+      if (el.dataset.act === "new-category") {
         r = await formDialog({ title: "Add category", fields: categoryFields(), onSubmit: (v) => data.budgetApi({ action: "createCategory", category: { name: v.name.trim(), budget: parseBudget(v.budget, "category budget") } }) });
         message = "Category added.";
       } else if (el.dataset.act === "suggested") {

@@ -48,9 +48,9 @@ async function world() {
   const business = { id, timezone: "Asia/Manila" };
   const actor = (n = "Owner") => ({ uid: `${n}-${id}`, name: n, email: "" });
   const c = { db, tenant, FieldValue, business, workspace: WS, actor: actor(), now: NOW };
-  await babyLib.setBudgetTotal({ ...c, total: 50000000 });
+  // Phase 18.6: the total is the category budgets added up (₱500,000).
   const photo = (await babyLib.createCategory({ ...c, input: { name: "Photo / Video", budget: 8000000 } })).categoryId;
-  const venue = (await babyLib.createCategory({ ...c, input: { name: "Venue" } })).categoryId;
+  const venue = (await babyLib.createCategory({ ...c, input: { name: "Venue", budget: 42000000 } })).categoryId;
   const supplierId = (await wed.createSupplier({ ...c, input: { name: "ABC Photo Studio", service: "photo_video", agreedAmount: 8000000 } })).supplierId;
   return { c, tenant, actor, photo, venue, supplierId };
 }
@@ -155,16 +155,17 @@ describe("one supplier payment, one Wedding Expense", () => {
 });
 
 describe("budget, expenses, tasks and guests under concurrency", () => {
-  it("expenses (direct and to a supplier) racing budget changes: Spent / supplier paid exact", async () => {
+  it("expenses (direct and to a supplier) racing category budget changes: Spent / supplier paid exact; Total = Σ category budgets", async () => {
     const w = await world();
     const r = await Promise.allSettled([
       ...Array.from({ length: 8 }, (_, i) => exp.createExpense({ ...w.c, input: { date: "2026-10-10", method: "cash", category: i % 2 ? w.venue : w.photo, amount: 100000 + i, ...(i % 2 ? {} : { supplierId: w.supplierId }) } })),
-      babyLib.setBudgetTotal({ ...w.c, total: 60000000 }),
-      babyLib.setBudgetTotal({ ...w.c, total: 55000000 }),
+      babyLib.updateCategory({ ...w.c, categoryId: w.venue, changes: { budget: 50000000 } }),
+      babyLib.updateCategory({ ...w.c, categoryId: w.photo, changes: { budget: 10000000 } }),
     ]);
-    expectExplicit(r);
+    expectExplicit(r, ["stale"]);
     const { b } = await consistent(w);
-    expect([60000000, 55000000]).toContain(b.total);
+    expect(b.total).toBe(60000000);
+    await expect(babyLib.setBudgetTotal({ ...w.c, total: 1 })).rejects.toMatchObject({ code: "budget-total-automatic" });
   });
 
   it("two users completing / reopening the same task, plus new tasks: taskTotals exact", async () => {

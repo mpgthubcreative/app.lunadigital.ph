@@ -64,9 +64,11 @@ const ok = (r, status = 200) => {
 };
 
 async function setup() {
-  ok(await api("budget", u.camille, { action: "setTotal", total: 50000000 }));
+  // Phase 18.6: the total is the category budgets added up (₱500,000 here).
   const cats = ok(await api("budget", u.camille, { action: "setupCategories" }));
   const byName = Object.fromEntries(cats.categoryIds.map((id) => [docAt(`expenseCategories/${id}`).name, id]));
+  ok(await api("budget", u.camille, { action: "updateCategory", categoryId: byName.Venue, changes: { budget: 20000000 } }));
+  ok(await api("budget", u.camille, { action: "updateCategory", categoryId: byName.Catering, changes: { budget: 30000000 } }));
   return byName;
 }
 async function photographer(cats, agreed = 8000000) {
@@ -83,6 +85,10 @@ describe("Wedding Budget: the shared budget primitive with wedding categories", 
     expect(ok(await api("budget", u.camille, { action: "setupCategories" })).created).toBe(0);
     ok(await api("expenses", u.camille, { action: "create", expense: { date: "2026-10-10", method: "cash", category: cats.Venue, amount: 1500000 } }), 201);
     expect(summary()).toMatchObject({ total: 50000000, spent: 1500000, remaining: 48500000 });
+    // No typed total in the Wedding workspace (409), and it follows the categories.
+    expect((await api("budget", u.camille, { action: "setTotal", total: 1 })).status).toBe(409);
+    ok(await api("budget", u.camille, { action: "updateCategory", categoryId: cats.Venue, changes: { budget: 25000000 } }));
+    expect(summary().total).toBe(55000000);
   });
 });
 

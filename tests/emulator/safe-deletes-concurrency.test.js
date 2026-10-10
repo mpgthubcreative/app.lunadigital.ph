@@ -44,8 +44,7 @@ describe("wedding supplier: delete vs scheduling its first payment", () => {
   it("never a payment for a deleted supplier; contracted = the remaining agreements", async () => {
     for (let i = 0; i < 4; i++) {
       const w = await world("bridal-expense");
-      await babyLib.setBudgetTotal({ ...w.c, total: 50000000 });
-      const cat = (await babyLib.createCategory({ ...w.c, input: { name: "Photo / Video" } })).categoryId;
+      const cat = (await babyLib.createCategory({ ...w.c, input: { name: "Photo / Video", budget: 50000000 } })).categoryId;
       const supplierId = (await wed.createSupplier({ ...w.c, input: { name: "ABC Photo", service: "photo_video", agreedAmount: 8000000 } })).supplierId;
       await Promise.allSettled([
         wed.deleteSupplier({ ...w.c, supplierId }),
