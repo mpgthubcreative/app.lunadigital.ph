@@ -440,6 +440,78 @@
   }
 }
 
+/* ---------- Luna Console shell (operators) ----------
+   The console keeps the pre-18.5 drawer: menu button + scrim on phones.
+   The scrim must stay out of the shell grid, or it takes the content column. */
+
+.scrim,
+.menu-btn {
+  display: none;
+}
+
+.menu-btn {
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+}
+
+.menu-btn svg {
+  width: 22px;
+  height: 22px;
+}
+
+@media (max-width: 719px) {
+  .console-shell .sidebar {
+    display: flex;
+    position: fixed;
+    inset: 0 auto 0 0;
+    z-index: 40;
+    width: min(var(--sidebar-width), 85vw);
+    transform: translateX(-100%);
+    transition: transform 0.2s ease;
+  }
+
+  .console-shell.nav-open .sidebar {
+    transform: none;
+  }
+
+  .console-shell.nav-open .scrim {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 30;
+    background: rgba(16, 24, 40, 0.45);
+  }
+
+  .console-shell .brand-text,
+  .console-shell .nav-label,
+  .console-shell .sidebar-footer {
+    display: revert;
+  }
+
+  .console-shell .brand {
+    justify-content: flex-start;
+    padding: 0 var(--space-5);
+  }
+
+  .console-shell .nav-link {
+    justify-content: flex-start;
+    padding: var(--space-3);
+  }
+
+  .console-shell .menu-btn {
+    display: inline-flex;
+  }
+
+  .console-shell .content {
+    padding: var(--space-4);
+  }
+}
+
 /* ---------- Auth / access screens (outside the shell) ---------- */
 
 .auth-page {

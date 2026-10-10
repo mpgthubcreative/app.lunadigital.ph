@@ -49,7 +49,7 @@ function mountConsole(root, session, plans) {
   render(
     root,
     html`
-      <div class="shell" id="shell">
+      <div class="shell console-shell" id="shell">
         <aside class="sidebar" id="sidebar" aria-label="Console navigation">
           <div class="brand">${lunaMark()}<span class="brand-text">Luna <span class="brand-sub">Console</span></span></div>
           <nav class="nav">
