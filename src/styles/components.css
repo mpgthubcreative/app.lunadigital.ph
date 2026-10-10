@@ -1834,11 +1834,19 @@ a.item:hover {
     font-size: 1.0625rem;
   }
 
-  .kpi-label,
-  .kpi-hint {
+  .kpi-label {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  /* Hints explain the number, so wrap to two lines instead of cutting it. */
+  .kpi-hint {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    overflow: hidden;
   }
 
   .count-tile {

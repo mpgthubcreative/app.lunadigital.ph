@@ -90,7 +90,7 @@ Recorded so the calculation method is explicit. Not legal advice: confirm with D
 | 3 Household access | done | 1c889d9 | unit 1218, rules payroll 18/18 (emulator) |
 | 4 Household payroll | done | 373a05f | unit 1227/1227 |
 | 5 Shared | done | a53a43f + (users commit) | unit full suite green |
-| 6 UI polish | pending | | |
+| 6 UI polish | done | fdea8e2 + (css commit) | unit 1242/1242; 22 pages × 390px + 1280px audited (no horizontal overflow, no unnamed buttons/links, no unlabelled inputs) |
 | 7 Release gate | pending | | |
 
 ## Known blockers
@@ -98,7 +98,9 @@ Recorded so the calculation method is explicit. Not legal advice: confirm with D
 - I can't sign in to staging in a browser with real passwords, so screenshots use the preview harness with realistic data.
 
 ## Next action
-Stage 6: UI/terminology pass + 390px screenshots (preview harness), then Stage 7 release gate (emulator batches, mutation, build, staging deploy + migrations + resync-permissions, live probes).
+Stage 7 release gate: full unit, emulator in foreground batches, mutation, build, staging deploy (rules first), `adopt-baby-category-totals` dry run then `--apply`, `resync-permissions --all`, live probes, CI.
+
+Stage 6 notes: terms are now Budget left / Still to pay / Coming up (UI + Excel); inventory Adjust uses In stock / left after orders set aside; phone KPI hints wrap to 2 lines instead of an ellipsis. The audit script (CDP device emulation on the preview build) lives in the session scratchpad, not the repo.
 
 ## Staging steps still to run (stage 7)
 - `scripts/adopt-baby-category-totals.js` dry run, then `--apply`, on staging Baby tenants (demo-baby-a).
