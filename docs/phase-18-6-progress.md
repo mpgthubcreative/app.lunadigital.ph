@@ -87,8 +87,8 @@ Recorded so the calculation method is explicit. Not legal advice: confirm with D
 | 0 Plan + checkpoint | done | (this file) | n/a |
 | 1 Distributor | done | fff5cc2 | unit (targeted) green |
 | 2 Baby | done (exports in stage 5) | see git log | unit 1200/1200 |
-| 3 Household access | pending | | |
-| 4 Household payroll | pending | | |
+| 3 Household access | done | 1c889d9 | unit 1218, rules payroll 18/18 (emulator) |
+| 4 Household payroll | done | (stage 4 commit) | unit 1227/1227 |
 | 5 Shared | pending | | |
 | 6 UI polish | pending | | |
 | 7 Release gate | pending | | |
@@ -98,7 +98,7 @@ Recorded so the calculation method is explicit. Not legal advice: confirm with D
 - I can't sign in to staging in a browser with real passwords, so screenshots use the preview harness with realistic data.
 
 ## Next action
-Stage 3: household staff accounts (activation links), attendance requests + approval, leave/rest-day statuses, advance requests.
+Stage 5: one-sheet Excel exports (all workspaces), Users page (Add member, roles, remove, new link), usage meter refresh + fix api("/api/usage") double prefix in Settings.
 
 ## Staging steps still to run (stage 7)
 - `scripts/adopt-baby-category-totals.js` dry run, then `--apply`, on staging Baby tenants (demo-baby-a).

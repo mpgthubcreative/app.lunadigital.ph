@@ -185,7 +185,60 @@ export function distributorDashboard(ctx) {
 
 // ---------- Household ----------
 
+// Phase 18.6: a compact payroll summary from the server: the next cutoff's
+// total salary to pay, then one row per person (estimated take-home,
+// advance to deduct, this cutoff's payment, last salary received), and what
+// staff sent that's waiting for the Owner.
+const PAY_STATE = { not_paid: ["Not paid", "warning"], paid: ["Paid", "success"], disputed: ["Disputed", "danger"] };
+const LAST_STATE = { received: ["Received", "success"], waiting: ["Not confirmed", "warning"], not_received: ["Not received", "danger"] };
+
+function householdSummaryView(ctx) {
+  const { currency, summary } = ctx;
+  const s = summary.data;
+  const money = (c) => formatCentavos(c, currency);
+  const waiting = s.pending.attendance + s.pending.advances;
+  const rows = s.staff;
+  return html`
+    <section class="card hero-pay" data-section="to-pay">
+      <div class="hero-pay-main">
+        <div class="kpi-label">Total salary to pay${s.nextCutoff ? ` · next cutoff ${shortDay(s.nextCutoff)}` : ""}</div>
+        <div class="hero-pay-value" data-role="total-to-pay">${money(s.totalToPay)}</div>
+        <div class="kpi-hint">${plural(rows.filter((r) => r.payment === "not_paid").length, "person", "people")} · estimated take-home, grows as days are marked</div>
+      </div>
+      ${s.overdueTotal ? html`<a class="hero-pay-warn" href="/payroll" data-link data-role="overdue">${money(s.overdueTotal)} from ended pay periods is still not paid ›</a>` : ""}
+    </section>
+    ${waiting
+      ? html`<section class="card section" data-section="waiting"><h2 class="card-title">Waiting for you</h2><div class="waiting-links">
+          ${s.pending.attendance ? html`<a class="btn" href="/attendance" data-link data-role="waiting-attendance">${plural(s.pending.attendance, "attendance / leave request")} ›</a>` : ""}
+          ${s.pending.advances ? html`<a class="btn" href="/advances" data-link data-role="waiting-advances">${plural(s.pending.advances, "advance request")} ›</a>` : ""}
+        </div></section>`
+      : ""}
+    ${section({
+      title: "This cutoff, per person",
+      id: "staff-pay",
+      link: { href: "/payroll", label: "Payroll" },
+      body: rows.length
+        ? html`<div class="table-wrap"><table class="table table-compact rows" data-role="staff-pay">
+            <thead><tr><th class="m-only"></th><th>Name</th><th>Pay period</th><th class="num">Est. take-home</th><th class="num">Advance to deduct</th><th>Payment</th><th>Last salary</th></tr></thead>
+            <tbody>${rows.map(
+              (r) => html`<tr data-staff="${r.staffId}">
+                ${mobileCell({ title: r.name, sub: `to ${shortDay(r.period.end)}${r.advanceToDeduct ? ` · advance −${money(r.advanceToDeduct)}` : ""} · ${PAY_STATE[r.payment][0]}${r.lastSalary ? ` · last: ${LAST_STATE[r.lastSalary.receipt][0]}` : ""}`, end: money(r.estimatedNet), endSub: r.prepared ? "prepared" : "so far" })}
+                <td class="cell-strong">${r.name}</td>
+                <td>${shortDay(r.period.start)} – ${shortDay(r.period.end)}</td>
+                <td class="num" data-col="net"><strong>${money(r.estimatedNet)}</strong>${r.prepared ? "" : html` <span class="stat-hint">so far</span>`}</td>
+                <td class="num" data-col="advance">${r.advanceToDeduct ? money(r.advanceToDeduct) : "—"}</td>
+                <td data-col="payment">${badge(...PAY_STATE[r.payment])}${r.overdue.length ? html` ${badge(`${r.overdue.length} earlier unpaid`, "danger")}` : ""}</td>
+                <td data-col="last">${r.lastSalary ? badge(...LAST_STATE[r.lastSalary.receipt]) : html`<span class="stat-hint">—</span>`}</td>
+              </tr>`
+            )}</tbody></table></div>`
+        : emptyState({ iconName: "staff", title: "No household staff yet", body: "Add the people you pay on the Household Staff page." }),
+    })}
+  `;
+}
+
 export function householdDashboard(ctx) {
+  if (ctx.summary?.status === "ok") return householdSummaryView(ctx);
+  if (ctx.summary?.status === "loading") return html`<section class="card">${skeleton(4)}</section>`;
   const { view, currency, today } = ctx;
   const a = access(view);
   const drafts = a.rows("payrollsToRelease");

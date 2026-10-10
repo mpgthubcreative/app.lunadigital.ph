@@ -116,9 +116,40 @@ describe("Payroll", () => {
     await flush();
     const row = container.querySelector("tr[data-payroll]");
     expect(row.textContent).toMatch(/Maria/);
-    expect(row.textContent).toMatch(/10 \/ 2 \/ 3/);
+    expect(row.textContent).toMatch(/10 P · 2 PL · 3 A/);
     expect(row.textContent).toMatch(/₱6,700\.00/);
-    expect(row.textContent).toMatch(/Not yet paid/);
+    // Phase 18.6: the Owner's payment and the employee's confirmation are separate columns.
+    expect(row.querySelector('[data-col="payment"]').textContent).toBe("Not paid");
+    expect(row.querySelector('[data-col="received"]').textContent).toBe("—");
+  });
+
+  it("Phase 18.6: the breakdown shows Gross and Net; Add bonus / 13th month / deduction; pay with an optional proof", async () => {
+    const data = fakeData({ getPayroll: vi.fn(async () => payroll({ additions: [{ id: "bon-1", type: "bonus", description: "Christmas", amount: 100000 }], additionsTotal: 100000, grossPay: 820000, netPay: 770000 })) });
+    data.payrollApi = vi.fn(async (b) => (b.action === "thirteenth" ? { year: 2026, basicPay: 7200000, entitlement: 600000, onPayrolls: 0, remaining: 600000 } : b.action === "release" ? { receiptToken: "tokTOKtokTOKtokTOKtokTOKtokTOKto" } : {}));
+    mountPayroll(container, home(), { data, now: NOW, toast: () => {} });
+    await flush();
+    container.querySelector('[data-act="view"]').click();
+    await flush();
+    const view = document.querySelector('[data-role="payroll-view"]');
+    const rows = [...view.querySelectorAll('[data-role="breakdown"] tr')].map((r) => [...r.cells].map((c) => c.textContent.replace(/\s+/g, " ").trim()).filter(Boolean).join(" "));
+    expect(rows).toEqual(["Basic pay 12 paid days ₱7,200.00", "+ Christmas ₱1,000.00 Remove", "Gross pay ₱8,200.00", "− Advance 2026-10-05 ₱500.00 Deduct next payroll", "Net pay (take-home) ₱7,700.00"]);
+    expect(view.querySelector('[data-role="thirteenth"]').textContent).toMatch(/₱6,000.00 left/);
+    view.querySelector('[data-x="add-13th"]').click();
+    let form = lastForm();
+    expect(form.elements.amount.value).toBe("6000");
+    submit(form);
+    await flush();
+    expect(data.payrollApi).toHaveBeenCalledWith({ action: "addAddition", payrollId: "staffMaria0001_2026-10-01", addition: { type: "thirteenth", amount: 600000 } });
+    document.querySelector('[data-role="payroll-view"] [data-x="add-bonus"]').click();
+    form = lastForm();
+    form.elements.amount.value = "500";
+    submit(form);
+    await flush();
+    expect(data.payrollApi).toHaveBeenCalledWith({ action: "addAddition", payrollId: "staffMaria0001_2026-10-01", addition: { type: "bonus", amount: 50000 } });
+    document.querySelector('[data-role="payroll-view"] [data-x="release"]').click();
+    form = lastForm();
+    expect([...form.elements.method.options].map((o) => o.textContent).slice(0, 3)).toEqual(["Cash", "GCash", "Bank Transfer"]);
+    expect(form.elements.proof.type).toBe("file");
   });
 
   it("Pay salary -> the one-time receipt link is shown (and copyable)", async () => {

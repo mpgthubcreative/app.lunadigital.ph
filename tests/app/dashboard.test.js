@@ -366,3 +366,30 @@ describe("Expenses page (Phase 10)", () => {
     for (const t of ["baby-expense", "bridal-expense"]) expect(buildRoutes(sessionFixture({ workspaceTemplateId: t })).map((r) => r.path), t).toContain("/expenses");
   });
 });
+
+describe("Household (Phase 18.6): total salary to pay at the next cutoff, per person", () => {
+  it("shows the server's total, one row per person, and what's waiting for the Owner", async () => {
+    const summary = {
+      today: "2026-12-18",
+      totalToPay: 260000,
+      nextCutoff: "2026-12-31",
+      overdueTotal: 0,
+      pending: { attendance: 2, advances: 1 },
+      staff: [
+        { staffId: "s1", name: "Lito", period: { start: "2026-12-16", end: "2026-12-31" }, prepared: false, estimatedNet: 80000, advanceToDeduct: 40000, payment: "not_paid", overdue: [], lastSalary: null },
+        { staffId: "s2", name: "Maria", period: { start: "2026-12-16", end: "2026-12-31" }, prepared: false, estimatedNet: 180000, advanceToDeduct: 0, payment: "not_paid", overdue: [], lastSalary: { receipt: "waiting", netPay: 600000 } },
+      ],
+    };
+    const api = vi.fn(async (path) => (path === "household-summary" ? { summary } : {}));
+    await show(sessionFixture({ workspaceTemplateId: "household-payroll" }), {}, {}, { api });
+    expect(api).toHaveBeenCalledWith("household-summary");
+    expect(container.querySelector('[data-role="total-to-pay"]').textContent).toBe("₱2,600.00");
+    expect(sectionOf("to-pay").textContent).toMatch(/next cutoff Dec 31/);
+    const rows = [...container.querySelectorAll('[data-role="staff-pay"] tbody tr')];
+    expect(rows.map((r) => r.querySelector('[data-col="net"] strong').textContent)).toEqual(["₱800.00", "₱1,800.00"]);
+    expect(rows[0].querySelector('[data-col="advance"]').textContent).toBe("₱400.00");
+    expect(rows[1].querySelector('[data-col="last"]').textContent).toBe("Not confirmed");
+    expect(container.querySelector('[data-role="waiting-attendance"]').textContent).toMatch(/2 attendance \/ leave requests/);
+    expect(container.querySelector('[data-role="waiting-advances"]').textContent).toMatch(/1 advance request/);
+  });
+});

@@ -9,6 +9,8 @@ import { actorOf, only } from "./inventory-http.js";
 import { PayrollError } from "../../../shared/payroll.js";
 import { ProvisioningError } from "./provisioning.js";
 import { ActivationError } from "./activation.js";
+import { PaymentError } from "../../../shared/payments.js";
+import { MeteringError } from "../../../shared/metering.js";
 import { isModuleEnabled } from "../../../shared/modules.js";
 import { moduleForPermission } from "../../../shared/permissions.js";
 
@@ -40,6 +42,10 @@ export const PAYROLL_STATUS = {
   "thirteenth-over": 409,
   "payment-not-paid": 409,
   "receipt-confirmed": 409,
+  "has-proof": 409,
+  "no-dispute": 409,
+  "proof-too-large": 413,
+  "storage-limit-reached": 409,
 };
 const FORBIDDEN = () => new RequestError("forbidden", "This feature isn't available for your account.", 403);
 
@@ -57,19 +63,19 @@ export function payrollActionHandler(name, { getAdmin: loadAdmin, now = () => ne
       bodyError = err;
     }
     const action = body && Object.prototype.hasOwnProperty.call(actions, body.action) ? actions[body.action] : null;
-    const { db, auth, admin } = await loadAdmin();
+    const { db, auth, admin, bucket } = await loadAdmin();
     const first = Object.values(actions)[0];
     const ctx = await requireTenant(event, { db, auth, permission: action ? action.permission : first.permission, write: true });
     for (const p of action?.also || []) if (ctx.permissions[p] !== true || !isModuleEnabled(ctx.entitlements, moduleForPermission(p))) throw FORBIDDEN();
     if (bodyError) throw bodyError;
     if (!action) throw new RequestError("invalid-request", "Unknown action.", 400);
     only(body, action.fields);
-    const common = { db, admin, auth, tenant: ctx.tenant, businessId: ctx.businessId, FieldValue: admin.firestore.FieldValue, business: ctx.business, actor: actorOf(ctx), now: now() };
+    const common = { db, admin, auth, bucket, tenant: ctx.tenant, businessId: ctx.businessId, FieldValue: admin.firestore.FieldValue, business: ctx.business, actor: actorOf(ctx), now: now() };
     try {
       const out = await action.run(common, body, ctx);
       return respond(action.created ? 201 : 200, { success: true, ...out });
     } catch (err) {
-      if (err instanceof PayrollError || err instanceof ProvisioningError || err instanceof ActivationError) throw new RequestError(err.code, err.message, PAYROLL_STATUS[err.code] || 400);
+      if (err instanceof PayrollError || err instanceof ProvisioningError || err instanceof ActivationError || err instanceof PaymentError || err instanceof MeteringError) throw new RequestError(err.code, err.message, PAYROLL_STATUS[err.code] || 400);
       throw err;
     }
   });

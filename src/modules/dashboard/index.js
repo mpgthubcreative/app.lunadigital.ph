@@ -49,7 +49,24 @@ export function mount(container, session, { fetchDocuments = fetchMetricDocument
     return () => {};
   }
   const start = presets[DEFAULT_PRESET[templateId]] ? DEFAULT_PRESET[templateId] : "today";
-  const state = { preset: start, range: start === "today" ? { from: today, to: today } : { from: presets[start].from, to: presets[start].to }, view: null, seq: 0, lists: null };
+  const state = { preset: start, range: start === "today" ? { from: today, to: today } : { from: presets[start].from, to: presets[start].to }, view: null, seq: 0, lists: null, summary: null };
+  // Phase 18.6: the Household Dashboard's payroll summary comes from the
+  // server (GET /api/household-summary, payroll.view); the layout falls back
+  // to the widget lists without it.
+  const wantsSummary = templateId === "household-payroll" && session.member.permissions["payroll.view"] === true;
+  const loadSummary = () => {
+    if (!wantsSummary) return;
+    state.summary = { status: "loading" };
+    api("household-summary")
+      .then((r) => {
+        state.summary = { status: "ok", data: r.summary };
+      })
+      .catch((err) => {
+        console.error("dashboard: household summary failed:", err && (err.code || err.message));
+        state.summary = { status: "error" };
+      })
+      .then(() => alive && draw());
+  };
   const canDownload = mayExport(session, "dashboard") && plan.widgets.some((w) => w.kind === "stat");
   const can = orderPermissions(session.member.permissions);
   const currency = session.business.currency || "PHP";
@@ -83,7 +100,7 @@ export function mount(container, session, { fetchDocuments = fetchMetricDocument
     const view = state.view;
     const empty = dashboardEmptyState(session.entitlements);
     const nothing = !view.cards.length && !view.lists.length;
-    const body = nothing || !layout ? html`<div data-role="workspace-empty">${card({ body: emptyState({ title: empty.title, body: empty.body }) })}</div>` : layout({ session, view, can, currency, today, periodLabel: periodLabel(), range: state.range });
+    const body = nothing || !layout ? html`<div data-role="workspace-empty">${card({ body: emptyState({ title: empty.title, body: empty.body }) })}</div>` : layout({ session, view, can, currency, today, periodLabel: periodLabel(), range: state.range, summary: state.summary });
     render(container, html`${header()}<div class="dashboard" data-workspace-layout="${templateId || ""}">${body}</div>`);
     for (const btn of container.querySelectorAll('[data-act="export"]')) btn.classList.add("btn-ghost");
   }
@@ -164,6 +181,7 @@ export function mount(container, session, { fetchDocuments = fetchMetricDocument
   const unbindMenus = bindRowMenus(container);
   // The workbook is for the period on screen.
   const unbindExport = bindExport(container, () => ({ ...state.range }), { toast, deps: exportDeps });
+  loadSummary();
   load();
 
   return () => {
