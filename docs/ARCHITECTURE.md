@@ -453,7 +453,7 @@ There are no combined ids such as `distributor-growth`. Every plan works with ev
 | `distributor` (v5) | live | orders, payments, inventory, customers (Phase 9), expenses (Phase 10, "Operating Expenses"), reports (Phase 11), imports (Phase 12) | suppliers, production, returns (notifications became a core capability in Phase 13) |
 | `household-payroll` (v2) | live (Phase 14) | household, attendance, payroll, advances | payroll reports |
 | `baby-expense` (v2 only) | live (Phase 15) | expenses ("Baby Expenses"), budget (with categories), schedule (Payment Schedule), providers | milestones, reports |
-| `bridal-expense` (v2) | live (Phase 16) | expenses ("Wedding Expenses"), budget ("Wedding Budget"), vendors (Wedding Suppliers), vendorpayments (Supplier Payments), tasks, guests (Guests & RSVP) | reports |
+| `bridal-expense` (v2 only) | live (Phase 16) | expenses ("Wedding Expenses"), budget ("Wedding Budget"), vendors (Wedding Suppliers), vendorpayments (Supplier Payments), tasks, guests (Guests & RSVP) | reports |
 
 **Effective modules** (`computeEntitlements(plan, overrides, workspaceTemplateId)`, which has no default template):
 
@@ -1320,13 +1320,16 @@ Supplier, payment and expense writes all read and write `budgets/current` and th
 - concurrent RSVP edits, size edits, an addition and a removal
 
 ### Staged rollout
-1. **Compatible step (this commit).**
-   - `vendors`, `vendorpayments`, `tasks` and `guests` are in `ROLLING_OUT_MODULE_IDS`, read with `m.get(…, false)` in both rule files.
-   - The template accepts v1 and v2. A v1 snapshot stays valid but opens no Wedding data.
-   - Deploy the rules and the 44 indexes, push, run `seed-plans --overwrite`, `recompute-entitlements --all` and `resync-permissions --all`, then a live probe.
-2. **Strict step.** Empty `ROLLING_OUT_MODULE_IDS`, require the four keys, and drop bridal-expense v1.
-
-Shipping the code alone activates nothing on staging. No Bridal business exists there today.
+1. **Compatible step: deployed and verified (2026-10-10), commit `ff7e029`.**
+   - `vendors`, `vendorpayments`, `tasks` and `guests` were in `ROLLING_OUT_MODULE_IDS`, read with `m.get(…, false)` in both rule files, and the template accepted v1 and v2.
+   - Rules and the 44 new indexes were deployed (104/104 READY, deployed rules equal to the source). An index check confirmed all 44 are needed by supported filter combinations, with no duplicates. The code was pushed (CI green, Netlify live from git).
+   - `seed-plans --overwrite` added only the four module keys to each plan. `recompute-entitlements --all` added them as `false` to every Distributor, Household and Baby snapshot. `resync-permissions --all` gave Owners and Managers the eight Wedding keys, Staff none.
+   - `demo-bridal-a` (bridal-expense v2) was created as the Wedding staging tenant.
+   - A live probe passed 139/139. It covered the budget, the supplier agreement, payments (repeat and concurrent), direct expenses as the source of truth for supplier paid, the agreement and overpayment protection, supplier snapshots, RSVP people counts, tasks with derived overdue, the dashboard period vs current split, filtered Excel past one page, notifications, isolation, and the Distributor / Baby / Household regressions. The regression probes were green; Imports commits were blocked only by the demo tenants' exhausted monthly quota.
+2. **Strict step (this commit).**
+   - `ROLLING_OUT_MODULE_IDS` is empty again. Every snapshot of every template must carry `vendors`, `vendorpayments`, `tasks` and `guests` as booleans (`requiredModuleIds()`, `m.<key> is bool` in both rule files, and the shared validator).
+   - `bridal-expense` accepts **v2 only** (no `upgradingFrom`). v1, missing, unknown or string versions, and a missing or non-boolean Wedding key fail closed in the validator, the server (503) and both rule files. Wedding modules forged into Distributor, Household or Baby snapshots open nothing.
+   - Before deploying, every staging snapshot was checked against the strict validator (all 7 pass). Deploy order: the strict rules first (they only fail more closed), then the same commit pushed to Netlify.
 
 ### Not built (later)
 - A wedding website, invitation sending, QR invitations, a seating chart or floor plan, a gift registry, honeymoon planning, a photo gallery, chat, a supplier marketplace, a payment gateway, accounting, an AI planner, workflow builders
@@ -1397,7 +1400,7 @@ On Orders, Reference and Proof show "—" until Payments (Phase 8) fills them in
 13. Notifications ✅
 14. Household / Kasambahay Payroll MVP ✅ (the household-payroll workspace)
 15. Baby Expense Tracker MVP ✅ (the baby-expense workspace)
-16. Bridal / Wedding Command Center MVP (the bridal-expense workspace): local gate passed; staging activation awaiting approval
+16. Bridal / Wedding Command Center MVP ✅ (the bridal-expense workspace)
 17. Super Admin console
 18. Usage metering views
 19. Reliability, backups and recovery

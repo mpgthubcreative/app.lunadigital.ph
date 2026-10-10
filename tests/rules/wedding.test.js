@@ -2,9 +2,10 @@
 // their totals, guests and RSVP totals, plus the shared budget primitive and
 // Wedding Expenses) is readable only by members of THAT Bridal business with
 // the module's view permission, only in the bridal-expense workspace;
-// nothing is browser-writable. Compatible step: bridal-expense v1 snapshots
-// (no Wedding keys) stay valid but open no Wedding data; forged Wedding
-// modules in other workspaces open nothing.
+// nothing is browser-writable. Strict step: only bridal-expense v2 snapshots
+// carrying every Wedding key (as a boolean) are valid; v1, missing / unknown /
+// string versions and missing or non-bool Wedding keys fail closed; forged
+// Wedding modules in other workspaces open nothing.
 
 import { afterAll, beforeAll, describe, it } from "vitest";
 import { assertFails, assertSucceeds } from "@firebase/rules-unit-testing";
@@ -35,7 +36,7 @@ beforeAll(async () => {
     await db.doc("businesses/baby-x").set(businessDoc("Baby", "active", { planId: "growth", workspaceTemplateId: "baby-expense" }));
     await seedMember(db, "baby-x", "owner@baby-x", { role: "owner", isAccountOwner: true });
     for (const c of WEDDING_ONLY) await db.doc(`businesses/baby-x/${c}/d1`).set({ x: 1 });
-    // Compatible step: a Bridal business still on its v1 snapshot (no Wedding keys, Expenses / Budget off).
+    // Strict step: a Bridal business still on its v1 snapshot (no Wedding keys, Expenses / Budget off) is stale.
     const v1 = businessDoc("Wedding v1", "active", { planId: "growth", workspaceTemplateId: "bridal-expense" });
     for (const k of KEYS) delete v1.entitlements.modules[k];
     v1.entitlements.modules.expenses = false;
@@ -45,15 +46,34 @@ beforeAll(async () => {
     await seedMember(db, "wed-v1", "owner@wed-v1", { role: "owner", isAccountOwner: true });
     for (const c of Object.keys(COLLECTIONS)) await db.doc(`businesses/wed-v1/${c}/d1`).set({ x: 1 });
     await db.doc("businesses/wed-v1/settings/general").set({ x: 1 });
-    // Malformed: unknown version, a non-bool Wedding key.
-    const v3 = businessDoc("Wedding v3", "active", { planId: "growth", workspaceTemplateId: "bridal-expense" });
-    v3.entitlements.workspaceTemplateVersion = 3;
-    const bad = businessDoc("Wedding bad", "active", { planId: "growth", workspaceTemplateId: "bridal-expense" });
-    bad.entitlements.modules.guests = "yes";
-    for (const [bid, b] of [["wed-v3", v3], ["wed-bad", bad]]) {
+    // Malformed / stale: v1 with every key, unknown / missing / string versions, each Wedding key missing, non-bool.
+    const STALE = {
+      "wed-v1keys": (e) => { e.workspaceTemplateVersion = 1; },
+      "wed-v3": (e) => { e.workspaceTemplateVersion = 3; },
+      "wed-nover": (e) => { delete e.workspaceTemplateVersion; },
+      "wed-vstr": (e) => { e.workspaceTemplateVersion = "2"; },
+      "wed-nokeys": (e) => { for (const k of KEYS) delete e.modules[k]; },
+      "wed-novendors": (e) => { delete e.modules.vendors; },
+      "wed-novendorpayments": (e) => { delete e.modules.vendorpayments; },
+      "wed-notasks": (e) => { delete e.modules.tasks; },
+      "wed-noguests": (e) => { delete e.modules.guests; },
+      "wed-bad": (e) => { e.modules.guests = "yes"; },
+    };
+    for (const [bid, mutate] of Object.entries(STALE)) {
+      const b = businessDoc(bid, "active", { planId: "growth", workspaceTemplateId: "bridal-expense" });
+      mutate(b.entitlements);
       await db.doc(`businesses/${bid}`).set(b);
       await seedMember(db, bid, `owner@${bid}`, { role: "owner", isAccountOwner: true });
       await db.doc(`businesses/${bid}/guests/d1`).set({ x: 1 });
+      await db.doc(`businesses/${bid}/settings/general`).set({ x: 1 });
+    }
+    // Distributor / Household / Baby snapshots missing a Wedding key are stale too.
+    for (const [bid, t] of [["dist-nowed", "distributor"], ["home-nowed", "household-payroll"], ["baby-nowed", "baby-expense"]]) {
+      const b = businessDoc(bid, "active", { planId: "growth", workspaceTemplateId: t });
+      delete b.entitlements.modules.tasks;
+      await db.doc(`businesses/${bid}`).set(b);
+      await seedMember(db, bid, `owner@${bid}`, { role: "owner", isAccountOwner: true });
+      await db.doc(`businesses/${bid}/settings/general`).set({ x: 1 });
     }
     // Wedding modules forged into Distributor, Household and Baby snapshots.
     for (const [bid, t] of [["dist-wforged", "distributor"], ["home-wforged", "household-payroll"], ["baby-wforged", "baby-expense"]]) {
@@ -109,13 +129,25 @@ describe("reading Wedding data", () => {
     for (const bid of ["dist-wforged", "home-wforged", "baby-wforged"]) for (const c of WEDDING_ONLY) await assertFails(dbAs(env, `owner@${bid}`).doc(`businesses/${bid}/${c}/d1`).get());
   });
 
-  it("compatible step: a v1 Bridal snapshot is still valid (settings) but opens no Wedding data", async () => {
-    await assertSucceeds(dbAs(env, "owner@wed-v1").doc("businesses/wed-v1/settings/general").get());
+  it("strict: the current Bridal v2 snapshot works", async () => {
+    await assertSucceeds(dbAs(env, `owner@${W}`).doc(`businesses/${W}/guests/d1`).get());
+    await assertSucceeds(dbAs(env, `owner@${W}`).doc(`businesses/${W}/expenses/d1`).get());
+  });
+
+  it("strict: a v1 Bridal snapshot (pre-Phase-16) fails closed: Wedding data AND settings", async () => {
+    await assertFails(dbAs(env, "owner@wed-v1").doc("businesses/wed-v1/settings/general").get());
     for (const c of Object.keys(COLLECTIONS)) await assertFails(dbAs(env, "owner@wed-v1").doc(`businesses/wed-v1/${c}/d1`).get());
   });
 
-  it("an unknown version or a non-bool Wedding key fails closed", async () => {
-    for (const bid of ["wed-v3", "wed-bad"]) await assertFails(dbAs(env, `owner@${bid}`).doc(`businesses/${bid}/guests/d1`).get());
+  for (const [bid, what] of [["wed-v1keys", "v1 with every Wedding key"], ["wed-v3", "unknown future version"], ["wed-nover", "missing version"], ["wed-vstr", "version as a string"], ["wed-nokeys", "v2 missing every Wedding key"], ["wed-novendors", "v2 missing vendors"], ["wed-novendorpayments", "v2 missing vendorpayments"], ["wed-notasks", "v2 missing tasks"], ["wed-noguests", "v2 missing guests"], ["wed-bad", "a non-bool Wedding key"]]) {
+    it(`strict: ${what} fails closed (guests AND settings)`, async () => {
+      await assertFails(dbAs(env, `owner@${bid}`).doc(`businesses/${bid}/guests/d1`).get());
+      await assertFails(dbAs(env, `owner@${bid}`).doc(`businesses/${bid}/settings/general`).get());
+    });
+  }
+
+  it("strict: Distributor / Household / Baby snapshots missing a Wedding key fail closed", async () => {
+    for (const bid of ["dist-nowed", "home-nowed", "baby-nowed"]) await assertFails(dbAs(env, `owner@${bid}`).doc(`businesses/${bid}/settings/general`).get());
   });
 });
 

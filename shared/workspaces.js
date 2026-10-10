@@ -140,11 +140,10 @@ const TEMPLATES = [
     id: "bridal-expense",
     // v2 (Phase 16): Wedding Budget (the generic budget primitive), Wedding
     // Expenses (the Expenses Core with the Bridal profile), Wedding
-    // Suppliers, Supplier Payments, Wedding Tasks, Guests & RSVP. v1
-    // snapshots are accepted via upgradingFrom only until every business is
-    // recomputed (staged rollout).
+    // Suppliers, Supplier Payments, Wedding Tasks, Guests & RSVP. (v1
+    // snapshots were accepted via upgradingFrom only until every business
+    // was recomputed.)
     version: 2,
-    upgradingFrom: [1],
     name: "Bridal / Wedding Management Tracker",
     description: "A compact wedding command center: budget, suppliers, payments, tasks and guests.",
     status: "live",

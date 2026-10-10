@@ -334,10 +334,30 @@ describe("stored snapshot validation fails closed", () => {
     }
   });
 
-  it("Phase 16 (compatible step): bridal-expense v1 and v2 accepted; Wedding modules forged into Distributor, Household or Baby are refused", () => {
-    expect(ROLLING_OUT_MODULE_IDS).toEqual(["vendors", "vendorpayments", "tasks", "guests"]);
-    expect(WORKSPACE_TEMPLATES["bridal-expense"].upgradingFrom).toEqual([1]);
-    expect(v(ent("bridal-expense", "growth"), "growth", "bridal-expense").ok).toBe(true);
+  it("Phase 16 strict: bridal-expense v2 is the only accepted version; stale, malformed or keyless snapshots fail closed", () => {
+    expect(ROLLING_OUT_MODULE_IDS).toEqual([]);
+    expect(WORKSPACE_TEMPLATES["bridal-expense"].upgradingFrom).toBeUndefined();
+    const s = ent("bridal-expense", "growth");
+    expect(s.workspaceTemplateVersion).toBe(2);
+    expect(v(s, "growth", "bridal-expense")).toEqual({ ok: true, problems: [] });
+    for (const bad of [1, 0, 3, 99, "2", null, 2.5]) expect(v({ ...s, workspaceTemplateVersion: bad }, "growth", "bridal-expense").ok, String(bad)).toBe(false);
+    const noVersion = structuredClone(s);
+    delete noVersion.workspaceTemplateVersion;
+    expect(v(noVersion, "growth", "bridal-expense").ok).toBe(false);
+    // each Wedding key is required, as a boolean, in every template's snapshot
+    for (const t of ["bridal-expense", "distributor", "household-payroll", "baby-expense"]) {
+      for (const k of ["vendors", "vendorpayments", "tasks", "guests"]) {
+        const missing = structuredClone(ent(t, "growth"));
+        delete missing.modules[k];
+        expect(v(missing, "growth", t).ok, `${t} missing ${k}`).toBe(false);
+        const notBool = structuredClone(ent(t, "growth"));
+        notBool.modules[k] = "true";
+        expect(v(notBool, "growth", t).ok, `${t} ${k}="true"`).toBe(false);
+      }
+    }
+  });
+
+  it("Phase 16 strict: Wedding modules forged into Distributor, Household or Baby are refused", () => {
     for (const t of ["distributor", "household-payroll", "baby-expense"]) {
       for (const m of ["vendors", "vendorpayments", "tasks", "guests"]) {
         const s = structuredClone(ent(t, "growth"));

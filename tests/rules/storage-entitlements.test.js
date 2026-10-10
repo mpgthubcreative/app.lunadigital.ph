@@ -36,6 +36,10 @@ const BROKEN = Object.freeze({
   "st-bad-no-baby-keys": (b) => { for (const k of ["budget", "schedule", "providers"]) delete b.entitlements.modules[k]; },
   "st-bad-no-providers-key": (b) => delete b.entitlements.modules.providers,
   "st-bad-schedule-string": (b) => (b.entitlements.modules.schedule = "false"),
+  // Phase 16 strict step: the Wedding keys are required, as booleans.
+  "st-bad-no-wedding-keys": (b) => { for (const k of ["vendors", "vendorpayments", "tasks", "guests"]) delete b.entitlements.modules[k]; },
+  "st-bad-no-guests-key": (b) => delete b.entitlements.modules.guests,
+  "st-bad-tasks-string": (b) => (b.entitlements.modules.tasks = "false"),
 });
 
 const ROLES = Object.freeze({
