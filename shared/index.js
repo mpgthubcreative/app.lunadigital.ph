@@ -30,3 +30,5 @@ export * from "./notifications.js";
 export * from "./payroll.js";
 export * from "./baby.js";
 export * from "./wedding.js";
+export * from "./operators.js";
+export * from "./tenant-config.js";

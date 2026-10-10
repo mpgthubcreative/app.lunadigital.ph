@@ -121,7 +121,13 @@ const OPS = {
   in: (a, b) => b.includes(a),
   "array-contains": (a, b) => Array.isArray(a) && a.includes(b),
 };
-const valueOf = (snap, field) => (field === DOC_ID ? snap.id : snap._data[field] instanceof Date ? snap._data[field].getTime() : snap._data[field]);
+// Dotted field paths ("subscription.status") read nested values, like Firestore.
+const fieldAt = (data, field) => (field.includes(".") ? field.split(".").reduce((o, k) => (o && typeof o === "object" ? o[k] : undefined), data) : data[field]);
+const valueOf = (snap, field) => {
+  if (field === DOC_ID) return snap.id;
+  const v = fieldAt(snap._data, field);
+  return v instanceof Date ? v.getTime() : v;
+};
 const cmp = (a, b) => (a === b ? 0 : a === undefined ? -1 : b === undefined ? 1 : a < b ? -1 : 1);
 
 class Query {

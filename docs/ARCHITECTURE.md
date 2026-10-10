@@ -136,7 +136,7 @@ The proof is `npm run test:rules`: `tests/rules/` runs on the real emulators wit
 
 ## Identity, roles and permissions
 
-- Firebase Auth uses email and password. The only custom claim is `platformAdmin`, which is set by a CLI script.
+- Firebase Auth uses email and password. No custom claims are used. Luna Super Admin access comes from a server-only operator record (`operators/{uid}`, Phase 17), never from a claim or a business role.
 - Membership documents are the source of truth for tenant access, so revoking access takes effect immediately.
 - **Roles are permission templates only** (`shared/permissions.js`). The initial templates are Owner, Manager / Admin and Staff. Code checks permission keys and never role names. New roles such as Warehouse, Sales or Finance are new template entries.
 - `isAccountOwner` on the member record (not the role name) protects the business's owner account from being demoted or removed by other users.
@@ -1338,6 +1338,80 @@ Supplier, payment and expense writes all read and write `budgets/current` and th
 - Member-linked task assignment
 - Dietary notes and table numbers
 
+## Luna Super Admin (Phase 17)
+
+An internal console at `/console`, a separate bundle from the business app at `/`. It is how Luna staff create and manage businesses without editing Firestore or running scripts for routine work.
+
+### Operators: who may use it
+- **Access** comes from an active `operators/{uid}` record (`role: "superadmin"`, `status: "active"`).
+  - The record is server-only: the rules' default deny means no browser can read or write it, not even the operator.
+  - It is created and disabled by `scripts/set-operator.js` (audited). The console can't create operators, so the first one is bootstrapped with the CLI.
+- **Never** from a business role, an email domain, a custom claim, a query parameter or a client flag. A business Owner who opens `/console` gets "Luna staff only" and no data.
+- **Every request** to `POST /api/operator` verifies the ID token, then the operator record (`requireOperator`), before reading the body. A non-operator learns nothing from validation (403 `not-operator` for any action).
+- **The console never reads Firestore directly.** `operators`, `provisioning` and `platformAudit` stay closed to every browser.
+
+### One implementation for the CLI and the console
+`netlify/functions/_lib/provisioning.js` holds every operator rule. The console's API and the CLI scripts call the same functions:
+- `provisionBusiness`, `assignPlan`, `updateOverrides`
+- `setSubscriptionStatus`, `updateBusinessGeneral`, `setTenantTerminology`
+- `addMember`, `setMemberStatus`, `setOperator`
+
+`scripts/create-business.js` now runs `provisionBusiness` as well (it needs `--id`). The CLI scripts stay for emergencies, migrations, recovery and automation.
+
+### Create business: one retry-safe workflow
+The console (or the CLI) sends name, business id (a lowercase slug), workspace, plan, owner email and name, and timezone.
+- **Workspace:** only live templates are offered, always at their current version. No typed ids, no old versions.
+- **The workflow:** validate → claim `provisioning/{businessId}` → create the business with a valid entitlement snapshot → find or create the owner's account → owner membership with the Owner role template → default tenant configuration → mark complete and audit `business.created`, once.
+- **Recovery:** auth-account creation can't join a Firestore transaction, so progress is recorded and every step is idempotent.
+  - A double click, a retry or concurrent requests for the same id converge on one business, one membership and one audit (emulator-tested).
+  - The same id for a different request, or an id already used outside the console, is refused (`business-exists`). Nothing is overwritten.
+- **Owner onboarding:** a new owner's account is created without a password. The operator copies a one-time **setup link** from the business page and shares it.
+  - There is no email infrastructure yet. **Production needs** email delivery for invitations and setup links.
+
+### Plans, overrides, subscription
+- **Workspace template = hard ceiling; plan = defaults and limits; overrides = operator exceptions inside the ceiling; tenant configuration = cosmetic preferences.** These four are never mixed.
+- **Workspace template is immutable in the console.** Changing a populated business's workspace needs a dedicated migration tool, which is future work. The CLI's `set-template` (explicit confirmation) remains for exceptional cases.
+- **Plan change:** validated, recomputed, keeps the ceiling and valid overrides, audited before → after with a reason.
+  - A downgrade never deletes data: modules become unavailable, and over-limit users stay (new ones are blocked) with a warning.
+- **Module overrides:** Default, Enabled or Disabled, only for the business's own workspace modules (`overridableModules`: in the template, built, not core).
+  - Another workspace's module (for example Payroll in a Distributor), a core, unbuilt or planned module, or an unknown id is refused (`not-overridable`). `computeEntitlements` re-checks the ceiling.
+  - The console's table shows Module | Workspace | Plan | Override | Effective, where effective = template && (override Enabled || (plan && not Disabled)) && built.
+- **Subscription:** active / past due / suspended / cancelled is set manually (no payment gateway), with a reason and an audit record, and follows the existing access policy:
+  - suspended is read-only
+  - cancelled allows owner export only
+  - nothing is ever deleted, and there is no "delete tenant" action
+- **No lost updates:** every operator change bumps `businesses/{bid}.adminRevision`. The console sends the revision it showed, and a stale one is refused (409). Businesses created before Phase 17 read as revision 0.
+
+### Members
+Members can be viewed, added (Owner, Manager or Staff role templates only; never typed permission lists), have their role changed, and be deactivated or reactivated (with a reason). The account owner can't be demoted or deactivated. Every change is audited.
+
+### Tenant configuration (the customization foundation)
+- **Rule (permanent):** business differences come only from the workspace template, the plan, module overrides and controlled tenant configuration.
+  - Never `if (businessId === …)` in application logic.
+  - No client-specific Git branches, and no per-customer deployments.
+- **General:** display name and timezone, on the business document. Audited and revisioned. A timezone change doesn't move records already dated.
+- **Terminology** (`shared/tenant-config.js`, stored at `settings/tenantConfig`):
+  - Controlled options only. MVP: Distributor's term for customers is Customer, Dealer, Reseller, Retailer or Client. It relabels the navigation and the Customers page; ids, paths and permissions never change.
+  - Versioned (`version: 1`) and **fail-safe**: a missing, old or unknown value resolves to the default, because these settings are cosmetic. Security-relevant state (workspace, entitlements) stays strict.
+- **Not built:** a general customization editor, branding and logos, themes.
+
+### Read models
+- **Overview:** total businesses, and counts per status, workspace and plan (server-side counts, no revenue analytics).
+- **Businesses:** Business | Workspace | Plan | Status | Owner | Created | Usage, filtered by workspace, plan and status, 25 per page ordered by business id. Search matches the id prefix or the name prefix; businesses created before Phase 17 match by id until renamed.
+- **Business page:** overview, modules, members, current-month usage (only counters that already exist: active users vs limit, orders, imports, exports and rows exported), configuration, and recent changes from `platformAudit`.
+  - The audit view needs one composite index: `platformAudit` (businessId, at desc).
+- **Plans:** read-only, from the stored plans.
+- **Audit:** the platform log, newest first.
+
+### Audit
+Every operator mutation writes the same record to `businesses/{bid}/auditLog` and `platformAudit` in its transaction: business created, plan changed, override changed, subscription changed, general settings, configuration, and member added, updated, deactivated or reactivated. Each record holds the operator, business, before, after, time and reason. Operator records (`operator.updated`) go to `platformAudit`. None of it is tenant-editable.
+
+### Rollout
+- **Rules:** none needed; operator collections are already denied by default.
+- **Index:** one new index (`platformAudit` by business).
+- **Functions:** `/api/operator`, and `scripts/set-operator.js` to bootstrap the first operator.
+- **Not built:** billing or invoices, payment charging, CRM, support ticketing, impersonation, a Firestore editor, a feature-flag engine, a no-code builder, tenant deletion, full usage metering (Phase 18).
+
 ## Performance
 
 - The dashboard reads at most four summary documents (see above), plus small limited list queries once Orders and Inventory exist.
@@ -1401,7 +1475,7 @@ On Orders, Reference and Proof show "—" until Payments (Phase 8) fills them in
 14. Household / Kasambahay Payroll MVP ✅ (the household-payroll workspace)
 15. Baby Expense Tracker MVP ✅ (the baby-expense workspace)
 16. Bridal / Wedding Command Center MVP ✅ (the bridal-expense workspace)
-17. Super Admin console
+17. Luna Super Admin console (operators, provisioning, plans, overrides, subscription, tenant configuration): local gate passed; staging awaiting approval
 18. Usage metering views
 19. Reliability, backups and recovery
 

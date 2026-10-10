@@ -23,6 +23,7 @@
     "create-business": "node --env-file=.env.local scripts/create-business.js",
     "add-member": "node --env-file=.env.local scripts/add-member.js",
     "set-member-status": "node --env-file=.env.local scripts/set-member-status.js",
+    "set-operator": "node --env-file=.env.local scripts/set-operator.js",
     "set-plan": "node --env-file=.env.local scripts/set-plan.js",
     "set-template": "node --env-file=.env.local scripts/set-template.js",
     "migrate-workspaces": "node --env-file=.env.local scripts/migrate-workspaces.js",

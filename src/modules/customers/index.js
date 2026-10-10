@@ -107,7 +107,7 @@ export function mount(container, session, { data = defaultData, api = defaultApi
     render(
       container,
       html`
-        ${pageHeader({ title: "Customers", subtitle: "Stores and buyers you sell to, with their orders and balances.", actions: canManage ? html`<button type="button" class="btn btn-primary" data-act="new">New customer</button>` : "" })}
+        ${pageHeader({ title: session.config?.terminology?.customer?.plural ?? "Customers", subtitle: "Stores and buyers you sell to, with their orders and balances.", actions: canManage ? html`<button type="button" class="btn btn-primary" data-act="new">New customer</button>` : "" })}
         <form class="section card filters filters-inline" data-role="filters">
           <input class="input" name="search" placeholder="Search by name" value="${state.search}" autocomplete="off" aria-label="Search customers" />
           <select class="select" name="status" aria-label="Status">

@@ -2,7 +2,7 @@
 // Navigation comes from resolveNavigation(): plan/override entitlements ×
 // the user's permissions. No role names or plan ids are checked here.
 
-import { resolveNavigation, accessPolicy, ENVIRONMENT_LABELS, normalizeEnvironment, canUseNotifications } from "@shared/index.js";
+import { resolveNavigation, accessPolicy, ENVIRONMENT_LABELS, normalizeEnvironment, canUseNotifications, terminologyLabels } from "@shared/index.js";
 import { html, render } from "../lib/html.js";
 import { icon, lunaMark } from "../components/icons.js";
 import { initials } from "../lib/format.js";
@@ -32,7 +32,9 @@ function businessSwitcher(session) {
 
 // handlers: { onSignOut(), onSwitchBusiness(businessId) }
 export function renderShell(root, session, handlers = {}) {
-  const nav = resolveNavigation({ entitlements: session.entitlements, permissions: session.member.permissions });
+  // Tenant terminology (Phase 17) may relabel a module; ids and paths never change.
+  const labels = terminologyLabels(session.config);
+  const nav = resolveNavigation({ entitlements: session.entitlements, permissions: session.member.permissions }).map((m) => (labels[m.id] ? { ...m, label: labels[m.id] } : m));
   const notifications = canUseNotifications({ entitlements: session.entitlements, permissions: session.member.permissions });
   if (bell) bell.stop();
   bell = null;

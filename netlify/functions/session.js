@@ -17,6 +17,7 @@ import { authenticate } from "./_lib/auth.js";
 import { resolveTenantContext, requestedBusinessId, listActiveMemberships } from "./_lib/tenant.js";
 import { readUsageSummary } from "./_lib/usage.js";
 import { normalizeEnvironment } from "../../shared/environment.js";
+import { resolveTenantConfig, TENANT_CONFIG_DOC_ID } from "../../shared/tenant-config.js";
 
 function toIso(value) {
   if (!value) return null;
@@ -34,9 +35,11 @@ export function createSessionHandler({ getAdmin: loadAdmin }) {
     const context = await resolveTenantContext({ db, uid: user.uid, requestedBusinessId: requestedBusinessId(event) });
 
     const seesPackage = context.permissions["billing.view"] === true;
-    const [memberships, usage] = await Promise.all([
+    const [memberships, usage, configSnap] = await Promise.all([
       listActiveMemberships(db, user.uid),
       seesPackage ? readUsageSummary(context.tenant, context.business.timezone) : null,
+      // Tenant configuration (Phase 17): cosmetic, fail-safe (defaults when missing / unknown).
+      context.tenant.doc("settings", TENANT_CONFIG_DOC_ID).get(),
     ]);
 
     return respond(200, {
@@ -67,6 +70,7 @@ export function createSessionHandler({ getAdmin: loadAdmin }) {
       },
       usage,
       memberships,
+      config: resolveTenantConfig(configSnap.exists ? configSnap.data() : null, context.workspace.templateId),
     });
   });
 }
