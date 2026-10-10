@@ -675,15 +675,18 @@ export async function provisionBusiness({ db, admin, auth, request, actor = "cli
   // 5. Default configuration + 6. complete, audited exactly once.
   const tenant = tenantDb(db, req.businessId);
   const configRef = tenant.doc("settings", TENANT_CONFIG_DOC_ID);
-  await db.runTransaction(async (tx) => {
+  // Only the request that completes provisioning reports it as created
+  // (concurrent duplicates that resumed the same claim report "already").
+  const completedHere = await db.runTransaction(async (tx) => {
     const [p, c] = await Promise.all([tx.get(pRef), tx.get(configRef)]);
     if (!c.exists) tx.create(configRef, { version: TENANT_CONFIG_VERSION, terminology: {}, createdAt: FieldValue.serverTimestamp() });
-    if (p.data().status === "complete") return;
+    if (p.data().status === "complete") return false;
     const now = FieldValue.serverTimestamp();
     tx.update(pRef, { status: "complete", ownerUid: owner.uid, completedAt: now });
     writeAudit(tx, db, tenant, { type: "business.created", summary: `Business created: ${req.name} (${req.workspaceTemplateId}, ${req.planId})`, businessId: req.businessId, actor, reason: "Provisioned", before: null, after: { ...fingerprintOf(req), ownerUid: owner.uid }, at: now });
+    return true;
   });
-  return { businessId: req.businessId, ownerUid: owner.uid, ownerCreated: owner.created, alreadyProvisioned: false };
+  return { businessId: req.businessId, ownerUid: owner.uid, ownerCreated: owner.created, alreadyProvisioned: !completedHere };
 }
 
 // ---------- Luna operators (Phase 17) ----------

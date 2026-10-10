@@ -49,14 +49,33 @@ describe("business creation idempotency", () => {
     const r = await Promise.allSettled(Array.from({ length: 6 }, () => prov.provisionBusiness({ db, admin, auth, request: request(id), actor: "ops@luna.test" })));
     expectExplicit(r);
     expect(settledOk(r).length).toBeGreaterThan(0);
+    // At most one racer reports it as newly created; the rest "already".
+    expect(settledOk(r).filter((x) => x.value.alreadyProvisioned === false).length).toBeLessThanOrEqual(1);
     // A retry after the race completes it if every racer was contended.
-    await prov.provisionBusiness({ db, admin, auth, request: request(id), actor: "ops@luna.test" });
+    const again = await prov.provisionBusiness({ db, admin, auth, request: request(id), actor: "ops@luna.test" });
+    expect(settledOk(r).filter((x) => x.value.alreadyProvisioned === false).length + (again.alreadyProvisioned ? 0 : 1)).toBe(1);
     const s = await state(id);
     expect(s.members).toHaveLength(1);
     expect(s.members[0]).toMatchObject({ roleTemplate: "owner", isAccountOwner: true });
     expect(s.audits.filter((a) => a.type === "business.created")).toHaveLength(1);
     expect((await db.doc(`provisioning/${id}`).get()).data().status).toBe("complete");
     await validSnapshot(id);
+  });
+
+  it("6 retries resuming the same interrupted attempt at once: exactly one reports created, one audit", async () => {
+    const auth = new FakeAuth();
+    const id = newId();
+    const req = request(id);
+    // An earlier attempt claimed the id and created the business, then stopped.
+    await db.doc(`provisioning/${id}`).create({ request: { name: req.name, workspaceTemplateId: req.workspaceTemplateId, planId: req.planId, ownerEmail: req.ownerEmail, timezone: req.timezone }, status: "started" });
+    await prov.createBusiness({ db, admin, name: req.name, planId: req.planId, workspaceTemplateId: req.workspaceTemplateId, timezone: req.timezone, businessId: id });
+    const r = await Promise.allSettled(Array.from({ length: 6 }, () => prov.provisionBusiness({ db, admin, auth, request: req, actor: "ops@luna.test" })));
+    expectExplicit(r);
+    const again = await prov.provisionBusiness({ db, admin, auth, request: req, actor: "ops@luna.test" });
+    expect(settledOk(r).filter((x) => x.value.alreadyProvisioned === false).length + (again.alreadyProvisioned ? 0 : 1)).toBe(1);
+    const s = await state(id);
+    expect(s.members).toHaveLength(1);
+    expect(s.audits.filter((a) => a.type === "business.created")).toHaveLength(1);
   });
 
   it("two DIFFERENT businesses racing for the same id: exactly one wins, the other is refused (business-exists)", async () => {
