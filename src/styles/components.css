@@ -2364,3 +2364,15 @@ tr.is-saving {
   border-top: 2px solid var(--border-strong);
   font-size: var(--text-md);
 }
+
+/* Users page (Phase 18.6): role templates folded at the bottom. */
+.roles-ref > summary {
+  cursor: pointer;
+  min-height: var(--touch);
+  display: flex;
+  align-items: center;
+}
+.roles-ref .list li {
+  padding: var(--space-1) 0;
+  font-size: var(--text-sm);
+}

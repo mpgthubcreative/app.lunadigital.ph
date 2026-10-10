@@ -38,3 +38,12 @@ export async function currentIdToken() {
   const { auth } = await getFirebase();
   return auth.currentUser ? auth.currentUser.getIdToken() : null;
 }
+
+// Phase 18.6: "Forgot password?" on the sign-in screen. Firebase emails the
+// reset link straight to the person (Luna never sees it). A login ID has no
+// mailbox: its owner gets a new activation link from the business instead.
+export async function sendPasswordReset(email) {
+  const { auth } = await getFirebase();
+  const { sendPasswordResetEmail } = await import("firebase/auth");
+  await sendPasswordResetEmail(auth, email.trim());
+}

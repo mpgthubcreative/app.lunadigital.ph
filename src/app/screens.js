@@ -25,8 +25,9 @@ function authFrame(body) {
 }
 
 // onSubmit(email, password) → resolves on success, throws with a friendly
-// message on failure.
-export function renderLogin(root, { onSubmit, notice = "" }) {
+// message on failure. onForgot(email) (Phase 18.6) asks Firebase to email a
+// password-reset link.
+export function renderLogin(root, { onSubmit, onForgot = null, notice = "" }) {
   render(
     root,
     authFrame(html`
@@ -44,6 +45,7 @@ export function renderLogin(root, { onSubmit, notice = "" }) {
         </div>
         <p class="form-error" id="loginError" role="alert" hidden></p>
         <button type="submit" class="btn btn-primary btn-block" id="loginSubmit">Sign in</button>
+        ${onForgot ? html`<button type="button" class="btn btn-ghost btn-block" id="loginForgot">Forgot password?</button>` : ""}
       </form>
     `)
   );
@@ -54,6 +56,22 @@ export function renderLogin(root, { onSubmit, notice = "" }) {
   const errorEl = root.querySelector("#loginError");
   const submitBtn = root.querySelector("#loginSubmit");
   emailInput.focus();
+  root.querySelector("#loginForgot")?.addEventListener("click", async () => {
+    errorEl.hidden = true;
+    const typed = emailInput.value.trim();
+    if (!typed.includes("@")) {
+      errorEl.textContent = typed ? "A login ID has no email. Ask your employer for a new activation link." : "Type your email above, then tap Forgot password.";
+      errorEl.hidden = false;
+      return;
+    }
+    try {
+      await onForgot(typed);
+    } catch {
+      /* same answer either way: never reveal whether an account exists */
+    }
+    errorEl.textContent = `If ${typed} has a Luna account, a reset link is on its way. Check your inbox.`;
+    errorEl.hidden = false;
+  });
 
   form.addEventListener("submit", async (event) => {
     event.preventDefault();

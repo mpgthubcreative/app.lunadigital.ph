@@ -16,7 +16,7 @@ import "../styles/components.css";
 
 import { isFirebaseConfigured } from "../lib/firebase.js";
 import { setTokenProvider, setBusinessSelector } from "../lib/api.js";
-import { watchUser, signIn, signOutUser, currentIdToken, friendlyAuthError } from "./auth.js";
+import { watchUser, signIn, signOutUser, currentIdToken, friendlyAuthError, sendPasswordReset } from "./auth.js";
 import { loadSession, setPreferredBusinessId } from "./session.js";
 import { renderShell } from "./shell.js";
 import { createRouter } from "./router.js";
@@ -86,6 +86,7 @@ async function revalidate() {
 function showLogin(notice = "") {
   renderLogin(root, {
     notice,
+    onForgot: (email) => sendPasswordReset(email),
     onSubmit: async (email, password) => {
       try {
         await signIn(email, password);
