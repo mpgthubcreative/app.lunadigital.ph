@@ -374,14 +374,11 @@ export function bridalDashboard(ctx) {
   const rsvp = a.rows("rsvpSummary")[0] || null;
   const suppliers = a.rows("supplierSummary");
   const overdue = a.num("weddingOverdueTasks");
-  const awaiting = a.num("weddingAwaitingRsvp");
-
-  const attention = [];
-  for (const p of pays.filter((x) => x.dueDate && daysUntil(today, x.dueDate) <= 14).slice(0, 3)) attention.push({ id: `pay-${p.id}`, tone: daysUntil(today, p.dueDate) < 0 ? "danger" : "warning", text: `${p.supplierName}: ${p.description.toLowerCase()} ${dueText(today, p.dueDate)}`, detail: formatCentavos(p.amount, currency), href: "/supplier-payments" });
-  if (overdue > 0) attention.push({ id: "overdue", tone: "danger", text: `${plural(overdue, "task")} overdue`, detail: tasks.filter((t) => t.dueDate < today).slice(0, 3).map((t) => t.title).join(", "), href: "/wedding-tasks" });
   const soon = tasks.filter((t) => t.dueDate >= today && daysUntil(today, t.dueDate) <= 14);
-  if (soon.length) attention.push({ id: "soon", tone: "info", text: `${plural(soon.length, "task")} due in the next two weeks`, detail: soon.slice(0, 3).map((t) => t.title).join(", "), href: "/wedding-tasks" });
-  if (awaiting > 0) attention.push({ id: "rsvp", tone: "info", text: `${plural(awaiting, "invitation")} still waiting for an RSVP`, href: "/guests" });
+  // Phase 18.6: no Needs attention list; the payments card leads with the
+  // total of ALL upcoming payments (budgets/current.upcoming), not just the
+  // few listed.
+  const upcomingTotal = a.card("weddingUpcoming");
 
   const taskTiles = [
     a.card("weddingOpenTasks") && { id: "open", label: "Open", value: a.card("weddingOpenTasks").value, href: "/wedding-tasks" },
@@ -412,18 +409,17 @@ export function bridalDashboard(ctx) {
   const supplierBal = a.card("weddingSupplierBalance");
   return html`
     ${budgetHero(a, { total: "weddingBudgetTotal", spent: "weddingSpentNow", remaining: "weddingRemaining", upcoming: "weddingUpcoming" }, { currency, periodSpent, periodLabel, extra: supplierBal && !supplierBal.empty ? html`<p class="chart-note" data-role="supplier-balance">Still owed to suppliers under their agreements: <b>${supplierBal.value}</b></p>` : "" })}
-    <div class="split section">
-      ${section({ title: "Needs attention", id: "attention", body: attentionList(attention, { clear: "You're on track. Nothing urgent right now." }) })}
-      ${a.list("upcomingSupplierPayments")
-        ? section({
-            title: "Payments coming up",
-            hint: "scheduled, not spent yet",
-            id: "upcoming",
-            link: { href: "/supplier-payments", label: "Payments" },
-            body: pays.length ? itemList(pays.slice(0, 4).map((p) => ({ id: p.id, title: p.supplierName, sub: `${p.description} · ${dueText(today, p.dueDate)}`, end: formatCentavos(p.amount, currency) })), { role: "upcoming" }) : emptyState({ iconName: "payments", title: "Nothing scheduled", body: "Supplier deposits and balances you schedule appear here." }),
-          })
-        : ""}
-    </div>
+    ${a.list("upcomingSupplierPayments")
+      ? section({
+          title: "Payments coming up",
+          hint: "scheduled, not spent yet",
+          id: "upcoming",
+          link: { href: "/wedding-suppliers", label: "Suppliers" },
+          body: html`${upcomingTotal && !upcomingTotal.empty
+            ? html`<div class="upcoming-total" data-role="upcoming-total"><span class="kpi-label">Total upcoming payments</span><span class="kpi-value">${upcomingTotal.value}</span><span class="kpi-hint">Every scheduled supplier payment not paid yet</span></div>`
+            : ""}${pays.length ? itemList(pays.slice(0, 5).map((p) => ({ id: p.id, title: p.supplierName, sub: `${p.description} · ${dueText(today, p.dueDate)}`, end: formatCentavos(p.amount, currency), tone: daysUntil(today, p.dueDate) < 0 ? "danger" : undefined })), { role: "upcoming" }) : emptyState({ iconName: "payments", title: "Nothing scheduled", body: "Supplier deposits and balances you schedule appear here." })}`,
+        })
+      : ""}
     <div class="grid grid-2 section">
       ${taskTiles.length || a.list("tasksDueSoon")
         ? section({

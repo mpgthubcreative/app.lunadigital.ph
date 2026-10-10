@@ -181,7 +181,7 @@ describe("Guests & RSVP", () => {
 });
 
 describe("Wedding Dashboard (Phase 18.5): are we on track?", () => {
-  it("budget hero from budgets; tasks from taskTotals + a live overdue count; RSVP from guestTotals; attention items", async () => {
+  it("budget hero from budgets; tasks from taskTotals + a live overdue count; RSVP from guestTotals; total upcoming payments", async () => {
     const fetchDocuments = vi.fn(async (_b, docs) =>
       Object.fromEntries(
         docs.map((d) => [
@@ -205,7 +205,8 @@ describe("Wedding Dashboard (Phase 18.5): are we on track?", () => {
     expect(container.querySelector('[data-section="tasks"] [data-count="overdue"] b').textContent).toBe("2");
     expect(container.querySelector('[data-section="rsvp"]').textContent).toMatch(/3 of 9 invited seats confirmed/);
     expect(container.querySelector('[data-section="rsvp"]').textContent).toContain("4 awaiting (1 invitation)");
-    expect(container.querySelector('[data-attention="rsvp"]')).not.toBeNull();
+    expect(container.querySelector('[data-section="attention"]')).toBeNull();
+    expect(container.querySelector('[data-role="upcoming-total"]').textContent).toMatch(/30,000/);
     expect(container.textContent).not.toMatch(/Gross|COGS|Profit|Sales|Baby/);
   });
 });

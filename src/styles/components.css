@@ -606,6 +606,15 @@ a.item:hover {
   overflow-y: auto;
 }
 
+/* Wedding dashboard: total of all upcoming payments, above the list. */
+.upcoming-total {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 0 var(--space-5) var(--space-3);
+  border-bottom: 1px solid var(--border);
+}
+
 /* ---------- Segmented control ---------- */
 
 .seg {

@@ -338,7 +338,7 @@ describe("Baby: how much have we spent, who paid, and what's coming up? (Phase 1
 
 describe("Bridal: are we on track?", () => {
   const W = () => sessionFixture({ workspaceTemplateId: "bridal-expense" });
-  it("budget hero, attention (payments due, overdue tasks, RSVP), tasks, RSVP and supplier summary", async () => {
+  it("budget hero, total upcoming payments (no Needs attention), tasks, RSVP and supplier summary", async () => {
     await show(W(), { "budgets/current": { total: 50000000, spent: 18450000, upcoming: 12500000 }, "guestTotals/current": { invitations: 12, invitedSeats: 30, attending: 7, attendingSeats: 16, declined: 2, declinedSeats: 5, awaiting: 3, awaitingSeats: 9 } }, {
       upcomingSupplierPayments: [{ id: "p1", supplierName: "Grand Table Catering", description: "Second payment", amount: 4000000, dueDate: "2026-10-14" }],
       tasksDueSoon: [{ id: "t1", title: "Final guest count", dueDate: "2026-10-05", status: "in_progress" }, { id: "t2", title: "Food tasting", dueDate: "2026-10-15", status: "not_started" }],
@@ -346,8 +346,10 @@ describe("Bridal: are we on track?", () => {
       supplierSummary: [{ id: "s1", name: "Grand Table Catering", agreedAmount: 15000000, paid: 5000000, balance: 10000000 }],
     }, {}, { "count:weddingOverdueTasks": 1 });
     expect(value("weddingRemaining")).toBe("₱315,500.00");
-    const att = [...sectionOf("attention").querySelectorAll("[data-attention]")].map((li) => li.dataset.attention);
-    expect(att).toEqual(["pay-p1", "overdue", "soon", "rsvp"]);
+    expect(sectionOf("attention")).toBeNull();
+    const up = sectionOf("upcoming");
+    expect(up.querySelector('[data-role="upcoming-total"]').textContent).toMatch(/Total upcoming payments.*₱125,000\.00/s);
+    expect(up.textContent).toMatch(/Grand Table Catering/);
     expect(sectionOf("rsvp").textContent).toMatch(/16 of 30 invited seats confirmed/);
     expect(sectionOf("suppliers").querySelector('[data-supplier="s1"]').textContent).toMatch(/₱100,000.00/);
     expect(sectionOf("tasks").querySelector('[data-count="overdue"] b').textContent).toBe("1");
