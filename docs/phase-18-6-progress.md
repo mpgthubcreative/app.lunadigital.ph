@@ -102,7 +102,9 @@ Stage 7 release gate: full unit, emulator in foreground batches, mutation, build
 
 User request (2026-10-11, mid stage 7): order form uses a dropdown of every active SKU, a source dropdown (note only for Other) and an optional Delivery address (`orders.deliveryAddress`, max 300; in details, history and the Orders export). Done in 0d1c972.
 
-Stage 7 emulator progress: batch 1 (payroll/baby/membership rules + payroll/baby concurrency) 79/79 after fixing the Baby concurrency fixture (it set a manual total, which Baby now refuses).
+Stage 7 emulator suite: ALL GREEN, 2934 tests / 38 files in 8 foreground batches (79, 64, 64, 72, 35, 186, 1696, 738). Fixed stale fixtures: Baby concurrency + safe-deletes (manual Baby total now refused), emulator Orders export (one-sheet layout).
+
+User requests queued 2026-10-11 (Wedding): merge Suppliers + Supplier Payments into one page; Wedding total budget = sum of category budgets; Wedding dashboard: remove Needs attention, show total upcoming payments; Guests/RSVP: status dropdown in rows, filter by category, dashboard guest list grouped by category.
 
 Stage 6 notes: terms are now Budget left / Still to pay / Coming up (UI + Excel); inventory Adjust uses In stock / left after orders set aside; phone KPI hints wrap to 2 lines instead of an ellipsis. The audit script (CDP device emulation on the preview build) lives in the session scratchpad, not the repo.
 
