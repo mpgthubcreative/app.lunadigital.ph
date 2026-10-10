@@ -2036,3 +2036,11 @@ tr.is-saving {
 .card-body > .filters {
   padding: 0;
 }
+
+@media (max-width: 719px) {
+  /* Phone figure labels wrap (two lines) rather than truncate. */
+  .kpi-label {
+    white-space: normal;
+    line-height: 1.25;
+  }
+}

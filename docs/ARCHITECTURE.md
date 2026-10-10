@@ -1621,7 +1621,7 @@ The new deletes run their "never used" check in the same transaction as the dele
 16. Bridal / Wedding Command Center MVP ✅ (the bridal-expense workspace)
 17. Luna Super Admin console (operators, provisioning, plans, overrides, subscription, tenant configuration): local gate passed; staging awaiting approval
 18. Usage metering (shared meter registry, storage accounting, warnings, history, limit overrides, recount) ✅
-18.5. UX/UI simplification, information architecture, visual polish and mobile redesign: local gate in progress
+18.5. UX/UI simplification, information architecture, visual polish and mobile redesign: built, gate passed, live on staging (awaiting review)
 19. Reliability, backups and recovery
 
 - Phases 6 and 7 are in this order because orders need products to reserve and a cost to snapshot.
