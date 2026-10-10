@@ -133,7 +133,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
   const newDialog = () =>
     formDialog({
       title: "Schedule a supplier payment",
-      intro: "Not spending yet: it shows under Upcoming payments until you mark it paid. Paid + scheduled can't exceed the supplier's agreed amount.",
+      intro: "Not spending yet: it shows under Still to pay until you mark it paid. Paid + scheduled can't be more than the supplier's agreed amount.",
       fields: paymentFields(null, ctx()),
       onSubmit: (v) => {
         const p = parseSupplierPayment(v, state.suppliers);
@@ -173,7 +173,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
   const cancelDialog = (p) =>
     formDialog({
       title: `Cancel ${p.description}?`,
-      intro: "It leaves Upcoming payments. Nothing is spent.",
+      intro: "It leaves Still to pay. Nothing is spent.",
       fields: [{ name: "reason", label: "Reason (optional)", type: "textarea" }],
       submitLabel: "Cancel payment",
       onSubmit: (v) => data.paymentsApi({ action: "cancel", paymentId: p.id, ...(v.reason.trim() ? { reason: v.reason.trim() } : {}) }),

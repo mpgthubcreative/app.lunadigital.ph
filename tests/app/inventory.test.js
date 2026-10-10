@@ -163,7 +163,7 @@ describe("Adjust: signed quantity + reason", () => {
   it("shows the current stock and sends a decrease with its reason", async () => {
     const deps = await show(session("owner"));
     row("p1").querySelector('[data-act="adjust"]').click();
-    expect(lastForm().textContent).toMatch(/Current: 140 sack on hand/);
+    expect(lastForm().textContent).toMatch(/Now: 140 sack in stock/);
     fill({ change: "-3", reason: "damaged", note: "Wet" });
     await flush();
     expect(deps.api).toHaveBeenCalledWith("inventory", { method: "POST", body: { action: "adjustment_decrease", productId: "p1", quantity: Q(3), reason: "damaged", note: "Wet" } });

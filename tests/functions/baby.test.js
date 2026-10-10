@@ -408,7 +408,7 @@ describe("Excel downloads (Export Core)", () => {
     const b = await download(u.camille, "budget");
     const report = sheet(b.bytes, "Baby budget");
     const h = report[0];
-    expect(h).toEqual(["Record", "Date", "Category", "Description / item", "Category budget", "Total spent", "Remaining budget", "Payment amount", "Still to pay", "Payment status", "Payment method", "Paid by", "Provider", "Payee", "Due date", "Date paid", "Reference", "Notes"]);
+    expect(h).toEqual(["Record", "Date", "Category", "Description / item", "Category budget", "Total spent", "Budget left", "Payment amount", "Still to pay", "Payment status", "Payment method", "Paid by", "Provider", "Payee", "Due date", "Date paid", "Reference", "Notes"]);
     const of = (type) => report.slice(1).filter((r) => r[0] === type);
     expect(of("Category").map((r) => [r[2], r[4], r[5], r[6]])).toEqual([["Medical", "60000", "10000", "50000"], ["Nursery", "40000", "0", "40000"], ["Clothing", "10000", "0", "10000"], ["Savings buffer", "40000", "0", "40000"]]);
     expect(of("Expense").map((r) => [r[2], r[3], r[7], r[9], r[11]])).toEqual([["Medical", "Check-up", "10000", "Paid", "Mom"]]);

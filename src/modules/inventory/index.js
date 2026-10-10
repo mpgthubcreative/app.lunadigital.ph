@@ -198,7 +198,7 @@ export function mount(container, session, { data = defaultData, api = defaultApi
   async function adjust(p) {
     const ok = await formDialog({
       title: `Adjust ${p.name}`,
-      intro: `Current: ${qty(p.onHand, p.unit)} on hand (${qty(p.available, p.unit)} available). Increases use the current average cost; decreases leave it unchanged.`,
+      intro: `Now: ${qty(p.onHand, p.unit)} in stock (${qty(p.available, p.unit)} left after orders set aside). Increases use the current average cost; decreases leave it unchanged.`,
       fields: [
         { name: "change", label: `Adjustment (${unitLabel(p.unit)}), e.g. -3 or +2`, required: true, inputmode: "decimal" },
         { name: "reason", label: "Reason", type: "select", options: REASON_OPTIONS, required: true },

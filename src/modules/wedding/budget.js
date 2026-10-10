@@ -65,8 +65,8 @@ export function mount(container, session, { data = defaultData, toast = defaultT
               <div class="stat-grid">
                 ${statCard({ id: "total", label: "Total wedding budget", value: s.total === null ? "Not set" : money(s.total, currency), empty: s.total === null })}
                 ${statCard({ id: "spent", label: "Total spent", value: money(s.spent, currency), hint: `${s.expenseCount} expense${s.expenseCount === 1 ? "" : "s"}` })}
-                ${statCard({ id: "remaining", label: "Remaining budget", value: s.remaining === null ? "—" : money(s.remaining, currency), hint: s.percentUsed === null ? "Set a total budget" : `${s.percentUsed}% used`, empty: s.remaining === null })}
-                ${statCard({ id: "upcoming", label: "Upcoming payments", value: money(s.upcoming, currency), hint: "Scheduled, not yet spent" })}
+                ${statCard({ id: "remaining", label: "Budget left", value: s.remaining === null ? "—" : money(s.remaining, currency), hint: s.percentUsed === null ? "Set a total budget" : `${s.percentUsed}% used`, empty: s.remaining === null })}
+                ${statCard({ id: "upcoming", label: "Still to pay", value: money(s.upcoming, currency), hint: "Scheduled, not spent yet" })}
                 ${statCard({ id: "balance", label: "Supplier balance", value: money(s.supplierBalance, currency), hint: "Still owed on supplier agreements" })}
               </div>
               ${canManage ? html`<div class="page-actions"><button type="button" class="btn btn-primary" data-act="total">${s.total === null ? "Set wedding budget" : "Edit wedding budget"}</button></div>` : ""}

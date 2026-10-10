@@ -108,7 +108,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
             : state.loading
               ? skeleton(5)
               : !state.rows.length
-                ? emptyState({ iconName: "calendar", title: f.status === "upcoming" ? "No upcoming payments" : "Nothing here", body: "Schedule deposits and due bills so you can see what's still to be paid." })
+                ? emptyState({ iconName: "calendar", title: f.status === "upcoming" ? "Nothing still to pay" : "Nothing here", body: "Schedule deposits and due bills so you can see what's still to be paid." })
                 : html`<div class="table-wrap"><table class="table table-compact rows" data-role="schedule">
                     <thead><tr><th class="m-only"></th><th>Due date</th><th>Description</th><th class="col-secondary">Category</th><th class="col-secondary">Paid to</th><th class="num">Amount</th><th>Status</th><th></th></tr></thead>
                     <tbody>${state.rows.map(
@@ -133,7 +133,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
   const newDialog = () =>
     formDialog({
       title: "Schedule a payment",
-      intro: "Not spending yet: it shows under Upcoming payments until you mark it paid.",
+      intro: "Not spending yet: it shows under Still to pay until you pay it.",
       fields: paymentFields(null, ctx()),
       onSubmit: (v) => {
         const p = parsePayment(v);

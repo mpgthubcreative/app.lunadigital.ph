@@ -111,8 +111,8 @@ export function weddingBudgetPairs(doc, now) {
     ["As of", "datetime", now, "Current figures at export time (no history is stored)"],
     money("Total wedding budget", s.total, "Set on the Wedding Budget screen"),
     ["Total spent", "money", s.spent, "All active Wedding Expenses"],
-    money("Remaining budget", s.remaining, "Total budget − total spent"),
-    ["Upcoming payments", "money", s.upcoming, `${s.upcomingCount} scheduled supplier payment(s), not counted as spent`],
+    money("Budget left", s.remaining, "Total budget − total spent"),
+    ["Still to pay", "money", s.upcoming, `${s.upcomingCount} scheduled supplier payment(s), not counted as spent`],
     ["Supplier balance", "money", s.supplierBalance, "Agreed amounts − paid, for suppliers with an agreement"],
   ];
 }
@@ -137,7 +137,7 @@ async function weddingSuppliers({ filters, readRows }) {
 
 async function supplierPayments({ filters, readRows }) {
   const [rows, cats] = await Promise.all([readRows("supplierPayments", supplierPaymentsQuery(filters)), categoryNames(readRows)]);
-  return { rowCount: rows.length, table: { name: "Supplier Payments", columns: paymentColumns(cats.name), rows }, note: "Upcoming payments are commitments, not spending: they count as spent only once marked Paid." };
+  return { rowCount: rows.length, table: { name: "Supplier Payments", columns: paymentColumns(cats.name), rows }, note: "Scheduled payments still to pay are commitments, not spending: they count as spent only once marked Paid." };
 }
 
 async function weddingTasks({ filters, today, readRows }) {

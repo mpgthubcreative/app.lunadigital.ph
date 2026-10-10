@@ -38,7 +38,7 @@ export const CATEGORY_BUDGET_COLUMNS = [
   { header: "Shown / hidden", format: "text", width: 10, value: (l) => (l.status === "active" ? "Shown" : "Hidden") },
   { header: "Category budget", format: "money", width: 14, total: true, value: (l) => l.budget },
   { header: "Total spent", format: "money", width: 14, total: true, value: (l) => l.spent },
-  { header: "Remaining budget", format: "money", width: 14, total: true, value: (l) => l.remaining },
+  { header: "Budget left", format: "money", width: 14, total: true, value: (l) => l.remaining },
   { header: "% used", format: "percent", width: 9, value: (l) => (l.percentUsed === null ? null : l.percentUsed / 100) },
   { header: "Still to pay", format: "money", width: 14, total: true, value: (l) => l.upcoming },
 ];
@@ -91,7 +91,7 @@ const REPORT_COLUMNS = (names) => [
   { header: "Description / item", format: "text", width: 30, value: (r) => (r.record === "Expense" ? r.e.notes : r.record === "Still to pay" ? r.s.description : r.l.status === "active" ? null : "Hidden category") },
   { header: "Category budget", format: "money", width: 14, total: true, value: (r) => (r.record === "Category" ? r.l.budget : null) },
   { header: "Total spent", format: "money", width: 14, total: true, value: (r) => (r.record === "Category" ? r.l.spent : null) },
-  { header: "Remaining budget", format: "money", width: 14, total: true, value: (r) => (r.record === "Category" ? r.l.remaining : null) },
+  { header: "Budget left", format: "money", width: 14, total: true, value: (r) => (r.record === "Category" ? r.l.remaining : null) },
   { header: "Payment amount", format: "money", width: 13, total: true, value: (r) => (r.record === "Expense" ? r.e.amount : null) },
   { header: "Still to pay", format: "money", width: 13, total: true, value: (r) => (r.record === "Still to pay" ? upcomingPart(r.s) : null) },
   { header: "Payment status", format: "text", width: 12, value: (r) => (r.record === "Expense" ? "Paid" : r.record === "Still to pay" ? (r.s.dueDate < r.today ? "Overdue" : scheduleState(r.s)) : null) },
@@ -113,7 +113,7 @@ export function budgetPairs(doc, now) {
     ["As of", "datetime", now, "Current figures at export time (no history is stored)"],
     money("Total budget", s.total, "Sum of the category budgets"),
     ["Total spent", "money", s.spent, "All active Baby Expenses"],
-    money("Remaining budget", s.remaining, "Total budget − total spent"),
+    money("Budget left", s.remaining, "Total budget − total spent"),
     ["Still to pay", "money", s.upcoming, `${s.upcomingCount} scheduled, not yet paid (not counted as spent)`],
   ];
 }
