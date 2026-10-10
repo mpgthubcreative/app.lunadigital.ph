@@ -106,10 +106,13 @@ describe("list-query specs on real Firestore", () => {
     const entitlements = computeEntitlements(PLAN_SEED.growth, {}, "distributor");
     const ctx = { uid: "u1", user: { name: "Owner" }, tenant: w.tenant, business: { id: w.id, name: "Emu Biz", timezone: "Asia/Manila" }, permissions: resolvePermissions("manager", { revoke: ["dashboard.financials"] }), entitlements };
     const out = await runExport({ db, ctx, admin, descriptor: EXPORT_DATASETS.orders, builder: RECORD_BUILDERS.orders, rawFilters: { paymentStatus: "paid" }, now: new Date("2026-10-08T06:00:00Z") });
-    const rows = readXlsx(out.bytes, { sheet: "Orders" }).rows;
-    expect(rows).toHaveLength(13);
-    expect(rows[0]).not.toContain("COGS");
-    expect(rows.slice(1).every((r) => r[3].startsWith("'="))).toBe(true);
+    // One sheet (Phase 18.6): title/info rows, then ONE header row and the records.
+    const { reportRows } = await import("../../shared/exports.js");
+    const [header, ...body] = reportRows(readXlsx(out.bytes, { sheet: "Orders" }).rows);
+    const orders = body.filter((r) => r[header.indexOf("Record")] === "Order");
+    expect(orders).toHaveLength(12);
+    expect(header.join(" ")).not.toMatch(/COGS/);
+    expect(orders.every((r) => r[header.indexOf("Customer")].startsWith("'="))).toBe(true);
     const audit = (await w.tenant.collection("auditLog").where("type", "==", "export.generated").get()).docs.map((d) => d.data());
     expect(audit).toHaveLength(1);
     expect(audit[0]).toMatchObject({ dataset: "orders", rowCount: 12, filters: { paymentStatus: "paid" } });
