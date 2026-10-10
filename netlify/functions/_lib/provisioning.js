@@ -703,9 +703,35 @@ export async function setOperator({ db, admin, auth, email, name = null, role = 
   return db.runTransaction(async (tx) => {
     const snap = await tx.get(ref);
     const before = snap.exists ? { role: snap.data().role, status: snap.data().status } : null;
+    // A re-run that changes nothing (e.g. only to resend the password
+    // email) writes nothing and isn't audited again.
+    if (before && before.role === role && before.status === status && (!name || name === snap.data().name)) return { uid: user.uid, email: user.email, role, status, changed: false };
     const now = FieldValue.serverTimestamp();
     tx.set(ref, { email: user.email, name: name || user.displayName || user.email, role, status, updatedAt: now, ...(snap.exists ? {} : { createdAt: now }) }, { merge: true });
     tx.set(db.collection("platformAudit").doc(), { type: "operator.updated", operator: { uid: user.uid, email: user.email }, actor, reason: why, before, after: { role, status }, at: now });
-    return { uid: user.uid, email: user.email, role, status };
+    return { uid: user.uid, email: user.email, role, status, changed: true };
   });
+}
+
+// Firebase Auth's own password-reset email (Identity Toolkit sendOobCode
+// with the public web API key): how an operator sets or resets a password.
+// Nothing secret is returned; Firebase delivers the link.
+export async function sendPasswordSetupEmail({ email, apiKey, siteUrl = null, fetchImpl = fetch }) {
+  if (!apiKey) throw new ProvisioningError("invalid-input", "VITE_FIREBASE_API_KEY is not set in the env file.");
+  const continueUrl = siteUrl ? `${siteUrl.replace(/\/$/, "")}/console/` : undefined;
+  const r = await fetchImpl(`https://identitytoolkit.googleapis.com/v1/accounts:sendOobCode?key=${encodeURIComponent(apiKey)}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ requestType: "PASSWORD_RESET", email: cleanEmail(email), ...(continueUrl ? { continueUrl } : {}) }) });
+  if (!r.ok) {
+    const j = await r.json().catch(() => ({}));
+    throw new ProvisioningError("email-failed", `Firebase didn't send the password email (${r.status} ${j.error?.message ?? ""}).`);
+  }
+}
+
+// scripts/set-operator.js: optionally create the Luna account (no password,
+// no business), grant / change operator access, optionally have Firebase
+// email a password-setup link.
+export async function bootstrapOperator({ db, admin, auth, email, name = null, status = "active", actor = "cli", reason, createAccount = false, sendPasswordEmail = false, apiKey = null, siteUrl = null, fetchImpl = fetch }) {
+  const account = createAccount ? await ensureAuthUser({ auth, email, name: name || cleanEmail(email) }) : null;
+  const operator = await setOperator({ db, admin, auth, email, name, status, actor, reason });
+  if (sendPasswordEmail) await sendPasswordSetupEmail({ email: operator.email, apiKey, siteUrl, fetchImpl });
+  return { account, operator, passwordEmailSent: Boolean(sendPasswordEmail) };
 }

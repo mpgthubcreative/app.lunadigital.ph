@@ -314,8 +314,8 @@ export class FakeAuth {
     if (!user) throw Object.assign(new Error("not found"), { code: "auth/user-not-found" });
     return user;
   }
-  async createUser({ email, displayName }) {
-    const user = { uid: `uid-${email.split("@")[0].replace(/[^a-z0-9]/gi, "")}`, email, displayName };
+  async createUser({ email, displayName, password }) {
+    const user = { uid: `uid-${email.split("@")[0].replace(/[^a-z0-9]/gi, "")}`, email, displayName, hasPassword: Boolean(password) };
     this.users.set(email, user);
     return user;
   }
