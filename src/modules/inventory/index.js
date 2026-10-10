@@ -81,18 +81,18 @@ export function mount(container, session, { data = defaultData, api = defaultApi
           <option value="inactive" ${p.status === "inactive" ? "selected" : ""}>Inactive</option>
         </select>`
       : r.status === "active" ? badge("Active", "success") : badge("Inactive", "neutral");
-    const primary = can.adjust ? html`<button type="button" class="btn btn-compact" data-act="${r.hasMovements ? "adjust" : "opening"}" data-id="${r.id}">${r.hasMovements ? "Adjust" : "Opening"}</button>` : "";
-    const low = r.isLowStock ? html` ${badge("Low", "warning")}` : "";
+    const primary = can.adjust ? html`<button type="button" class="btn btn-compact" data-act="${r.hasMovements ? "adjust" : "opening"}" data-id="${r.id}">${r.hasMovements ? "Adjust" : "Starting stock"}</button>` : "";
+    const low = r.isLowStock ? html` ${badge("Low stock", "warning")}` : "";
     return html`<tr data-product="${r.id}" class="${r.isLowStock ? "row-warning" : ""}" data-open>
-      ${mobileCell({ title: r.name, sub: `${r.sku} · ${r.reserved} reserved · ${r.price}`, end: html`${r.available} <small>${r.unit} available</small>` })}
+      ${mobileCell({ title: r.name, sub: `${r.sku} · ${r.reserved} set aside · ${r.price}`, end: html`${r.available} <small>${r.unit} left</small>` })}
       <td class="cell-strong">${r.sku}</td>
       <td>${r.name}${low}</td>
       <td class="col-secondary">${r.category}</td>
       <td class="col-secondary">${r.unit}</td>
-      <td class="num" data-col="onHand">${r.onHand}</td>
-      <td class="num col-secondary">${r.reserved}</td>
-      <td class="num cell-strong">${r.available}</td>
-      ${can.costs ? html`<td class="num col-secondary" data-col="avgCost">${r.avgCost}</td><td class="num col-secondary" data-col="value">${r.value}</td>` : ""}
+      <td class="num cell-strong" data-col="available">${r.available}</td>
+      <td class="num col-secondary" data-col="onHand">${r.onHand}</td>
+      <td class="num col-secondary" data-col="reserved">${r.reserved}</td>
+      ${can.costs ? html`<td class="num col-secondary" data-col="avgCost">${r.avgCost}</td><td class="num col-secondary${r.isLoss ? " text-danger" : ""}" data-col="profit">${r.profitPerUnit}</td>` : ""}
       <td class="num col-secondary" data-col="reorder">${editable("edit-reorder", r.id, r.reorderLevel, `Edit reorder level of ${r.name}`)}</td>
       <td class="num" data-col="price">${editable("edit-price", r.id, r.price, `Edit selling price of ${r.name}`)}</td>
       <td data-col="status">${statusCell}</td>
@@ -109,7 +109,7 @@ export function mount(container, session, { data = defaultData, api = defaultApi
       html`
         ${pageHeader({
           title: "Inventory",
-          subtitle: "Stock you have, what's reserved for orders, and what's running low.",
+          subtitle: "Stock left to sell, and what's running low. Stock left = in stock − set aside for open orders.",
           actions: can.manage ? html`<button type="button" class="btn btn-primary" data-act="new">+ New product</button>` : "",
         })}
         ${filterBar({
@@ -131,8 +131,8 @@ export function mount(container, session, { data = defaultData, api = defaultApi
                 : html`<div class="table-wrap"><table class="table table-compact rows" data-role="products">
                     <thead><tr>
                       <th class="m-only"></th><th>SKU</th><th>Product</th><th class="col-secondary">Category</th><th class="col-secondary">Unit</th>
-                      <th class="num">On hand</th><th class="num col-secondary">Reserved</th><th class="num">Available</th>
-                      ${can.costs ? html`<th class="num col-secondary">Avg cost</th><th class="num col-secondary">Value (est.)</th>` : ""}
+                      <th class="num" title="In stock minus what's set aside for open orders">Stock left</th><th class="num col-secondary" title="Everything on your shelves">In stock</th><th class="num col-secondary" title="Held for open orders until they're fulfilled or cancelled">Set aside</th>
+                      ${can.costs ? html`<th class="num col-secondary" title="Average cost of the stock you have">Cost (avg)</th><th class="num col-secondary" title="Selling price minus average cost (estimate)">Profit / unit</th>` : ""}
                       <th class="num col-secondary">Reorder at</th><th class="num">Price</th><th>Status</th><th><span class="visually-hidden">Actions</span></th><th><span class="visually-hidden">Details</span></th>
                     </tr></thead>
                     <tbody>${rows.map(rowCells)}</tbody>
@@ -215,7 +215,7 @@ export function mount(container, session, { data = defaultData, api = defaultApi
 
   async function stockIn(kind, p) {
     const ok = await formDialog({
-      title: kind === "receipt" ? `Receive ${p.name}` : `Opening balance: ${p.name}`,
+      title: kind === "receipt" ? `Receive ${p.name}` : `Starting stock: ${p.name}`,
       intro: kind === "opening" ? "Only possible before any other movement. Sets the starting stock and average cost." : "Updates the moving average cost.",
       fields: [
         { name: "quantity", label: `Quantity (${unitLabel(p.unit)})`, required: true, inputmode: "decimal" },
@@ -231,7 +231,7 @@ export function mount(container, session, { data = defaultData, api = defaultApi
         return send("inventory", body);
       },
     });
-    if (ok) await done(kind === "receipt" ? "Stock received" : "Opening balance recorded");
+    if (ok) await done(kind === "receipt" ? "Stock received" : "Starting stock recorded");
   }
 
   // ---- product master ----
@@ -242,7 +242,7 @@ export function mount(container, session, { data = defaultData, api = defaultApi
       { name: "category", label: "Category", value: p ? p.category : "" },
       { name: "unit", label: "Unit", type: "select", options: UNIT_OPTIONS, value: p ? p.unit : "pcs", disabled: Boolean(p && p.movementCount > 0), hint: p && p.movementCount > 0 ? "Locked once stock has moved." : "" },
       { name: "sellingPrice", label: `Selling price (${currency})`, value: p ? pesos(p.sellingPrice) : "", required: true, inputmode: "decimal" },
-      { name: "reorderLevel", label: "Reorder level", value: p ? formatQuantity(p.reorderLevel) : "0", inputmode: "decimal", hint: "Low stock when available is at or below this." },
+      { name: "reorderLevel", label: "Reorder level", value: p ? formatQuantity(p.reorderLevel) : "0", inputmode: "decimal", hint: "Shows Low stock when stock left is at or below this." },
     ];
   }
 
@@ -280,17 +280,18 @@ export function mount(container, session, { data = defaultData, api = defaultApi
           <div class="modal-body">
             <dl class="dl dl-compact">
               <dt>Category</dt><dd>${r.category}</dd><dt>Unit</dt><dd>${r.unit}</dd>
-              <dt>On hand</dt><dd>${r.onHand}</dd><dt>Reserved</dt><dd>${r.reserved}</dd><dt>Available</dt><dd>${r.available}</dd>
+              <dt>Stock left</dt><dd><strong>${r.available}</strong> to sell</dd><dt>In stock</dt><dd>${r.onHand}</dd><dt>Set aside for orders</dt><dd>${r.reserved}</dd>
               <dt>Reorder at</dt><dd>${r.reorderLevel}</dd><dt>Selling price</dt><dd>${r.price}</dd><dt>Status</dt><dd>${r.status}</dd>
-              ${can.costs ? html`<dt>Average cost</dt><dd>${r.avgCost}</dd><dt>Value (est.)</dt><dd>${r.value}</dd>` : ""}
+              ${can.costs ? html`<dt>Cost (average)</dt><dd>${r.avgCost}</dd><dt>Profit per unit (est.)</dt><dd data-role="profit">${r.profitPerUnit}${r.margin !== "—" ? ` · ${r.margin} of the price` : ""}</dd><dt>Stock value (est.)</dt><dd>${r.value}</dd>` : ""}
               <dt>Movements</dt><dd>${p.movementCount || 0}</dd>
             </dl>
+            ${can.costs ? html`<p class="stat-hint" data-role="cost-method">Cost is the average of what you paid for the stock you have; each delivery you receive updates it. Orders keep the cost from the day they were fulfilled, so past profit never changes. The Cost column below is your cost history.</p>` : ""}
             <h3 class="section-title">History</h3>
             <div data-role="history">
               ${error ? html`<p class="form-error">${error}</p>` : ""}
               ${!rows.length && !error ? emptyState({ title: "No movements yet" }) : ""}
               ${rows.length
-                ? html`<div class="table-wrap"><table class="table table-compact"><thead><tr><th>Movement</th><th>When</th><th>By</th><th>Balance</th><th>Reason / reference</th>${can.costs ? html`<th>Cost</th>` : ""}</tr></thead>
+                ? html`<div class="table-wrap"><table class="table table-compact"><thead><tr><th>Movement</th><th>When</th><th>By</th><th>Stock after</th><th>Reason / reference</th>${can.costs ? html`<th>Cost</th>` : ""}</tr></thead>
                     <tbody>${rows.map(
                       (h) => html`<tr data-tx="${h.id}"><td><strong>${h.label}</strong></td><td>${h.when}</td><td>${h.actor}</td><td>${h.balance}</td>
                         <td>${[h.reason, h.note, h.reference && `Ref ${h.reference}`].filter(Boolean).join(" · ")}</td>${can.costs ? html`<td data-col="cost">${h.cost || ""}</td>` : ""}</tr>`
@@ -301,7 +302,7 @@ export function mount(container, session, { data = defaultData, api = defaultApi
           <div class="modal-footer">
             ${hasMore ? html`<button type="button" class="btn" data-act="more">Load more</button>` : ""}
             ${can.receive && p.status === "active" ? html`<button type="button" class="btn" data-act="d-receipt">Receive</button>` : ""}
-            ${can.adjust && !(p.movementCount > 0) ? html`<button type="button" class="btn" data-act="d-opening">Opening balance</button>` : ""}
+            ${can.adjust && !(p.movementCount > 0) ? html`<button type="button" class="btn" data-act="d-opening">Starting stock</button>` : ""}
             ${can.adjust && p.movementCount > 0 ? html`<button type="button" class="btn" data-act="d-adjust">Adjust</button>` : ""}
             ${can.manage ? html`<button type="button" class="btn" data-act="d-edit">Edit product</button>` : ""}
             ${can.manage && !(p.movementCount > 0) ? html`<button type="button" class="btn btn-danger" data-act="d-delete">Delete</button>` : ""}

@@ -27,6 +27,59 @@ export const ORDER_SOURCES = Object.freeze({
 });
 export const ORDER_SOURCE_IDS = Object.freeze(Object.keys(ORDER_SOURCES));
 
+// Phase 18.6: order entry asks ONE plain question, "Where did the order
+// come from?", in a single text box (e.g. "Viber", "Walk-in", "Messenger ·
+// returning customer"). It still becomes the structured source id that
+// filters and reports group by, plus the free-text sourceNote:
+//   "Viber"                           -> viber, no note
+//   "viber - returning customer"      -> viber, "returning customer"
+//   "Returning customer"              -> other, "Returning customer"
+//   "Facebook Messenger"              -> messenger (aliases below)
+// sourceText() is the inverse, used to show / pre-fill the box.
+const SOURCE_ALIASES = Object.freeze({
+  "facebook messenger": "messenger",
+  "fb messenger": "messenger",
+  fb: "facebook",
+  "phone call": "phone",
+  call: "phone",
+  text: "phone",
+  sms: "phone",
+  walkin: "walk_in",
+  "walk in": "walk_in",
+  "walk-in": "walk_in",
+});
+const sourceKey = (s) => s.toLocaleLowerCase("en").replace(/\s+/g, " ").trim();
+function sourceIdFor(label) {
+  const k = sourceKey(label);
+  if (Object.hasOwn(SOURCE_ALIASES, k)) return SOURCE_ALIASES[k];
+  return ORDER_SOURCE_IDS.find((id) => id !== "other" && sourceKey(ORDER_SOURCES[id].label) === k) ?? null;
+}
+export const SOURCE_SEPARATOR = " · ";
+
+export function sourceText(source, sourceNote) {
+  const note = typeof sourceNote === "string" ? sourceNote.trim() : "";
+  if (source === "other" || !ORDER_SOURCES[source]) return note;
+  return note ? `${ORDER_SOURCES[source].label}${SOURCE_SEPARATOR}${note}` : ORDER_SOURCES[source].label;
+}
+
+// Returns { source, sourceNote } (sourceNote "" when none). Empty text ->
+// { source: "other", sourceNote: "" }, which order validation refuses with
+// "Say where the order came from".
+export function parseSourceText(value) {
+  const t = typeof value === "string" ? value.replace(/\s+/g, " ").trim() : "";
+  if (!t) return { source: "other", sourceNote: "" };
+  const whole = sourceIdFor(t);
+  if (whole) return { source: whole, sourceNote: "" };
+  // The first separator whose left side is a known source ("Walk-in - x"
+  // must not split inside "Walk-in").
+  for (const m of t.matchAll(/[·\-–—:,/(]/g)) {
+    const id = sourceIdFor(t.slice(0, m.index));
+    const note = t.slice(m.index + 1).replace(/\)\s*$/, "").trim();
+    if (id && note) return { source: id, sourceNote: note };
+  }
+  return { source: "other", sourceNote: t };
+}
+
 // "open" stages hold reserved stock and can still be edited, fulfilled or
 // cancelled; preparing / ready are operational stages for the Phase 8 row
 // dropdown (no transition action yet). fulfilled and cancelled are final.

@@ -27,7 +27,15 @@ export function productRow(p, costs, { seesCosts, currency = "PHP" }) {
   };
   if (seesCosts) {
     row.avgCost = costs ? avg(costs.avgCostUnits, currency) : "—";
-    row.value = costs && costs.avgCostUnits !== null && costs.avgCostUnits !== undefined ? formatCentavos(inventoryValue(p.onHand, costs.avgCostUnits), currency) : "—";
+    const hasCost = Boolean(costs) && costs.avgCostUnits !== null && costs.avgCostUnits !== undefined;
+    row.value = hasCost ? formatCentavos(inventoryValue(p.onHand, costs.avgCostUnits), currency) : "—";
+    // Phase 18.6: estimated profit per unit at today's price and average
+    // cost. An estimate only: an order's real COGS is the cost snapshot
+    // taken when it was fulfilled, never re-priced with a later cost.
+    const unitCost = hasCost ? costUnitsToCentavos(costs.avgCostUnits) : null;
+    row.profitPerUnit = hasCost ? formatCentavos(p.sellingPrice - unitCost, currency) : "—";
+    row.margin = hasCost && p.sellingPrice > 0 ? `${Math.round(((p.sellingPrice - unitCost) * 1000) / p.sellingPrice) / 10}%` : "—";
+    row.isLoss = hasCost && p.sellingPrice < unitCost;
   }
   return row;
 }
@@ -53,7 +61,7 @@ export function historyRow(t, cost, { seesCosts, currency = "PHP" }) {
     reason,
     note: t.note || "",
     reference: t.referenceId || "",
-    balance: `On hand ${formatQuantity(t.onHandBefore)} → ${formatQuantity(t.onHandAfter)} · Reserved ${formatQuantity(t.reservedBefore)} → ${formatQuantity(t.reservedAfter)}`,
+    balance: `In stock ${formatQuantity(t.onHandBefore)} → ${formatQuantity(t.onHandAfter)} · Set aside ${formatQuantity(t.reservedBefore)} → ${formatQuantity(t.reservedAfter)}`,
   };
   if (seesCosts && cost) {
     const parts = [];

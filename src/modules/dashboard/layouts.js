@@ -126,7 +126,7 @@ export function distributorDashboard(ctx) {
         : !inv.raw.length
           ? emptyState({ iconName: "inventory", title: "No products yet", body: inv.empty })
           : html`<div class="table-wrap"><table class="table table-compact rows" data-role="inventory-summary">
-              <thead><tr><th>SKU</th><th class="num">Available</th><th class="num">Reserved</th><th>Status</th></tr></thead>
+              <thead><tr><th>SKU</th><th class="num">Stock left</th><th class="num">Set aside</th><th>Status</th></tr></thead>
               <tbody>${inv.raw.map((p) => {
                 const unit = UNITS[p.unit]?.label ?? p.unit ?? "";
                 const out = (p.available ?? 0) <= 0;

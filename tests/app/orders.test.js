@@ -74,8 +74,7 @@ async function composeOrder() {
   };
   type("name", "Maria Santos");
   type("phone", "0918 555 0000");
-  form.elements.source.value = "viber";
-  form.elements.source.dispatchEvent(new Event("change", { bubbles: true }));
+  type("sourceText", "Viber");
   form.elements.search.value = "wing";
   modal().querySelector('[data-act="search"]').click();
   await flush();

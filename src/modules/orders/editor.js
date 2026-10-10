@@ -7,7 +7,7 @@
 
 import { html, render } from "../../lib/html.js";
 import { formatCentavos } from "../../lib/format.js";
-import { ORDER_SOURCES, ORDER_SOURCE_IDS, computeTotals, parseQuantity, parseCentavos, formatQuantity, UNITS, canUseModule } from "@shared/index.js";
+import { ORDER_SOURCES, ORDER_SOURCE_IDS, sourceText, parseSourceText, computeTotals, parseQuantity, parseCentavos, formatQuantity, UNITS, canUseModule } from "@shared/index.js";
 
 const newKey = () => (globalThis.crypto && crypto.randomUUID ? crypto.randomUUID() : `k${Date.now()}${Math.random().toString(36).slice(2)}`).replace(/[^A-Za-z0-9_-]/g, "");
 
@@ -28,8 +28,8 @@ export function openOrderEditor({ session, deps, order = null }) {
     customer: { name: order?.customer?.name ?? "", phone: order?.customer?.phone ?? "", notes: order?.customer?.notes ?? "" },
     customerId: order?.customerId ?? null,
     customerMatches: [],
-    source: order?.source ?? "messenger",
-    sourceNote: order?.sourceNote ?? "",
+    // One plain box (Phase 18.6), parsed into source + sourceNote on save.
+    sourceText: order ? sourceText(order.source, order.sourceNote) : "",
     notes: order?.notes ?? "",
     reason: "",
     discountText: order ? (order.discount / 100).toFixed(2) : "0",
@@ -87,7 +87,7 @@ export function openOrderEditor({ session, deps, order = null }) {
       }
     }
 
-    const sourceOptions = ORDER_SOURCE_IDS.map((id) => html`<option value="${id}" ${id === state.source ? "selected" : ""}>${ORDER_SOURCES[id].label}</option>`);
+    const sourceOptions = ORDER_SOURCE_IDS.filter((id) => id !== "other").map((id) => html`<option value="${ORDER_SOURCES[id].label}"></option>`);
 
     render(
       backdrop,
@@ -98,8 +98,7 @@ export function openOrderEditor({ session, deps, order = null }) {
           <div class="stat-grid">
             <div class="field"><label for="oeName">Customer name *</label><input class="input" id="oeName" name="name" value="${state.customer.name}" autocomplete="off" ${state.customerId ? "readonly" : ""} /></div>
             <div class="field"><label for="oePhone">Phone</label><input class="input" id="oePhone" name="phone" value="${state.customer.phone}" inputmode="tel" autocomplete="off" ${state.customerId ? "readonly" : ""} /></div>
-            <div class="field"><label for="oeSource">Source</label><select class="select" id="oeSource" name="source">${sourceOptions}</select></div>
-            <div class="field"><label for="oeSourceNote">Source note</label><input class="input" id="oeSourceNote" name="sourceNote" value="${state.sourceNote}" autocomplete="off" /></div>
+            <div class="field"><label for="oeSource">Where did the order come from? *</label><input class="input" id="oeSource" name="sourceText" value="${state.sourceText}" list="oeSourceList" placeholder="e.g. Messenger, Viber, Walk-in" autocomplete="off" /><datalist id="oeSourceList">${sourceOptions}</datalist><div class="stat-hint">Add a note after a dash, e.g. "Viber - returning customer".</div></div>
           </div>
           <div data-role="customer-link"></div>
           <div class="field"><label for="oeSearch">Add product (name or exact SKU)</label>
@@ -228,14 +227,11 @@ export function openOrderEditor({ session, deps, order = null }) {
       if (t.dataset.lineIndex !== undefined) state.lines[Number(t.dataset.lineIndex)].quantityText = t.value;
       else if (t.name === "name") state.customer.name = t.value;
       else if (t.name === "phone") state.customer.phone = t.value;
-      else if (t.name === "sourceNote") state.sourceNote = t.value;
+      else if (t.name === "sourceText") state.sourceText = t.value;
       else if (t.name === "notes") state.notes = t.value;
       else if (t.name === "discount") state.discountText = t.value;
       else if (t.name === "reason") state.reason = t.value;
       paintTotals();
-    });
-    form.addEventListener("change", (e) => {
-      if (e.target.name === "source") state.source = e.target.value;
     });
     form.addEventListener("keydown", (e) => {
       if (e.key === "Enter" && e.target.name === "search") {
@@ -294,8 +290,7 @@ export function openOrderEditor({ session, deps, order = null }) {
         const payload = {
           customer: { name: state.customer.name, phone: state.customer.phone, notes: state.customer.notes },
           ...(state.customerId ? { customerId: state.customerId } : {}),
-          source: state.source,
-          sourceNote: state.sourceNote,
+          ...parseSourceText(state.sourceText),
           items: p.lines.map((l) => ({ productId: l.productId, quantity: l.quantity })),
           notes: state.notes,
           ...(canDiscount ? { discount: p.discount } : order ? { discount: order.discount } : {}),

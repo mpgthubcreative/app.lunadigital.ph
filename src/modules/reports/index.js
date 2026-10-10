@@ -54,7 +54,7 @@ export function reportTables(r, { currency = "PHP" } = {}) {
       id: "products",
       tab: "products",
       title: `Products sold${r.products.total > rows.length ? ` (top ${rows.length} of ${r.products.total})` : ""}`,
-      headers: ["Product", "Qty sold", ...(fin ? ["Sales", "COGS", "Gross profit"] : [])],
+      headers: ["Product", "Qty sold", ...(fin ? ["Sales", "Cost (COGS)", "Gross profit"] : [])],
       rows: r.products.rows === null ? null : rows.map((p) => [`${p.sku ?? ""} · ${p.name ?? p.productId}`, qty(p.qty, p.unit), ...(fin ? [money(p.netSales, currency), money(p.cogs, currency), money(p.grossProfit, currency)] : [])]),
       csv: rows.map((p) => [p.sku, p.name, p.qty / 1000, ...(fin ? [p.netSales, p.cogs, p.grossProfit] : [])]),
       csvHeaders: ["SKU", "Product", "Qty sold", ...(fin ? ["Sales (centavos)", "COGS (centavos)", "Gross profit (centavos)"] : [])],
@@ -66,10 +66,10 @@ export function reportTables(r, { currency = "PHP" } = {}) {
       id: "lowStock",
       tab: "products",
       title: "Low stock now",
-      headers: ["Product", "Available", "Reorder at"],
+      headers: ["Product", "Stock left", "Reorder at"],
       rows: r.lowStock.map((p) => [`${p.sku} · ${p.name}`, qty(p.available, p.unit), qty(p.reorderLevel, p.unit)]),
       csv: r.lowStock.map((p) => [p.sku, p.name, p.available / 1000, p.reorderLevel / 1000]),
-      csvHeaders: ["SKU", "Product", "Available", "Reorder at"],
+      csvHeaders: ["SKU", "Product", "Stock left", "Reorder at"],
     });
   }
   if (r.customers) {
@@ -167,7 +167,7 @@ export function mount(container, session, { api = defaultApi, now = () => new Da
     if (o.netSales === null || o.netSales === undefined || o.netSales <= 0) return html`<section class="card" data-chart="waterfall">${emptyState({ iconName: "reports", title: "No sales in this period yet", body: "Sales count when orders are fulfilled. Choose a longer period or come back after the first fulfilled order." })}</section>`;
     const steps = [
       { label: "Sales", value: o.netSales, kind: "total", cls: "fill-sales" },
-      ...(o.cogs !== null && o.cogs !== undefined ? [{ label: "COGS", value: o.cogs, kind: "minus", cls: "fill-cost" }, { label: ["Gross", "profit"], value: o.grossProfit, kind: "total", cls: "fill-profit" }] : []),
+      ...(o.cogs !== null && o.cogs !== undefined ? [{ label: ["Cost of", "products"], value: o.cogs, kind: "minus", cls: "fill-cost" }, { label: ["Gross", "profit"], value: o.grossProfit, kind: "total", cls: "fill-profit" }] : []),
       ...(o.operatingExpenses !== null && o.operatingExpenses !== undefined && o.estimatedOperatingProfit !== null && o.estimatedOperatingProfit !== undefined
         ? [{ label: ["Operating", "expenses"], value: o.operatingExpenses, kind: "minus", cls: "fill-expense" }, { label: ["Est. op.", "profit"], value: o.estimatedOperatingProfit, kind: "total", cls: "fill-profit" }]
         : []),
@@ -199,7 +199,7 @@ export function mount(container, session, { api = defaultApi, now = () => new Da
       title: "Sales, cost and gross profit over time",
       hint: r.range.granularity === "day" ? "by day" : "by month",
       link: "sales",
-      body: html`${legend([{ cls: "fill-cost", label: "COGS" }, { cls: "fill-profit", label: "Gross profit" }])}<div class="chart">${stackedColumns(periods, { aria: `Sales split into COGS and gross profit for ${rows.length} periods` })}</div>`,
+      body: html`${legend([{ cls: "fill-cost", label: "Cost of products sold" }, { cls: "fill-profit", label: "Gross profit" }])}<div class="chart">${stackedColumns(periods, { aria: `Sales split into cost of products sold and gross profit for ${rows.length} periods` })}</div>`,
       note: `Bar height = sales. Latest gross margin: ${last.netSales > 0 ? `${((last.grossProfit / last.netSales) * 100).toFixed(1)}%` : "—"}.`,
     });
   }
@@ -232,11 +232,11 @@ export function mount(container, session, { api = defaultApi, now = () => new Da
       ${fin
         ? strip("profit", [
             kpi("Net sales", money(o.netSales, currency), "Recognized when orders are fulfilled"),
-            kpi("COGS", money(o.cogs, currency)),
-            kpi("Gross profit", money(o.grossProfit, currency), `Gross margin ${pct(o.grossMarginPct)}`),
+            kpi("Cost of products sold", money(o.cogs, currency), "COGS: what the sold items cost you"),
+            kpi("Gross profit", money(o.grossProfit, currency), `Sales − cost of products sold · margin ${pct(o.grossMarginPct)}`),
             kpi("Gross margin", pct(o.grossMarginPct)),
             kpi("Operating expenses", money(o.operatingExpenses, currency)),
-            kpi("Estimated operating profit", money(o.estimatedOperatingProfit, currency), "An estimate, not net income"),
+            kpi("Estimated operating profit", money(o.estimatedOperatingProfit, currency), "Gross profit − operating expenses. An estimate, not net income"),
           ])
         : ""}
       ${fin ? html`<div class="split section">${profitStory(r)}${trend(r)}</div>` : ""}

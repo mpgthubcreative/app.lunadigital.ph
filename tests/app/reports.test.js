@@ -61,7 +61,7 @@ describe("Reports page", () => {
     mount(container, sessionFixture(), { api: vi.fn(async () => FIN), now: NOW });
     await flush();
     const text = container.querySelector('[data-role="profit"]').textContent;
-    expect(text).toMatch(/Net sales\s*₱15,000\.00.*COGS\s*₱9,000\.00.*Gross profit\s*₱6,000\.00.*Gross margin 40\.0%.*Operating expenses\s*₱1,500\.00.*Estimated operating profit\s*₱4,500\.00/s);
+    expect(text).toMatch(/Net sales\s*₱15,000\.00.*Cost of products sold\s*₱9,000\.00\s*COGS.*Gross profit\s*₱6,000\.00\s*Sales − cost of products sold · margin 40\.0%.*Gross margin\s*40\.0%.*Operating expenses\s*₱1,500\.00.*Estimated operating profit\s*₱4,500\.00/s);
     const labels = [...container.querySelectorAll(".kpi-label")].map((l) => l.textContent);
     expect(labels).toContain("Estimated operating profit");
     expect(labels.join("|")).not.toMatch(/Net income|Net profit/i);
@@ -131,7 +131,7 @@ describe("Reports page", () => {
     mount(container, sessionFixture(), { api: vi.fn(async () => two), now: NOW });
     await flush();
     const wf = container.querySelector('[data-chart="waterfall"]');
-    expect(wf.querySelector("svg").getAttribute("aria-label")).toMatch(/Sales ₱15,000.00, COGS ₱9,000.00, Gross profit ₱6,000.00, Operating expenses ₱1,500.00, Est. op. profit ₱4,500.00/);
+    expect(wf.querySelector("svg").getAttribute("aria-label")).toMatch(/Sales ₱15,000.00, Cost of products ₱9,000.00, Gross profit ₱6,000.00, Operating expenses ₱1,500.00, Est. op. profit ₱4,500.00/);
     expect(wf.textContent).toMatch(/Of every ₱100 of sales, ₱60 paid for the goods and ₱30 is left/);
     expect(container.querySelector('[data-chart="trend"] .chart svg').querySelectorAll("rect.fill-cost")).toHaveLength(2);
     expect(container.querySelector('[data-chart="products"]').textContent).toMatch(/₱10,000.00/);

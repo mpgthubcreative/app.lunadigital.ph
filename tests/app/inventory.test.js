@@ -62,16 +62,17 @@ const fill = (values) => {
 describe("compact rows and cost visibility", () => {
   it("one row per product with the standard columns; owner also sees cost columns", async () => {
     const deps = await show(session("owner"));
-    expect(headers()).toEqual(["", "SKU", "Product", "Category", "Unit", "On hand", "Reserved", "Available", "Avg cost", "Value (est.)", "Reorder at", "Price", "Status", "Actions", "Details"]);
+    expect(headers()).toEqual(["", "SKU", "Product", "Category", "Unit", "Stock left", "In stock", "Set aside", "Cost (avg)", "Profit / unit", "Reorder at", "Price", "Status", "Actions", "Details"]);
     expect(container.querySelectorAll("tbody tr")).toHaveLength(2);
     expect(row("p1").querySelector('[data-col="avgCost"]').textContent).toBe("₱53.33");
-    expect(row("p1").querySelector('[data-col="value"]').textContent).toBe("₱7,466.67");
+    // Estimated profit per unit: ₱1,250 price − ₱53.33 average cost.
+    expect(row("p1").querySelector('[data-col="profit"]').textContent).toBe("₱1,196.67");
     expect(deps.data.loadCostDocs).toHaveBeenCalled();
   });
 
   it("staff see quantities but no cost, and cost documents are never requested", async () => {
     const deps = await show(session("staff"));
-    expect(headers()).toEqual(["", "SKU", "Product", "Category", "Unit", "On hand", "Reserved", "Available", "Reorder at", "Price", "Status", "Actions", "Details"]);
+    expect(headers()).toEqual(["", "SKU", "Product", "Category", "Unit", "Stock left", "In stock", "Set aside", "Reorder at", "Price", "Status", "Actions", "Details"]);
     expect(container.textContent).not.toMatch(/53\.33|7,466/);
     expect(deps.data.loadCostDocs).not.toHaveBeenCalled();
   });
@@ -79,7 +80,7 @@ describe("compact rows and cost visibility", () => {
   it("secondary columns are marked so they collapse on narrow screens", async () => {
     await show(session("owner"));
     const secondary = [...container.querySelectorAll("thead th.col-secondary")].map((th) => th.textContent.trim());
-    expect(secondary).toEqual(["Category", "Unit", "Reserved", "Avg cost", "Value (est.)", "Reorder at"]);
+    expect(secondary).toEqual(["Category", "Unit", "In stock", "Set aside", "Cost (avg)", "Profit / unit", "Reorder at"]);
   });
 });
 
@@ -92,11 +93,11 @@ describe("row actions follow permissions", () => {
     expect(container.querySelector('[data-act="new"]')).toBeNull();
   });
 
-  it("owner: inline price / reorder / status, Adjust (moved) or Opening (unused), View details", async () => {
+  it("owner: inline price / reorder / status, Adjust (moved) or Starting stock (unused), View details", async () => {
     await show(session("owner"));
     // inline reorder + price cells are buttons too, in column order
     expect(rowButtons("p1")).toEqual(["20", "₱1,250.00", "Adjust", "View details"]);
-    expect(rowButtons("p2")).toEqual(["0", "₱50.00", "Opening", "View details"]);
+    expect(rowButtons("p2")).toEqual(["0", "₱50.00", "Starting stock", "View details"]);
     expect(row("p1").querySelector('[data-act="adjust"]')).not.toBeNull();
     expect(row("p2").querySelector('[data-act="opening"]')).not.toBeNull();
     expect(row("p1").querySelector('[data-act="edit-price"]').textContent).toBe("₱1,250.00");
@@ -192,10 +193,13 @@ describe("View details", () => {
     await show(session("owner"));
     const d = await openDetails("p1");
     const text = d.textContent.replace(/\s+/g, " ");
-    expect(text).toMatch(/Average cost\s*₱53\.33/);
+    expect(text).toMatch(/Cost \(average\)\s*₱53\.33/);
+    expect(text).toMatch(/Profit per unit \(est\.\)\s*₱1,196\.67 · 95\.7% of the price/);
+    expect(text).toMatch(/Stock value \(est\.\)\s*₱7,466\.67/);
+    expect(text).toMatch(/past profit never changes/);
     expect(text).toMatch(/Adjustment −10 sack/);
     expect(text).toMatch(/Received \+50 sack/);
-    expect(text).toMatch(/Opening balance \+100 sack/);
+    expect(text).toMatch(/Starting stock \+100 sack/);
     expect(text).toMatch(/Damaged · Crushed/);
     expect(text).toMatch(/Ref DR-1001/);
     expect(text).toMatch(/avg ₱50\.00 → ₱53\.33/);
@@ -205,7 +209,7 @@ describe("View details", () => {
     const deps = await show(session("staff"));
     const d = await openDetails("p1");
     expect(d.querySelector('[data-col="cost"]')).toBeNull();
-    expect(d.textContent).not.toMatch(/Average cost/);
+    expect(d.textContent).not.toMatch(/Cost \(average\)|Profit per unit|past profit/);
     expect([...d.querySelectorAll(".modal-footer button")].map((b) => b.textContent.trim())).toEqual(["Close"]);
     expect(deps.data.loadCostDocs).not.toHaveBeenCalled();
   });
@@ -216,7 +220,7 @@ describe("View details", () => {
     expect([...d.querySelectorAll(".modal-footer button")].map((b) => b.textContent.trim())).toEqual(["Receive", "Adjust", "Edit product", "Close"]);
     document.querySelector(".modal-backdrop").remove();
     d = await openDetails("p2");
-    expect([...d.querySelectorAll(".modal-footer button")].map((b) => b.textContent.trim())).toEqual(["Receive", "Opening balance", "Edit product", "Delete", "Close"]);
+    expect([...d.querySelectorAll(".modal-footer button")].map((b) => b.textContent.trim())).toEqual(["Receive", "Starting stock", "Edit product", "Delete", "Close"]);
   });
 
   it("receiving from details sends integer quantity + centavos", async () => {

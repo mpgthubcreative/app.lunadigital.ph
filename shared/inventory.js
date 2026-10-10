@@ -41,12 +41,12 @@ export const PRODUCT_SCHEMA_VERSION = 1;
 export const PRODUCT_STATUSES = Object.freeze(["active", "inactive"]);
 
 export const MOVEMENT_TYPES = Object.freeze({
-  opening: { label: "Opening balance", sign: +1, needsCost: true },
+  opening: { label: "Starting stock", sign: +1, needsCost: true },
   receipt: { label: "Received", sign: +1, needsCost: true },
   adjustment_increase: { label: "Adjustment", sign: +1, needsCost: false },
   adjustment_decrease: { label: "Adjustment", sign: -1, needsCost: false },
-  reservation: { label: "Reserved", sign: 0, needsCost: false },
-  release: { label: "Reservation released", sign: 0, needsCost: false },
+  reservation: { label: "Set aside for order", sign: 0, needsCost: false },
+  release: { label: "Released from order", sign: 0, needsCost: false },
   fulfillment: { label: "Fulfilled", sign: -1, needsCost: false },
   correction_in: { label: "Order correction", sign: +1, needsCost: false },
   correction_out: { label: "Order correction", sign: -1, needsCost: false },

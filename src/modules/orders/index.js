@@ -20,7 +20,7 @@ import { formDialog } from "../../components/form-dialog.js";
 import { confirmDialog, toast as defaultToast } from "../../components/feedback.js";
 import { api as defaultApi } from "../../lib/api.js";
 import { formatCentavos } from "../../lib/format.js";
-import { ORDER_SOURCES, ORDER_SOURCE_IDS, FULFILLMENT_STATUSES, PAYMENT_STATUSES, PAYMENT_STATES, isDayId, isOpenFulfillment } from "@shared/index.js";
+import { ORDER_SOURCES, ORDER_SOURCE_IDS, sourceText, FULFILLMENT_STATUSES, PAYMENT_STATUSES, PAYMENT_STATES, isDayId, isOpenFulfillment } from "@shared/index.js";
 import * as ordersData from "./data.js";
 import { listOrderPayments } from "../payments/data.js";
 import { listProducts } from "../inventory/data.js";
@@ -79,7 +79,7 @@ export function mount(container, session, { data = defaultDeps.data, payments = 
           fields: [
             { name: "fulfillmentStatus", label: "Fulfillment", type: "select", primary: true, all: "Any fulfillment", options: Object.entries(FULFILLMENT_STATUSES).map(([k, v]) => [k, v.label]), value: f.fulfillmentStatus },
             { name: "paymentStatus", label: "Payment", type: "select", primary: true, all: "Any payment", options: Object.entries(PAYMENT_STATUSES).map(([k, v]) => [k, v.label]), value: f.paymentStatus },
-            { name: "source", label: "Source", type: "select", all: "Any source", options: ORDER_SOURCE_IDS.map((k) => [k, ORDER_SOURCES[k].label]), value: f.source },
+            { name: "source", label: "Came from", type: "select", all: "Anywhere", options: ORDER_SOURCE_IDS.map((k) => [k, ORDER_SOURCES[k].label]), value: f.source },
             { name: "from", label: "From (order date)", type: "date", value: f.from },
             { name: "to", label: "To (order date)", type: "date", value: f.to },
           ],
@@ -160,7 +160,7 @@ export function mount(container, session, { data = defaultDeps.data, payments = 
         <div class="modal-body">
           <dl class="dl">
             <dt>Customer</dt><dd>${order.customer?.name}${order.customer?.phone ? ` · ${order.customer.phone}` : ""}${order.customerId ? html` ${badge("Saved customer", "info")}` : ""}</dd>
-            <dt>Source</dt><dd>${sourceLabel(order.source)}${order.sourceNote ? ` · ${order.sourceNote}` : ""}</dd>
+            <dt>Came from</dt><dd>${sourceText(order.source, order.sourceNote) || sourceLabel(order.source)}</dd>
             <dt>Created by</dt><dd>${order.createdBy?.name ?? ""}</dd>
             ${order.notes ? html`<dt>Notes</dt><dd>${order.notes}</dd>` : ""}
             ${order.cancellationReason ? html`<dt>Cancelled because</dt><dd>${order.cancellationReason}</dd>` : ""}
