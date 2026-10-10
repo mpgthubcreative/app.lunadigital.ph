@@ -14,6 +14,7 @@ import { requireTenant } from "./_lib/tenant.js";
 import { recordPayment, updatePayment, verifyPayment, voidPayment, readProof } from "./_lib/payments.js";
 import { actorOf, only } from "./_lib/inventory-http.js";
 import { PaymentError } from "../../shared/payments.js";
+import { MeteringError } from "../../shared/metering.js";
 
 const ACTIONS = {
   record: { permission: "payments.record", write: true, fields: ["action", "orderId", "payment", "proof"] },
@@ -34,6 +35,11 @@ const STATUS = {
   "history-full": 409,
   inconsistent: 409,
   "proof-too-large": 413,
+  // Phase 18 file storage (./_lib/storage-usage.js)
+  "storage-limit-reached": 409,
+  "storage-reservation-lost": 409,
+  "storage-conflict": 409,
+  "business-misconfigured": 409,
 };
 
 // Base64 screenshots (<= 2.5 MB decoded) fit well inside this.
@@ -72,7 +78,7 @@ export function createPaymentsHandler({ getAdmin: loadAdmin, now = () => new Dat
           return respond(200, { success: true, ...(await readProof({ tenant: ctx.tenant, bucket, businessId: ctx.business.id, paymentId: body.paymentId })) });
       }
     } catch (err) {
-      if (err instanceof PaymentError) throw new RequestError(err.code, err.message, STATUS[err.code] || 400);
+      if (err instanceof PaymentError || err instanceof MeteringError) throw new RequestError(err.code, err.message, STATUS[err.code] || 400);
       throw err;
     }
   });

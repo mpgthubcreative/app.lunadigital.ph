@@ -21,6 +21,11 @@ import { tenantDb } from "./tenant-db.js";
 import { getWorkspaceTemplate, WORKSPACE_TEMPLATE_IDS } from "../../../shared/workspaces.js";
 import { OPERATOR_ROLES, OPERATOR_STATUSES } from "../../../shared/operators.js";
 import { TENANT_CONFIG_VERSION, TENANT_CONFIG_DOC_ID, validateTerminologyChange } from "../../../shared/tenant-config.js";
+import { LIMIT_METER, METERS, MeteringError, effectiveLimit, overrideImpact, validateLimitOverride, thresholdUnits, WARNING_THRESHOLDS, monthlyAlertKey } from "../../../shared/metering.js";
+import { LIMIT_DEFINITIONS } from "../../../shared/plans.seed.js";
+import { usageMonthRef, usageCurrentRef, nonNegative, prepareRunningAlerts, usageEvent, noteLimitReached } from "./metering.js";
+import { prepareNotifications } from "./notifications.js";
+import { monthKey } from "./usage.js";
 
 export class ProvisioningError extends Error {
   constructor(code, message) {
@@ -178,11 +183,54 @@ function summarize(entitlements) {
   return { planId: entitlements.planId ?? null, workspaceTemplateId: entitlements.workspaceTemplateId ?? null, workspaceTemplateVersion: entitlements.workspaceTemplateVersion ?? null, modules: entitlements.modules ?? null, limits: entitlements.limits ?? null, features: entitlements.features ?? null };
 }
 
+// Current usage of every limited meter, read inside the transaction.
+async function readUsageForLimits(tx, tenant, timezone, activeMembers) {
+  const period = monthKey(timezone || "UTC");
+  const [month, storage, users] = await Promise.all([tx.get(usageMonthRef(tenant, period)), tx.get(usageCurrentRef(tenant, "storage")), tx.get(usageCurrentRef(tenant, "users"))]);
+  const m = month.exists ? month.data() : {};
+  const values = { activeUsers: activeMembers, storageBytes: storage.exists ? nonNegative(storage.data().bytes) : 0 };
+  for (const meterId of Object.values(LIMIT_METER)) if (METERS[meterId].kind === "monthly") values[meterId] = nonNegative(m[meterId]);
+  return { period, values, states: { activeUsers: users.exists ? users.data().alerts : null, storageBytes: storage.exists ? storage.data().alerts : null } };
+}
+
+// A limit change can put usage over 80% / 100% without any new activity
+// (a lower limit). Monthly: warn for thresholds the new limit crosses that
+// the old one didn't (same month keys, so never twice). Running: the
+// episode state is re-evaluated (a raised limit re-arms it).
+async function prepareLimitChangeAlerts(tx, { tenant, usage, before, after }) {
+  const events = [];
+  const stateWrites = [];
+  const running = [];
+  for (const [limitKey, meterId] of Object.entries(LIMIT_METER)) {
+    const limit = after?.[limitKey];
+    const used = usage.values[meterId];
+    if (METERS[meterId].kind === "monthly") {
+      const old = before?.[limitKey];
+      for (const t of WARNING_THRESHOLDS) {
+        const now = Number.isSafeInteger(limit) && limit > 0 && used >= thresholdUnits(limit, t);
+        const was = Number.isSafeInteger(old) && old > 0 && used >= thresholdUnits(old, t);
+        if (now && !was) events.push(usageEvent({ meterId, key: monthlyAlertKey(meterId, usage.period, t), threshold: t, used, limit, period: usage.period }));
+      }
+    } else running.push({ meterId, limit, used });
+  }
+  const runningPlans = [];
+  for (const r of running) runningPlans.push({ ...r, plan: await prepareRunningAlerts(tx, { tenant, meterId: r.meterId, state: usage.states[r.meterId], used: r.used, limit: r.limit }) });
+  const monthly = await prepareNotifications(tx, { tenant, events });
+  for (const r of runningPlans) if (r.plan.changed) stateWrites.push({ ref: usageCurrentRef(tenant, r.meterId === "activeUsers" ? "users" : "storage"), alerts: r.plan.next });
+  return {
+    commit({ FieldValue }) {
+      monthly.commit({ FieldValue });
+      for (const r of runningPlans) r.plan.notes.commit({ FieldValue });
+      for (const w of stateWrites) tx.set(w.ref, { alerts: w.alerts, updatedAt: FieldValue.serverTimestamp() }, { merge: true });
+    },
+  };
+}
+
 // The one write path for a business's plan / overrides / workspace
 // template / snapshot. mutate({ planId, overrides, templateId }) returns
 // the next state. A business without a workspace template (pre-8.5) can
 // only be given one (assignWorkspaceTemplate); nothing else recomputes it.
-async function changeEntitlements({ db, admin, businessId, actor, reason, action, mutate, expectedRevision = null }) {
+async function changeEntitlements({ db, admin, businessId, actor, reason, action, mutate, expectedRevision = null, summary = null }) {
   const why = typeof reason === "string" ? reason.trim() : "";
   if (why.length < 3) throw new ProvisioningError("invalid-input", "A reason is required for every plan or entitlement change.");
   const who = typeof actor === "string" && actor.trim() ? actor.trim() : "cli";
@@ -207,6 +255,11 @@ async function changeEntitlements({ db, admin, businessId, actor, reason, action
     const entitlements = buildEntitlementsSnapshot(plan, next.overrides, template.id);
     const overrides = { modules: { ...next.overrides.modules }, limits: { ...next.overrides.limits }, features: { ...next.overrides.features } };
     const activeMembers = (await tx.get(tenant.collection("members").where("status", "==", "active"))).size;
+    // Phase 18: current usage against the NEW effective limits. Nothing is
+    // ever deleted or rewritten; the operator is told, and the owner gets the
+    // 80% / 100% warnings the new limit implies (deduplicated as usual).
+    const usage = await readUsageForLimits(tx, tenant, business.timezone, activeMembers);
+    const limitAlerts = await prepareLimitChangeAlerts(tx, { tenant, usage, before: business.entitlements?.limits, after: entitlements.limits });
 
     const now = FieldValue.serverTimestamp();
     tx.update(tenant.ref, {
@@ -224,7 +277,7 @@ async function changeEntitlements({ db, admin, businessId, actor, reason, action
     const templateMoved = current.templateId !== template.id;
     const audit = {
       type: !templateMoved ? `entitlements.${action}` : current.templateId === null ? "workspace.template-assigned" : "workspace.template-changed",
-      ...(templateMoved ? { summary: current.templateId === null ? `Workspace template assigned: ${template.id}` : `Workspace template changed: ${current.templateId} → ${template.id}` } : {}),
+      ...(templateMoved ? { summary: current.templateId === null ? `Workspace template assigned: ${template.id}` : `Workspace template changed: ${current.templateId} → ${template.id}` } : summary ? { summary: typeof summary === "function" ? summary() : summary } : {}),
       businessId,
       actor: who,
       reason: why,
@@ -235,9 +288,16 @@ async function changeEntitlements({ db, admin, businessId, actor, reason, action
     tx.set(tenant.collection("auditLog").doc(), audit);
     tx.set(db.collection("platformAudit").doc(), audit);
 
+    limitAlerts.commit({ FieldValue });
     const warnings = [];
     if (activeMembers > entitlements.limits.users) {
       warnings.push(`${activeMembers} active users exceed the new limit of ${entitlements.limits.users}. Nobody is removed; adding or re-enabling members is blocked until it's back under the limit.`);
+    }
+    for (const [limitKey, meterId] of Object.entries(LIMIT_METER)) {
+      if (limitKey === "users") continue;
+      const changed = business.entitlements?.limits?.[limitKey] !== entitlements.limits[limitKey];
+      const w = changed ? overrideImpact({ limitKey, value: entitlements.limits[limitKey], current: usage.values[meterId] }) : null;
+      if (w) warnings.push(w);
     }
     return { businessId, planId: plan.id, workspaceTemplateId: template.id, previousWorkspaceTemplateId: current.templateId, overrides, entitlements, warnings, adminRevision: adminRevisionOf(business) + 1 };
   });
@@ -275,6 +335,38 @@ export async function updateOverrides({ db, admin, businessId, set = {}, clear =
         for (const key of clear[section] || []) delete state.overrides[section][key];
         Object.assign(state.overrides[section], set[section] || {});
       }
+      return state;
+    },
+  });
+}
+
+// Phase 18: one per-business LIMIT override (separate from module
+// overrides). Plan limit -> optional business override -> effective limit.
+// value null = back to the plan's limit. Recognised limit keys only.
+export async function setLimitOverride({ db, admin, businessId, limitKey, value, actor, reason, expectedRevision = null }) {
+  let v;
+  try {
+    v = validateLimitOverride(limitKey, value);
+  } catch (err) {
+    if (err instanceof MeteringError) throw new ProvisioningError("invalid-input", err.message);
+    throw err;
+  }
+  let previous = null;
+  const label = LIMIT_DEFINITIONS[limitKey].label;
+  const show = (x) => (x === null || x === undefined ? "plan default" : Number(x).toLocaleString("en-PH"));
+  return changeEntitlements({
+    db,
+    admin,
+    businessId,
+    actor,
+    reason,
+    expectedRevision,
+    action: "limit-override-updated",
+    summary: () => `${label} override: ${show(previous)} → ${show(v)}`,
+    mutate: (state) => {
+      previous = Object.hasOwn(state.overrides.limits, limitKey) ? state.overrides.limits[limitKey] : null;
+      if (v === null) delete state.overrides.limits[limitKey];
+      else state.overrides.limits[limitKey] = v;
       return state;
     },
   });
@@ -342,6 +434,31 @@ function userLimit(businessSnap, businessId) {
   return business.entitlements.limits.users;
 }
 
+// Phase 18: active-user warnings (80% / 100% of the effective limit, per
+// usage episode, owners only) and a one-time note when an add / reactivate
+// is refused at the limit.
+function userLimitError(message, used, limit) {
+  return Object.assign(new ProvisioningError("user-limit-reached", message), { details: { meterId: "activeUsers", used, limit } });
+}
+async function withUserLimitNote({ db, tenant, FieldValue }, run) {
+  try {
+    return await run();
+  } catch (err) {
+    if (err && err.code === "user-limit-reached" && err.details) await noteLimitReached({ db, tenant, FieldValue, ...err.details });
+    throw err;
+  }
+}
+async function prepareUserAlerts(tx, { tenant, businessSnap, usersUsage, activeAfter }) {
+  const limit = effectiveLimit(businessSnap.exists ? businessSnap.data().entitlements : null, "users");
+  const r = await prepareRunningAlerts(tx, { tenant, meterId: "activeUsers", state: usersUsage.exists ? usersUsage.data().alerts : null, used: activeAfter, limit });
+  return {
+    commit({ FieldValue }) {
+      if (r.changed) tx.set(usageCurrentRef(tenant, "users"), { alerts: r.next, updatedAt: FieldValue.serverTimestamp() }, { merge: true });
+      r.notes.commit({ FieldValue });
+    },
+  };
+}
+
 // Finds the Firebase Auth user for an email, creating it if needed.
 // A created user has NO password unless one is supplied (real onboarding
 // sends a password-setup link instead — see passwordSetupLink()).
@@ -395,12 +512,13 @@ export async function addMember({
   const userRef = db.collection("users").doc(uid);
   const FieldValue = admin.firestore.FieldValue;
 
-  await db.runTransaction(async (tx) => {
-    const [businessSnap, memberSnap, userSnap, activeSnap] = await Promise.all([
+  await withUserLimitNote({ db, tenant, FieldValue }, () => db.runTransaction(async (tx) => {
+    const [businessSnap, memberSnap, userSnap, activeSnap, usersUsage] = await Promise.all([
       tx.get(tenant.ref),
       tx.get(memberRef),
       tx.get(userRef),
       tx.get(tenant.collection("members").where("status", "==", "active")),
+      tx.get(usageCurrentRef(tenant, "users")),
     ]);
 
     if (!businessSnap.exists) throw new ProvisioningError("not-found", `Business ${businessId} not found.`);
@@ -409,9 +527,11 @@ export async function addMember({
     if (status === "active" && !wasActive) {
       const limit = userLimit(businessSnap, businessId);
       if (activeSnap.size >= limit) {
-        throw new ProvisioningError("user-limit-reached", `Business ${businessId} already has ${activeSnap.size}/${limit} active users.`);
+        throw userLimitError(`Business ${businessId} already has ${activeSnap.size}/${limit} active users.`, activeSnap.size, limit);
       }
     }
+    const activeAfter = activeSnap.size + (status === "active" && !wasActive ? 1 : 0) - (wasActive && status !== "active" ? 1 : 0);
+    const userAlerts = await prepareUserAlerts(tx, { tenant, businessSnap, usersUsage, activeAfter });
 
     if (audit) {
       const before = memberSnap.exists ? { roleTemplate: memberSnap.data().roleTemplate, status: memberSnap.data().status } : null;
@@ -446,7 +566,8 @@ export async function addMember({
       },
       { merge: true }
     );
-  });
+    userAlerts.commit({ FieldValue });
+  }));
 
   return { businessId, uid, roleTemplate, status };
 }
@@ -458,11 +579,13 @@ export async function setMemberStatus({ db, admin, businessId, uid, status, audi
   const tenant = tenantDb(db, businessId);
   const memberRef = tenant.member(uid);
 
-  await db.runTransaction(async (tx) => {
-    const [businessSnap, memberSnap, activeSnap] = await Promise.all([
+  const FieldValue = admin.firestore.FieldValue;
+  await withUserLimitNote({ db, tenant, FieldValue }, () => db.runTransaction(async (tx) => {
+    const [businessSnap, memberSnap, activeSnap, usersUsage] = await Promise.all([
       tx.get(tenant.ref),
       tx.get(memberRef),
       tx.get(tenant.collection("members").where("status", "==", "active")),
+      tx.get(usageCurrentRef(tenant, "users")),
     ]);
     if (!memberSnap.exists) throw new ProvisioningError("not-found", `No membership for ${uid} in ${businessId}.`);
     const member = memberSnap.data();
@@ -471,11 +594,14 @@ export async function setMemberStatus({ db, admin, businessId, uid, status, audi
     }
     if (status === "active" && member.status !== "active") {
       const limit = userLimit(businessSnap, businessId);
-      if (activeSnap.size >= limit) throw new ProvisioningError("user-limit-reached", `User limit reached (${activeSnap.size}/${limit}).`);
+      if (activeSnap.size >= limit) throw userLimitError(`User limit reached (${activeSnap.size}/${limit}).`, activeSnap.size, limit);
     }
+    const activeAfter = activeSnap.size + (status === "active" && member.status !== "active" ? 1 : 0) - (member.status === "active" && status !== "active" ? 1 : 0);
+    const userAlerts = await prepareUserAlerts(tx, { tenant, businessSnap, usersUsage, activeAfter });
     if (audit && member.status !== status) writeAudit(tx, db, tenant, { type: status === "active" ? "member.reactivated" : "member.deactivated", businessId, actor: audit.actor, reason: audit.reason ?? null, member: { uid, email: member.email ?? null }, before: { status: member.status }, after: { status }, at: admin.firestore.FieldValue.serverTimestamp() });
     tx.update(memberRef, { status, updatedAt: admin.firestore.FieldValue.serverTimestamp() });
-  });
+    userAlerts.commit({ FieldValue });
+  }));
   return { businessId, uid, status };
 }
 

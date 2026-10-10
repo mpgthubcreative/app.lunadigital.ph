@@ -7,7 +7,7 @@
 import { html, render } from "../lib/html.js";
 import { pageHeader, card, emptyState, badge, statCard } from "../components/ui.js";
 import { formDialog } from "../components/form-dialog.js";
-import { formatMoney, SUBSCRIPTION_LABELS, SUBSCRIPTION_ACTIONS, OVERRIDE_CHOICES, ROLE_TEMPLATES } from "@shared/index.js";
+import { formatMoney, SUBSCRIPTION_LABELS, SUBSCRIPTION_ACTIONS, OVERRIDE_CHOICES, ROLE_TEMPLATES, METERS, MONTHLY_METER_IDS, overrideImpact } from "@shared/index.js";
 import { formatBytes, formatNumber } from "../lib/format.js";
 
 const TONE = { active: "success", past_due: "warning", suspended: "danger", cancelled: "neutral" };
@@ -184,15 +184,44 @@ export async function businessDetailView(el, ctx, businessId) {
           </div>`,
         })}
         ${card({
-          title: `Usage · ${d.usage.period}`,
+          title: `Activity · ${d.usage.period}`,
           body: html`<dl class="dl dl-compact" data-role="usage">
-            <dt>Active users</dt><dd>${d.usage.activeUsers}${d.usage.userLimit ? ` of ${d.usage.userLimit}` : ""}</dd>
-            <dt>Orders this month</dt><dd>${formatNumber(d.usage.ordersThisMonth)}</dd>
-            <dt>Imports this month</dt><dd>${formatNumber(d.usage.importsThisMonth)}${d.limits?.importsPerMonth ? ` of ${d.limits.importsPerMonth}` : ""}</dd>
-            <dt>Exports generated</dt><dd>${formatNumber(d.usage.exportsGenerated)} <span class="stat-hint">${formatNumber(d.usage.rowsExported)} rows</span></dd>
-          </dl>`,
+            ${(d.meters || []).map((m) => html`<dt title="${m.definition}">${m.label}</dt><dd>${formatNumber(m.value)}</dd>`)}
+          </dl>
+          <p class="stat-hint">Informational counters: not plan limits, never enforced.</p>`,
         })}
       </div>
+      ${d.limitRows
+        ? html`<section class="section card">
+            <div class="card-header"><h2 class="card-title">Plan limits</h2><span class="stat-hint">Effective = the business override if set, otherwise the plan's limit. Commercial limits are enforced by the server.</span></div>
+            <div class="table-wrap"><table class="table table-compact" data-role="limits">
+              <thead><tr><th>Limit</th><th class="num">Plan</th><th class="num">Override</th><th class="num">Effective</th><th class="num">Current</th><th></th></tr></thead>
+              <tbody>${d.limitRows.map((l) => {
+                const f = limitFormat(l.unit);
+                return html`<tr data-limit="${l.limitKey}">
+                  <td>${l.label}${l.kind === "monthly" ? html` <span class="stat-hint">/ month</span>` : ""}</td>
+                  <td class="num">${l.plan === null ? "—" : f(l.plan)}</td>
+                  <td class="num">${l.override === null ? "—" : f(l.override)}</td>
+                  <td class="num">${l.effective === null ? "—" : f(l.effective)}</td>
+                  <td class="num">${f(l.current)}${l.percent !== null ? html` <span class="stat-hint">${l.percent}%</span>` : ""}${l.atOrOver ? html` ${badge("At limit", "warning")}` : ""}</td>
+                  <td class="row-actions"><button type="button" class="btn btn-compact" data-act="limit" data-id="${l.limitKey}">Set override</button>${l.override !== null ? html` <button type="button" class="btn btn-compact" data-act="limit-default" data-id="${l.limitKey}">Default</button>` : ""}</td>
+                </tr>`;
+              })}</tbody></table></div>
+            ${d.storage?.reservedBytes ? html`<p class="stat-hint">${formatBytes(d.storage.reservedBytes)} reserved by uploads in progress.</p>` : ""}
+          </section>`
+        : ""}
+      ${d.history
+        ? html`<section class="section card">
+            <div class="card-header"><h2 class="card-title">Usage history</h2><span class="stat-hint">Last 12 months. — = not measured that month. Storage and users are current totals, not monthly.</span></div>
+            <div class="table-wrap"><table class="table table-compact" data-role="history">
+              <thead><tr><th>Month</th>${historyColumns(d).map((id) => html`<th class="num">${METERS[id].label}</th>`)}<th class="num">Records created</th></tr></thead>
+              <tbody>${d.history.map((r) =>
+                r.recorded
+                  ? html`<tr data-period="${r.period}"><td>${r.period}${r.timezone && r.timezone !== b.timezone ? html` <span class="stat-hint">${r.timezone}</span>` : ""}</td>${historyColumns(d).map((id) => html`<td class="num">${r.values[id] === null ? "—" : formatNumber(r.values[id])}</td>`)}<td class="num">${r.recordsCreated === null ? "—" : formatNumber(r.recordsCreated)}</td></tr>`
+                  : html`<tr data-period="${r.period}"><td>${r.period}</td><td colspan="${historyColumns(d).length + 1}" class="stat-hint">No recorded usage</td></tr>`
+              )}</tbody></table></div>
+          </section>`
+        : ""}
       <section class="section card">
         <div class="card-header"><h2 class="card-title">Modules</h2><span class="stat-hint">Effective = in the workspace template AND (override Enabled, or the plan includes it and it isn't Disabled). Only the workspace's own modules can be changed.</span></div>
         <div class="table-wrap"><table class="table table-compact" data-role="modules">
@@ -258,6 +287,9 @@ export async function businessDetailView(el, ctx, businessId) {
       run(() => withReason(`Subscription · now ${SUBSCRIPTION_LABELS[b.status] ?? b.status}`, "Suspended businesses become read-only; cancelled keeps all data (owner export only). Nothing is deleted.", [{ name: "status", label: "New status", type: "select", options: Object.entries(SUBSCRIPTION_ACTIONS).map(([k, l]) => ({ value: k, label: l })), value: b.status === "active" ? "suspended" : "active" }], "Confirm", (v) => ctx.call("setStatus", { businessId, status: v.status, reason: v.reason, expectedRevision: b.adminRevision })), "Subscription updated.");
     } else if (act === "general") {
       run(() => withReason("Edit name / timezone", "A timezone change doesn't move records already dated.", [{ name: "name", label: "Business name", value: b.name, required: true }, { name: "timezone", label: "Timezone", value: b.timezone }], "Save", (v) => ctx.call("updateGeneral", { businessId, changes: { name: v.name, timezone: v.timezone }, reason: v.reason, expectedRevision: b.adminRevision })), "Saved.");
+    } else if (act === "limit" || act === "limit-default") {
+      const l = d.limitRows.find((x) => x.limitKey === t.dataset.id);
+      run(() => limitOverrideDialog(ctx, { businessId, row: l, clear: act === "limit-default", expectedRevision: b.adminRevision }), act === "limit" ? "Limit override saved." : "Back to the plan's limit.");
     } else if (act === "add-member") {
       run(() => formDialog({ title: "Add member", intro: "Roles come from Luna's role templates. A new person gets an account without a password: share a setup link.", fields: [{ name: "email", label: "Email", required: true }, { name: "name", label: "Name", required: true }, { name: "roleTemplate", label: "Role", type: "select", options: Object.entries(ROLE_TEMPLATES).map(([k, r]) => ({ value: k, label: r.label })), value: "staff" }], submitLabel: "Add member", onSubmit: (v) => ctx.call("addMember", { businessId, email: v.email, name: v.name, roleTemplate: v.roleTemplate }) }), "Member saved.");
     } else if (act === "member-status") {
@@ -281,6 +313,89 @@ export async function businessDetailView(el, ctx, businessId) {
       run(() => ctx.call("setTerminology", { businessId, terminology: { [t.dataset.id]: t.value } }), "Configuration saved.");
     }
   };
+}
+
+// ---------- Limit overrides (Phase 18) ----------
+
+const MB = 1024 * 1024;
+const limitFormat = (unit) => (unit === "bytes" ? formatBytes : formatNumber);
+// The monthly meters that apply to this business (from the registry, via the server).
+const historyColumns = (d) => d.historyMeters || MONTHLY_METER_IDS;
+
+// Sends intent only: { limitKey, value } (value null = back to the plan).
+// Storage is typed in MB and sent in bytes. Lowering a limit to or below
+// what's already used shows a warning and needs a second confirmation;
+// nothing is ever deleted.
+export async function limitOverrideDialog(ctx, { businessId, row, clear = false, expectedRevision }) {
+  const bytes = row.unit === "bytes";
+  const v = await formDialog({
+    title: clear ? `${row.label}: back to the plan's limit` : `${row.label}: business override`,
+    intro: `Plan limit: ${row.plan === null ? "—" : limitFormat(row.unit)(row.plan)}. Current: ${limitFormat(row.unit)(row.current)}. Separate from module overrides; recorded in the audit log.`,
+    fields: [...(clear ? [] : [{ name: "value", label: bytes ? "New limit (MB)" : "New limit", value: row.override === null ? "" : String(bytes ? Math.round(row.override / MB) : row.override), required: true, inputmode: "numeric" }]), { name: "reason", label: "Reason (recorded in the audit log)", type: "textarea", required: true }],
+    submitLabel: clear ? "Use the plan's limit" : "Save override",
+    onSubmit: (x) => {
+      if (clear) return { value: null, reason: x.reason };
+      const n = Number(String(x.value).replace(/,/g, "").trim());
+      if (!Number.isSafeInteger(n) || n < 0) throw new Error("Enter a whole number of 0 or more");
+      return { value: bytes ? Math.round(n * MB) : n, reason: x.reason };
+    },
+  });
+  if (!v) return null;
+  const effectiveAfter = v.value === null ? row.plan : v.value;
+  const warning = overrideImpact({ limitKey: row.limitKey, value: effectiveAfter, current: row.current });
+  if (warning) {
+    const ok = await formDialog({ title: "This limit is at or below current usage", intro: warning, fields: [], submitLabel: "Save anyway", onSubmit: () => true });
+    if (!ok) return null;
+  }
+  return ctx.call("setLimitOverride", { businessId, limitKey: row.limitKey, value: v.value, reason: v.reason, expectedRevision });
+}
+
+// ---------- Usage across businesses (Phase 18) ----------
+
+export function usageView(el, ctx) {
+  const state = { cursors: [null], page: null };
+  const cell = (l) => (l ? html`${limitFormat(l.unit)(l.current)} / ${l.effective === null ? "—" : limitFormat(l.unit)(l.effective)}${l.percent !== null ? html` <span class="stat-hint">${l.percent}%</span>` : ""}${l.atOrOver ? html` ${badge("At limit", "warning")}` : ""}` : "—");
+  async function load() {
+    render(el, html`${pageHeader({ title: "Usage" })}${loading()}`);
+    try {
+      state.page = await ctx.call("usageOverview", { after: state.cursors.at(-1) });
+    } catch (err) {
+      render(el, failed(err));
+      return;
+    }
+    const rows = state.page.rows;
+    render(
+      el,
+      html`${pageHeader({ title: "Usage", subtitle: "This month's usage against each business's effective limits (25 per page). Exports and records created are informational." })}
+        ${card({
+          body: rows.length
+            ? html`<div class="table-wrap"><table class="table table-compact" data-role="usage">
+                <thead><tr><th>Business</th><th>Plan</th><th class="num">Users</th><th class="num">Orders / mo</th><th class="num">Imports / mo</th><th class="num">Storage</th><th class="num col-secondary">Exports</th><th class="num col-secondary">Records created</th></tr></thead>
+                <tbody>${rows.map((r) => {
+                  const by = Object.fromEntries(r.limits.map((l) => [l.limitKey, l]));
+                  return html`<tr data-business="${r.id}">
+                    <td><a href="${ctx.base}/businesses?b=${r.id}" data-link>${r.name}</a><div class="stat-hint">${ctx.workspaceName(r.workspaceTemplateId)} · ${r.period}</div></td>
+                    <td>${ctx.planName(r.planId)} ${statusBadge(r.status)}</td>
+                    <td class="num">${cell(by.users)}</td><td class="num">${cell(by.ordersPerMonth)}</td><td class="num">${cell(by.importsPerMonth)}</td><td class="num">${cell(by.storageBytes)}</td>
+                    <td class="num col-secondary">${formatNumber(r.exports)}</td><td class="num col-secondary">${formatNumber(r.recordsCreated)}</td>
+                  </tr>`;
+                })}</tbody></table></div>
+              <div class="modal-footer"><button type="button" class="btn" data-act="prev" ${state.cursors.length > 1 ? "" : "disabled"}>Previous</button><button type="button" class="btn" data-act="next" ${state.page.next ? "" : "disabled"}>Next</button></div>`
+            : emptyState({ title: "No businesses yet" }),
+        })}`
+    );
+  }
+  el.onclick = (e) => {
+    const act = e.target.closest("[data-act]")?.dataset.act;
+    if (act === "next") {
+      state.cursors.push(state.page.next);
+      load();
+    } else if (act === "prev") {
+      state.cursors.pop();
+      load();
+    }
+  };
+  load();
 }
 
 // ---------- Plans (read-only) ----------

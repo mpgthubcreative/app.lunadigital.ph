@@ -39,6 +39,8 @@ async function world({ total = 1000000 } = {}) {
   const id = `payc-${Date.now().toString(36)}-${run}`;
   const tenant = tenantDb(db, id);
   const business = { id, timezone: "Asia/Manila", orderPrefix: "PC" };
+  // Phase 18: the effective limits (orders, file storage) are read from the business document.
+  await tenant.ref.set({ timezone: "Asia/Manila", entitlements: { limits: { users: 5, ordersPerMonth: 1000, storageBytes: 1024 ** 3, importsPerMonth: 5 } } });
   const { productId } = await inv.createProduct({ db, tenant, FieldValue, actor, input: { sku: `P-${run}`, name: "Item", unit: "pcs", sellingPrice: total / 10, reorderLevel: 0 } });
   await inv.recordMovement({ db, tenant, FieldValue, productId, actor, movement: { type: "opening", quantity: Q(100), unitCost: 100, note: "count" } });
   const { orderId } = await orders.createOrder({ db, tenant, FieldValue, business, entitlements: { limits: { ordersPerMonth: 1000 } }, input: { customer: { name: "Racer" }, source: "phone", items: [{ productId, quantity: Q(10) }] }, idempotencyKey: `payc-key-${id}`.padEnd(20, "x"), actor, canDiscount: false, now: NOW });

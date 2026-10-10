@@ -16,6 +16,8 @@ import { WORKSPACE_TEMPLATE_IDS, getWorkspaceTemplate } from "../../../shared/wo
 import { validateEntitlementsSnapshot } from "../../../shared/entitlements.js";
 import { isValidBusinessId } from "../../../shared/tenancy.js";
 import { resolveTenantConfig, termsFor, TENANT_CONFIG_DOC_ID } from "../../../shared/tenant-config.js";
+import { METERS, MONTHLY_METER_IDS, limitRows, meterApplies, isEnforced, RECORD_CREATION_METER_IDS } from "../../../shared/metering.js";
+import { readCurrentUsage, readUsageHistory } from "./metering.js";
 
 // One answer for "not an operator", "disabled operator" and "unknown role".
 const NOT_OPERATOR = () => new RequestError("not-operator", "This area is for Luna staff only.", 403);
@@ -123,6 +125,9 @@ export async function businessDetail({ db, businessId }) {
     tenant.doc("settings", TENANT_CONFIG_DOC_ID).get(),
     db.collection("provisioning").doc(businessId).get(),
   ]);
+  // Phase 18: every meter's current value, limits (plan / override /
+  // effective / current) and the last 12 months.
+  const [current, history] = await Promise.all([readCurrentUsage(tenant, b.timezone || "Asia/Manila"), readUsageHistory(tenant, b.timezone || "Asia/Manila")]);
   const plan = planSnap && planSnap.exists ? planSnap.data() : null;
   const check = validateEntitlementsSnapshot(b.entitlements, planId, b.workspaceTemplateId);
   const template = getWorkspaceTemplate(b.workspaceTemplateId);
@@ -153,10 +158,54 @@ export async function businessDetail({ db, businessId }) {
     limits: b.entitlements?.limits ?? null,
     members: members.docs.map((d) => ({ uid: d.id, email: d.data().email, name: d.data().name, roleTemplate: d.data().roleTemplate, status: d.data().status, isAccountOwner: d.data().isAccountOwner === true })),
     usage: { period: monthKey(b.timezone || "Asia/Manila"), activeUsers: activeMembers, userLimit: b.entitlements?.limits?.users ?? null, ordersThisMonth: int(u.ordersCreated), importsThisMonth: int(u.excelImports), exportsGenerated: int(u.exportsGenerated), rowsExported: int(u.rowsExported) },
+    limitRows: limitRows({ plan, overrides: b.limitOverrides || {}, entitlements: b.entitlements, usage: current.values }),
+    meters: meterRows(current.values, b.entitlements),
+    storage: current.storage,
+    history,
+    historyMeters: MONTHLY_METER_IDS.filter((id) => meterApplies(id, b.entitlements)),
     config: resolveTenantConfig(config.exists ? config.data() : null, b.workspaceTemplateId),
     terms: termsFor(b.workspaceTemplateId).map((t) => ({ id: t.id, label: t.label, options: Object.entries(t.options).map(([id, o]) => ({ id, label: o.singular })) })),
     audit: audit.docs.map((d) => auditRow(d)),
   };
+}
+
+// Informational (meter-only) counters that apply to this business, this month.
+export function meterRows(values, entitlements) {
+  return MONTHLY_METER_IDS.filter((id) => !isEnforced(id) && meterApplies(id, entitlements)).map((id) => ({ id, label: METERS[id].label, definition: METERS[id].definition, value: values[id] ?? 0 }));
+}
+
+// ---------- Usage across businesses (Phase 18) ----------
+
+// One page (25 businesses, by id) with each one's current usage against
+// its effective limits. Per-business reads only: no global counter that
+// every tenant operation would have to update, no full scan.
+export async function usageOverview({ db, FieldPath, after = null }) {
+  let q = db.collection("businesses").orderBy(FieldPath.documentId());
+  if (after !== null) {
+    if (!isValidBusinessId(after)) throw new RequestError("invalid-request", "Invalid cursor.", 400);
+    q = q.startAfter(after);
+  }
+  const snap = await q.limit(PAGE + 1).get();
+  const docs = snap.docs.slice(0, PAGE);
+  const rows = await Promise.all(
+    docs.map(async (d) => {
+      const b = d.data();
+      const current = await readCurrentUsage(tenantDb(db, d.id), b.timezone || "Asia/Manila");
+      const recordsCreated = RECORD_CREATION_METER_IDS.reduce((sum, id) => sum + (meterApplies(id, b.entitlements) ? current.values[id] : 0), 0);
+      return {
+        id: d.id,
+        name: b.name,
+        workspaceTemplateId: b.workspaceTemplateId ?? null,
+        planId: b.subscription?.planId ?? null,
+        status: b.subscription?.status ?? null,
+        period: current.period,
+        limits: limitRows({ overrides: b.limitOverrides || {}, entitlements: b.entitlements, usage: current.values }).map((r) => ({ limitKey: r.limitKey, label: r.label, unit: r.unit, current: r.current, effective: r.effective, percent: r.percent, override: r.override, atOrOver: r.atOrOver })),
+        exports: current.values.exportsGenerated,
+        recordsCreated,
+      };
+    })
+  );
+  return { rows, next: snap.docs.length > PAGE ? docs.at(-1).id : null };
 }
 
 const auditRow = (d) => {

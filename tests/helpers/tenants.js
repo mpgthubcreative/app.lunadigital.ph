@@ -36,6 +36,12 @@ export async function buildWorld() {
   return { ...env, uids };
 }
 
+// Phase 18: setting up members can raise plan-limit warnings (e.g. 4 of 5
+// users = 80%). Tests about other notifications start from empty inboxes.
+export function clearInboxes(db) {
+  for (const path of [...db.docs.keys()]) if (path.includes("/inbox/") || path.includes("/inboxState/")) db.docs.delete(path);
+}
+
 export function request({ uid, token, businessId, method = "GET" } = {}) {
   const headers = {};
   if (token !== undefined) headers.authorization = `Bearer ${token}`;

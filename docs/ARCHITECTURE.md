@@ -1399,7 +1399,7 @@ Members can be viewed, added (Owner, Manager or Staff role templates only; never
 ### Read models
 - **Overview:** total businesses, and counts per status, workspace and plan (server-side counts, no revenue analytics).
 - **Businesses:** Business | Workspace | Plan | Status | Owner | Created | Usage, filtered by workspace, plan and status, 25 per page ordered by business id. Search matches the id prefix or the name prefix; businesses created before Phase 17 match by id until renamed.
-- **Business page:** overview, modules, members, current-month usage (only counters that already exist: active users vs limit, orders, imports, exports and rows exported), configuration, and recent changes from `platformAudit`.
+- **Business page:** overview, modules, members, usage (limits, informational meters, storage and 12-month history; see Usage metering), configuration, and recent changes from `platformAudit`.
   - The audit view needs one composite index: `platformAudit` (businessId, at desc).
 - **Plans:** read-only, from the stored plans.
 - **Audit:** the platform log, newest first.
@@ -1411,7 +1411,7 @@ Every operator mutation writes the same record to `businesses/{bid}/auditLog` an
 - **Rules:** none needed; operator collections are already denied by default.
 - **Index:** one new index (`platformAudit` by business).
 - **Functions:** `/api/operator`, and `scripts/set-operator.js` to bootstrap the first operator.
-- **Not built:** billing or invoices, payment charging, CRM, support ticketing, impersonation, a Firestore editor, a feature-flag engine, a no-code builder, tenant deletion, full usage metering (Phase 18).
+- **Not built:** billing or invoices, payment charging, CRM, support ticketing, impersonation, a Firestore editor, a feature-flag engine, a no-code builder, tenant deletion. Usage metering is Phase 18 (see Usage metering).
 
 ## Performance
 
@@ -1419,10 +1419,86 @@ Every operator mutation writes the same record to `businesses/{bid}/auditLog` an
 - Lists are paginated (25–50 records per page) with server-side `where()` filters and indexes.
 - Every query is scoped to a single tenant.
 
-## Usage metering
+## Usage metering (Phase 18)
 
 - `usage/{YYYY-MM}` counters are incremented inside the same transaction as the action they meter. Limits are enforced there, on the server.
 - Firestore read and write counts are Super Admin infrastructure metrics and are never shown to customers.
+
+### One registry
+`shared/metering.js` defines every meter once: its kind, label, unit, the limit it enforces (if any), the module it belongs to, the first month it was recorded (`since`) and a plain-language definition. Enforcement, warnings, Settings, the console, history and the recount tool all read it. Nothing else keeps its own list of counters.
+
+- **Monthly meters** count activity in a calendar month of the **business's** timezone at `businesses/{bid}/usage/{YYYY-MM}`. They only ever go up, in the same transaction (or batch) as the record they measure. Deleting, cancelling or voiding a record never decrements them, because they measure activity, not how many records exist now.
+- **Running totals** go up and down: `activeUsers` (a live count of active memberships, no stored counter) and `storageBytes` (`usageCurrent/storage`).
+- **Applicability:** a meter tied to a module only shows while that module is enabled for the business.
+
+| Meter | Kind | Enforced limit | Since |
+|---|---|---|---|
+| Active users | running | `users` | always (live count) |
+| File storage | running | `storageBytes` | 2026-10 |
+| Orders | monthly | `ordersPerMonth` | start of metering |
+| Spreadsheet imports | monthly | `importsPerMonth` | start of metering |
+| Excel exports, Rows exported | monthly | none | start of metering |
+| Customer payments recorded, Expenses recorded, Scheduled payments paid, Supplier payments paid, Guests added, Payroll runs released | monthly | none | 2026-10 (first month partial) |
+
+- **Commercial limits:** every plan limit has exactly one meter (checked when the module loads). Every other meter is informational: never enforced and never warned about.
+- **Records created** = orders + payments recorded + expenses recorded + guests added. Each counts a distinct user-created record once. A payment marked Paid isn't a new record, because the expense it creates is already counted. Imported rows, audit entries, notifications, metrics, usage, history, locks and entitlement snapshots are never records created.
+- **Period:** each monthly document stores the timezone(s) it was counted in. A timezone change near a month boundary can put an event in the neighbouring month. Usage already counted is never moved (a documented limitation).
+
+### Enforcement
+- **Effective limit** = the plan's limit or the operator's per-business override (`limitOverrides`), resolved by `computeEntitlements`. The monthly check (`checkMonthlyLimit`) reads the business document **inside the transaction**, so a limit changed a moment ago applies. A missing or malformed limit refuses the action (`business-misconfigured`) and never skips the check.
+- Orders and imports: refused at the limit (`order-limit-reached`, `import-limit-reached`), and the refused attempt isn't counted.
+- Users: adding or reactivating a member past the limit is refused (`user-limit-reached`). Lowering the limit below the active count deactivates nobody.
+
+### File storage (exactly-once accounting)
+Object storage and Firestore can't commit together, so every stored file goes through a ledger (`storageObjects/{sha256(path)}`) in `netlify/functions/_lib/storage-usage.js`:
+
+1. **Reserve** (transaction): stored + live reservations + this file must be ≤ the effective limit, or the upload is refused (409 `storage-limit-reached`) **before anything is stored**. Two uploads near the limit serialize on `usageCurrent/storage`.
+2. **Upload** the object.
+3. **Finalize** in the **same transaction** as the record that references the file (the payment): reserved → stored. A reservation that already expired must fit again.
+4. **Release** when the upload or the business transaction fails. The object is removed and the bytes are given back.
+5. **Delete** (a supported removal of a stored file): stored → deleted, and the bytes are subtracted.
+
+- Every step is a state transition read inside its transaction, so a retry or a racing request can't count, release or subtract twice. Totals never go below 0.
+- The byte count is the server's measurement of the decoded file, never a number from the browser.
+- **Crashes:** a reservation that is never finalized expires after 10 minutes. The next reservation sweeps it and gives its bytes back. If its object was actually stored, the recount tool finds it.
+- Today only payment screenshots are stored. Replacing a screenshot keeps the earlier file (payment history), so it stays counted.
+- **Index:** one new index, `storageObjects` (state, expiresAt), for the sweep.
+
+### Warnings (80% / 100%, enforced limits only)
+- Delivered as in-app notifications (`usage.threshold`) through Notifications Core, to members who receive billing notices.
+- **Monthly:** a threshold fires when usage crosses it. The event key is meter + month + threshold, so each fires at most once a month.
+- **Running totals:** episodes. A threshold fires once when reached and re-arms only after usage drops below (threshold − 10)%. The next crossing is a new episode with a new key, so repeated uploads above 80% never re-notify.
+- **Refusals:** a refused action records "limit reached" once (per month, or per episode) and never on every blocked attempt. This covers a limit lowered below current usage. It is best effort and never changes the refusal.
+- A limit change by an operator that puts usage over a threshold warns once, in the same transaction.
+
+### Where usage is shown
+- **Settings** (members with `billing.view`): Plan limits as bars with percentages (monthly ones labelled "this month"), "Activity this month" as plain numbers for the informational meters, and the last 12 months on request (`GET /api/usage`, `billing.view` only).
+  - **History:** a month with no usage document shows "No recorded usage", never zeros. A counter not metered yet that month shows "—". File storage and active users are current totals, never shown as monthly history.
+- **Session:** the `usage` block carries every meter's current value (`values`) plus the original fields.
+- **Console:** the business page shows Limit | Plan | Override | Effective | Current, the informational meters, storage (bytes, reserved, objects) and 12-month history. A usage overview lists one page of businesses with usage against effective limits and records created, with no global counter.
+- **Limit overrides** (console, `setLimitOverride`): recognised limit keys only, whole numbers from 0 up to a sane ceiling, or Default (removes the override).
+  - Revisioned and audited (`entitlements.limit-override-updated`), and kept separate from module overrides.
+  - Before saving a value at or below current usage, the console shows what will happen. Nothing is deleted, and further use is blocked.
+
+### Recount / repair (`scripts/recount-usage.js`)
+- **Targeted:** one business, one counter and, for monthly counters, one month.
+  - Dry run by default.
+  - `--apply` needs the dry run's current value (`--expect-current`, otherwise `changed-meanwhile`), a reason and `--confirm <projectId>`.
+  - It writes one `usage.recounted` audit record to the tenant log and `platformAudit`.
+- **Sources** (never another counter):
+  - orders by order date, plus deleted-order audit snapshots
+  - import jobs that started committing
+  - `export.generated` audit entries (exports and rows)
+  - for storage, the objects actually in the bucket under `tenants/{bid}/`, reconciled into the ledger
+- **Enforced monthly counters (orders, imports) are never lowered:** quota already consumed stays consumed, so a lower source count is only reported. Informational counters and storage are set to the source value.
+- **Storage first measurement:** files stored before Phase 18 aren't counted until a storage recount records them. Run it once per business at rollout.
+- Counters with no reliable source (payments recorded, expenses, …) can't be recounted.
+
+### Rollout
+- **Rules:** none needed. `usage`, `usageCurrent` and `storageObjects` are server-only through the default deny (covered by the rules fixture).
+- **Index:** `storageObjects` (state, expiresAt).
+- **Functions:** `GET /api/usage`. Usage metering is part of existing functions (orders, imports, exports, payments, expenses, schedule, vendor payments, guests, payroll, provisioning, operator).
+- **After deploy:** run a storage recount for each existing business that has payment screenshots.
 
 ## Security baseline
 
@@ -1477,7 +1553,7 @@ On Orders, Reference and Proof show "—" until Payments (Phase 8) fills them in
 15. Baby Expense Tracker MVP ✅ (the baby-expense workspace)
 16. Bridal / Wedding Command Center MVP ✅ (the bridal-expense workspace)
 17. Luna Super Admin console (operators, provisioning, plans, overrides, subscription, tenant configuration): local gate passed; staging awaiting approval
-18. Usage metering views
+18. Usage metering (shared meter registry, storage accounting, warnings, history, limit overrides, recount): local gate passed; staging awaiting approval
 19. Reliability, backups and recovery
 
 - Phases 6 and 7 are in this order because orders need products to reserve and a cost to snapshot.

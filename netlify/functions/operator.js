@@ -6,14 +6,15 @@
 // through the shared provisioning library (the same code as the CLI), each
 // in a transaction with an audit record.
 //
-// Reads:   session, overview, plans, listBusinesses, business, audit
-// Writes:  createBusiness, changePlan, setModuleOverride, setStatus,
-//          addMember, setMemberStatus, updateGeneral, setTerminology, setupLink
+// Reads:   session, overview, plans, listBusinesses, business, audit, usageOverview
+// Writes:  createBusiness, changePlan, setModuleOverride, setLimitOverride,
+//          setStatus, addMember, setMemberStatus, updateGeneral,
+//          setTerminology, setupLink
 
 import { respond, withErrorHandling, requireMethod, parseJsonBody, RequestError } from "./_lib/http.js";
 import { getAdmin } from "./_lib/firebase-admin.js";
-import { requireOperator, overview, listBusinesses, businessDetail, listAudit, listPlans, creatableWorkspaces } from "./_lib/operator.js";
-import { provisionBusiness, assignPlan, updateOverrides, setSubscriptionStatus, addMember, setMemberStatus, updateBusinessGeneral, setTenantTerminology, ensureAuthUser, passwordSetupLink, ProvisioningError } from "./_lib/provisioning.js";
+import { requireOperator, overview, listBusinesses, businessDetail, listAudit, listPlans, creatableWorkspaces, usageOverview } from "./_lib/operator.js";
+import { provisionBusiness, assignPlan, updateOverrides, setLimitOverride, setSubscriptionStatus, addMember, setMemberStatus, updateBusinessGeneral, setTenantTerminology, ensureAuthUser, passwordSetupLink, ProvisioningError } from "./_lib/provisioning.js";
 import { tenantDb } from "./_lib/tenant-db.js";
 import { OperatorError, validateCreateBusinessInput, validateSubscriptionStatus, validateReason, overrideChange } from "../../shared/operators.js";
 import { ROLE_TEMPLATES } from "../../shared/permissions.js";
@@ -63,6 +64,7 @@ const ACTIONS = {
   listBusinesses: { fields: ["filters", "after"], run: async ({ db, admin }, b) => listBusinesses({ db, FieldPath: admin.firestore.FieldPath, filters: b.filters && typeof b.filters === "object" && !Array.isArray(b.filters) ? b.filters : {}, after: b.after ?? null }) },
   business: { fields: ["businessId"], run: async ({ db }, b) => businessDetail({ db, businessId: b.businessId }) },
   audit: { fields: ["after"], run: async ({ db }, b) => listAudit({ db, after: b.after ?? null }) },
+  usageOverview: { fields: ["after"], run: async ({ db, admin }, b) => usageOverview({ db, FieldPath: admin.firestore.FieldPath, after: b.after ?? null }) },
 
   // Create business: one retry-safe workflow (provisionBusiness). The
   // workspace is a live template at its current version (never typed).
@@ -100,6 +102,17 @@ const ACTIONS = {
       const { set, clear } = overrideChange(snap.data().workspaceTemplateId, b.moduleId, b.choice);
       const r = await updateOverrides({ db, admin, businessId: b.businessId, set, clear, actor: actorOf(op), reason: validateReason(b.reason), expectedRevision: rev(b.expectedRevision) });
       return { modules: r.entitlements.modules, adminRevision: r.adminRevision };
+    },
+  },
+  // Phase 18: one per-business LIMIT override (separate from module
+  // overrides). Intent only: { limitKey, value } where value is a whole
+  // number or null (back to the plan's limit). Never deletes data; the
+  // response warns when usage is already at / over the new limit.
+  setLimitOverride: {
+    fields: ["businessId", "limitKey", "value", "reason", "expectedRevision"],
+    run: async ({ db, admin, op }, b) => {
+      const r = await setLimitOverride({ db, admin, businessId: bid(b.businessId), limitKey: b.limitKey, value: b.value === undefined ? undefined : b.value, actor: actorOf(op), reason: validateReason(b.reason), expectedRevision: rev(b.expectedRevision) });
+      return { limits: r.entitlements.limits, overrides: r.overrides.limits, warnings: r.warnings, adminRevision: r.adminRevision };
     },
   },
   // Suspend / reactivate / cancel / past due: reason required; data kept.

@@ -43,6 +43,7 @@ export const NOTIFICATION_CATEGORIES = Object.freeze({
   payroll: { label: "Salary receipt confirmations", mandatory: false },
   budget: { label: "Budget alerts (75%, 90%, 100% used)", mandatory: false },
   wedding: { label: "Supplier payments recorded", mandatory: false },
+  usage: { label: "Plan limits (80% and 100% used)", mandatory: false },
 });
 export const NOTIFICATION_CATEGORY_IDS = Object.freeze(Object.keys(NOTIFICATION_CATEGORIES));
 
@@ -90,6 +91,18 @@ export const NOTIFICATION_TYPES = Object.freeze({
     permissions: ["vendorpayments.view"],
     excludeActor: true,
     action: { label: "View supplier payments", route: "/supplier-payments" },
+  },
+  // Phase 18: a commercial plan limit (users, orders / month, imports /
+  // month, file storage) reached 80% or 100%. Owners only (billing.view).
+  // Event key: monthly "<meter>-<YYYY-MM>-<pct>", running
+  // "<meter>-e<episode>-<pct>" (shared/metering.js): never repeated for the
+  // same month or usage episode.
+  "usage.threshold": {
+    category: "usage",
+    module: "settings",
+    permissions: ["billing.view"],
+    excludeActor: false,
+    action: { label: "View usage", route: "/settings" },
   },
   "order.ready": {
     category: "orders",

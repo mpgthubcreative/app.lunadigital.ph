@@ -31,6 +31,7 @@ import { businessDate } from "../../../shared/metrics.js";
 import { recordDailyMetrics } from "./metrics.js";
 import { babySpendingSink } from "./baby-spending.js";
 import { weddingSpendingSink } from "./wedding-spending.js";
+import { meterActivity } from "./metering.js";
 
 const TX_OPTIONS = { maxAttempts: 10 };
 const MAX_HISTORY_ENTRIES = 200;
@@ -167,6 +168,8 @@ export async function prepareExpenseCreate(tx, { tenant, business, workspace, in
         removalReason: null,
       });
       s.commit({ FieldValue });
+      // Phase 18 activity meter, in the same transaction as the record.
+      meterActivity(tx, { tenant, FieldValue, timezone: business.timezone, now, counts: { expensesCreated: 1 } });
     },
   };
 }

@@ -25,6 +25,7 @@ import { EXPORT_MAX_ROWS, ExportError, TOO_MANY_ROWS_MESSAGE, validateExportFilt
 import { ID, mergeParts } from "../../../shared/list-queries.js";
 import { businessDate } from "../../../shared/metrics.js";
 import { monthKey } from "./usage.js";
+import { meterActivity } from "./metering.js";
 
 const READ_PAGE = 1000;
 const tooMany = () => new ExportError("too-many-rows", TOO_MANY_ROWS_MESSAGE);
@@ -123,7 +124,9 @@ export async function runExport({ db, ctx, admin, descriptor, builder, rawFilter
   const month = monthKey(business.timezone, now);
   const batch = db.batch();
   batch.set(tenant.collection("auditLog").doc(), { type: "export.generated", dataset: descriptor.id, filters, rowCount: built.rowCount, actor, at: stamp });
-  batch.set(tenant.doc("usage", month), { period: month, exportsGenerated: FieldValue.increment(1), rowsExported: FieldValue.increment(built.rowCount), updatedAt: stamp }, { merge: true });
+  // Phase 18: meter-only counters (no plan limit; the row ceiling above is a
+  // technical safety limit, not a commercial one).
+  meterActivity(batch, { tenant, FieldValue, timezone: business.timezone, now, period: month, counts: { exportsGenerated: 1, rowsExported: built.rowCount } });
   await batch.commit();
 
   return { fileName, bytes, rowCount: built.rowCount, filters };

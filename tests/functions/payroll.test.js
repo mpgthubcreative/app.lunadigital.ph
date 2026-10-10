@@ -392,3 +392,18 @@ describe("Excel downloads (Phase 12.5 Export Core)", () => {
     expect((await xport(u.mom, "payroll", { employee: "Maria" })).status).toBe(400);
   });
 });
+
+describe("Phase 18 usage metering (meter only, never enforced)", () => {
+  const usage = () => docAt("usage/2026-10") || {};
+  it("a released salary counts one payroll run; a prepared-then-deleted draft never counts", async () => {
+    const id = await maria();
+    await markPeriod(id, "2026-10-01", OCT_1_15);
+    const draft = (await api("payroll", u.mom, { action: "prepare", staffId: id, periodStart: "2026-10-01" })).body.payrollId;
+    expect((await api("payroll", u.mom, { action: "deleteDraft", payrollId: draft })).status).toBe(200);
+    expect(usage().payrollsReleased).toBeUndefined();
+    const { payrollId } = (await api("payroll", u.mom, { action: "prepare", staffId: id, periodStart: "2026-10-01" })).body;
+    expect((await api("payroll", u.mom, { action: "release", payrollId, payment: { method: "cash" } })).status).toBe(200);
+    expect((await api("payroll", u.mom, { action: "release", payrollId, payment: { method: "cash" } })).status).not.toBe(200);
+    expect(usage()).toMatchObject({ payrollsReleased: 1, timezone: "Asia/Manila" });
+  });
+});

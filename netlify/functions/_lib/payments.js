@@ -12,6 +12,10 @@
 //                                lastProofPaymentId (+ statusHistory entries)
 // Storage (server only, never public, no download tokens):
 //   tenants/{bid}/payments/proofs/{orderId}/{paymentId}-{n}.{ext}
+// Phase 18: a screenshot is metered and enforced against the plan's file
+// storage (./storage-usage.js): reserve -> upload -> finalize in the
+// payment's own transaction; a failed upload or transaction gives the
+// reservation back and removes the object.
 //
 // Payments never touch Sales or COGS (those belong to fulfillment).
 
@@ -34,6 +38,8 @@ import { isValidOrderId, MAX_HISTORY_ENTRIES } from "../../../shared/orders.js";
 import { businessDate } from "../../../shared/metrics.js";
 import { recordDailyMetrics, adjustCurrentMetrics } from "./metrics.js";
 import { prepareNotifications, prepareResolution } from "./notifications.js";
+import { reserveStorage, prepareStorageFinalize, releaseStorageReservation } from "./storage-usage.js";
+import { meterActivity, noteLimitReached } from "./metering.js";
 
 const TX_OPTIONS = { maxAttempts: 10 };
 const peso = (c) => `₱${(c / 100).toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -61,20 +67,45 @@ export function decodeProof(proof) {
   return { data, contentType: actual };
 }
 
-async function storeProof(bucket, { businessId, orderId, paymentId, proof, actor }) {
+// Reserve the bytes (refused here, before anything is stored, when the
+// plan's storage is full), then upload. A failed upload gives the
+// reservation back. The size is the decoded buffer's, measured here.
+async function storeProof({ db, bucket, tenant, FieldValue, businessId, orderId, paymentId, proof, actor, now = new Date() }) {
   const path = `tenants/${businessId}/payments/proofs/${orderId}/${paymentId}-${randomUUID().slice(0, 8)}.${PROOF_TYPES[proof.contentType]}`;
-  // No firebaseStorageDownloadTokens: the object is never reachable by URL.
-  await bucket.file(path).save(proof.data, { resumable: false, contentType: proof.contentType, metadata: { metadata: { uploadedBy: actor.uid, orderId, paymentId } } });
-  return { path, contentType: proof.contentType, size: proof.data.length, uploadedBy: actor, uploadedAt: new Date() };
+  let reservation;
+  try {
+    reservation = await reserveStorage({ db, tenant, FieldValue, path, bytes: proof.data.length, area: "payments", recordType: "payment", recordId: paymentId, now });
+  } catch (err) {
+    if (err && err.code === "storage-limit-reached") await noteLimitReached({ db, tenant, FieldValue, meterId: "storageBytes", used: err.details.used, limit: err.details.limit });
+    throw err;
+  }
+  try {
+    // No firebaseStorageDownloadTokens: the object is never reachable by URL.
+    await (await bucket()).file(path).save(proof.data, { resumable: false, contentType: proof.contentType, metadata: { metadata: { uploadedBy: actor.uid, orderId, paymentId } } });
+  } catch (err) {
+    await releaseQuietly({ db, tenant, FieldValue, objectId: reservation.objectId });
+    throw err;
+  }
+  return { path, contentType: proof.contentType, size: proof.data.length, objectId: reservation.objectId, uploadedBy: actor, uploadedAt: new Date() };
 }
 
-const removeQuietly = async (bucket, path) => {
+const releaseQuietly = async (args) => {
   try {
-    await bucket.file(path).delete();
-  } catch {
-    /* best effort: an orphaned object is harmless and unreachable */
+    await releaseStorageReservation(args);
+  } catch (err) {
+    console.error("payments: releasing a storage reservation failed (it expires on its own):", err?.message);
   }
 };
+
+// The business transaction failed: remove the object, give the bytes back.
+async function undoProof({ db, bucket, tenant, FieldValue, stored }) {
+  try {
+    await (await bucket()).file(stored.path).delete();
+  } catch {
+    /* best effort: an orphaned object is unreachable; the recount tool reports it */
+  }
+  await releaseQuietly({ db, tenant, FieldValue, objectId: stored.objectId });
+}
 
 // ---------- Helpers ----------
 
@@ -125,7 +156,7 @@ export async function recordPayment({ db, bucket, tenant, FieldValue, business, 
   const decoded = proof ? decodeProof(proof) : null;
   const day = businessDate(business.timezone, now);
   const key = referenceKey(data.method, data.reference);
-  const stored = decoded ? await storeProof(await bucket(), { businessId: business.id, orderId, paymentId: paymentRef.id, proof: decoded, actor }) : null;
+  const stored = decoded ? await storeProof({ db, bucket, tenant, FieldValue, businessId: business.id, orderId, paymentId: paymentRef.id, proof: decoded, actor, now }) : null;
 
   try {
     return await db.runTransaction(async (tx) => {
@@ -149,6 +180,7 @@ export async function recordPayment({ db, bucket, tenant, FieldValue, business, 
               actor,
               events: [{ type: "payment.awaiting_verification", key: paymentRef.id, title: "Payment awaiting verification", message: `${peso(data.amount)} ${label} received for ${order.orderNumber}.`, recordType: "payment", recordId: paymentRef.id }],
             });
+      const file = stored ? await prepareStorageFinalize(tx, { tenant, objectId: stored.objectId }) : null;
       const stamp = FieldValue.serverTimestamp();
       const payment = {
         schemaVersion: PAYMENT_SCHEMA_VERSION,
@@ -189,10 +221,12 @@ export async function recordPayment({ db, bucket, tenant, FieldValue, business, 
       balanceGauges(tx, { tenant, FieldValue, before: order.total - (order.amountPaid || 0), after: fields.balance });
     applyCustomerStats(tx, { tenant, FieldValue, customerId: order.customerId, balance: fields.balance - (order.total - (order.amountPaid || 0)) });
       if (notes) notes.commit({ FieldValue });
+      if (file) file.commit({ FieldValue });
+      meterActivity(tx, { tenant, FieldValue, timezone: business.timezone, now, counts: { paymentsRecorded: 1 } });
       return { paymentId: paymentRef.id, orderId, state: payment.state, ...fields };
     }, TX_OPTIONS);
   } catch (err) {
-    if (stored) await removeQuietly(await bucket(), stored.path);
+    if (stored) await undoProof({ db, bucket, tenant, FieldValue, stored });
     if (err && err.code === 6) throw new PaymentError("duplicate-reference", "This payment reference has already been used.");
     throw err;
   }
@@ -211,6 +245,12 @@ export async function updatePayment({ db, bucket, tenant, FieldValue, business, 
   let stored = null;
 
   try {
+    if (decoded) {
+      const current = await r.payment.get();
+      if (!current.exists) throw new PaymentError("not-found", "Payment not found");
+      if (current.data().state === "voided") throw new PaymentError("voided", "A voided payment can't be edited");
+      stored = await storeProof({ db, bucket, tenant, FieldValue, businessId: business.id, orderId: current.data().orderId, paymentId, proof: decoded, actor });
+    }
     return await db.runTransaction(async (tx) => {
       const snap = await tx.get(r.payment);
       if (!snap.exists) throw new PaymentError("not-found", "Payment not found");
@@ -231,7 +271,7 @@ export async function updatePayment({ db, bucket, tenant, FieldValue, business, 
       if (newKey && newKey !== payment.referenceKey && (await tx.get(tenant.doc("paymentRefs", newKey))).exists) {
         throw new PaymentError("duplicate-reference", "This payment reference has already been used.");
       }
-      if (decoded && !stored) stored = await storeProof(await bucket(), { businessId: business.id, orderId: payment.orderId, paymentId, proof: decoded, actor });
+      const file = stored ? await prepareStorageFinalize(tx, { tenant, objectId: stored.objectId }) : null;
 
       const delta = merged.amount - payment.amount;
       const verified = payment.state === "verified";
@@ -281,10 +321,11 @@ export async function updatePayment({ db, bucket, tenant, FieldValue, business, 
         balanceGauges(tx, { tenant, FieldValue, before: order.total - (order.amountPaid || 0), after: fields.balance });
     applyCustomerStats(tx, { tenant, FieldValue, customerId: order.customerId, balance: fields.balance - (order.total - (order.amountPaid || 0)) });
       }
+      if (file) file.commit({ FieldValue });
       return { paymentId, orderId: payment.orderId, ...fields };
     }, TX_OPTIONS);
   } catch (err) {
-    if (stored) await removeQuietly(await bucket(), stored.path);
+    if (stored) await undoProof({ db, bucket, tenant, FieldValue, stored });
     if (err && err.code === 6) throw new PaymentError("duplicate-reference", "This payment reference has already been used.");
     throw err;
   }

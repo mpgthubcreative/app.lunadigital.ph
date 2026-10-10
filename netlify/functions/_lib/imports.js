@@ -20,7 +20,7 @@ import { InventoryError } from "../../../shared/inventory.js";
 import { CustomerError } from "../../../shared/customers.js";
 import { createProduct } from "./inventory.js";
 import { createCustomer } from "./customers.js";
-import { monthKey } from "./usage.js";
+import { checkMonthlyLimit, prepareMonthlyAlerts, meterActivity, noteLimitReached } from "./metering.js";
 
 const TX_OPTIONS = { maxAttempts: 10 };
 const JOB_ID = /^[A-Za-z0-9]{8,40}$/;
@@ -162,7 +162,19 @@ export async function previewImport({ db, tenant, FieldValue, type, fileName, ro
 
 const eligible = (row, includeWarnings) => row.action === "create" && (row.status === "ready" || (row.status === "warning" && includeWarnings));
 
-async function startCommit({ db, tenant, FieldValue, business, entitlements, ref, includeWarnings, actor, now }) {
+// Phase 18: the quota is checked against the business's CURRENT effective
+// limit (read in this transaction); the import is counted when it starts
+// writing rows, with the 80% / 100% warnings. A refused commit isn't counted.
+const limitError = (code, message, details) => Object.assign(new ImportError(code, code === "import-limit-reached" ? `This month's import limit (${details.limit}) has been reached. Contact Luna to raise it.` : message), { details });
+async function startCommit(args) {
+  try {
+    return await startCommitOnce(args);
+  } catch (err) {
+    if (err && err.code === "import-limit-reached" && err.details) await noteLimitReached({ db: args.db, tenant: args.tenant, FieldValue: args.FieldValue, ...err.details });
+    throw err;
+  }
+}
+async function startCommitOnce({ db, tenant, FieldValue, business, entitlements, ref, includeWarnings, actor, now }) {
   return db.runTransaction(async (tx) => {
     const snap = await tx.get(ref);
     if (!snap.exists) throw new ImportError("not-found", "Import not found");
@@ -172,15 +184,11 @@ async function startCommit({ db, tenant, FieldValue, business, entitlements, ref
       tx.update(ref, { status: "expired", revision: job.revision + 1 });
       return { ...job, status: "expired" };
     }
-    const limit = entitlements?.limits?.importsPerMonth;
-    if (!Number.isSafeInteger(limit) || limit < 0) throw new ImportError("business-misconfigured", "This business has no valid import limit");
-    const month = monthKey(business.timezone, now);
-    const usageRef = tenant.doc("usage", month);
-    const usage = await tx.get(usageRef);
-    const used = usage.exists && Number.isSafeInteger(usage.data().excelImports) ? usage.data().excelImports : 0;
-    if (used >= limit) throw new ImportError("import-limit-reached", `This month's import limit (${limit}) has been reached. Contact Luna to raise it.`);
+    const quota = await checkMonthlyLimit(tx, { tenant, meterId: "excelImports", timezone: business.timezone, now, error: limitError, entitlements });
+    const alerts = await prepareMonthlyAlerts(tx, { tenant, meterId: "excelImports", period: quota.period, before: quota.used, after: quota.used + 1, limit: quota.limit });
     const stamp = FieldValue.serverTimestamp();
-    tx.set(usageRef, { period: month, excelImports: FieldValue.increment(1), updatedAt: stamp }, { merge: true });
+    meterActivity(tx, { tenant, FieldValue, timezone: business.timezone, now, period: quota.period, counts: { excelImports: 1 } });
+    alerts.commit({ FieldValue });
     tx.update(ref, { status: "committing", includeWarnings: includeWarnings === true, committedBy: actor, committedAt: stamp, revision: job.revision + 1 });
     return { ...job, status: "committing", includeWarnings: includeWarnings === true };
   }, TX_OPTIONS);

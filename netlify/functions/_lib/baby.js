@@ -23,6 +23,7 @@ import { EXPENSE_METHODS } from "../../../shared/expenses.js";
 import { businessDate, isDayId } from "../../../shared/metrics.js";
 import { prepareExpenseCreate } from "./expenses.js";
 import { SUGGESTED_WEDDING_CATEGORIES } from "../../../shared/wedding.js";
+import { meterActivity } from "./metering.js";
 
 const TX_OPTIONS = { maxAttempts: 10 };
 const MAX_HISTORY = 200;
@@ -446,6 +447,7 @@ async function markPaidOnce({ db, tenant, FieldValue, business, workspace, sched
       },
     });
     plan.commit({ FieldValue });
+    meterActivity(tx, { tenant, FieldValue, timezone: business.timezone, now, counts: { scheduledPaymentsPaid: 1 } });
     tx.update(sRef, {
       status: "paid",
       expenseId,

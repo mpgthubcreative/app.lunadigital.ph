@@ -55,13 +55,15 @@ export function card({ title, actions = "", body }) {
   `;
 }
 
-export function meter({ label, used, limit, format = (n) => String(n) }) {
+export function meter({ label, used, limit, format = (n) => String(n), showPercent = false }) {
   const pct = limit > 0 ? Math.min(100, Math.round((used / limit) * 100)) : 0;
+  // The real percentage (can exceed 100 when a limit was lowered below usage).
+  const real = limit > 0 ? Math.round((used / limit) * 100) : used > 0 ? 100 : 0;
   return html`
     <div class="meter-row">
       <div class="meter-head">
         <span>${label}</span>
-        <span class="meter-value">${format(used)} / ${format(limit)}</span>
+        <span class="meter-value">${format(used)} / ${format(limit)}${showPercent ? html` <span class="meter-pct" data-role="percent">${real}%</span>` : ""}</span>
       </div>
       <progress class="meter" max="100" value="${pct}" aria-label="${label}"></progress>
     </div>

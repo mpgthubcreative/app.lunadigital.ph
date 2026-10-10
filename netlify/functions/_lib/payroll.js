@@ -44,6 +44,7 @@ import {
 import { businessDate } from "../../../shared/metrics.js";
 import { prepareNotifications } from "./notifications.js";
 import { tenantDb } from "./tenant-db.js";
+import { meterActivity } from "./metering.js";
 
 const TX_OPTIONS = { maxAttempts: 10 };
 const MAX_HISTORY = 200;
@@ -425,6 +426,7 @@ export async function releaseSalary({ db, tenant, FieldValue, business, payrollI
       updatedAt: stamp,
     });
     advSnaps.forEach((s) => s.exists && tx.update(s.ref, { deducted: true, deductedAt: stamp }));
+    meterActivity(tx, { tenant, FieldValue, timezone: business.timezone, now, counts: { payrollsReleased: 1 } });
     return { payrollId, status: "released", netPay: p.netPay, receiptToken: link.token, receiptLinkExpiresAt: link.expiresAt.toISOString() };
   }, TX_OPTIONS);
 }

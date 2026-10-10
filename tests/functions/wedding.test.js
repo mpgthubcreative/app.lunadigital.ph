@@ -419,3 +419,24 @@ describe("Excel downloads (Export Core)", () => {
     for (const ds of ["budget", "babyExpenses", "providers", "paymentSchedule", "expenses"]) expect((await download(u.camille, ds)).status, ds).toBe(403);
   });
 });
+
+describe("Phase 18 usage metering (meter only, never enforced)", () => {
+  const usage = () => docAt("usage/2026-10") || {};
+  it("a supplier payment marked Paid counts once (plus the one expense it records); retries add nothing", async () => {
+    const cats = await setup();
+    const s = await photographer(cats);
+    const p1 = await schedule(s, cats["Photo / Video"], 2000000, "2026-10-15");
+    const before = usage().expensesCreated ?? 0;
+    ok(await markPaid(p1));
+    ok(await markPaid(p1));
+    expect(usage()).toMatchObject({ supplierPaymentsPaid: 1, expensesCreated: before + 1, timezone: "Asia/Manila" });
+  });
+
+  it("guests added count once each; removing a guest doesn't decrement", async () => {
+    const g1 = ok(await api("guests", u.camille, { action: "create", guest: { name: "Santos", side: "bride", partySize: 2 } }), 201).guestId;
+    ok(await api("guests", u.camille, { action: "create", guest: { name: "Cruz", side: "groom", partySize: 3 } }), 201);
+    expect(usage().guestsAdded).toBe(2);
+    ok(await api("guests", u.camille, { action: "remove", guestId: g1 }));
+    expect(usage().guestsAdded).toBe(2);
+  });
+});

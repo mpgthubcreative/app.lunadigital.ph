@@ -27,7 +27,7 @@ export function sessionFixture({
     plan: seesPackage ? { id: plan.id, name: plan.name } : null,
     subscription: { status, access: { canRead: true, canWrite: status !== "suspended", exportOnly: false } },
     entitlements: { workspaceTemplateId: entitlements.workspaceTemplateId, workspaceTemplateVersion: entitlements.workspaceTemplateVersion, modules: entitlements.modules, features: entitlements.features, limits: seesPackage ? entitlements.limits : null },
-    usage: seesPackage ? { period: "2026-10", users: 3, ordersThisMonth: 0, storageBytes: 0, importsThisMonth: 0 } : null,
+    usage: seesPackage ? { period: "2026-10", values: { activeUsers: 3, ordersCreated: 0, storageBytes: 0, excelImports: 0, exportsGenerated: 0, rowsExported: 0, paymentsRecorded: 0, expensesCreated: 0 }, users: 3, ordersThisMonth: 0, storageBytes: 0, importsThisMonth: 0 } : null,
     memberships: memberships || [{ businessId: "demo-distributor-a", businessName: "Demo Distributor A", roleLabel: "Owner" }],
   };
 }

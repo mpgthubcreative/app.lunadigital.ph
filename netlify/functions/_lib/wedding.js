@@ -28,6 +28,7 @@ import { EXPENSE_METHODS } from "../../../shared/expenses.js";
 import { businessDate, isDayId } from "../../../shared/metrics.js";
 import { prepareExpenseCreate } from "./expenses.js";
 import { prepareNotifications } from "./notifications.js";
+import { meterActivity } from "./metering.js";
 
 const TX_OPTIONS = { maxAttempts: 10 };
 const MAX_HISTORY = 200;
@@ -342,6 +343,7 @@ async function markPaidOnce({ db, tenant, FieldValue, business, workspace, payme
       },
     });
     plan.commit({ FieldValue });
+    meterActivity(tx, { tenant, FieldValue, timezone: business.timezone, now, counts: { supplierPaymentsPaid: 1 } });
     tx.update(pRef, {
       status: "paid",
       expenseId,
@@ -430,7 +432,7 @@ export async function setTaskStatus({ db, tenant, FieldValue, business, taskId, 
 const guestTotalsRef = (tenant) => tenant.doc("guestTotals", TOTALS_DOC_ID);
 const guestRef = (tenant, id) => ref(tenant, "guests", id, "guest");
 
-export async function createGuest({ db, tenant, FieldValue, input, actor }) {
+export async function createGuest({ db, tenant, FieldValue, business = null, input, actor, now = new Date() }) {
   const data = validateGuestInput(input);
   for (const k of ["name", "side", "partySize"]) if (data[k] === undefined) throw new WeddingError("invalid-input", `${k} is required`);
   return db.runTransaction(async (tx) => {
@@ -440,6 +442,7 @@ export async function createGuest({ db, tenant, FieldValue, input, actor }) {
     const g = { name: data.name, nameLower: lower(data.name), group: data.group ?? null, side: data.side, contact: data.contact ?? null, partySize: data.partySize, invitationSent: data.invitationSent ?? null, invited: Boolean(data.invitationSent), rsvp: "awaiting", confirmed: 0, rsvpDate: null };
     tx.create(r, { schemaVersion: WEDDING_SCHEMA_VERSION, ...g, notes: data.notes ?? null, history: [entry(actor, `Added · party of ${g.partySize}`)], revision: 1, createdBy: who(actor), createdAt: stamp, updatedBy: who(actor), updatedAt: stamp });
     tx.set(guestTotalsRef(tenant), { schemaVersion: WEDDING_SCHEMA_VERSION, ...incTotals(FieldValue, guestDelta(null, g)), updatedAt: stamp }, { merge: true });
+    meterActivity(tx, { tenant, FieldValue, timezone: business?.timezone ?? "Asia/Manila", now, counts: { guestsAdded: 1 } });
     return { guestId: r.id };
   }, TX_OPTIONS);
 }

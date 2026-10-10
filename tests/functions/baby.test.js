@@ -10,7 +10,7 @@ import { createScheduleHandler } from "../../netlify/functions/schedule.js";
 import { createExpensesHandler } from "../../netlify/functions/expenses.js";
 import { createExportsHandler } from "../../netlify/functions/exports.js";
 import { createBusiness, addMember, ensureAuthUser } from "../../netlify/functions/_lib/provisioning.js";
-import { buildWorld, request } from "../helpers/tenants.js";
+import { buildWorld, request, clearInboxes } from "../helpers/tenants.js";
 import { notificationId } from "../../shared/notifications.js";
 import { budgetSummary, budgetLines } from "../../shared/baby.js";
 import { readXlsx } from "../../shared/xlsx.js";
@@ -41,6 +41,7 @@ beforeEach(async () => {
   await add("nopay", B, "manager", { permissionOverrides: { revoke: ["expenses.create"] } });
   await add("other", B2, "owner");
   await add("home", "biz-home", "owner");
+  clearInboxes(world.db);
 });
 
 const deps = () => ({ getAdmin: async () => world, now: () => clock });
@@ -393,5 +394,29 @@ describe("Excel downloads (Export Core)", () => {
     }
     expect((await download(u.camille, "expenses")).status).toBe(403);
     expect((await download(u.yaya, "babyExpenses")).status).toBe(403);
+  });
+});
+
+describe("Phase 18 usage metering (meter only, never enforced)", () => {
+  const usage = () => docAt("usage/2026-10") || {};
+  it("Mark paid counts ONE scheduled payment paid and ONE expense created (business month, timezone kept); a retry or second click counts nothing more", async () => {
+    const c = await scenarioBudget();
+    const r0 = await api("schedule", u.camille, { action: "create", payment: { description: "Hospital deposit", category: c.medical, amount: 2000000, dueDate: "2026-12-15" } });
+    const before = { exp: usage().expensesCreated ?? 0, paid: usage().scheduledPaymentsPaid ?? 0 };
+    const first = await api("schedule", u.camille, { action: "markPaid", scheduleId: r0.body.scheduleId, payment: { method: "cash" } });
+    expect(first.status).toBe(200);
+    await api("schedule", u.paolo, { action: "markPaid", scheduleId: r0.body.scheduleId, payment: { method: "cash" } });
+    expect(usage()).toMatchObject({ period: "2026-10", timezone: "Asia/Manila", scheduledPaymentsPaid: before.paid + 1, expensesCreated: before.exp + 1 });
+    expect(usage().timezones).toEqual(["Asia/Manila"]);
+  });
+
+  it("removing an expense doesn't decrement expensesCreated (it measures activity, not records kept)", async () => {
+    const c = await scenarioBudget();
+    const e = await expense({ category: c.medical, amount: 1000, payee: "Clinic" });
+    const n = usage().expensesCreated;
+    expect(n).toBeGreaterThanOrEqual(1);
+    const r = await api("expenses", u.camille, { action: "remove", expenseId: e, reason: "entered twice" });
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(usage().expensesCreated).toBe(n);
   });
 });

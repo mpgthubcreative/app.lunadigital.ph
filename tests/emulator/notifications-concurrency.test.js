@@ -43,6 +43,9 @@ async function world() {
   run += 1;
   const id = `ntfc-${Date.now().toString(36)}-${run}`;
   await prov.createBusiness({ db, admin, name: `Notif ${run}`, planId: "growth", workspaceTemplateId: "distributor", businessId: id });
+  // Growth allows 5 users: 4 members would be the 80% usage warning
+  // (Phase 18), which isn't what these inbox assertions are about.
+  await prov.setLimitOverride({ db, admin, businessId: id, limitKey: "users", value: 100, actor: "test", reason: "room for test members" });
   const uids = {};
   for (const [key, role] of [["owner", "owner"], ["manager", "manager"], ["manager2", "manager"], ["staff", "staff"]]) {
     uids[key] = `${key}-${id}`;

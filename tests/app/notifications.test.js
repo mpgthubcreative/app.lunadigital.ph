@@ -59,9 +59,9 @@ describe("view helpers", () => {
   });
 
   it("categories follow what the user can receive", () => {
-    expect(myCategories(session("owner")).sort()).toEqual(["inventory", "orders", "payments"]);
+    expect(myCategories(session("owner")).sort()).toEqual(["inventory", "orders", "payments", "usage"]);
     expect(myCategories(session("staff")).sort()).toEqual(["orders"]);
-    expect(myCategories(session("owner", null, { workspaceTemplateId: "bridal-expense", planId: "pro" })).sort()).toEqual(["budget", "wedding"]);
+    expect(myCategories(session("owner", null, { workspaceTemplateId: "bridal-expense", planId: "pro" })).sort()).toEqual(["budget", "usage", "wedding"]);
   });
 });
 
@@ -190,7 +190,7 @@ describe("Notifications page", () => {
     form.elements.inventory.checked = false;
     form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
     await flush();
-    expect(data.savePreferences).toHaveBeenCalledWith({ inventory: { inApp: false }, orders: { inApp: true } });
+    expect(data.savePreferences).toHaveBeenCalledWith({ inventory: { inApp: false }, orders: { inApp: true }, usage: { inApp: true } });
   });
 
   it("staff see only the categories they can receive", async () => {

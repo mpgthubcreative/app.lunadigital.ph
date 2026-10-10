@@ -24,6 +24,9 @@
 //   counters/orders-{YYYYMMDD}      next order sequence for that local day     (server only)
 //   idempotencyKeys/{key}           create-once guard                          (server only)
 //   usage/{YYYY-MM}.ordersCreated   plan limit counter (never decremented)     (server only)
+//                                   Phase 18: checked against the business's CURRENT
+//                                   effective limit read in the create transaction;
+//                                   80% / 100% warnings (./metering.js)
 
 import { applyRollup, fulfilledOrderContribution, diffRollup } from "./reports.js";
 import { readCustomerForOrder, applyCustomerStats } from "./customers.js";
@@ -48,6 +51,7 @@ import { businessDate } from "../../../shared/metrics.js";
 import { prepareMovements } from "./inventory.js";
 import { prepareNotifications } from "./notifications.js";
 import { recordDailyMetrics, adjustCurrentMetrics } from "./metrics.js";
+import { checkMonthlyLimit, prepareMonthlyAlerts, meterActivity, noteLimitReached } from "./metering.js";
 
 const TX_OPTIONS = { maxAttempts: 10 };
 
@@ -120,7 +124,6 @@ export async function createOrder({ db, tenant, FieldValue, business, entitlemen
   if (!Number.isSafeInteger(limit) || limit < 0) throw new OrderError("business-misconfigured", "This business has no valid order limit");
 
   const day = businessDate(business.timezone, now); // throws on a bad timezone
-  const month = day.slice(0, 7);
   const prefix = orderPrefixFor(business);
   const requestHash = hashRequest({ uid: actor.uid, data });
 
@@ -129,6 +132,10 @@ export async function createOrder({ db, tenant, FieldValue, business, entitlemen
     if (prior.requestHash !== requestHash) throw new OrderError("idempotency-conflict", "This request key was already used for a different order");
     return { orderId: prior.orderId, orderNumber: prior.orderNumber, replayed: true };
   };
+
+  // The limit refusal: the order isn't created or counted; the owner hears
+  // once that the limit is reached (./metering.js noteLimitReached).
+  const limitError = (code, message, details) => Object.assign(new OrderError(code, code === "order-limit-reached" ? `This month's order limit (${details.limit}) has been reached. Contact Luna to raise it.` : message), { details });
 
   try {
     return await runCreate();
@@ -139,6 +146,7 @@ export async function createOrder({ db, tenant, FieldValue, business, entitlemen
       const prior = await idemRef.get();
       if (prior.exists) return replay(prior.data());
     }
+    if (err && err.code === "order-limit-reached" && err.details) await noteLimitReached({ db, tenant, FieldValue, ...err.details });
     throw err;
   }
 
@@ -149,10 +157,7 @@ export async function createOrder({ db, tenant, FieldValue, business, entitlemen
       if (idem.exists) return replay(idem.data());
 
       const counterRef = tenant.doc("counters", `orders-${day.replace(/-/g, "")}`);
-      const usageRef = tenant.doc("usage", month);
-      const [counterSnap, usageSnap] = await Promise.all([tx.get(counterRef), tx.get(usageRef)]);
-      const used = usageSnap.exists && Number.isSafeInteger(usageSnap.data().ordersCreated) ? usageSnap.data().ordersCreated : 0;
-      if (used >= limit) throw new OrderError("order-limit-reached", `This month's order limit (${limit}) has been reached. Contact Luna to raise it.`);
+      const [counterSnap, quota] = await Promise.all([tx.get(counterRef), checkMonthlyLimit(tx, { tenant, meterId: "ordersCreated", timezone: business.timezone, now, error: limitError, entitlements })]);
 
       const seq = counterSnap.exists && Number.isSafeInteger(counterSnap.data().next) ? counterSnap.data().next : 1;
       const orderNumber = formatOrderNumber(prefix, day, seq);
@@ -215,10 +220,12 @@ export async function createOrder({ db, tenant, FieldValue, business, entitlemen
         cancellationReason: null,
       };
 
+      const alerts = await prepareMonthlyAlerts(tx, { tenant, meterId: "ordersCreated", period: quota.period, before: quota.used, after: quota.used + 1, limit: quota.limit });
       tx.create(idemRef, { orderId: ref.id, orderNumber, requestHash, uid: actor.uid, createdAt: stamp });
       tx.create(ref, order);
       tx.set(counterRef, { next: seq + 1, day, updatedAt: stamp });
-      tx.set(usageRef, { period: month, ordersCreated: FieldValue.increment(1), updatedAt: stamp }, { merge: true });
+      meterActivity(tx, { tenant, FieldValue, timezone: business.timezone, now, period: quota.period, counts: { ordersCreated: 1 } });
+      alerts.commit({ FieldValue });
       recordDailyMetrics({ tx, tenant, FieldValue, timezone: business.timezone, at: now, operational: { orderCount: 1 } });
       adjustCurrentMetrics({ tx, tenant, FieldValue, operational: { pendingFulfillment: 1, unpaidOrders: totals.total > 0 ? 1 : 0 }, financial: { receivablesOutstanding: totals.total } });
       applyCustomerStats(tx, { tenant, FieldValue, customerId: data.customerId, orders: 1, total: totals.total, balance: totals.total, lastOrder: orderNumber });

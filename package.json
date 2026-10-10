@@ -31,6 +31,7 @@
     "recompute-entitlements": "node --env-file=.env.local scripts/recompute-entitlements.js",
     "show-entitlements": "node --env-file=.env.local scripts/show-entitlements.js",
     "resync-permissions": "node --env-file=.env.local scripts/resync-permissions.js",
+    "recount-usage": "node --env-file=.env.local scripts/recount-usage.js",
     "smoke:staging": "node --env-file=.env.local scripts/smoke-session.js",
     "rebuild-report-rollups": "node --env-file=.env.local scripts/rebuild-report-rollups.js"
   },

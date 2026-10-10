@@ -13,7 +13,7 @@ import { createNotificationsHandler } from "../../netlify/functions/notification
 import { tenantDb } from "../../netlify/functions/_lib/tenant-db.js";
 import { createBusiness, addMember, ensureAuthUser, updateOverrides } from "../../netlify/functions/_lib/provisioning.js";
 import { FieldValue } from "../helpers/fake-firebase.js";
-import { buildWorld, request } from "../helpers/tenants.js";
+import { buildWorld, request, clearInboxes } from "../helpers/tenants.js";
 import { QTY_SCALE } from "../../shared/quantity.js";
 import { isEligibleRecipient, canFollowNotification, notificationId, validatePreferences, NOTIFICATION_TYPES, wantsChannel } from "../../shared/notifications.js";
 import { resolvePermissions } from "../../shared/permissions.js";
@@ -29,6 +29,7 @@ let owner;
 
 beforeEach(async () => {
   world = await buildWorld();
+  clearInboxes(world.db);
   A = tenantDb(world.db, "biz-a");
   staff = { uid: world.uids.staffa, name: "staffa", email: "staffa@t.test" };
   owner = { uid: world.uids.ownera, name: "ownera", email: "ownera@t.test" };
@@ -243,7 +244,7 @@ describe("C. order ready", () => {
   });
 
   it("there is no 'payment overdue' rule (no due dates exist)", () => {
-    expect(Object.keys(NOTIFICATION_TYPES).sort()).toEqual(["budget.threshold", "inventory.low_stock", "order.ready", "payment.awaiting_verification", "payroll.receipt_confirmed", "supplierpayment.paid"]);
+    expect(Object.keys(NOTIFICATION_TYPES).sort()).toEqual(["budget.threshold", "inventory.low_stock", "order.ready", "payment.awaiting_verification", "payroll.receipt_confirmed", "supplierpayment.paid", "usage.threshold"]);
   });
 });
 

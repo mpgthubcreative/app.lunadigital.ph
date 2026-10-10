@@ -61,6 +61,8 @@ export const TENANT_COLLECTIONS = Object.freeze({
   paymentRefs: null,
   counters: null,
   usage: null,
+  usageCurrent: null, // Phase 18: storage / users current totals
+  storageObjects: null, // Phase 18: the file-storage ledger
   auditLog: null,
   integrations: null,
   // Module approved (Phase 5) but not built: no rule, so nobody reads it.

@@ -329,6 +329,10 @@ export class FakeBucket {
   constructor() {
     this.files = new Map();
   }
+  // Like GCS bucket.getFiles({ prefix }): [[{ name, metadata: { size } }]].
+  async getFiles({ prefix = "" } = {}) {
+    return [[...this.files.entries()].filter(([name]) => name.startsWith(prefix)).map(([name, f]) => ({ name, metadata: { size: String(f.data.length), contentType: f.contentType } }))];
+  }
   file(path) {
     const files = this.files;
     return {
