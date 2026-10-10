@@ -79,7 +79,6 @@ describe("baby provider: delete vs its first expense", () => {
   it("never an expense pointing at a deleted provider", async () => {
     for (let i = 0; i < 4; i++) {
       const w = await world("baby-expense");
-      await babyLib.setBudgetTotal({ ...w.c, total: 15000000 });
       const cat = (await babyLib.createCategory({ ...w.c, input: { name: "Medical" } })).categoryId;
       const providerId = (await babyLib.createProvider({ ...w.c, input: { name: "ABC Clinic", type: "medical" } })).providerId;
       await Promise.allSettled([
