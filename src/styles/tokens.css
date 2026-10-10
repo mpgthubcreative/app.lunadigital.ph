@@ -1,5 +1,8 @@
 /* Luna design tokens — the only place raw colors, type and spacing live.
-   Components reference these variables; a rebrand is a change here only. */
+   Components reference these variables; a rebrand is a change here only.
+   Phase 18.5: workspace accents (--ws-*) are set by [data-workspace] on the
+   shell and used ONLY for progress, the selected navigation item and small
+   highlights. Status colors are universal and never change per workspace. */
 
 :root {
   /* Brand */
@@ -11,31 +14,46 @@
   --luna-primary-soft: #eceffd;
   --luna-moon: #f2c94c;         /* accent (brand mark, highlights) */
 
+  /* Workspace accent (Distributor = brand indigo by default) */
+  --ws-accent: #4255d4;
+  --ws-accent-strong: #3243b8;  /* text on the soft tint (>= 4.5:1) */
+  --ws-accent-soft: #eceffd;
+
   /* Surfaces */
   --bg: #f4f6fa;
   --surface: #ffffff;
   --surface-muted: #f8f9fc;
-  --border: #e3e7ef;
+  --surface-sunken: #eff2f7;
+  --border: #e6e9f0;
   --border-strong: #cfd5e2;
 
   /* Text */
   --text: var(--luna-ink);
   --text-muted: #5b6478;
-  --text-faint: #8a93a6;
+  --text-faint: #7d879b;        /* AA on white for 12px+ meta text */
   --text-on-dark: #e8ecf6;
   --text-on-dark-muted: #9aa5c0;
 
-  /* Status */
+  /* Status (universal) */
   --success: #1f7a4d;
   --success-bg: #e3f4ea;
   --warning: #8a5a00;
   --warning-bg: #fdf1d6;
+  --warning-bar: #d9961c;
   --danger: #b42318;
   --danger-bg: #fde8e6;
+  --danger-bar: #d9473b;
   --info: #2554a5;
   --info-bg: #e5edfb;
   --neutral: #4b5565;
   --neutral-bg: #eef0f4;
+
+  /* Charts (Reports): at most three hues per chart */
+  --chart-1: #4255d4;           /* sales / primary series */
+  --chart-cost: #b3bbcc;        /* COGS */
+  --chart-profit: #1f9d63;      /* gross profit */
+  --chart-expense: #d98b2b;     /* operating expenses */
+  --chart-grid: #e6e9f0;
 
   /* Type */
   --font-sans: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
@@ -61,15 +79,34 @@
   --radius-sm: 6px;
   --radius: 10px;
   --radius-lg: 14px;
-  --shadow-sm: 0 1px 2px rgba(16, 24, 40, 0.06);
+  --shadow-sm: 0 1px 2px rgba(16, 24, 40, 0.05);
   --shadow: 0 1px 3px rgba(16, 24, 40, 0.08), 0 1px 2px rgba(16, 24, 40, 0.04);
   --shadow-lg: 0 12px 32px rgba(16, 24, 40, 0.16);
 
   /* Layout */
-  --sidebar-width: 248px;
+  --sidebar-width: 240px;
   --sidebar-rail: 72px;
   --topbar-height: 60px;
-  --content-max: 1280px;
+  --tabbar-height: 62px;
+  --content-max: 1240px;
+  --touch: 44px;                /* minimum touch target on phones */
 
   --focus-ring: 0 0 0 3px rgba(66, 85, 212, 0.35);
+}
+
+/* Workspace accents (quiet; text uses the -strong shade). */
+[data-workspace="household-payroll"] {
+  --ws-accent: #5b8a68;         /* sage */
+  --ws-accent-strong: #3f6b4c;
+  --ws-accent-soft: #e9f2eb;
+}
+[data-workspace="baby-expense"] {
+  --ws-accent: #3a9a98;         /* soft teal */
+  --ws-accent-strong: #23716f;
+  --ws-accent-soft: #e3f3f2;
+}
+[data-workspace="bridal-expense"] {
+  --ws-accent: #a8687f;         /* dusty rose / mauve */
+  --ws-accent-strong: #864c62;
+  --ws-accent-soft: #f6eaef;
 }

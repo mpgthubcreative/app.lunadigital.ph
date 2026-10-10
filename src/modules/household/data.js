@@ -13,7 +13,7 @@ export const listStaff = (businessId, filters = {}, { cursor = null, pageSize = 
 export const activeStaff = async (businessId) => (await listStaff(businessId, { status: "active" }, { pageSize: 100 })).rows;
 export const listAttendance = (businessId, filters = {}, { cursor = null, pageSize = 31 } = {}) => runListQuery(businessId, "attendance", attendanceQuery(filters), { cursor, pageSize });
 export const listPayrolls = (businessId, filters = {}, { cursor = null } = {}) => runListQuery(businessId, "payrolls", payrollsQuery(filters), { cursor, pageSize: 25 });
-export const listAdvances = (businessId, filters = {}, { cursor = null } = {}) => runListQuery(businessId, "advances", advancesQuery(filters), { cursor, pageSize: 25 });
+export const listAdvances = (businessId, filters = {}, { cursor = null, pageSize = 25 } = {}) => runListQuery(businessId, "advances", advancesQuery(filters), { cursor, pageSize });
 
 export async function getPayroll(businessId, payrollId) {
   const { db, lite } = await getFirestoreLite();

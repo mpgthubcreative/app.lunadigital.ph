@@ -234,22 +234,26 @@ describe("Providers", () => {
   });
 });
 
-describe("Baby Dashboard: selected-period spending vs the current budget", () => {
-  it("period cards from spendingMetrics; 'Current budget · as of now' from budgets/current; lists", async () => {
+describe("Baby Dashboard (Phase 18.5): where are we with the budget, and what is coming up?", () => {
+  it("Total / Spent / Remaining + a spent-vs-scheduled bar (Upcoming ≠ Spent); this month from spendingMetrics; category bars; lists", async () => {
     const fetchDocuments = vi.fn(async (_b, docs) => Object.fromEntries(docs.map((d) => [d.source, { status: "ok", data: d.source === "spending-day" ? { spent: 1500000, count: 3 } : BUDGET }])));
     const fetchLists = vi.fn(async () => ({ spendingByCategory: { status: "ok", rows: [{ id: "a", name: "Medical", spent: 1000000, budget: 6000000, remaining: 5000000 }] }, upcomingPayments: { status: "ok", rows: [DEPOSIT] }, recentExpenses: { status: "ok", rows: [EXP] } }));
     mountDashboard(container, baby(), { fetchDocuments, fetchLists, now: NOW(), toast: () => {} });
     await flush();
     const collections = fetchDocuments.mock.calls[0][1].map((d) => d.collection).sort();
     expect(collections).toEqual(["budgets", "spendingMetrics"]);
-    expect(container.querySelector('[data-section="period"] .section-title').textContent).toMatch(/^Spending in the selected period · Today/);
-    expect(container.querySelector('[data-section="current"] .section-title').textContent).toBe("Current budget · as of now");
-    const val = (id) => container.querySelector(`[data-widget="${id}"] .stat-value`).textContent;
-    expect(val("babySpent")).toMatch(/15,000/);
+    // Budget workspaces open on This month.
+    expect(fetchDocuments.mock.calls[0][1].find((d) => d.source === "spending-day").ids[0]).toBe("2026-10-01");
+    const val = (id) => container.querySelector(`[data-widget="${id}"] .kpi-value`).textContent;
+    expect(val("budgetTotal")).toMatch(/150,000/);
+    expect(val("budgetSpent")).toMatch(/22,000/);
     expect(val("budgetRemaining")).toMatch(/128,000/);
-    expect(val("budgetUpcoming")).toMatch(/20,000/);
-    expect(container.querySelector('[data-widget="spendingByCategory"]').textContent).toMatch(/Medical · ₱10,000.00 spent/);
-    expect(container.querySelector('[data-widget="upcomingPayments"]').textContent).toMatch(/Hospital deposit · ₱20,000.00/);
+    const budget = container.querySelector('[data-section="budget"]').textContent;
+    expect(budget).toMatch(/Scheduled, not paid yet: ₱20,000.00/);
+    expect(budget).toMatch(/This month: ₱15,000.00/);
+    expect(container.querySelector('[data-section="categories"] [data-row="a"]').textContent).toMatch(/Medical.*₱10,000.00 of ₱60,000.00/s);
+    expect(container.querySelector('[data-section="upcoming"]').textContent).toMatch(/Hospital deposit.*₱20,000.00/s);
+    expect(container.querySelector('[data-section="recent"]').textContent).toMatch(/Baby Company/);
     expect(container.textContent).not.toMatch(/Gross|COGS|Profit|Sales/);
   });
 });

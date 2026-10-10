@@ -27,13 +27,13 @@ describe("dashboard.financials separates profitability from operations", () => {
     expect(ids(widgets)).toEqual(expect.arrayContaining(["ordersToday", "pendingFulfillment", "lowStock", "unpaidOrders"]));
   });
 
-  it("owner sees sales, gross profit, expenses and estimated operating profit", () => {
+  it("owner sees sales and the unpaid balance on the Dashboard (Phase 18.5: profitability is in Reports)", () => {
     const widgets = resolveDashboard({ entitlements: growth(), permissions: resolvePermissions("owner") });
-    expect(ids(financial(widgets))).toEqual(["netSales", "cogs", "grossProfit", "operatingExpenses", "estimatedOperatingProfit", "paymentsReceived", "receivablesOutstanding"]);
+    expect(ids(financial(widgets))).toEqual(["netSales", "receivablesOutstanding"]);
   });
 
   it("a staff member granted dashboard.financials sees them; a manager with it revoked does not", () => {
-    expect(financial(resolveDashboard({ entitlements: growth(), permissions: resolvePermissions("staff", { grant: ["dashboard.financials"] }) })).length).toBe(7);
+    expect(financial(resolveDashboard({ entitlements: growth(), permissions: resolvePermissions("staff", { grant: ["dashboard.financials"] }) })).length).toBe(2);
     expect(financial(resolveDashboard({ entitlements: growth(), permissions: resolvePermissions("manager", { revoke: ["dashboard.financials"] }) }))).toEqual([]);
   });
 
@@ -44,12 +44,13 @@ describe("dashboard.financials separates profitability from operations", () => {
   it("widgets disappear when a module they depend on isn't entitled", () => {
     const owner = resolvePermissions("owner");
     const noExpenses = ids(resolveDashboard({ entitlements: growth({ modules: { expenses: false } }), permissions: owner }));
-    expect(noExpenses).not.toContain("operatingExpenses");
-    expect(noExpenses).not.toContain("estimatedOperatingProfit");
     expect(noExpenses).toContain("netSales");
     const noInventory = ids(resolveDashboard({ entitlements: growth({ modules: { inventory: false } }), permissions: owner }));
-    expect(noInventory).not.toContain("grossProfit");
+    expect(noInventory).not.toContain("inventorySummary");
     expect(noInventory).not.toContain("lowStock");
+    const noPayments = ids(resolveDashboard({ entitlements: growth({ modules: { payments: false } }), permissions: owner }));
+    expect(noPayments).not.toContain("paymentsToVerify");
+    expect(noPayments).not.toContain("receivablesOutstanding");
   });
 
   it("a broken snapshot shows nothing", () => {
@@ -95,7 +96,7 @@ describe("dashboardDocuments: a fixed, tiny read set", () => {
 
   it("list widgets issue no query until their data exists (Phase 7: recent orders + low stock; Phase 14: payroll lists)", () => {
     const ready = DASHBOARD_WIDGETS.filter((x) => x.kind === "list" && x.ready).map((w) => w.id);
-    expect(ready).toEqual(["recentOrders", "lowStockItems", "attendanceToday", "payrollsToRelease", "awaitingReceipt", "advancesNotPaid", "spendingByCategory", "upcomingPayments", "recentExpenses", "upcomingSupplierPayments", "tasksDueSoon", "recentWeddingExpenses", "rsvpSummary"]);
+    expect(ready).toEqual(["recentOrders", "lowStockItems", "attendanceToday", "payrollsToRelease", "awaitingReceipt", "advancesNotPaid", "inventorySummary", "advancesToDeduct", "supplierSummary", "spendingByCategory", "upcomingPayments", "recentExpenses", "upcomingSupplierPayments", "tasksDueSoon", "recentWeddingExpenses", "rsvpSummary"]);
     // Spending by category reads the budget's lines: bounded by MAX_CATEGORIES (50).
     for (const w of DASHBOARD_WIDGETS.filter((x) => x.kind === "list" && x.query)) expect(w.query.limit).toBeLessThanOrEqual(w.id === "spendingByCategory" ? 50 : 10);
   });

@@ -1,11 +1,11 @@
-/* App shell layout.
-   Desktop (≥1100px): full sidebar — staff operations.
-   Tablet (720–1099px): icon rail sidebar — order entry at the counter.
-   Mobile (<720px): top bar + slide-in drawer — owners monitoring. */
+/* App shell layout (Phase 18.5).
+   Desktop (≥1100px): sidebar grouped by purpose (Overview / Work / Analyze / Manage).
+   Tablet (720–1099px): icon rail.
+   Phone (<720px): top bar + bottom tab bar (Dashboard + 3 + More sheet). */
 
 .shell {
   display: grid;
-  grid-template-columns: var(--sidebar-width) 1fr;
+  grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
   min-height: 100vh;
 }
 
@@ -49,7 +49,7 @@
 }
 
 .business-switch {
-  margin: 0 var(--space-3) var(--space-3);
+  margin: 0 var(--space-3) var(--space-4);
   padding: var(--space-3);
   border-radius: var(--radius);
   background: var(--luna-night-2);
@@ -71,8 +71,23 @@
 .nav {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--space-4);
   padding: 0 var(--space-3);
+}
+
+.nav-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.nav-group-label {
+  padding: 0 var(--space-3) var(--space-1);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #7383a6;
 }
 
 .nav-link {
@@ -80,7 +95,7 @@
   align-items: center;
   gap: var(--space-3);
   padding: var(--space-2) var(--space-3);
-  min-height: 40px;
+  min-height: 38px;
   border-radius: var(--radius-sm);
   color: var(--text-on-dark-muted);
   font-weight: 500;
@@ -88,8 +103,8 @@
 
 .nav-link svg {
   flex: none;
-  width: 20px;
-  height: 20px;
+  width: 19px;
+  height: 19px;
 }
 
 .nav-link:hover {
@@ -100,8 +115,12 @@
 .nav-link.is-active {
   background: var(--luna-night-2);
   color: #fff;
-  box-shadow: inset 3px 0 0 var(--luna-moon);
+  box-shadow: inset 3px 0 0 var(--ws-accent-on-dark, var(--luna-moon));
 }
+
+[data-workspace="household-payroll"] { --ws-accent-on-dark: #8fc49c; }
+[data-workspace="baby-expense"] { --ws-accent-on-dark: #7fd0cd; }
+[data-workspace="bridal-expense"] { --ws-accent-on-dark: #e3a6bd; }
 
 .sidebar-footer {
   margin-top: auto;
@@ -127,29 +146,18 @@
   gap: var(--space-3);
   height: var(--topbar-height);
   padding: 0 var(--space-6);
-  background: var(--surface);
+  background: rgba(255, 255, 255, 0.94);
+  backdrop-filter: saturate(1.4) blur(8px);
   border-bottom: 1px solid var(--border);
-}
-
-.menu-btn {
-  display: none;
-  align-items: center;
-  justify-content: center;
-  width: 40px;
-  height: 40px;
-  border: 0;
-  border-radius: var(--radius-sm);
-  background: transparent;
-}
-
-.menu-btn svg {
-  width: 22px;
-  height: 22px;
 }
 
 .topbar-title {
   font-weight: 600;
   font-size: var(--text-md);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .topbar-spacer {
@@ -159,7 +167,28 @@
 .account {
   display: flex;
   align-items: center;
+}
+
+.account-btn {
+  display: flex;
+  align-items: center;
   gap: var(--space-3);
+  padding: var(--space-1) var(--space-1) var(--space-1) var(--space-3);
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: none;
+  text-align: right;
+}
+
+.account-btn:hover {
+  background: var(--surface-muted);
+  border-color: var(--border);
+}
+
+.account-text {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.25;
 }
 
 .account-name {
@@ -175,11 +204,11 @@
 .avatar {
   display: grid;
   place-items: center;
-  width: 36px;
-  height: 36px;
+  width: 34px;
+  height: 34px;
   border-radius: 50%;
-  background: var(--luna-primary-soft);
-  color: var(--luna-primary);
+  background: var(--ws-accent-soft);
+  color: var(--ws-accent-strong);
   font-weight: 700;
   font-size: var(--text-sm);
 }
@@ -192,10 +221,18 @@
   width: 100%;
   max-width: var(--content-max);
   margin: 0 auto;
-  padding: var(--space-6);
+  padding: var(--space-6) var(--space-6) var(--space-10);
 }
 
-.scrim {
+.content:focus {
+  outline: none;
+  box-shadow: none;
+}
+
+/* Phone-only pieces are hidden on larger screens. */
+.tabbar,
+.sheet,
+.sheet-backdrop {
   display: none;
 }
 
@@ -203,14 +240,24 @@
 
 @media (max-width: 1099px) {
   .shell {
-    grid-template-columns: var(--sidebar-rail) 1fr;
+    grid-template-columns: var(--sidebar-rail) minmax(0, 1fr);
   }
 
   .brand-text,
   .business-switch,
   .nav-label,
+  .nav-group-label,
   .sidebar-footer {
     display: none;
+  }
+
+  .nav {
+    gap: var(--space-2);
+  }
+
+  .nav-group + .nav-group {
+    padding-top: var(--space-2);
+    border-top: 1px solid var(--luna-night-2);
   }
 
   .brand {
@@ -223,68 +270,173 @@
     padding: var(--space-3);
     min-height: 48px; /* comfortable touch target */
   }
-}
-
-/* ---------- Mobile: drawer ---------- */
-
-@media (max-width: 719px) {
-  .shell {
-    grid-template-columns: 1fr;
-  }
-
-  .sidebar {
-    position: fixed;
-    inset: 0 auto 0 0;
-    z-index: 40;
-    width: min(var(--sidebar-width), 85vw);
-    transform: translateX(-100%);
-    transition: transform 0.2s ease;
-  }
-
-  .shell.nav-open .sidebar {
-    transform: none;
-  }
-
-  .shell.nav-open .scrim {
-    display: block;
-    position: fixed;
-    inset: 0;
-    z-index: 30;
-    background: rgba(16, 24, 40, 0.45);
-  }
-
-  /* Drawer shows full labels again */
-  .brand-text,
-  .business-switch,
-  .nav-label,
-  .sidebar-footer {
-    display: revert;
-  }
-
-  .brand {
-    justify-content: flex-start;
-    padding: 0 var(--space-5);
-  }
-
-  .nav-link {
-    justify-content: flex-start;
-    padding: var(--space-3);
-  }
-
-  .menu-btn {
-    display: inline-flex;
-  }
-
-  .topbar {
-    padding: 0 var(--space-3);
-  }
 
   .account-text {
     display: none;
   }
 
   .content {
-    padding: var(--space-4);
+    padding: var(--space-5) var(--space-5) var(--space-8);
+  }
+}
+
+/* ---------- Phone: top bar + bottom tabs ---------- */
+
+@media (max-width: 719px) {
+  .shell {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .sidebar {
+    display: none;
+  }
+
+  .topbar {
+    padding: 0 var(--space-4);
+  }
+
+  .content {
+    padding: var(--space-4) var(--space-4) calc(var(--tabbar-height) + var(--space-6) + env(safe-area-inset-bottom, 0px));
+  }
+
+  .banner {
+    padding: var(--space-2) var(--space-4);
+  }
+
+  .tabbar {
+    position: fixed;
+    inset: auto 0 0 0;
+    z-index: 30;
+    display: grid;
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(0, 1fr);
+    min-height: var(--tabbar-height);
+    padding: var(--space-1) var(--space-1) calc(var(--space-1) + env(safe-area-inset-bottom, 0px));
+    background: rgba(255, 255, 255, 0.97);
+    backdrop-filter: blur(8px);
+    border-top: 1px solid var(--border);
+  }
+
+  .tab-link {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 3px;
+    min-height: var(--touch);
+    min-width: 0;
+    padding: var(--space-1);
+    border: 0;
+    border-radius: var(--radius);
+    background: none;
+    color: var(--text-faint);
+    font-size: 0.6875rem;
+    font-weight: 600;
+  }
+
+  .tab-link span {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .tab-link svg {
+    width: 22px;
+    height: 22px;
+  }
+
+  .tab-link.is-active {
+    color: var(--ws-accent-strong);
+  }
+
+  .tab-link.is-active svg {
+    stroke-width: 2.2;
+  }
+
+  .sheet-backdrop:not([hidden]) {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 40;
+    background: rgba(16, 24, 40, 0.4);
+  }
+
+  .sheet:not([hidden]) {
+    position: fixed;
+    inset: auto 0 0 0;
+    z-index: 41;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    max-height: 80vh;
+    overflow-y: auto;
+    padding: var(--space-2) var(--space-4) calc(var(--space-5) + env(safe-area-inset-bottom, 0px));
+    background: var(--surface);
+    border-radius: 18px 18px 0 0;
+    box-shadow: var(--shadow-lg);
+  }
+
+  .sheet-handle {
+    width: 40px;
+    height: 4px;
+    margin: 0 auto var(--space-2);
+    border-radius: 2px;
+    background: var(--border-strong);
+  }
+
+  .sheet-head {
+    display: flex;
+    flex-direction: column;
+    padding: var(--space-1) var(--space-2) var(--space-2);
+  }
+
+  .sheet-head span {
+    font-size: var(--text-sm);
+    color: var(--text-muted);
+  }
+
+  .sheet .business-select {
+    margin: 0 0 var(--space-2);
+    border-color: var(--border-strong);
+    background: var(--surface);
+    color: var(--text);
+    min-height: var(--touch);
+  }
+
+  .sheet-links {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--space-2);
+  }
+
+  .sheet-link {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    min-height: 52px;
+    padding: var(--space-3);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface-muted);
+    color: var(--text);
+    font-weight: 600;
+    font-size: var(--text-sm);
+    text-align: left;
+  }
+
+  .sheet-link svg {
+    flex: none;
+    width: 20px;
+    height: 20px;
+    color: var(--ws-accent-strong);
+  }
+
+  .sheet-signout {
+    margin-top: var(--space-2);
+    justify-content: center;
+    color: var(--danger);
+    background: var(--surface);
   }
 }
 

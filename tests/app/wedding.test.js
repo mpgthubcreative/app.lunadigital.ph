@@ -180,8 +180,8 @@ describe("Guests & RSVP", () => {
   });
 });
 
-describe("Wedding Dashboard: selected-period spending vs the wedding plan (as of now)", () => {
-  it("period cards from spendingMetrics; plan cards from budgets / taskTotals / guestTotals / a live overdue count", async () => {
+describe("Wedding Dashboard (Phase 18.5): are we on track?", () => {
+  it("budget hero from budgets; tasks from taskTotals + a live overdue count; RSVP from guestTotals; attention items", async () => {
     const fetchDocuments = vi.fn(async (_b, docs) =>
       Object.fromEntries(
         docs.map((d) => [
@@ -198,15 +198,14 @@ describe("Wedding Dashboard: selected-period spending vs the wedding plan (as of
     await flush();
     const plan = fetchDocuments.mock.calls[0][1];
     expect(plan.find((d) => d.count)).toMatchObject({ source: "count:weddingOverdueTasks", collection: "weddingTasks", where: [["open", "==", true], ["dueDate", "<", "2026-10-16"]] });
-    expect(container.querySelector('[data-section="current"] .section-title').textContent).toBe("Wedding plan · as of now");
-    const val = (id) => container.querySelector(`[data-widget="${id}"] .stat-value`).textContent;
-    expect(val("weddingSupplierBalance")).toMatch(/60,000/);
+    const val = (id) => container.querySelector(`[data-widget="${id}"] .kpi-value`).textContent;
     expect(val("weddingRemaining")).toMatch(/480,000/);
-    expect(val("weddingOpenTasks")).toBe("7");
-    expect(val("weddingOverdueTasks")).toBe("2");
-    expect(val("weddingConfirmedGuests")).toBe("3");
-    expect(val("weddingAwaitingRsvp")).toBe("1");
-    expect(container.querySelector('[data-widget="rsvpSummary"]').textContent).toMatch(/Attending: 3 people/);
+    expect(container.querySelector('[data-role="supplier-balance"]').textContent).toMatch(/60,000/);
+    expect(container.querySelector('[data-section="tasks"] [data-count="open"] b').textContent).toBe("7");
+    expect(container.querySelector('[data-section="tasks"] [data-count="overdue"] b').textContent).toBe("2");
+    expect(container.querySelector('[data-section="rsvp"]').textContent).toMatch(/3 of 9 invited seats confirmed/);
+    expect(container.querySelector('[data-section="rsvp"]').textContent).toContain("4 awaiting (1 invitation)");
+    expect(container.querySelector('[data-attention="rsvp"]')).not.toBeNull();
     expect(container.textContent).not.toMatch(/Gross|COGS|Profit|Sales|Baby/);
   });
 });

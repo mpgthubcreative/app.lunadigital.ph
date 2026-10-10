@@ -436,7 +436,8 @@ describe("navigation", () => {
   });
 
   it("non-Distributor workspaces get no Distributor navigation, and their own names", () => {
-    expect(nav("bridal-expense", "owner")).toEqual(["/ Wedding Dashboard", "/budget Wedding Budget", "/expenses Wedding Expenses", "/wedding-suppliers Wedding Suppliers", "/supplier-payments Supplier Payments", "/wedding-tasks Wedding Tasks", "/guests Guests & RSVP", "/users Users", "/settings Settings"]);
+    // Phase 18.5: the wedding story order (Tasks → Guests → Suppliers → Payments → Budget / Expenses).
+    expect(nav("bridal-expense", "owner")).toEqual(["/ Wedding Dashboard", "/wedding-tasks Wedding Tasks", "/guests Guests & RSVP", "/wedding-suppliers Wedding Suppliers", "/supplier-payments Supplier Payments", "/budget Wedding Budget", "/expenses Wedding Expenses", "/users Users", "/settings Settings"]);
     expect(nav("baby-expense", "owner")).toEqual(["/ Baby Dashboard", "/budget Budget & Categories", "/expenses Baby Expenses", "/payment-schedule Payment Schedule", "/providers Providers / Vendors", "/users Users", "/settings Settings"]);
     expect(nav("household-payroll", "owner")).toEqual(["/ Payroll Dashboard", "/attendance Attendance", "/payroll Payroll", "/advances Advances", "/household-staff Household Staff", "/users Users", "/settings Settings"]);
   });
@@ -454,18 +455,19 @@ describe("navigation", () => {
 describe("dashboard", () => {
   const ids = (t, role = "owner") => resolveDashboard(access(t, role)).map((w) => w.id);
 
-  it("Distributor: selected-period widgets first, then current operations (Phase 12.5 adds COGS)", () => {
-    expect(ids("distributor")).toEqual(["netSales", "cogs", "grossProfit", "operatingExpenses", "estimatedOperatingProfit", "paymentsReceived", "ordersToday", "receivablesOutstanding", "unpaidOrders", "pendingFulfillment", "lowStock", "recentOrders", "lowStockItems", "recentActivity"]);
-    expect(ids("distributor", "staff")).toEqual(["ordersToday", "unpaidOrders", "pendingFulfillment", "lowStock", "recentOrders", "lowStockItems", "recentActivity"]);
+  it("Distributor (Phase 18.5): the store pulse; profitability (COGS, gross / operating profit) lives in Reports only", () => {
+    expect(ids("distributor")).toEqual(["netSales", "ordersToday", "fulfilledOrders", "receivablesOutstanding", "unpaidOrders", "pendingFulfillment", "lowStock", "paymentsToVerify", "ordersPending", "ordersPreparing", "ordersReady", "inventorySummary", "recentOrders", "lowStockItems"]);
+    for (const id of ["cogs", "grossProfit", "operatingExpenses", "estimatedOperatingProfit", "paymentsReceived"]) expect(ids("distributor")).not.toContain(id);
+    expect(ids("distributor", "staff")).toEqual(["ordersToday", "fulfilledOrders", "unpaidOrders", "pendingFulfillment", "lowStock", "paymentsToVerify", "ordersPending", "ordersPreparing", "ordersReady", "inventorySummary", "recentOrders", "lowStockItems"]);
   });
 
-  it("Household Payroll: only its own list widgets, never a metric document", () => {
-    expect(ids("household-payroll")).toEqual(["attendanceToday", "payrollsToRelease", "awaitingReceipt", "advancesNotPaid"]);
+  it("Household Payroll: its own lists + a live active-staff count, never a metric document", () => {
+    expect(ids("household-payroll")).toEqual(["activeStaff", "attendanceToday", "payrollsToRelease", "awaitingReceipt", "advancesNotPaid", "advancesToDeduct"]);
     expect(dashboardDocuments(resolveDashboard(access("household-payroll")), "2026-10-08")).toEqual([]);
   });
 
   it("Bridal (Phase 16): only Wedding widgets; reads spendingMetrics, budgets, taskTotals, guestTotals (+ a live overdue count), never a Distributor or Baby widget", () => {
-    expect(ids("bridal-expense")).toEqual(["weddingSpent", "weddingSupplierPaid", "weddingExpenseCount", "weddingBudgetTotal", "weddingSpentNow", "weddingRemaining", "weddingSupplierBalance", "weddingUpcoming", "weddingOpenTasks", "weddingOverdueTasks", "weddingConfirmedGuests", "weddingAwaitingRsvp", "upcomingSupplierPayments", "tasksDueSoon", "recentWeddingExpenses", "rsvpSummary"]);
+    expect(ids("bridal-expense")).toEqual(["weddingSpent", "weddingSupplierPaid", "weddingExpenseCount", "weddingBudgetTotal", "weddingSpentNow", "weddingRemaining", "weddingSupplierBalance", "weddingUpcoming", "weddingOpenTasks", "weddingOverdueTasks", "weddingConfirmedGuests", "weddingAwaitingRsvp", "upcomingSupplierPayments", "tasksDueSoon", "recentWeddingExpenses", "rsvpSummary", "supplierSummary"]);
     const cols = dashboardDocuments(resolveDashboard(access("bridal-expense")), "2026-10-08").map((d) => d.collection);
     expect([...new Set(cols)].sort()).toEqual(["budgets", "guestTotals", "spendingMetrics", "taskTotals"]);
     expect(dashboardEmptyState(ent("bridal-expense")).title).toMatch(/ready/);

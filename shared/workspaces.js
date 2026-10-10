@@ -14,6 +14,8 @@
 //                  ∩ (plan default, or an operator add-on/disable
 //                  override) — see computeEntitlements.
 //   navigation     module ids in display order
+//   mobileTabs     (Phase 18.5) up to three navigation ids for the phone tab
+//                  bar, after Dashboard (display only)
 //   dashboard      widget ids (shared/dashboard.js) in display order, and
 //                  the empty state shown when none apply yet
 //   labels         plain-text display names by module id; ids, permission
@@ -77,10 +79,15 @@ const TEMPLATES = [
     description: "Orders, payments, products and inventory for distributors and wholesalers.",
     status: "live",
     modules: [...CORE, "orders", "payments", "inventory", "customers", "expenses", "reports", "imports"],
+    // Phase 18.5: navigation follows the daily story (Monitor → Work →
+    // Analyze → Manage); phones show Dashboard + mobileTabs + More.
     navigation: ["dashboard", "orders", "payments", "inventory", "customers", "expenses", "reports", "imports", "users", "settings"],
+    mobileTabs: ["orders", "inventory", "payments"],
     dashboard: {
       // Selected period first, then current operations (Phase 12.5).
-      widgets: ["netSales", "cogs", "grossProfit", "operatingExpenses", "estimatedOperatingProfit", "paymentsReceived", "ordersToday", "receivablesOutstanding", "unpaidOrders", "pendingFulfillment", "lowStock", "recentOrders", "lowStockItems", "recentActivity"],
+      // Phase 18.5: the store pulse (Monitor). Profitability (COGS, gross
+      // profit, operating expenses / profit) lives in Reports only.
+      widgets: ["netSales", "ordersToday", "fulfilledOrders", "receivablesOutstanding", "unpaidOrders", "pendingFulfillment", "lowStock", "paymentsToVerify", "ordersPending", "ordersPreparing", "ordersReady", "inventorySummary", "recentOrders", "lowStockItems"],
       empty: { title: "Nothing to show yet", body: "Your dashboard fills in as your business uses Luna." },
     },
     labels: { modules: { expenses: "Operating Expenses" } },
@@ -103,8 +110,9 @@ const TEMPLATES = [
     status: "live",
     modules: [...CORE, "household", "attendance", "payroll", "advances"],
     navigation: ["dashboard", "attendance", "payroll", "advances", "household", "users", "settings"],
+    mobileTabs: ["attendance", "payroll", "advances"],
     dashboard: {
-      widgets: ["attendanceToday", "payrollsToRelease", "awaitingReceipt", "advancesNotPaid"],
+      widgets: ["activeStaff", "attendanceToday", "payrollsToRelease", "awaitingReceipt", "advancesNotPaid", "advancesToDeduct"],
       empty: { title: "Your payroll workspace is ready", body: "Add your household staff to start marking attendance." },
     },
     labels: { modules: { dashboard: "Payroll Dashboard" } },
@@ -123,6 +131,7 @@ const TEMPLATES = [
     status: "live",
     modules: [...CORE, "expenses", "budget", "schedule", "providers"],
     navigation: ["dashboard", "budget", "expenses", "schedule", "providers", "users", "settings"],
+    mobileTabs: ["expenses", "budget", "schedule"],
     dashboard: {
       // Selected period (spending), then the current budget (as of now).
       widgets: ["babySpent", "babyExpenseCount", "budgetTotal", "budgetSpent", "budgetRemaining", "budgetUpcoming", "spendingByCategory", "upcomingPayments", "recentExpenses"],
@@ -148,10 +157,13 @@ const TEMPLATES = [
     description: "A compact wedding command center: budget, suppliers, payments, tasks and guests.",
     status: "live",
     modules: [...CORE, "expenses", "budget", "vendors", "vendorpayments", "tasks", "guests"],
-    navigation: ["dashboard", "budget", "expenses", "vendors", "vendorpayments", "tasks", "guests", "users", "settings"],
+    // Phase 18.5: the wedding story is Tasks → Guests → Suppliers →
+    // Payments → Budget / Expenses ("are we on track?" first).
+    navigation: ["dashboard", "tasks", "guests", "vendors", "vendorpayments", "budget", "expenses", "users", "settings"],
+    mobileTabs: ["tasks", "guests", "vendors"],
     dashboard: {
       // Selected period (spending, payments made), then the current state (as of now).
-      widgets: ["weddingSpent", "weddingSupplierPaid", "weddingExpenseCount", "weddingBudgetTotal", "weddingSpentNow", "weddingRemaining", "weddingSupplierBalance", "weddingUpcoming", "weddingOpenTasks", "weddingOverdueTasks", "weddingConfirmedGuests", "weddingAwaitingRsvp", "upcomingSupplierPayments", "tasksDueSoon", "recentWeddingExpenses", "rsvpSummary"],
+      widgets: ["weddingSpent", "weddingSupplierPaid", "weddingExpenseCount", "weddingBudgetTotal", "weddingSpentNow", "weddingRemaining", "weddingSupplierBalance", "weddingUpcoming", "weddingOpenTasks", "weddingOverdueTasks", "weddingConfirmedGuests", "weddingAwaitingRsvp", "upcomingSupplierPayments", "tasksDueSoon", "recentWeddingExpenses", "rsvpSummary", "supplierSummary"],
       empty: { title: "Your wedding workspace is ready", body: "Set your budget, add suppliers, tasks and guests to get started." },
       sectionLabels: { period: "Spending in the selected period", current: "Wedding plan" },
     },
@@ -224,7 +236,7 @@ export function validateWorkspaceTemplate(t, { moduleIds, coreModuleIds, availab
   const problems = [];
   const isObj = (v) => Boolean(v) && typeof v === "object" && !Array.isArray(v);
   if (!isObj(t)) return ["template must be an object"];
-  const allowedKeys = ["id", "version", "upgradingFrom", "name", "description", "status", "modules", "navigation", "dashboard", "labels", "settings", "plannedModules"];
+  const allowedKeys = ["id", "version", "upgradingFrom", "name", "description", "status", "modules", "navigation", "mobileTabs", "dashboard", "labels", "settings", "plannedModules"];
   for (const k of Object.keys(t)) if (!allowedKeys.includes(k)) problems.push(`unknown key ${k}`);
   if (typeof t.id !== "string" || !WORKSPACE_TEMPLATE_ID_PATTERN.test(t.id)) problems.push("invalid id");
   if (!Number.isSafeInteger(t.version) || t.version < 1) problems.push("version must be a positive integer");
@@ -244,6 +256,12 @@ export function validateWorkspaceTemplate(t, { moduleIds, coreModuleIds, availab
   if (!Array.isArray(t.navigation) || new Set(nav).size !== nav.length) problems.push("navigation must be a list without duplicates");
   for (const m of nav) if (!mods.includes(m)) problems.push(`navigation ${m} isn't an allowed module`);
   for (const m of mods) if (!nav.includes(m)) problems.push(`allowed module ${m} has no navigation position`);
+  // Phase 18.5: up to three phone tabs (after Dashboard), from the navigation.
+  if (t.mobileTabs !== undefined) {
+    const tabs = Array.isArray(t.mobileTabs) ? t.mobileTabs : null;
+    if (!tabs || tabs.length > 3 || new Set(tabs).size !== tabs.length) problems.push("mobileTabs must be up to three distinct module ids");
+    else for (const m of tabs) if (!nav.includes(m) || m === "dashboard") problems.push(`mobileTabs ${m} isn't a navigation module`);
+  }
 
   if (!isObj(t.dashboard) || !Array.isArray(t.dashboard.widgets) || !isObj(t.dashboard.empty)) problems.push("dashboard must have widgets and empty");
   else {

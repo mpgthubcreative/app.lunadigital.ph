@@ -68,14 +68,15 @@ export function buildDashboardView({ session, widgets, docs, lists = {} }) {
     .map((w) => {
       const result = valueFor(w, docs);
       const shown = display(w, result, currency);
-      return { id: w.id, section: w.section, label: w.label, value: shown.text, empty: shown.empty, state: result.state, hint: w.hint || "", note: w.note || "" };
+      return { id: w.id, section: w.section, label: w.label, value: shown.text, empty: shown.empty, state: result.state, raw: result.state === "ok" ? result.raw : null, format: w.format, hint: w.hint || "", note: w.note || "" };
     });
   const listViews = widgets
     .filter((w) => w.kind === "list")
     .map((w) => {
       const loaded = lists[w.id];
-      const rows = loaded && loaded.status === "ok" && LIST_ROWS[w.id] ? loaded.rows.map(LIST_ROWS[w.id]) : [];
-      return { id: w.id, label: w.label, empty: w.empty, ready: w.ready === true, status: w.ready ? (loaded ? loaded.status : "loading") : "not-ready", rows };
+      const raw = loaded && loaded.status === "ok" ? loaded.rows : [];
+      const rows = LIST_ROWS[w.id] ? raw.map(LIST_ROWS[w.id]) : [];
+      return { id: w.id, label: w.label, empty: w.empty, ready: w.ready === true, status: w.ready ? (loaded ? loaded.status : "loading") : "not-ready", rows, raw };
     });
   return { cards, lists: listViews };
 }

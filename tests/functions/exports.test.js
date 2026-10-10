@@ -292,11 +292,11 @@ describe("Dashboard and Reports workbooks", () => {
     const ctx = await ctxFor(world.uids.ownera);
     const rep = await buildReport({ db: world.db, tenant: A, from: "2026-10-07", to: "2026-10-08", permissions: ctx.permissions, entitlements: ctx.entitlements });
     expect(s["Net sales"]).toBe(String(rep.overview.netSales / 100));
-    expect(s.COGS).toBe(String(rep.overview.cogs / 100));
-    expect(s["Gross profit"]).toBe(String(rep.overview.grossProfit / 100));
-    expect(s["Estimated operating profit"]).toBe(String(rep.overview.estimatedOperatingProfit / 100));
-    expect(s["Payments received"]).toBe("12000");
+    // Phase 18.5: the Dashboard workbook is the store pulse (what the screen
+    // shows); profitability (COGS, gross / operating profit) is the Reports workbook.
+    for (const k of ["COGS", "Gross profit", "Estimated operating profit", "Payments received"]) expect(s[k], k).toBeUndefined();
     expect(s.Orders).toBe("3");
+    expect(s.Fulfilled).toBeDefined();
     expect(s["Current unpaid balance"]).toBeUndefined(); // not a period figure
     const cur = sheet(r.bytes, "Current operations");
     expect(cur[1][2]).toMatch(/NOT for the selected period/);

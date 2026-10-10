@@ -20,7 +20,7 @@ describe("unit tests never reach a real Firebase project", () => {
     const el = document.createElement("div");
     mount(el, sessionFixture(), { now: new Date("2026-10-08T02:00:00Z") });
     await new Promise((r) => setTimeout(r, 20));
-    expect(el.querySelector('[data-widget="ordersToday"] .stat-value').textContent.trim()).toBe("Couldn't load");
+    expect(el.querySelector('[data-widget="ordersToday"] .kpi-value').textContent.trim()).toBe("Couldn't load");
     errors.mockRestore();
   });
 });

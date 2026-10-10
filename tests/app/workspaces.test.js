@@ -45,7 +45,7 @@ describe("navigation", () => {
 
   it("Bridal: its own dashboard name, no Orders / Inventory / Payments", () => {
     renderShell(document.getElementById("app"), bridal());
-    expect(navOf()).toEqual(["/ Wedding Dashboard", "/budget Wedding Budget", "/expenses Wedding Expenses", "/wedding-suppliers Wedding Suppliers", "/supplier-payments Supplier Payments", "/wedding-tasks Wedding Tasks", "/guests Guests & RSVP", "/users Users", "/settings Settings"]);
+    expect(navOf()).toEqual(["/ Wedding Dashboard", "/wedding-tasks Wedding Tasks", "/guests Guests & RSVP", "/wedding-suppliers Wedding Suppliers", "/supplier-payments Supplier Payments", "/budget Wedding Budget", "/expenses Wedding Expenses", "/users Users", "/settings Settings"]);
   });
 
   it("Bridal staff: roles still apply", () => {
@@ -96,6 +96,6 @@ describe("dashboard", () => {
     mountDashboard(document.getElementById("content"), sessionFixture(), { fetchDocuments, fetchLists, now: NOW });
     await new Promise((r) => setTimeout(r, 0));
     expect(fetchDocuments.mock.calls[0][1].map((d) => d.collection)).toEqual(expect.arrayContaining(["metrics", "financialMetrics"]));
-    expect(fetchLists.mock.calls[0][1].map((w) => w.id)).toEqual(["recentOrders", "lowStockItems"]);
+    expect(fetchLists.mock.calls[0][1].map((w) => w.id)).toEqual(["inventorySummary", "recentOrders", "lowStockItems"]);
   });
 });

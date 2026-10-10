@@ -6,22 +6,36 @@
 // collection is ever downloaded to compute a total.
 
 import { getFirestoreLite } from "../../lib/firebase.js";
-import { listLowStock } from "../inventory/data.js";
+import { listLowStock, listProducts } from "../inventory/data.js";
 import { listRecentOrders } from "../orders/data.js";
 import { listAttendance, listPayrolls, listAdvances } from "../household/data.js";
 import { getBudget, listCategories, listScheduled, listBabyExpenses } from "../baby/data.js";
 import { budgetLines } from "@shared/baby.js";
-import { listSupplierPayments, listTasks, listWeddingExpenses, getGuestTotals } from "../wedding/data.js";
+import { listSupplierPayments, listTasks, listWeddingExpenses, getGuestTotals, listSuppliers } from "../wedding/data.js";
+import { supplierBalance } from "@shared/wedding.js";
 import { rsvpSummary } from "@shared/wedding.js";
 import { combineDashboardDocs } from "@shared/dashboard.js";
 
 // Ready list widgets -> their (small, limited) query. ctx: { today }.
 const first = (page) => page.rows;
 const LIST_FETCHERS = {
-  recentOrders: (businessId) => listRecentOrders(businessId, 5),
+  recentOrders: (businessId) => listRecentOrders(businessId, 6),
+  // Phase 18.5: low-stock SKUs first, then the rest by name (8 rows).
+  inventorySummary: async (businessId) => {
+    const [low, page] = await Promise.all([listLowStock(businessId, 8), listProducts(businessId, { status: "active", pageSize: 12 })]);
+    const seen = new Set(low.map((p) => p.id));
+    return [...low, ...page.rows.filter((p) => !seen.has(p.id))].slice(0, 8);
+  },
+  // Paid advances not yet deducted from a released payroll.
+  advancesToDeduct: async (businessId) => (await listAdvances(businessId, { status: "paid" }, { pageSize: 10 })).rows.filter((a) => a.deducted !== true),
+  // Wedding suppliers, biggest balance first.
+  supplierSummary: async (businessId) =>
+    (await listSuppliers(businessId, { status: "active" }, { pageSize: 10 })).rows
+      .map((s) => ({ ...s, balance: supplierBalance(s) }))
+      .sort((a, b) => (b.balance ?? -1) - (a.balance ?? -1)),
   lowStockItems: (businessId) => listLowStock(businessId, 5),
   attendanceToday: (businessId, { today }) => listAttendance(businessId, { from: today, to: today }, { pageSize: 10 }).then(first),
-  payrollsToRelease: (businessId) => listPayrolls(businessId, { status: "draft" }).then((p) => p.rows.slice(0, 5)),
+  payrollsToRelease: (businessId) => listPayrolls(businessId, { status: "draft" }).then((p) => p.rows.slice(0, 10)),
   awaitingReceipt: (businessId) => listPayrolls(businessId, { receiptStatus: "awaiting" }).then((p) => p.rows.slice(0, 5)),
   advancesNotPaid: (businessId) => listAdvances(businessId, { status: "not_yet_paid" }).then((p) => p.rows.slice(0, 5)),
   // Phase 15 (Baby): the budget lines (as of now), soonest payments, latest expenses.
@@ -34,7 +48,7 @@ const LIST_FETCHERS = {
   // Phase 16 (Wedding): soonest supplier payments, open tasks by due date
   // (overdue first), latest expenses, and the RSVP totals as a short list.
   upcomingSupplierPayments: (businessId) => listSupplierPayments(businessId, { status: "upcoming" }, { pageSize: 5 }).then(first),
-  tasksDueSoon: async (businessId, { today }) => (await listTasks(businessId, { state: "open" }, { today, pageSize: 20 })).rows.filter((t) => t.dueDate).slice(0, 5),
+  tasksDueSoon: async (businessId, { today }) => (await listTasks(businessId, { state: "open" }, { today, pageSize: 25 })).rows.filter((t) => t.dueDate).slice(0, 10),
   recentWeddingExpenses: (businessId) => listWeddingExpenses(businessId, { status: "active" }, { pageSize: 5 }).then(first),
   rsvpSummary: async (businessId) => {
     const t = rsvpSummary(await getGuestTotals(businessId));
