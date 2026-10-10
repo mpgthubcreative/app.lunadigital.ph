@@ -105,7 +105,8 @@ export async function buildReport({ db, tenant, from, to, permissions, entitleme
         period: b.period,
         ordersCreated: o ? o.orderCount ?? 0 : null,
         fulfilledOrders: o ? o.fulfilledOrders ?? 0 : null,
-        ...(financials ? { netSales: s ? s.netSales : null, grossProfit: s ? s.grossProfit : null, operatingExpenses: s ? s.operatingExpenses : null, paymentsReceived: s ? s.paymentsReceived : null } : {}),
+        // Phase 18.5: cogs per period for the Reports charts (financials only).
+        ...(financials ? { netSales: s ? s.netSales : null, cogs: s ? s.cogs : null, grossProfit: s ? s.grossProfit : null, operatingExpenses: s ? s.operatingExpenses : null, paymentsReceived: s ? s.paymentsReceived : null } : {}),
       };
     }),
     sections: [],

@@ -1853,3 +1853,24 @@ a.item:hover {
     flex: 1 1 0;
   }
 }
+
+/* Reports (Phase 18.5) */
+.section-tabs {
+  margin-bottom: var(--space-4);
+}
+
+.reports > * + * {
+  margin-top: var(--space-4);
+}
+
+.reports .grid,
+.reports .split {
+  align-items: start;
+}
+
+.btn-linklike {
+  border: 0;
+  background: none;
+  padding: 0;
+  cursor: pointer;
+}

@@ -62,7 +62,7 @@ describe("Reports page", () => {
     await flush();
     const text = container.querySelector('[data-role="profit"]').textContent;
     expect(text).toMatch(/Net sales\s*₱15,000\.00.*COGS\s*₱9,000\.00.*Gross profit\s*₱6,000\.00.*Gross margin 40\.0%.*Operating expenses\s*₱1,500\.00.*Estimated operating profit\s*₱4,500\.00/s);
-    const labels = [...container.querySelectorAll(".stat-label")].map((l) => l.textContent);
+    const labels = [...container.querySelectorAll(".kpi-label")].map((l) => l.textContent);
     expect(labels).toContain("Estimated operating profit");
     expect(labels.join("|")).not.toMatch(/Net income|Net profit/i);
     expect(container.querySelector('[data-role="payments"]').textContent).toMatch(/Payments received\s*₱12,000\.00.*Unpaid balance \(now\)\s*₱3,000\.00/s);
@@ -73,7 +73,7 @@ describe("Reports page", () => {
     await flush();
     expect(container.querySelector('[data-role="profit"]')).toBeNull();
     expect(container.textContent).not.toMatch(/₱/);
-    expect([...container.querySelectorAll('[data-act="tab"]')].map((b) => b.textContent.trim())).toEqual(["Overview", "Sales", "Products", "Payments"]);
+    expect([...container.querySelectorAll('[data-role="tabs"] [data-act="tab"]')].map((b) => b.textContent.trim())).toEqual(["Overview", "Sales", "Products", "Payments"]);
   });
 
   it("tabs show compact tables; walk-ins are their own row", async () => {
@@ -124,6 +124,31 @@ describe("Reports page", () => {
     await flush();
     expect(api).toHaveBeenCalledTimes(1);
     expect(container.textContent).toMatch(/start date is after the end date/);
+  });
+
+  it("Overview tells the money story as charts: waterfall, sales split into COGS + gross profit, rankings, payments by method", async () => {
+    const two = { ...FIN, series: [{ period: "2026-10-07", ordersCreated: 1, fulfilledOrders: 1, netSales: 500000, cogs: 300000, grossProfit: 200000 }, FIN.series[0]] };
+    mount(container, sessionFixture(), { api: vi.fn(async () => two), now: NOW });
+    await flush();
+    const wf = container.querySelector('[data-chart="waterfall"]');
+    expect(wf.querySelector("svg").getAttribute("aria-label")).toMatch(/Sales ₱15,000.00, COGS ₱9,000.00, Gross profit ₱6,000.00, Operating expenses ₱1,500.00, Est. op. profit ₱4,500.00/);
+    expect(wf.textContent).toMatch(/Of every ₱100 of sales, ₱60 paid for the goods and ₱30 is left/);
+    expect(container.querySelector('[data-chart="trend"] .chart svg').querySelectorAll("rect.fill-cost")).toHaveLength(2);
+    expect(container.querySelector('[data-chart="products"]').textContent).toMatch(/₱10,000.00/);
+    expect(container.querySelector('[data-chart="expenses"]').textContent).toMatch(/Packaging/);
+    expect(container.querySelector('[data-chart="payments"]').textContent).toMatch(/GCash ₱10,000.00/);
+    // "Details ›" opens the matching detailed table.
+    container.querySelector('[data-chart="products"] [data-act="tab"]').click();
+    expect(container.querySelector('table[data-table="products"]')).not.toBeNull();
+  });
+
+  it("charts never render money for a non-financial viewer", async () => {
+    mount(container, sessionFixture({ roleTemplate: "staff", permissions: resolvePermissions("staff", { grant: ["reports.view"] }) }), { api: vi.fn(async () => OPS), now: NOW });
+    await flush();
+    expect(container.querySelector('[data-chart="waterfall"]')).toBeNull();
+    expect(container.querySelector('[data-chart="trend"]')).toBeNull();
+    expect(container.querySelector('[data-chart="products"]').textContent).toMatch(/Top products by quantity/);
+    expect(container.textContent).not.toMatch(/₱/);
   });
 
   it("table definitions never include money columns without financials", () => {

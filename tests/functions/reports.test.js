@@ -195,6 +195,9 @@ describe("rollups stay exact through every kind of change", () => {
     expect(long.body.series.map((s) => s.period)).toEqual(["2026-07", "2026-08", "2026-09", "2026-10"]);
     expect(long.body.overview).toMatchObject({ netSales: 300000, operatingExpenses: 7000, fulfilledOrders: 2 });
     expect(long.body.series.map((s) => s.netSales)).toEqual([100000, 0, null, 200000]);
+    // Phase 18.5: COGS per period for the charts; gross profit = net sales − COGS.
+    for (const s of long.body.series) if (s.netSales !== null) expect(s.grossProfit).toBe(s.netSales - s.cogs);
+    expect(long.body.series.map((s) => s.cogs)).toEqual([60000, 0, null, 120000]);
   });
 });
 
@@ -219,6 +222,7 @@ describe("financial and module permissions are enforced by the SERVER", () => {
     const r = await report(u.uid, "2026-10-08", "2026-10-08");
     expect(r.status).toBe(200);
     expect(r.body.access.financials).toBe(false);
+    for (const row of r.body.series) expect(row).not.toHaveProperty("cogs");
     expect(JSON.stringify(r.body)).not.toMatch(MONEY);
     expect(r.body.overview).toEqual({ ordersCreated: 1, fulfilledOrders: 1, cancelledOrders: 0 });
     expect(r.body.products.rows).toEqual([expect.objectContaining({ productId: p, qty: Q(3) })]);
