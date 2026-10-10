@@ -25,6 +25,7 @@ import { renderLogin, renderAccessProblem, renderBoot } from "./screens.js";
 import { MODULE_LOADERS } from "../modules/loaders.js";
 import { render } from "../lib/html.js";
 import { card, emptyState } from "../components/ui.js";
+import { isStaffPortalSession } from "../staff/is-staff.js";
 
 const root = document.getElementById("app");
 const REVALIDATE_MS = 5 * 60 * 1000;
@@ -113,6 +114,15 @@ function showSessionError(err) {
 
 function mountApp(session) {
   stopRouter();
+  // Phase 18.6: a household staff account gets its own simple screen
+  // (lazy-loaded), not the Owner's app.
+  if (isStaffPortalSession(session)) {
+    import("../staff/portal.js").then((m) => m.mountStaffPortal(root, session, { onSignOut: () => handleSignOut() }));
+    stopRevalidation();
+    revalidateTimer = setInterval(revalidate, REVALIDATE_MS);
+    document.addEventListener("visibilitychange", onVisibility);
+    return;
+  }
   const shell = renderShell(root, session, {
     onSignOut: () => handleSignOut(),
     onSwitchBusiness: (businessId) => {
@@ -174,6 +184,11 @@ function boot() {
   // in the URL fragment is the only credential, checked by the server).
   if (window.location.pathname === "/receipt") {
     import("./receipt.js").then((m) => m.renderReceiptPage(root));
+    return;
+  }
+  // Phase 18.6: the account activation page needs no login either.
+  if (window.location.pathname === "/activate") {
+    import("./activate.js").then((m) => m.renderActivatePage(root));
     return;
   }
   if (!isFirebaseConfigured()) {

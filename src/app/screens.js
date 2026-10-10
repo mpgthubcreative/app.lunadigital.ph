@@ -4,6 +4,7 @@
 import { html, render } from "../lib/html.js";
 import { lunaMark } from "../components/icons.js";
 import { ENVIRONMENT_LABELS, normalizeEnvironment } from "@shared/environment.js";
+import { signInEmail } from "@shared/tenancy.js";
 
 function environmentTag() {
   const env = normalizeEnvironment(import.meta.env.VITE_LUNA_ENV);
@@ -30,12 +31,12 @@ export function renderLogin(root, { onSubmit, notice = "" }) {
     root,
     authFrame(html`
       <h1 class="auth-title">Sign in</h1>
-      <p class="auth-subtitle">Use the account your business administrator gave you.</p>
+      <p class="auth-subtitle">Use the account your employer or business gave you.</p>
       ${notice ? html`<p class="form-notice" role="status">${notice}</p>` : ""}
       <form class="form" id="loginForm" novalidate>
         <div class="field">
-          <label for="loginEmail">Email</label>
-          <input class="input" id="loginEmail" name="email" type="email" autocomplete="username" required />
+          <label for="loginEmail">Email or login ID</label>
+          <input class="input" id="loginEmail" name="email" type="text" inputmode="email" autocapitalize="none" spellcheck="false" autocomplete="username" required />
         </div>
         <div class="field">
           <label for="loginPassword">Password</label>
@@ -56,11 +57,12 @@ export function renderLogin(root, { onSubmit, notice = "" }) {
 
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
-    const email = emailInput.value.trim();
+    // A login ID ("maria.4821") becomes its reserved-domain email (Phase 18.6).
+    const email = signInEmail(emailInput.value);
     const password = passwordInput.value;
     errorEl.hidden = true;
     if (!email || !password) {
-      errorEl.textContent = "Enter your email and password.";
+      errorEl.textContent = "Enter your email (or login ID) and password.";
       errorEl.hidden = false;
       return;
     }

@@ -15,6 +15,15 @@ export function isValidBusinessId(value) {
 
 export const MEMBER_STATUSES = Object.freeze(["active", "disabled"]);
 
+// Phase 18.6: people without an email sign in with a LOGIN ID ("maria.4821"),
+// stored as a Firebase email on this reserved domain that can't receive mail.
+export const STAFF_LOGIN_DOMAIN = "staff.luna.invalid";
+// What someone typed on the sign-in screen -> the Firebase email.
+export const signInEmail = (typed) => {
+  const t = typeof typed === "string" ? typed.trim().toLowerCase() : "";
+  return !t || t.includes("@") ? t : `${t}@${STAFF_LOGIN_DOMAIN}`;
+};
+
 // Header the browser uses to say WHICH of its businesses a request is for.
 // It is a selector, never a credential.
 export const BUSINESS_SELECTOR_HEADER = "x-luna-business-id";

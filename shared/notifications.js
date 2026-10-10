@@ -44,6 +44,8 @@ export const NOTIFICATION_CATEGORIES = Object.freeze({
   budget: { label: "Budget alerts (75%, 90%, 100% used)", mandatory: false },
   wedding: { label: "Supplier payments recorded", mandatory: false },
   usage: { label: "Plan limits (80% and 100% used)", mandatory: false },
+  // Phase 18.6: a household staff member is waiting for an answer.
+  requests: { label: "Staff requests (attendance, leave, advances)", mandatory: true },
 });
 export const NOTIFICATION_CATEGORY_IDS = Object.freeze(Object.keys(NOTIFICATION_CATEGORIES));
 
@@ -72,6 +74,29 @@ export const NOTIFICATION_TYPES = Object.freeze({
     module: "payroll",
     permissions: ["payroll.view"],
     excludeActor: false,
+    action: { label: "View payroll", route: "/payroll" },
+  },
+  // Phase 18.6: household staff self-service. Each needs the owner's answer.
+  "household.attendance_request": {
+    category: "requests",
+    module: "attendance",
+    permissions: ["attendance.view", "attendance.edit"],
+    excludeActor: true,
+    action: { label: "Review requests", route: "/attendance" },
+  },
+  "household.advance_request": {
+    category: "requests",
+    module: "advances",
+    permissions: ["advances.view", "advances.manage"],
+    excludeActor: true,
+    action: { label: "Review advances", route: "/advances" },
+  },
+  // The employee says a salary marked paid didn't reach them.
+  "payroll.salary_disputed": {
+    category: "requests",
+    module: "payroll",
+    permissions: ["payroll.view"],
+    excludeActor: true,
     action: { label: "View payroll", route: "/payroll" },
   },
   // Phase 15: the Baby budget reached 75 / 90 / 100% used. One per level

@@ -13,9 +13,15 @@
 //                                 paid, the payroll that deducts it
 //
 // Rules (docs/ARCHITECTURE.md "Luna-wide product requirements" 8-15):
-//   Present and Official Leave are payable; Absent isn't. A day nobody
-//   marked isn't payable either (shown as "Not marked").
-//   Payable Days = Present + Official Leave
+//   Present and Paid Leave (id official_leave) are payable; Absent, Unpaid
+//   Leave and Rest Day aren't. A day nobody marked isn't payable either
+//   (shown as "Not marked").
+//   Phase 18.6, Kasambahay Law (RA 10361) note: Luna pays a DAILY wage, so
+//   a rest day is a day not worked and not paid ("no work, no pay"), never
+//   a deduction from a wage that already covers it. If monthly-rated staff
+//   are added, rest days must stay inside the monthly wage (see
+//   docs/phase-18-6-progress.md, "Payroll legal notes").
+//   Payable Days = Present + Paid Leave
 //   Base Pay     = sum of each payable day's daily wage (= Daily Wage x
 //                  Payable Days when the wage didn't change in the period).
 //                  Luna calculates it; nobody types it.
@@ -34,11 +40,18 @@ export const PAY_CYCLES = Object.freeze({
 });
 export const PAY_CYCLE_IDS = Object.freeze(Object.keys(PAY_CYCLES));
 
+// `ahead`: may be recorded for a future day (planned leave or rest day).
 export const ATTENDANCE_STATUSES = Object.freeze({
-  present: { label: "Present", payable: true },
-  absent: { label: "Absent", payable: false },
-  official_leave: { label: "Official Leave", payable: true },
+  present: { label: "Present", payable: true, short: "P" },
+  absent: { label: "Absent", payable: false, short: "A" },
+  official_leave: { label: "Paid Leave", payable: true, ahead: true, short: "PL" },
+  unpaid_leave: { label: "Unpaid Leave", payable: false, ahead: true, short: "UL" },
+  rest_day: { label: "Rest Day", payable: false, ahead: true, short: "R" },
 });
+// How far ahead leave / rest days can be planned.
+export const MAX_DAYS_AHEAD = 90;
+// How far back a staff member may submit their own attendance.
+export const SELF_DAYS_BACK = 14;
 export const ATTENDANCE_STATUS_IDS = Object.freeze(Object.keys(ATTENDANCE_STATUSES));
 export const isPayableStatus = (status) => ATTENDANCE_STATUSES[status]?.payable === true;
 
@@ -50,7 +63,18 @@ export const PAYROLL_STATUSES = Object.freeze({ draft: { label: "Not yet paid" }
 // Receipt confirmation, separate from payment.
 export const RECEIPT_STATUSES = Object.freeze({ none: { label: "—" }, awaiting: { label: "Awaiting confirmation" }, confirmed: { label: "Confirmed" } });
 
-export const ADVANCE_STATUSES = Object.freeze({ not_yet_paid: { label: "Not Yet Paid" }, paid: { label: "Paid" } });
+// Phase 18.6: requested by the staff member -> approved by the owner (not
+// released yet) -> released (paid to the employee) -> deducted by payroll
+// installments until nothing is left; or rejected. Ids stay as before
+// (not_yet_paid = approved, paid = released) so older records keep working.
+export const ADVANCE_STATUSES = Object.freeze({
+  requested: { label: "Requested" },
+  not_yet_paid: { label: "Approved, not released" },
+  paid: { label: "Released" },
+  rejected: { label: "Rejected" },
+});
+// Staff self-service requests (attendance / leave) awaiting the owner.
+export const REQUEST_STATES = Object.freeze({ pending: { label: "Waiting for approval" }, approved: { label: "Approved" }, rejected: { label: "Rejected" } });
 
 export const SALARY_METHODS = Object.freeze({
   cash: { label: "Cash" },
@@ -127,20 +151,23 @@ export const periodLabel = ({ start, end }) => `${start} to ${end}`;
 // ---------- Calculation ----------
 
 // lines: attendance records of ONE person within the period.
+// Status -> the payroll counter it adds to.
+const COUNTER = { present: "present", absent: "absent", official_leave: "officialLeave", unpaid_leave: "unpaidLeave", rest_day: "restDay" };
+const COUNTERS = Object.values(COUNTER);
+
 export function summarizeAttendance(lines, period) {
   const total = daysIn(period).length;
-  const out = { present: 0, absent: 0, officialLeave: 0, notMarked: 0, payableDays: 0, basePay: 0 };
+  const out = { present: 0, absent: 0, officialLeave: 0, unpaidLeave: 0, restDay: 0, notMarked: 0, payableDays: 0, basePay: 0 };
   for (const l of lines) {
-    if (l.status === "present") out.present += 1;
-    else if (l.status === "absent") out.absent += 1;
-    else if (l.status === "official_leave") out.officialLeave += 1;
-    else continue;
+    const k = COUNTER[l.status];
+    if (!k) continue;
+    out[k] += 1;
     if (isPayableStatus(l.status)) {
       out.payableDays += 1;
       out.basePay += l.dailyWage;
     }
   }
-  out.notMarked = total - out.present - out.absent - out.officialLeave;
+  out.notMarked = total - COUNTERS.reduce((t, k) => t + out[k], 0);
   return out;
 }
 
@@ -148,17 +175,21 @@ export const deductionsTotal = (deductions) => (deductions || []).reduce((s, d) 
 export const netPayOf = (basePay, deductions) => basePay - deductionsTotal(deductions);
 
 // What one attendance line contributes to its payroll (for in-place deltas).
-export const lineContribution = (line) =>
-  !line || !ATTENDANCE_STATUSES[line.status]
-    ? { present: 0, absent: 0, officialLeave: 0, notMarked: 1, payableDays: 0, basePay: 0 }
-    : {
-        present: line.status === "present" ? 1 : 0,
-        absent: line.status === "absent" ? 1 : 0,
-        officialLeave: line.status === "official_leave" ? 1 : 0,
-        notMarked: 0,
-        payableDays: isPayableStatus(line.status) ? 1 : 0,
-        basePay: isPayableStatus(line.status) ? line.dailyWage : 0,
-      };
+export const lineContribution = (line) => {
+  const out = { present: 0, absent: 0, officialLeave: 0, unpaidLeave: 0, restDay: 0, notMarked: 0, payableDays: 0, basePay: 0 };
+  if (!line || !ATTENDANCE_STATUSES[line.status]) return { ...out, notMarked: 1 };
+  out[COUNTER[line.status]] = 1;
+  out.payableDays = isPayableStatus(line.status) ? 1 : 0;
+  out.basePay = isPayableStatus(line.status) ? line.dailyWage : 0;
+  return out;
+};
+// A payroll's counters after one attendance line changes (older payrolls
+// have no unpaidLeave / restDay fields: they read as 0).
+export function applyLineChange(payroll, before, after) {
+  const a = lineContribution(before);
+  const b = lineContribution(after);
+  return Object.fromEntries(Object.keys(a).map((k) => [k, (Number.isSafeInteger(payroll[k]) ? payroll[k] : 0) + b[k] - a[k]]));
+}
 
 // ---------- Validation ----------
 
@@ -203,21 +234,77 @@ export function validateStaffInput(input, { partial = false } = {}) {
   return out;
 }
 
+// A day's status: Present / Absent only up to today; Paid Leave, Unpaid
+// Leave and Rest Day may be planned up to MAX_DAYS_AHEAD days ahead.
+function checkDay(date, status, today) {
+  if (!isDayId(date)) throw new PayrollError("invalid-date", "Invalid date");
+  if (!ATTENDANCE_STATUSES[status]) throw new PayrollError("invalid-status", "Choose Present, Absent, Paid Leave, Unpaid Leave or Rest Day");
+  if (today && date > today) {
+    if (!ATTENDANCE_STATUSES[status].ahead) throw new PayrollError("invalid-date", "Present or Absent can't be marked for a future date");
+    if (date > addDays(today, MAX_DAYS_AHEAD)) throw new PayrollError("invalid-date", `Leave can be planned up to ${MAX_DAYS_AHEAD} days ahead`);
+  }
+}
+
 export function validateAttendanceInput({ staffId, date, status, note } = {}, { today }) {
   if (!isValidStaffId(staffId)) throw new PayrollError("invalid-staff", "Choose a staff member");
-  if (!isDayId(date)) throw new PayrollError("invalid-date", "Invalid date");
-  if (today && date > today) throw new PayrollError("invalid-date", "Attendance can't be marked for a future date");
-  if (!ATTENDANCE_STATUSES[status]) throw new PayrollError("invalid-status", "Choose Present, Absent or Official Leave");
+  checkDay(date, status, today);
   return { staffId, date, status, note: text(note, { field: "Note", max: 200 }) };
+}
+
+// Phase 18.6: a staff member's own request (their staffId comes from their
+// account, never from the request). Not more than SELF_DAYS_BACK days back.
+export function validateAttendanceRequest(input, { today }) {
+  if (!input || typeof input !== "object" || Array.isArray(input)) throw new PayrollError("invalid-input", "Invalid request");
+  for (const k of Object.keys(input)) if (!["date", "status", "note"].includes(k)) throw new PayrollError("invalid-input", `Unknown field ${k}`);
+  checkDay(input.date, input.status, today);
+  if (today && input.date < addDays(today, -SELF_DAYS_BACK)) throw new PayrollError("invalid-date", `Ask your employer to fix days more than ${SELF_DAYS_BACK} days ago`);
+  return { date: input.date, status: input.status, note: text(input.note, { field: "Note", max: 200 }) };
+}
+
+// The owner's decision on a request.
+export function validateDecision(input) {
+  if (!input || typeof input !== "object" || Array.isArray(input)) throw new PayrollError("invalid-input", "Invalid decision");
+  if (!["approve", "reject"].includes(input.decision)) throw new PayrollError("invalid-input", "Approve or reject");
+  return { decision: input.decision, note: text(input.note, { field: "Note", max: 200 }) };
 }
 
 export function validateAdvanceInput(input, { today } = {}) {
   if (!input || typeof input !== "object" || Array.isArray(input)) throw new PayrollError("invalid-input", "Invalid advance");
-  for (const k of Object.keys(input)) if (!["staffId", "date", "description", "amount"].includes(k)) throw new PayrollError("invalid-input", `Unknown field ${k}`);
+  for (const k of Object.keys(input)) if (!["staffId", "date", "description", "amount", "installment"].includes(k)) throw new PayrollError("invalid-input", `Unknown field ${k}`);
   if (!isValidStaffId(input.staffId)) throw new PayrollError("invalid-staff", "Choose a staff member");
   if (!isDayId(input.date)) throw new PayrollError("invalid-date", "Invalid date");
   if (today && input.date > today) throw new PayrollError("invalid-date", "An advance can't be dated in the future");
-  return { staffId: input.staffId, date: input.date, description: text(input.description, { field: "Description", max: 120 }), amount: money(input.amount, { field: "Amount", max: MAX_ADVANCE }) };
+  const amount = money(input.amount, { field: "Amount", max: MAX_ADVANCE });
+  return { staffId: input.staffId, date: input.date, description: text(input.description, { field: "Description", max: 120 }), amount, installment: validateInstallment(input.installment, amount) };
+}
+
+// Phase 18.6: how much each payroll deducts until the advance is repaid.
+// null / missing = all of it on the next payroll (the Phase 14 rule).
+export function validateInstallment(value, amount) {
+  if (value === undefined || value === null || value === "") return null;
+  if (!isCentavos(value) || value <= 0) throw new PayrollError("invalid-amount", "The amount per payroll must be more than ₱0");
+  return value >= amount ? null : value;
+}
+
+// The next deduction of a released advance: its installment (or all of
+// it), never more than what's left.
+export const advanceRemaining = (a) => Math.max(0, (a?.amount ?? 0) - (Number.isSafeInteger(a?.deductedAmount) ? a.deductedAmount : a?.deducted === true ? a.amount : 0));
+export const nextDeduction = (a) => Math.min(advanceRemaining(a), Number.isSafeInteger(a?.installment) && a.installment > 0 ? a.installment : advanceRemaining(a));
+
+// A staff member's own request: the amount and why.
+export function validateAdvanceRequest(input) {
+  if (!input || typeof input !== "object" || Array.isArray(input)) throw new PayrollError("invalid-input", "Invalid request");
+  for (const k of Object.keys(input)) if (!["amount", "reason"].includes(k)) throw new PayrollError("invalid-input", `Unknown field ${k}`);
+  return { amount: money(input.amount, { field: "Amount", max: MAX_ADVANCE }), reason: text(input.reason, { field: "Reason", max: 200 }) };
+}
+
+// The owner's approval: the approved amount (may differ from the request)
+// and the amount per payroll.
+export function validateAdvanceApproval(input, requested) {
+  if (!input || typeof input !== "object" || Array.isArray(input)) throw new PayrollError("invalid-input", "Invalid approval");
+  for (const k of Object.keys(input)) if (!["amount", "installment", "note"].includes(k)) throw new PayrollError("invalid-input", `Unknown field ${k}`);
+  const amount = input.amount === undefined ? requested : money(input.amount, { field: "Approved amount", max: MAX_ADVANCE });
+  return { amount, installment: validateInstallment(input.installment, amount), note: text(input.note, { field: "Note", max: 200 }) };
 }
 
 // Marking an advance Paid (released to the employee).

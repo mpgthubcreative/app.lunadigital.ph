@@ -26,3 +26,11 @@ export const staffApi = (body) => post("household-staff", body);
 export const setAttendance = (staffId, date, status, note) => post("attendance", { action: "set", staffId, date, status, ...(note ? { note } : {}) });
 export const payrollApi = (body) => post("payroll", body);
 export const advancesApi = (body) => post("advances", body);
+// Phase 18.6: staff requests waiting for the Owner (a household has few;
+// single-field equality, sorted here, no extra index).
+export async function pendingAttendanceRequests(businessId) {
+  const { db, lite } = await getFirestoreLite();
+  const snap = await lite.getDocs(lite.query(lite.collection(db, "businesses", businessId, "attendanceRequests"), lite.where("state", "==", "pending"), lite.limit(100)));
+  return snap.docs.map((d) => ({ id: d.id, ...d.data() })).sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : a.staffName < b.staffName ? -1 : 1));
+}
+export const decideAttendance = (requestId, decision, note) => post("attendance", { action: "decide", requestId, decision: { decision, ...(note ? { note } : {}) } });

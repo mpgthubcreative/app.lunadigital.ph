@@ -78,6 +78,13 @@ export const PERMISSIONS = Object.freeze({
   "payroll.release": { module: "payroll", group: "Payroll", label: "Release salaries and issue receipt links" },
   "advances.view": { module: "advances", group: "Advances", label: "View advances" },
   "advances.manage": { module: "advances", group: "Advances", label: "Record advances and mark them paid" },
+  // Phase 18.6: household staff self-service. Each acts ONLY on the staff
+  // record linked to the member's own account (member.staffId, server-set);
+  // none of them can read household data directly (no *.view): the server
+  // returns the person's own view through /api/me.
+  "attendance.self": { module: "attendance", group: "My work (household staff)", label: "Send their own attendance, leave and rest days for approval" },
+  "advances.self": { module: "advances", group: "My work (household staff)", label: "Ask for their own cash advances" },
+  "payroll.self": { module: "payroll", group: "My work (household staff)", label: "See their own salary and confirm receiving it" },
 
   // Phase 15: Baby Expense Tracker (Baby Expenses reuse expenses.*).
   "budget.view": { module: "budget", group: "Budget", label: "View the budget, categories, spent and remaining" },
@@ -123,6 +130,14 @@ export const ROLE_TEMPLATES = Object.freeze({
     label: "Manager / Admin",
     description: "Runs daily operations and reports. No subscription, team or business configuration.",
     permissions: ALL.filter((key) => !["billing.view", "users.manage", "settings.manage", "integrations.manage"].includes(key)),
+  },
+  // Phase 18.6: a kasambahay's own account (Household workspace): their own
+  // attendance, leave, advances and salary, nothing else.
+  household_staff: {
+    label: "Household staff",
+    description: "Their own attendance, leave, advances and salary only.",
+    workspaces: ["household-payroll"],
+    permissions: ["attendance.self", "advances.self", "payroll.self"],
   },
   staff: {
     label: "Staff",

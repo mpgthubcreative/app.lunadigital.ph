@@ -322,6 +322,24 @@ export class FakeAuth {
   async generatePasswordResetLink(email) {
     return `https://example.test/reset?email=${encodeURIComponent(email)}`;
   }
+  // Phase 18.6 (activation links).
+  async getUser(uid) {
+    const user = [...this.users.values()].find((u) => u.uid === uid);
+    if (!user) throw Object.assign(new Error("not found"), { code: "auth/user-not-found" });
+    return user;
+  }
+  async updateUser(uid, changes) {
+    const user = await this.getUser(uid);
+    if (changes.password) {
+      user.hasPassword = true;
+      user.password = changes.password;
+    }
+    if (changes.disabled !== undefined) user.disabled = changes.disabled;
+    return user;
+  }
+  async revokeRefreshTokens(uid) {
+    (this.revoked = this.revoked || []).push(uid);
+  }
 }
 
 // Minimal stand-in for an Admin SDK Storage bucket.

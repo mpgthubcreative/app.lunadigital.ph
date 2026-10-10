@@ -499,6 +499,14 @@ export async function addMember({
   status = "active",
   createdBy = "cli",
   audit = null,
+  // Phase 18.6: server-set membership fields (the household staff link,
+  // the activation state), written in the same transaction. Kept from the
+  // existing membership when not given, so a role change keeps the link.
+  extra = {},
+  // Phase 18.6: optional (tx) => commit-function, run after this
+  // transaction's reads: extra reads, then writes that must land with the
+  // membership (e.g. linking the householdStaff record).
+  within = null,
 }) {
   if (!ROLE_TEMPLATES[roleTemplate]) throw new ProvisioningError("invalid-input", `Unknown role template: ${roleTemplate}`);
   if (!MEMBER_STATUSES.includes(status)) throw new ProvisioningError("invalid-input", `Unknown member status: ${status}`);
@@ -532,6 +540,8 @@ export async function addMember({
     }
     const activeAfter = activeSnap.size + (status === "active" && !wasActive ? 1 : 0) - (wasActive && status !== "active" ? 1 : 0);
     const userAlerts = await prepareUserAlerts(tx, { tenant, businessSnap, usersUsage, activeAfter });
+    const withinCommit = within ? await within(tx, { memberSnap, businessSnap }) : null;
+    const kept = memberSnap.exists ? Object.fromEntries(["staffId", "activation", "invitedBy"].filter((k) => memberSnap.data()[k] !== undefined).map((k) => [k, memberSnap.data()[k]])) : {};
 
     if (audit) {
       const before = memberSnap.exists ? { roleTemplate: memberSnap.data().roleTemplate, status: memberSnap.data().status } : null;
@@ -551,7 +561,10 @@ export async function addMember({
       // Re-adding an existing member keeps their own notification choices (Phase 13).
       ...(memberSnap.exists && memberSnap.data().notificationPreferences ? { notificationPreferences: memberSnap.data().notificationPreferences } : {}),
       ...(memberSnap.exists ? {} : { createdAt: FieldValue.serverTimestamp(), createdBy }),
+      ...kept,
+      ...extra,
     });
+    if (withinCommit) withinCommit();
 
     const profile = userSnap.exists ? userSnap.data() : {};
     tx.set(

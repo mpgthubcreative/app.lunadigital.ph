@@ -314,6 +314,9 @@ service cloud.firestore {
       // Phase 14: Household / Kasambahay Payroll.
       match /householdStaff/{id}        { allow read: if canAccessModule(bid, 'household', 'household.view'); }
       match /attendance/{id}            { allow read: if canAccessModule(bid, 'attendance', 'attendance.view'); }
+      // Phase 18.6: staff requests (attendance / leave) awaiting the Owner. Staff
+      // accounts never read this: their own view comes from /api/me.
+      match /attendanceRequests/{id}    { allow read: if canAccessModule(bid, 'attendance', 'attendance.view'); }
       match /payrolls/{id}              { allow read: if canAccessModule(bid, 'payroll', 'payroll.view'); }
       match /advances/{id}              { allow read: if canAccessModule(bid, 'advances', 'advances.view'); }
 

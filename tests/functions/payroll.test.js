@@ -123,7 +123,9 @@ describe("attendance rules", () => {
     const id = await maria({ startDate: "2026-10-03" });
     expect((await mark(id, "2026-10-17", "present")).body.error).toBe("invalid-date");
     expect((await mark(id, "2026-10-02", "present")).body.error).toBe("invalid-date");
-    expect((await mark(id, "2026-10-04", "rest_day")).body.error).toBe("invalid-status");
+    expect((await mark(id, "2026-10-04", "holiday")).body.error).toBe("invalid-status");
+    // Phase 18.6: Rest Day is a status now (unpaid: no work, no pay).
+    expect((await mark(id, "2026-10-04", "rest_day")).status).toBe(200);
     await api("staff", u.mom, { action: "setStatus", staffId: id, status: "inactive" });
     expect((await mark(id, "2026-10-04", "present")).body.error).toBe("inactive-staff");
   });
@@ -380,7 +382,7 @@ describe("Excel downloads (Phase 12.5 Export Core)", () => {
     const abs = await xport(u.dad, "attendance", { staffId: id, status: "absent", from: "2026-10-01", to: "2026-10-15" });
     expect(sheet(abs.bytes, "Attendance").slice(1).map((l) => l[3])).toEqual(["Absent", "Absent", "Absent"]);
     await api("advances", u.mom, { action: "create", advance: { staffId: id, date: "2026-10-05", amount: 50000 } });
-    expect(sheet((await xport(u.mom, "advances", { status: "not_yet_paid" })).bytes, "Advances").slice(1)[0][4]).toBe("Not Yet Paid");
+    expect(sheet((await xport(u.mom, "advances", { status: "not_yet_paid" })).bytes, "Advances").slice(1)[0][4]).toBe("Approved, not released");
     expect(sheet((await xport(u.mom, "householdStaff", {})).bytes, "Household Staff").slice(1)[0].slice(0, 3)).toEqual(["Maria", "Kasambahay", "600"]);
   });
 

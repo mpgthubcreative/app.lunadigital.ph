@@ -68,7 +68,7 @@ describe("Attendance", () => {
     const rows = container.querySelectorAll('[data-role="attendance-employee"] tbody tr');
     expect(rows).toHaveLength(15);
     expect(rows[0].textContent).toMatch(/Oct 1, 2026\s*Thu/);
-    expect(container.querySelector('[data-role="totals"]').textContent).toMatch(/Present 10 · Official Leave 2 · Absent 3 · Not marked 0 → 12 payable days · ₱7,200\.00 base pay/);
+    expect(container.querySelector('[data-role="totals"]').textContent).toMatch(/Present 10 · Paid Leave 2 · Unpaid Leave 0 · Rest Day 0 · Absent 3 · Not marked 0 → 12 paid days · ₱7,200\.00 basic pay/);
   });
 
   it("by day: one tap (Present / Leave / Absent) goes to the server, then reloads", async () => {
@@ -174,7 +174,7 @@ describe("Advances", () => {
     mountAdvances(container, home(), { data, now: NOW, toast: () => {} });
     await flush();
     const sel = container.querySelector('select[data-act="status"]');
-    expect([...sel.options].map((o) => o.textContent)).toEqual(["Not Yet Paid", "Paid"]);
+    expect([...sel.options].map((o) => o.textContent)).toEqual(["Approved, not released", "Released"]);
     sel.value = "paid";
     sel.dispatchEvent(new Event("change", { bubbles: true }));
     await flush();

@@ -120,3 +120,43 @@ describe("no browser writes", () => {
     await assertFails(db.doc("receiptLinks/forged").set({ businessId: H, payrollId: "d1" }));
   });
 });
+
+describe("Phase 18.6: household staff accounts and attendance requests", () => {
+  beforeAll(async () => {
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      const db = ctx.firestore();
+      await seedMember(db, H, "maria@home-a", { role: "household_staff" });
+      await db.doc(`businesses/${H}/members/maria@home-a`).update({ staffId: "s1" });
+      for (const bid of [H, H2]) await db.doc(`businesses/${bid}/attendanceRequests/s1_2026-10-16`).set({ staffId: "s1", date: "2026-10-16", status: "present", state: "pending" });
+      await db.doc("activationLinks/abc").set({ businessId: H, uid: "maria@home-a" });
+    });
+  });
+
+  it("the Owner and Manager read pending requests (attendance.view); other households and roles don't", async () => {
+    for (const uid of ["owner@home-a", "manager@home-a"]) {
+      await assertSucceeds(dbAs(env, uid).doc(`businesses/${H}/attendanceRequests/s1_2026-10-16`).get());
+      await assertSucceeds(dbAs(env, uid).collection(`businesses/${H}/attendanceRequests`).where("state", "==", "pending").get());
+    }
+    await assertFails(dbAs(env, "owner@home-b").doc(`businesses/${H}/attendanceRequests/s1_2026-10-16`).get());
+    await assertFails(dbAs(env, "staff@home-a").doc(`businesses/${H}/attendanceRequests/s1_2026-10-16`).get());
+  });
+
+  it("a household staff account reads no household data directly, not even its own (the server shows it); nothing is writable", async () => {
+    const db = dbAs(env, "maria@home-a");
+    for (const c of [...Object.keys(COLLECTIONS), "attendanceRequests"]) {
+      await assertFails(db.doc(`businesses/${H}/${c}/${c === "attendanceRequests" ? "s1_2026-10-16" : "d1"}`).get());
+      await assertFails(db.collection(`businesses/${H}/${c}`).where("staffId", "==", "s1").get());
+    }
+    await assertFails(db.doc(`businesses/${H}/attendanceRequests/s1_2026-10-17`).set({ staffId: "s1", state: "approved" }));
+    await assertFails(db.doc(`businesses/${H}/members/maria@home-a`).update({ staffId: "s2" }));
+    await assertFails(db.collection(`businesses/${H}/members`).get());
+  });
+
+  it("activation links are server-only", async () => {
+    for (const uid of ["owner@home-a", "maria@home-a"]) {
+      await assertFails(dbAs(env, uid).doc("activationLinks/abc").get());
+      await assertFails(dbAs(env, uid).doc("activationLinks/new").set({ businessId: H }));
+    }
+    await assertFails(dbAnon(env).doc("activationLinks/abc").get());
+  });
+});

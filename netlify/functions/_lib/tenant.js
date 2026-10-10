@@ -108,6 +108,9 @@ async function evaluateCandidate(db, uid, businessId) {
         roleLabel: (roleTemplate && ROLE_TEMPLATES[roleTemplate]?.label) || "Custom",
         isAccountOwner: member.isAccountOwner === true,
         status: member.status,
+        // Phase 18.6: a household staff member's own record (self-service
+        // reads and requests are limited to it). Set by the server only.
+        staffId: typeof member.staffId === "string" ? member.staffId : null,
         // Their own notification choices (Phase 13), for the settings screen.
         notificationPreferences: member.notificationPreferences && typeof member.notificationPreferences === "object" ? member.notificationPreferences : {},
       },

@@ -1,11 +1,14 @@
 // Attendance = Work (Phase 18.5): "Who worked, and which days are payable?"
-//   By day       one row per person with one-tap Present / Leave / Absent
+//   Requests     Phase 18.6: what staff sent from their own accounts, with
+//                Approve / Reject (approval marks the day; nothing before)
+//   By day       one row per person with one-tap Present / Leave / Unpaid / Rest / Absent
 //                (44px targets on phones); ‹ date › steps through days.
 //   By employee  Date | Day | Status ▾ | Daily Wage | Payable Amount | Notes
 //                + Present / Official Leave / Absent / Not marked, payable days, base pay
 // The server records previous -> new, who and when, and recalculates any
-// unpaid payroll. Present and Official Leave are payable; Absent and
-// unmarked days aren't. Released periods are locked by the server.
+// unpaid payroll. Present and Paid Leave are payable; Absent, Unpaid Leave,
+// Rest Day and unmarked days aren't (a daily-paid rest day is a day not
+// worked, never a deduction). Released periods are locked by the server.
 
 import { html, render } from "../../lib/html.js";
 import { pageHeader, emptyState, segmented, skeleton, mobileCell } from "../../components/ui.js";
@@ -15,7 +18,7 @@ import { exportButton, bindExport, mayExport, exportHint } from "../../lib/expor
 import { ATTENDANCE_STATUSES, businessDate, periodFor, daysIn, weekdayLabel, summarizeAttendance, addDays } from "@shared/index.js";
 import * as defaultData from "../household/data.js";
 
-const SHORT = { present: "Present", official_leave: "Leave", absent: "Absent" };
+const SHORT = { present: "Present", official_leave: "Leave", unpaid_leave: "Unpaid", rest_day: "Rest", absent: "Absent" };
 
 const statusSelect = (staffId, date, status, disabled) =>
   html`<select class="select select-compact select-chip" data-act="mark" data-staff="${staffId}" data-date="${date}" data-tone="${status === "present" ? "success" : status === "absent" ? "danger" : status ? "info" : ""}" aria-label="Status on ${formatDayId(date)}" ${disabled ? "disabled" : ""}>
@@ -27,7 +30,7 @@ const statusSelect = (staffId, date, status, disabled) =>
 const statusButtons = (staff, date, status, disabled) =>
   html`<div class="pla" role="group" aria-label="Attendance of ${staff.name} on ${formatDayId(date)}">
     ${Object.keys(ATTENDANCE_STATUSES).map(
-      (k) => html`<button type="button" class="pla-btn pla-${k}" data-act="mark-btn" data-staff="${staff.id}" data-date="${date}" data-status="${k}" aria-pressed="${status === k ? "true" : "false"}" ${disabled ? "disabled" : ""}>${SHORT[k]}</button>`
+      (k) => html`<button type="button" class="pla-btn pla-${k}" data-act="mark-btn" data-staff="${staff.id}" data-date="${date}" data-status="${k}" aria-pressed="${status === k ? "true" : "false"}" title="${ATTENDANCE_STATUSES[k].label}${ATTENDANCE_STATUSES[k].payable ? " (paid)" : " (not paid)"}" ${disabled ? "disabled" : ""}>${SHORT[k]}</button>`
     )}
   </div>`;
 
@@ -35,14 +38,14 @@ export function mount(container, session, { data = defaultData, toast = defaultT
   const businessId = session.business.id;
   const canEdit = session.member.permissions["attendance.edit"] === true;
   const today = businessDate(session.business.timezone, now());
-  const state = { view: "day", date: today, staffId: "", from: "", to: "", staff: [], lines: [], loading: true, error: null, saving: null };
+  const state = { view: "day", date: today, staffId: "", from: "", to: "", staff: [], lines: [], requests: [], loading: true, error: null, saving: null, deciding: null };
   let alive = true;
 
   async function load() {
     state.loading = !state.lines.length || state.loading;
     draw();
     try {
-      state.staff = await data.activeStaff(businessId);
+      [state.staff, state.requests] = await Promise.all([data.activeStaff(businessId), canEdit && data.pendingAttendanceRequests ? data.pendingAttendanceRequests(businessId).catch(() => []) : []]);
       if (state.view === "employee" && !state.staffId && state.staff.length) state.staffId = state.staff[0].id;
       if (state.view === "employee" && state.staffId && !state.from) {
         const s = state.staff.find((x) => x.id === state.staffId);
@@ -84,7 +87,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     const byDate = new Map(state.lines.map((l) => [l.date, l]));
     const days = state.from && state.to && state.from <= state.to ? daysIn({ start: state.from, end: state.to > today ? today : state.to }) : [];
     const sum = summarizeAttendance(state.lines, { start: state.from, end: state.to > today ? today : state.to });
-    return html`<p class="chart-note" data-role="totals">Present ${sum.present} · Official Leave ${sum.officialLeave} · Absent ${sum.absent} · Not marked ${sum.notMarked} → <strong>${sum.payableDays} payable days · ${formatCentavos(sum.basePay)} base pay</strong></p>
+    return html`<p class="chart-note" data-role="totals">Present ${sum.present} · Paid Leave ${sum.officialLeave} · Unpaid Leave ${sum.unpaidLeave} · Rest Day ${sum.restDay} · Absent ${sum.absent} · Not marked ${sum.notMarked} → <strong>${sum.payableDays} paid days · ${formatCentavos(sum.basePay)} basic pay</strong></p>
       <div class="table-wrap"><table class="table table-compact rows" data-role="attendance-employee">
       <thead><tr><th class="m-only"></th><th>Date</th><th>Day</th><th>Status</th><th class="num">Daily Wage</th><th class="num">Payable Amount</th><th class="col-secondary">Notes</th></tr></thead>
       <tbody>${days.map((d) => {
@@ -94,12 +97,40 @@ export function mount(container, session, { data = defaultData, toast = defaultT
       })}</tbody></table></div>`;
   }
 
+  // Requests staff sent from their own accounts (Phase 18.6).
+  function requestsSection() {
+    if (!canEdit || !state.requests.length) return "";
+    return html`<section class="card section" data-section="requests">
+      <h2 class="card-title">Waiting for your approval (${state.requests.length})</h2>
+      <ul class="request-list" data-role="requests">${state.requests.map(
+        (r) => html`<li data-request="${r.id}">
+          <div class="request-main"><strong>${r.staffName}</strong> · ${ATTENDANCE_STATUSES[r.status]?.label ?? r.status} · ${formatDayId(r.date)}<small>${r.note ? `"${r.note}"` : r.current ? `Now marked ${ATTENDANCE_STATUSES[r.current]?.label ?? r.current}` : "Not marked yet"} · ${ATTENDANCE_STATUSES[r.status]?.payable ? "paid day" : "not paid"}</small></div>
+          <div class="request-actions"><button type="button" class="btn btn-compact" data-act="reject" data-id="${r.id}" ${state.deciding === r.id ? "disabled" : ""}>Reject</button><button type="button" class="btn btn-compact btn-primary" data-act="approve" data-id="${r.id}" ${state.deciding === r.id ? "disabled" : ""}>Approve</button></div>
+        </li>`
+      )}</ul>
+    </section>`;
+  }
+
+  async function decide(id, decision) {
+    state.deciding = id;
+    draw();
+    try {
+      await data.decideAttendance(id, decision);
+      toast(decision === "approve" ? "Approved and marked." : "Rejected. Nothing was changed.", "success");
+    } catch (err) {
+      toast(err.message || "Couldn't save", "danger");
+    }
+    state.deciding = null;
+    load();
+  }
+
   function draw() {
     if (!alive) return;
     render(
       container,
       html`
-        ${pageHeader({ title: "Attendance", subtitle: "Who worked each day. Present and Official Leave are paid; Absent isn't. Luna works out the pay." })}
+        ${pageHeader({ title: "Attendance", subtitle: "Who worked each day. Present and Paid Leave are paid; Absent, Unpaid Leave and Rest Day aren't." })}
+        ${requestsSection()}
         <div class="toolbar">
           ${segmented("view", [["day", "By day"], ["employee", "By employee"]], state.view, { label: "View" })}
         </div>
@@ -147,6 +178,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
       load();
     }
     if (el.dataset.act === "mark-btn" && el.getAttribute("aria-pressed") !== "true") mark(el.dataset.staff, el.dataset.date, el.dataset.status);
+    if (el.dataset.act === "approve" || el.dataset.act === "reject") decide(el.dataset.id, el.dataset.act);
     if (el.dataset.act === "step") {
       const next = el.dataset.step === "today" ? today : addDays(state.date, Number(el.dataset.step));
       if (next > today) return;

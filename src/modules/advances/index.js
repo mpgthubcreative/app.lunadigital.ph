@@ -1,10 +1,10 @@
 // Advances = Work (Phase 14; Phase 18.5 layout): "What was advanced, and
 // what is still to be deducted?" One compact row per advance.
-//   Date | Employee | Description | Amount | Status ▾ | Paid date | Deducted | View details
-// Status is a controlled value (Not Yet Paid / Paid), never free text.
-// Choosing Paid records the release (date, method, reference). Release is
-// separate from repayment: a paid advance is deducted in full from the
-// person's next payroll.
+//   Date | Employee | Description | Amount | Status | Released | Left to repay | View details
+// Phase 18.6: Requested (by the staff member) -> Approved -> Released
+// (paid out: date, method, reference) -> deducted per payroll, all at once
+// or a set amount each payday, until nothing is left. Approval is not the
+// money; release is separate from repayment; a rejected request goes nowhere.
 
 import { html, render } from "../../lib/html.js";
 import { pageHeader, emptyState, badge, filterBar, bindFilterBar, mobileCell, openButton, bindRowOpen, skeleton } from "../../components/ui.js";
@@ -12,14 +12,15 @@ import { formDialog } from "../../components/form-dialog.js";
 import { confirmDialog, toast as defaultToast } from "../../components/feedback.js";
 import { formatCentavos, formatDayId } from "../../lib/format.js";
 import { exportButton, bindExport, mayExport, exportHint } from "../../lib/export.js";
-import { ADVANCE_STATUSES, SALARY_METHODS, businessDate, parseCentavos } from "@shared/index.js";
+import { ADVANCE_STATUSES, SALARY_METHODS, businessDate, parseCentavos, advanceRemaining } from "@shared/index.js";
 import * as defaultData from "../household/data.js";
 
 export function mount(container, session, { data = defaultData, toast = defaultToast, now = () => new Date(), exportDeps = {} } = {}) {
   const canManage = session.member.permissions["advances.manage"] === true;
   const businessId = session.business.id;
   const today = businessDate(session.business.timezone, now());
-  const state = { staffId: "", status: "", from: "", to: "", cursors: [], rows: [], hasMore: false, staff: [], loading: true, error: null };
+  const state = { staffId: "", status: "", from: "", to: "", cursors: [], rows: [], requests: [], hasMore: false, staff: [], loading: true, error: null };
+  const optionalPesos = (v) => (v && String(v).trim() ? parseCentavos(v) : null);
   let alive = true;
   const filters = () => Object.fromEntries(Object.entries({ staffId: state.staffId, status: state.status, from: state.from, to: state.to }).filter(([, v]) => v));
 
@@ -28,7 +29,8 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     draw();
     try {
       if (!state.staff.length) state.staff = await data.activeStaff(businessId);
-      const page = await data.listAdvances(businessId, filters(), { cursor: state.cursors.at(-1) || null });
+      const [page, requests] = await Promise.all([data.listAdvances(businessId, filters(), { cursor: state.cursors.at(-1) || null }), canManage ? data.listAdvances(businessId, { status: "requested" }, { pageSize: 50 }).then((p) => p.rows).catch(() => []) : []]);
+      state.requests = requests;
       state.rows = page.rows;
       state.hasMore = page.hasMore;
       state.error = null;
@@ -40,10 +42,15 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     draw();
   }
 
+  const TONE = { requested: "warning", not_yet_paid: "info", paid: "success", rejected: "neutral" };
+  // Approved: choosing Released records the payout. Requested: Approve / Reject.
   const statusCell = (a) =>
     canManage && a.status === "not_yet_paid"
-      ? html`<select class="select select-compact" data-act="status" data-id="${a.id}" aria-label="Status">${Object.entries(ADVANCE_STATUSES).map(([k, s]) => html`<option value="${k}" ${a.status === k ? "selected" : ""}>${s.label}</option>`)}</select>`
-      : badge(ADVANCE_STATUSES[a.status]?.label ?? a.status, a.status === "paid" ? "success" : "warning");
+      ? html`<select class="select select-compact" data-act="status" data-id="${a.id}" aria-label="Status">${["not_yet_paid", "paid"].map((k) => html`<option value="${k}" ${a.status === k ? "selected" : ""}>${ADVANCE_STATUSES[k].label}</option>`)}</select>`
+      : canManage && a.status === "requested"
+        ? html`<span class="request-actions"><button type="button" class="btn btn-compact" data-act="reject" data-id="${a.id}">Reject</button><button type="button" class="btn btn-compact btn-primary" data-act="approve" data-id="${a.id}">Approve</button></span>`
+        : badge(ADVANCE_STATUSES[a.status]?.label ?? a.status, TONE[a.status] || "neutral");
+  const leftText = (a) => (a.status !== "paid" ? "—" : advanceRemaining(a) === 0 ? "Repaid" : `${formatCentavos(advanceRemaining(a))}${a.installment ? ` · ${formatCentavos(a.installment)}/payday` : ""}`);
 
   function draw() {
     if (!alive) return;
@@ -51,7 +58,14 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     render(
       container,
       html`
-        ${pageHeader({ title: "Advances", subtitle: "Cash advances (bale). Once paid out, an advance is deducted in full from the person's next payroll.", actions: canManage ? html`<button type="button" class="btn btn-primary" data-act="new">+ New advance</button>` : "" })}
+        ${pageHeader({ title: "Advances", subtitle: "Cash advances (bale). Once paid out, they're taken from salary: all at once, or a set amount each payday.", actions: canManage ? html`<button type="button" class="btn btn-primary" data-act="new">+ New advance</button>` : "" })}
+        ${canManage && state.requests.length && state.status !== "requested"
+          ? html`<section class="card section" data-section="requests"><h2 class="card-title">Waiting for your approval (${state.requests.length})</h2>
+              <ul class="request-list" data-role="advance-requests">${state.requests.map(
+                (a) => html`<li data-advance="${a.id}"><div class="request-main"><strong>${a.staffName}</strong> asks for ${formatCentavos(a.requestedAmount ?? a.amount)}<small>${formatDayId(a.date)}${a.description ? ` · "${a.description}"` : ""}</small></div>
+                  <div class="request-actions"><button type="button" class="btn btn-compact" data-act="reject" data-id="${a.id}">Reject</button><button type="button" class="btn btn-compact btn-primary" data-act="approve" data-id="${a.id}">Approve</button></div></li>`
+              )}</ul></section>`
+          : ""}
         ${filterBar({
           fields: [
             { name: "staffId", label: "Employee", type: "select", primary: true, all: "All employees", options: state.staff.map((x) => [x.id, x.name]), value: state.staffId },
@@ -69,13 +83,13 @@ export function mount(container, session, { data = defaultData, toast = defaultT
               : !state.rows.length
                 ? emptyState({ iconName: "advance", title: "No advances", body: "Advances you give household staff appear here." })
                 : html`<div class="table-wrap"><table class="table table-compact rows" data-role="advances">
-                    <thead><tr><th class="m-only"></th><th>Date</th><th>Employee</th><th class="col-secondary">Description</th><th class="num">Amount</th><th>Status</th><th class="col-secondary">Paid date</th><th class="col-secondary">Deducted</th><th><span class="visually-hidden">Details</span></th></tr></thead>
+                    <thead><tr><th class="m-only"></th><th>Date</th><th>Employee</th><th class="col-secondary">Description</th><th class="num">Amount</th><th>Status</th><th class="col-secondary">Released</th><th class="col-secondary">Left to repay</th><th><span class="visually-hidden">Details</span></th></tr></thead>
                     <tbody>${state.rows.map(
                       (a) => html`<tr data-advance="${a.id}" data-open>
-                        ${mobileCell({ title: a.staffName, sub: `${formatDayId(a.date)}${a.description ? ` · ${a.description}` : ""} · ${a.deducted ? "deducted" : a.status === "paid" ? "deduct next payroll" : "not paid out yet"}`, end: formatCentavos(a.amount) })}
+                        ${mobileCell({ title: a.staffName, sub: `${formatDayId(a.date)}${a.description ? ` · ${a.description}` : ""} · ${a.status === "paid" ? (advanceRemaining(a) ? `${formatCentavos(advanceRemaining(a))} left` : "repaid") : (ADVANCE_STATUSES[a.status]?.label ?? a.status).toLowerCase()}`, end: formatCentavos(a.amount) })}
                         <td>${formatDayId(a.date)}</td><td>${a.staffName}</td><td class="col-secondary">${a.description || "—"}</td><td class="num">${formatCentavos(a.amount)}</td>
                         <td data-m="ctl">${statusCell(a)}</td><td class="col-secondary">${a.paidDate ? formatDayId(a.paidDate) : "—"}</td>
-                        <td class="col-secondary">${a.deducted ? "Yes" : a.deductionPayrollId ? "In unpaid payroll" : a.status === "paid" ? "Next payroll" : "—"}</td>
+                        <td class="col-secondary" data-col="left">${leftText(a)}</td>
                         <td class="row-actions" data-m="more">${openButton(a.id, `View advance of ${a.staffName}`, { act: "view" })}</td>
                       </tr>`
                     )}</tbody></table></div>
@@ -89,14 +103,14 @@ export function mount(container, session, { data = defaultData, toast = defaultT
 
   const markPaid = (a) =>
     formDialog({
-      title: `Mark ${formatCentavos(a.amount)} to ${a.staffName} as paid`,
-      intro: "It will be deducted in full from their next payroll.",
+      title: `Release ${formatCentavos(a.amount)} to ${a.staffName}`,
+      intro: a.installment ? `${formatCentavos(a.installment)} will be taken from each payroll until it's repaid.` : "It will be taken in full from their next payroll.",
       fields: [
         { name: "paidDate", label: "Paid date", type: "date", value: today, max: today },
         { name: "method", label: "Paid via", type: "select", value: "cash", options: Object.entries(SALARY_METHODS).map(([value, m]) => ({ value, label: m.label })) },
         { name: "reference", label: "Reference (optional)" },
       ],
-      submitLabel: "Mark paid",
+      submitLabel: "Mark released",
       onSubmit: (v) => data.advancesApi({ action: "markPaid", advanceId: a.id, release: { paidDate: v.paidDate || today, method: v.method, ...(v.reference ? { reference: v.reference } : {}) } }),
     });
 
@@ -111,7 +125,10 @@ export function mount(container, session, { data = defaultData, toast = defaultT
         <div class="modal-body">
           <dl class="dl dl-compact"><dt>Date</dt><dd>${formatDayId(a.date)}</dd><dt>Description</dt><dd>${a.description || "—"}</dd>
             <dt>Status</dt><dd>${ADVANCE_STATUSES[a.status]?.label}</dd>${a.paidDate ? html`<dt>Paid</dt><dd>${formatDayId(a.paidDate)} via ${SALARY_METHODS[a.method]?.label}${a.reference ? ` · Ref ${a.reference}` : ""}</dd>` : ""}
-            <dt>Deducted</dt><dd>${a.deducted ? "Yes" : a.deductionPayrollId ? "In an unpaid payroll" : a.status === "paid" ? "From the next payroll" : "Not until it's paid"}</dd></dl>
+            ${a.requestedAmount && a.requestedAmount !== a.amount ? html`<dt>Asked for</dt><dd>${formatCentavos(a.requestedAmount)}</dd>` : ""}
+            <dt>Taken from salary</dt><dd>${a.installment ? `${formatCentavos(a.installment)} each payday` : "All at once"}</dd>
+            <dt>Left to repay</dt><dd>${a.status === "paid" ? leftText(a) : "Not until it's released"}</dd>
+            ${(a.deductionLog || []).length ? html`<dt>Deductions</dt><dd>${a.deductionLog.map((d) => `${formatCentavos(d.amount)} (period to ${formatDayId(d.periodEnd)})`).join(" · ")}</dd>` : ""}</dl>
           <ul class="list activity">${(a.history || []).map((h) => html`<li>${h.label}${h.actor ? ` · ${h.actor.name}` : ""}</li>`)}</ul>
         </div>
         <div class="modal-footer">${canManage && a.status === "not_yet_paid" ? html`<button type="button" class="btn btn-danger" data-x="delete">Delete</button>` : ""}<button type="button" class="btn" data-x="close">Close</button></div>
@@ -145,11 +162,44 @@ export function mount(container, session, { data = defaultData, toast = defaultT
           { name: "date", label: "Date", type: "date", value: today, max: today },
           { name: "amount", label: "Amount (₱)", required: true, inputmode: "decimal" },
           { name: "description", label: "Description", hint: "e.g. Fare home, medicine" },
+          { name: "installment", label: "Take from each payroll (₱, optional)", inputmode: "decimal", hint: "Leave blank to take it all from the next payroll." },
         ],
-        onSubmit: (v) => data.advancesApi({ action: "create", advance: { staffId: v.staffId, date: v.date || today, amount: parseCentavos(v.amount), ...(v.description ? { description: v.description } : {}) } }),
+        onSubmit: (v) => data.advancesApi({ action: "create", advance: { staffId: v.staffId, date: v.date || today, amount: parseCentavos(v.amount), ...(v.description ? { description: v.description } : {}), ...(optionalPesos(v.installment) ? { installment: optionalPesos(v.installment) } : {}) } }),
       });
       if (r) {
-        toast("Advance recorded (Not Yet Paid).", "success");
+        toast("Advance recorded. Mark it released when you hand over the money.", "success");
+        load();
+      }
+    } else if (el.dataset.act === "approve") {
+      const req = state.rows.find((r) => r.id === el.dataset.id) || state.requests.find((r) => r.id === el.dataset.id);
+      if (!req) return undefined;
+      const asked = req.requestedAmount ?? req.amount;
+      const r = await formDialog({
+        title: `Approve ${req.staffName}'s advance`,
+        intro: `${req.staffName} asked for ${formatCentavos(asked)}${req.description ? ` (${req.description})` : ""}. Approving doesn't move money: mark it released when you hand it over.`,
+        fields: [
+          { name: "amount", label: "Approved amount (₱)", value: String(asked / 100), inputmode: "decimal", required: true },
+          { name: "installment", label: "Take from each payroll (₱, optional)", inputmode: "decimal", hint: "Leave blank to take it all from the next payroll." },
+          { name: "note", label: "Message to them (optional)" },
+        ],
+        submitLabel: "Approve",
+        onSubmit: (v) => data.advancesApi({ action: "decide", advanceId: req.id, decision: { decision: "approve", ...(v.note.trim() ? { note: v.note.trim() } : {}) }, approval: { amount: parseCentavos(v.amount), ...(optionalPesos(v.installment) ? { installment: optionalPesos(v.installment) } : {}) } }),
+      });
+      if (r) {
+        toast("Approved. Mark it released when you hand over the money.", "success");
+        load();
+      }
+    } else if (el.dataset.act === "reject") {
+      const req = state.rows.find((r) => r.id === el.dataset.id) || state.requests.find((r) => r.id === el.dataset.id);
+      if (!req) return undefined;
+      const r = await formDialog({
+        title: `Reject ${req.staffName}'s request?`,
+        fields: [{ name: "note", label: "Message to them (optional)", placeholder: "e.g. Next month" }],
+        submitLabel: "Reject",
+        onSubmit: (v) => data.advancesApi({ action: "decide", advanceId: req.id, decision: { decision: "reject", ...(v.note.trim() ? { note: v.note.trim() } : {}) } }),
+      });
+      if (r) {
+        toast("Request rejected.", "success");
         load();
       }
     } else if (el.dataset.act === "view" && a) view(a);
@@ -166,7 +216,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     if (el.dataset.act !== "status" || el.value !== "paid") return;
     const a = state.rows.find((r) => r.id === el.dataset.id);
     const r = a ? await markPaid(a) : null;
-    if (r) toast("Advance marked paid.", "success");
+    if (r) toast("Advance released.", "success");
     load();
   };
   const onSubmit = (event) => {

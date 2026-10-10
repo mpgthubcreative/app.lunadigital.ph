@@ -38,7 +38,11 @@ describe("the calculation (nobody types base pay)", () => {
       ...Array(2).fill({ status: "official_leave", dailyWage: 60000 }),
       ...Array(3).fill({ status: "absent", dailyWage: 60000 }),
     ];
-    expect(summarizeAttendance(lines, { start: "2026-10-01", end: "2026-10-15" })).toEqual({ present: 10, absent: 3, officialLeave: 2, notMarked: 0, payableDays: 12, basePay: 720000 });
+    expect(summarizeAttendance(lines, { start: "2026-10-01", end: "2026-10-15" })).toEqual({ present: 10, absent: 3, officialLeave: 2, unpaidLeave: 0, restDay: 0, notMarked: 0, payableDays: 12, basePay: 720000 });
+    // Phase 18.6: Unpaid Leave and Rest Day are counted but not paid.
+    const more = [...lines.slice(0, 12), { status: "unpaid_leave", dailyWage: 60000 }, { status: "rest_day", dailyWage: 60000 }, { status: "rest_day", dailyWage: 60000 }];
+    expect(summarizeAttendance(more, { start: "2026-10-01", end: "2026-10-15" })).toEqual({ present: 10, absent: 0, officialLeave: 2, unpaidLeave: 1, restDay: 2, notMarked: 0, payableDays: 12, basePay: 720000 });
+    expect(ATTENDANCE_STATUSES.official_leave.label).toBe("Paid Leave");
     expect(netPayOf(720000, [{ amount: 50000 }])).toBe(670000);
     // a wage change mid-period: each day keeps the wage it was marked at
     expect(summarizeAttendance([{ status: "present", dailyWage: 60000 }, { status: "present", dailyWage: 65000 }], { start: "2026-10-01", end: "2026-10-02" }).basePay).toBe(125000);

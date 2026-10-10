@@ -41,7 +41,7 @@ export const MODULES = Object.freeze([
   // Built in Phase 14 (Household / Kasambahay Payroll). Operational only in
   // the household-payroll template.
   { id: "household", label: "Household Staff", path: "/household-staff", icon: "staff", permission: "household.view", available: true, collections: { householdStaff: "household.view" }, storage: {} },
-  { id: "attendance", label: "Attendance", path: "/attendance", icon: "calendar", permission: "attendance.view", available: true, collections: { attendance: "attendance.view" }, storage: {} },
+  { id: "attendance", label: "Attendance", path: "/attendance", icon: "calendar", permission: "attendance.view", available: true, collections: { attendance: "attendance.view", attendanceRequests: "attendance.view" }, storage: {} },
   { id: "payroll", label: "Payroll", path: "/payroll", icon: "payroll", permission: "payroll.view", available: true, collections: { payrolls: "payroll.view" }, storage: {} },
   { id: "advances", label: "Advances", path: "/advances", icon: "advance", permission: "advances.view", available: true, collections: { advances: "advances.view" }, storage: {} },
   // Built in Phase 15 (Baby Expense Tracker). Operational only in the
