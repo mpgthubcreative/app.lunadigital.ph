@@ -11,6 +11,7 @@ import { PayrollError } from "../../../shared/payroll.js";
 export const PAYROLL_STATUS = {
   "not-found": 404,
   "has-draft-payroll": 409,
+  "staff-in-use": 409,
   "payroll-released": 409,
   "advance-paid": 409,
   "inactive-staff": 409,

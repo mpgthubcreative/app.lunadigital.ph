@@ -128,6 +128,24 @@ export async function setStaffStatus({ db, tenant, FieldValue, staffId, status, 
   }, TX_OPTIONS);
 }
 
+// Phase 18.5 · ⋯ More -> Delete: only someone with no attendance, payroll
+// or advance at all (added by mistake). Anyone with history is deactivated
+// instead, so pay records always keep their person. Attendance, payroll
+// and advance writes all read the staff document, so they can't slip in
+// while this runs. A snapshot goes to the audit log.
+export async function deleteStaff({ db, tenant, FieldValue, staffId, actor }) {
+  const ref = staffRef(tenant, staffId);
+  return db.runTransaction(async (tx) => {
+    const current = await loadStaff(tx, tenant, staffId);
+    const used = await Promise.all(["attendance", "payrolls", "advances"].map((c) => tx.get(tenant.collection(c).where("staffId", "==", staffId).limit(1))));
+    if (used.some((q) => !q.empty)) throw new PayrollError("staff-in-use", "This person has attendance, payroll or advances. Deactivate them instead");
+    const stamp = FieldValue.serverTimestamp();
+    tx.delete(ref);
+    tx.set(tenant.collection("auditLog").doc(), { type: "staff.deleted", staffId, snapshot: { name: current.name, position: current.position ?? null, dailyWage: current.dailyWage, payCycle: current.payCycle, status: current.status, history: current.history ?? [] }, actor, at: stamp });
+    return { staffId, deleted: true };
+  }, TX_OPTIONS);
+}
+
 // ---------- Attendance ----------
 
 // Marks (or changes) one person's status for one day. The day's payable

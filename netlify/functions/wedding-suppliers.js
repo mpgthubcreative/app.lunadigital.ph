@@ -8,7 +8,7 @@
 
 import { getAdmin } from "./_lib/firebase-admin.js";
 import { weddingActionHandler } from "./_lib/wedding-http.js";
-import { createSupplier, updateSupplier, setSupplierStatus } from "./_lib/wedding.js";
+import { createSupplier, updateSupplier, setSupplierStatus, deleteSupplier } from "./_lib/wedding.js";
 
 const M = "vendors.manage";
 export const createWeddingSuppliersHandler = (deps) =>
@@ -18,6 +18,8 @@ export const createWeddingSuppliersHandler = (deps) =>
       create: { permission: M, created: true, fields: ["action", "supplier"], run: (c, b) => createSupplier({ ...c, input: b.supplier }) },
       update: { permission: M, fields: ["action", "supplierId", "expectedRevision", "changes"], run: (c, b) => updateSupplier({ ...c, supplierId: b.supplierId, changes: b.changes, expectedRevision: b.expectedRevision ?? null }) },
       setStatus: { permission: M, fields: ["action", "supplierId", "status"], run: (c, b) => setSupplierStatus({ ...c, supplierId: b.supplierId, status: b.status }) },
+      // Phase 18.5: only a supplier nothing was recorded against.
+      delete: { permission: M, fields: ["action", "supplierId"], run: (c, b) => deleteSupplier({ ...c, supplierId: b.supplierId }) },
     },
   });
 

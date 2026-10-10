@@ -1,5 +1,8 @@
-// Payroll (Phase 14): one compact row per person per pay period. History
-// is the same list filtered to Paid.
+// Payroll = Work (Phase 18.5): "How much should each person receive?"
+// One compact row per person per pay period, opened on "To pay"; "Paid
+// history" (released, with receipt confirmations) is the same list
+// filtered to Paid, so the Household story Attendance → Payroll →
+// Advances → History needs no extra module.
 //   Employee | Period | Daily wage | P / L / A | Payable days | Base pay |
 //   Deductions | Net pay | Salary | Receipt | View
 // Everything is computed by the server from attendance and advances. Paid
@@ -7,7 +10,7 @@
 // link the employee opens to confirm they received the money.
 
 import { html, render } from "../../lib/html.js";
-import { pageHeader, emptyState, badge } from "../../components/ui.js";
+import { pageHeader, emptyState, badge, filterBar, bindFilterBar, segmented, mobileCell, openButton, bindRowOpen, skeleton } from "../../components/ui.js";
 import { formDialog } from "../../components/form-dialog.js";
 import { confirmDialog, toast as defaultToast } from "../../components/feedback.js";
 import { formatCentavos, formatDayId } from "../../lib/format.js";
@@ -36,7 +39,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
   const canRelease = perms["payroll.release"] === true;
   const businessId = session.business.id;
   const today = businessDate(session.business.timezone, now());
-  const state = { staffId: "", status: "", from: "", to: "", cursors: [], rows: [], hasMore: false, staff: [], loading: true, error: null };
+  const state = { staffId: "", status: "draft", from: "", to: "", cursors: [], rows: [], hasMore: false, staff: [], loading: true, error: null };
   let alive = true;
   // "awaiting" = paid, receipt not yet confirmed.
   const filters = () => Object.fromEntries(Object.entries({ staffId: state.staffId, status: state.status === "awaiting" ? "" : state.status, receiptStatus: state.status === "awaiting" ? "awaiting" : "", from: state.from, to: state.to }).filter(([, v]) => v));
@@ -58,44 +61,54 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     draw();
   }
 
+  const VIEWS = [["draft", "To pay"], ["awaiting", "Awaiting receipt"], ["released", "Paid history"], ["", "All"]];
+  const EMPTY = {
+    draft: ["Nothing to pay right now", "Prepare payroll for a pay period once attendance is marked."],
+    awaiting: ["No receipts waiting", "Every released salary has been confirmed by the person who received it."],
+    released: ["No paid salaries yet", "Salaries you release appear here with their receipt confirmation."],
+    "": ["No payroll yet", "Prepare a payroll for a pay period once attendance is marked."],
+  };
+
   function draw() {
     if (!alive) return;
-    const opt = (v, l, cur) => html`<option value="${v}" ${cur === v ? "selected" : ""}>${l}</option>`;
+    const [emptyTitle, emptyBody] = EMPTY[state.status] ?? EMPTY[""];
     render(
       container,
       html`
-        ${pageHeader({ title: "Payroll", subtitle: "Pay is worked out from attendance; paid advances are deducted in full.", actions: canManage ? html`<button type="button" class="btn btn-primary" data-act="prepare">Prepare payroll</button>` : "" })}
-        <form class="section card filters filters-inline" data-role="filters">
-          <select class="select" name="staffId" aria-label="Employee">${opt("", "All employees", state.staffId)}${state.staff.map((s) => opt(s.id, s.name, state.staffId))}</select>
-          <select class="select" name="status" aria-label="Salary">${opt("", "All", state.status)}${opt("draft", "Not yet paid", state.status)}${opt("released", "Paid (history)", state.status)}${opt("awaiting", "Paid, awaiting receipt", state.status)}</select>
-          <input class="input" type="date" name="from" value="${state.from}" aria-label="Periods from" />
-          <input class="input" type="date" name="to" value="${state.to}" aria-label="Periods to" />
-          <button type="submit" class="btn">Apply</button>
-          ${mayExport(session, "payroll") ? html`${exportButton("payroll")}<span class="stat-hint">${exportHint}</span>` : ""}
-        </form>
-        <section class="section card">
+        ${pageHeader({ title: "Payroll", subtitle: "What each person should receive: worked out from attendance, with paid advances deducted in full.", actions: canManage ? html`<button type="button" class="btn btn-primary" data-act="prepare">Prepare payroll</button>` : "" })}
+        <div class="toolbar">${segmented("status", VIEWS, state.status, { label: "Show" })}</div>
+        ${filterBar({
+          fields: [
+            { name: "staffId", label: "Employee", type: "select", primary: true, all: "All employees", options: state.staff.map((x) => [x.id, x.name]), value: state.staffId },
+            { name: "from", label: "Periods from", type: "date", value: state.from },
+            { name: "to", label: "Periods to", type: "date", value: state.to },
+          ],
+          end: html`<input type="hidden" name="status" value="${state.status}" />${mayExport(session, "payroll") ? html`<span class="visually-hidden">${exportHint}</span>${exportButton("payroll")}` : ""}`,
+        })}
+        <section class="card">
           ${state.error
             ? emptyState({ title: "Couldn't load", body: state.error })
             : state.loading
-              ? emptyState({ title: "Loading…" })
+              ? skeleton(5)
               : !state.rows.length
-                ? emptyState({ iconName: "payroll", title: "No payroll yet", body: "Prepare a payroll for a pay period once attendance is marked." })
-                : html`<div class="table-wrap"><table class="table table-compact" data-role="payrolls">
-                    <thead><tr><th>Employee</th><th>Period</th><th class="num col-secondary">Daily wage</th><th class="col-secondary">P / L / A</th><th class="num">Payable days</th><th class="num col-secondary">Base pay</th><th class="num col-secondary">Deductions</th><th class="num">Net pay</th><th>Salary</th><th>Receipt</th><th></th></tr></thead>
+                ? emptyState({ iconName: "payroll", title: emptyTitle, body: emptyBody })
+                : html`<div class="table-wrap"><table class="table table-compact rows" data-role="payrolls">
+                    <thead><tr><th class="m-only"></th><th>Employee</th><th>Period</th><th class="num col-secondary">Daily wage</th><th class="col-secondary">P / L / A</th><th class="num">Payable days</th><th class="num col-secondary">Base pay</th><th class="num col-secondary">Deductions</th><th class="num">Net pay</th><th>Salary</th><th>Receipt</th><th><span class="visually-hidden">Details</span></th></tr></thead>
                     <tbody>${state.rows.map(
-                      (p) => html`<tr data-payroll="${p.id}">
-                        <td>${p.staffName}</td><td>${period(p)}</td><td class="num col-secondary">${formatCentavos(p.dailyWage)}</td>
+                      (p) => html`<tr data-payroll="${p.id}" data-open>
+                        ${mobileCell({ title: p.staffName, sub: `${period(p)} · ${p.present} / ${p.officialLeave} / ${p.absent} P/L/A`, end: formatCentavos(p.netPay), endSub: p.status === "released" ? (RECEIPT_STATUSES[p.receiptStatus]?.label ?? "Paid") : "to pay" })}
+                        <td class="cell-strong">${p.staffName}</td><td>${period(p)}</td><td class="num col-secondary">${formatCentavos(p.dailyWage)}</td>
                         <td class="col-secondary">${p.present} / ${p.officialLeave} / ${p.absent}${p.notMarked ? html` <span class="stat-hint">(${p.notMarked} not marked)</span>` : ""}</td>
                         <td class="num">${p.payableDays}</td><td class="num col-secondary">${formatCentavos(p.basePay)}</td><td class="num col-secondary">${formatCentavos(p.deductionsTotal)}</td>
                         <td class="num"><strong>${formatCentavos(p.netPay)}</strong></td>
                         <td>${badge(PAYROLL_STATUSES[p.status]?.label ?? p.status, p.status === "released" ? "success" : "warning")}</td>
                         <td>${badge(RECEIPT_STATUSES[p.receiptStatus]?.label ?? "—", RECEIPT_TONE[p.receiptStatus] || "neutral")}</td>
-                        <td class="row-actions"><button type="button" class="btn btn-compact" data-act="view" data-id="${p.id}">View</button></td>
+                        <td class="row-actions" data-m="more">${openButton(p.id, `Open payroll of ${p.staffName}`, { act: "view" })}</td>
                       </tr>`
                     )}</tbody></table></div>
-                  <div class="modal-footer">
-                    <button type="button" class="btn" data-act="prev" ${state.cursors.length ? "" : "disabled"}>Previous</button>
-                    <button type="button" class="btn" data-act="next" ${state.hasMore ? "" : "disabled"}>Next</button>
+                  <div class="pager">
+                    <button type="button" class="btn btn-ghost" data-act="prev" ${state.cursors.length ? "" : "disabled"}>‹ Previous</button>
+                    <button type="button" class="btn btn-ghost" data-act="next" ${state.hasMore ? "" : "disabled"}>Next ›</button>
                   </div>`}
         </section>`
     );
@@ -124,7 +137,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
 
   async function openView(payrollId) {
     const backdrop = document.createElement("div");
-    backdrop.className = "modal-backdrop";
+    backdrop.className = "modal-backdrop is-panel";
     document.body.appendChild(backdrop);
     let p = null;
     let link = null; // shown once after release / new link
@@ -239,6 +252,11 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     if (!el || !container.contains(el)) return;
     const a = el.dataset.act;
     if (a === "prepare") prepare();
+    else if (a === "seg" && el.dataset.seg === "status") {
+      state.status = el.dataset.value;
+      state.cursors = [];
+      load();
+    }
     else if (a === "view") openView(el.dataset.id);
     else if (a === "next" && state.rows.length) {
       state.cursors.push(state.rows.at(-1));
@@ -259,11 +277,15 @@ export function mount(container, session, { data = defaultData, toast = defaultT
   container.addEventListener("click", onClick);
   container.addEventListener("submit", onSubmit);
   const unbindExport = bindExport(container, filters, { toast, deps: exportDeps });
+  const unbindFilters = bindFilterBar(container);
+  const unbindRows = bindRowOpen(container, { act: "view" });
   load();
   return () => {
     alive = false;
     container.removeEventListener("click", onClick);
     container.removeEventListener("submit", onSubmit);
     unbindExport();
+    unbindFilters();
+    unbindRows();
   };
 }

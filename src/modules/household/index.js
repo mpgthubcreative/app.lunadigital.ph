@@ -1,12 +1,14 @@
-// Household Staff (Phase 14): one compact row per person.
-//   Name | Position | Daily wage | Pay cycle | Status | Edit · Deactivate
+// Household Staff (Phase 14; Phase 18.5 layout): one compact row per person.
+//   Name | Position | Daily wage | Pay cycle | Status | ⋯ (Edit · Deactivate · Delete)
+// Delete is only for someone added by mistake (no attendance, payroll or
+// advances): the server refuses it otherwise, and Deactivate keeps history.
 // The daily wage and pay cycle drive attendance and payroll; Luna computes
 // pay from them, nobody types base pay.
 
 import { html, render } from "../../lib/html.js";
-import { pageHeader, emptyState, badge } from "../../components/ui.js";
+import { pageHeader, emptyState, badge, filterBar, bindFilterBar, mobileCell, rowMenu, bindRowMenus, skeleton } from "../../components/ui.js";
 import { formDialog } from "../../components/form-dialog.js";
-import { toast as defaultToast } from "../../components/feedback.js";
+import { toast as defaultToast, confirmDialog } from "../../components/feedback.js";
 import { formatCentavos } from "../../lib/format.js";
 import { exportButton, bindExport, mayExport, exportHint } from "../../lib/export.js";
 import { PAY_CYCLES, STAFF_STATUSES, parseCentavos } from "@shared/index.js";
@@ -33,7 +35,7 @@ function toInput(v) {
   return out;
 }
 
-export function mount(container, session, { data = defaultData, toast = defaultToast, exportDeps = {} } = {}) {
+export function mount(container, session, { data = defaultData, toast = defaultToast, exportDeps = {}, confirm = confirmDialog } = {}) {
   const perms = session.member.permissions;
   const canManage = perms["household.manage"] === true;
   const businessId = session.business.id;
@@ -59,29 +61,33 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     render(
       container,
       html`
-        ${pageHeader({ title: "Household Staff", subtitle: "The people you pay, their daily wage and pay cycle.", actions: canManage ? html`<button type="button" class="btn btn-primary" data-act="new">Add staff</button>` : "" })}
-        <form class="section card filters filters-inline" data-role="filters">
-          <select class="select" name="status" aria-label="Status">${Object.entries(STAFF_STATUSES).map(([k, s]) => html`<option value="${k}" ${state.status === k ? "selected" : ""}>${s.label}</option>`)}</select>
-          <button type="submit" class="btn">Apply</button>
-          ${mayExport(session, "householdStaff") ? html`${exportButton("householdStaff")}<span class="stat-hint">${exportHint}</span>` : ""}
-        </form>
-        <section class="section card">
+        ${pageHeader({ title: "Household Staff", subtitle: "The people you pay: their daily wage and pay cycle drive attendance and payroll.", actions: canManage ? html`<button type="button" class="btn btn-primary" data-act="new">+ Add staff</button>` : "" })}
+        ${filterBar({
+          fields: [{ name: "status", label: "Status", type: "select", primary: true, def: "active", options: Object.entries(STAFF_STATUSES).map(([k, x]) => [k, x.label]), value: state.status }],
+          end: mayExport(session, "householdStaff") ? html`<span class="visually-hidden">${exportHint}</span>${exportButton("householdStaff")}` : "",
+        })}
+        <section class="card">
           ${state.error
             ? emptyState({ title: "Couldn't load", body: state.error })
             : state.loading
-              ? emptyState({ title: "Loading…" })
+              ? skeleton(4)
               : !state.rows.length
                 ? emptyState({ iconName: "staff", title: state.status === "active" ? "No household staff yet" : "No inactive staff", body: "Add the people you pay to start marking attendance." })
-                : html`<div class="table-wrap"><table class="table table-compact" data-role="staff">
-                    <thead><tr><th>Name</th><th class="col-secondary">Position</th><th class="num">Daily wage</th><th>Pay cycle</th><th>Status</th><th></th></tr></thead>
+                : html`<div class="table-wrap"><table class="table table-compact rows" data-role="staff">
+                    <thead><tr><th class="m-only"></th><th>Name</th><th class="col-secondary">Position</th><th class="num">Daily wage</th><th>Pay cycle</th><th>Status</th><th><span class="visually-hidden">Actions</span></th></tr></thead>
                     <tbody>${state.rows.map(
-                      (s) => html`<tr data-staff="${s.id}">
-                        <td>${s.name}</td><td class="col-secondary">${s.position || "—"}</td>
-                        <td class="num">${formatCentavos(s.dailyWage)}</td><td>${PAY_CYCLES[s.payCycle]?.label ?? s.payCycle}</td>
-                        <td>${badge(STAFF_STATUSES[s.status]?.label ?? s.status, s.status === "active" ? "success" : "neutral")}</td>
-                        <td class="row-actions">${canManage
-                          ? html`<button type="button" class="btn btn-compact" data-act="edit" data-id="${s.id}">Edit</button>
-                              <button type="button" class="btn btn-compact" data-act="status" data-id="${s.id}">${s.status === "active" ? "Deactivate" : "Reactivate"}</button>`
+                      (x) => html`<tr data-staff="${x.id}">
+                        ${mobileCell({ title: x.name, sub: `${x.position || "Staff"} · ${PAY_CYCLES[x.payCycle]?.label ?? x.payCycle}`, end: formatCentavos(x.dailyWage), endSub: "per day" })}
+                        <td class="cell-strong">${x.name}</td><td class="col-secondary">${x.position || "—"}</td>
+                        <td class="num">${formatCentavos(x.dailyWage)}</td><td>${PAY_CYCLES[x.payCycle]?.label ?? x.payCycle}</td>
+                        <td>${badge(STAFF_STATUSES[x.status]?.label ?? x.status, x.status === "active" ? "success" : "neutral")}</td>
+                        <td class="row-actions" data-m="more">${canManage
+                          ? rowMenu(x.id, [
+                              { act: "edit", label: "Edit" },
+                              { act: "status", label: x.status === "active" ? "Deactivate" : "Reactivate" },
+                              { sep: true },
+                              { act: "delete", label: "Delete (added by mistake)", danger: true },
+                            ], { label: `Actions for ${x.name}` })
                           : ""}</td>
                       </tr>`
                     )}</tbody></table></div>`}
@@ -110,6 +116,11 @@ export function mount(container, session, { data = defaultData, toast = defaultT
         if (r && !r.unchanged) toast("Saved.", "success");
       } else if (el.dataset.act === "status" && s) {
         await data.staffApi({ action: "setStatus", staffId: s.id, status: s.status === "active" ? "inactive" : "active" });
+      } else if (el.dataset.act === "delete" && s) {
+        const ok = await confirm({ title: `Delete ${s.name}?`, body: "Only for someone added by mistake. People with attendance, payroll or advances can't be deleted; deactivate them instead so their pay history stays.", confirmLabel: "Delete", danger: true });
+        if (!ok) return;
+        await data.staffApi({ action: "delete", staffId: s.id });
+        toast(`${s.name} deleted.`, "success");
       } else return;
       load();
     } catch (err) {
@@ -119,17 +130,21 @@ export function mount(container, session, { data = defaultData, toast = defaultT
   const onSubmit = (event) => {
     if (event.target.dataset.role !== "filters") return;
     event.preventDefault();
-    state.status = event.target.elements.status.value;
+    state.status = event.target.elements.status.value || "active";
     load();
   };
   container.addEventListener("click", onClick);
   container.addEventListener("submit", onSubmit);
   const unbindExport = bindExport(container, () => ({ status: state.status }), { toast, deps: exportDeps });
+  const unbindFilters = bindFilterBar(container);
+  const unbindMenus = bindRowMenus(container);
   load();
   return () => {
     alive = false;
     container.removeEventListener("click", onClick);
     container.removeEventListener("submit", onSubmit);
     unbindExport();
+    unbindFilters();
+    unbindMenus();
   };
 }

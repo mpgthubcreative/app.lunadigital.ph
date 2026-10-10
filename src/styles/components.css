@@ -1874,3 +1874,61 @@ a.item:hover {
   padding: 0;
   cursor: pointer;
 }
+
+/* Attendance: one tap per person (Phase 18.5) */
+.pla {
+  display: inline-flex;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: var(--surface);
+}
+
+.pla-btn {
+  min-width: 72px;
+  min-height: 34px;
+  padding: 0 var(--space-3);
+  border: 0;
+  border-right: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-muted);
+  font-weight: 600;
+  font-size: var(--text-sm);
+}
+
+.pla-btn:last-child {
+  border-right: 0;
+}
+
+.pla-btn:hover:not(:disabled) {
+  background: var(--surface-muted);
+  color: var(--text);
+}
+
+.pla-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.pla-present[aria-pressed="true"] { background: var(--success-bg); color: var(--success); }
+.pla-official_leave[aria-pressed="true"] { background: var(--info-bg); color: var(--info); }
+.pla-absent[aria-pressed="true"] { background: var(--danger-bg); color: var(--danger); }
+
+tr.is-saving {
+  opacity: 0.6;
+}
+
+@media (pointer: coarse), (max-width: 719px) {
+  .pla {
+    width: 100%;
+  }
+
+  .pla-btn {
+    flex: 1;
+    min-height: var(--touch);
+  }
+
+  .rows td[data-m="ctl"]:has(.pla) {
+    flex: 1 1 100%;
+  }
+}

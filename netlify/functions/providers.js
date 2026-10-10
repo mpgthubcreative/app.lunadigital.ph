@@ -7,7 +7,7 @@
 
 import { getAdmin } from "./_lib/firebase-admin.js";
 import { babyActionHandler } from "./_lib/baby-http.js";
-import { createProvider, updateProvider, setProviderStatus } from "./_lib/baby.js";
+import { createProvider, updateProvider, setProviderStatus, deleteProvider } from "./_lib/baby.js";
 
 const M = "providers.manage";
 export const createProvidersHandler = (deps) =>
@@ -17,6 +17,8 @@ export const createProvidersHandler = (deps) =>
       create: { permission: M, created: true, fields: ["action", "provider"], run: (c, b) => createProvider({ ...c, input: b.provider }) },
       update: { permission: M, fields: ["action", "providerId", "expectedRevision", "changes"], run: (c, b) => updateProvider({ ...c, providerId: b.providerId, changes: b.changes, expectedRevision: b.expectedRevision ?? null }) },
       setStatus: { permission: M, fields: ["action", "providerId", "status"], run: (c, b) => setProviderStatus({ ...c, providerId: b.providerId, status: b.status }) },
+      // Phase 18.5: only a provider nothing ever used.
+      delete: { permission: M, fields: ["action", "providerId"], run: (c, b) => deleteProvider({ ...c, providerId: b.providerId }) },
     },
   });
 

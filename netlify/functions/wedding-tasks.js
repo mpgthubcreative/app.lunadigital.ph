@@ -7,7 +7,7 @@
 
 import { getAdmin } from "./_lib/firebase-admin.js";
 import { weddingActionHandler } from "./_lib/wedding-http.js";
-import { createTask, updateTask, setTaskStatus } from "./_lib/wedding.js";
+import { createTask, updateTask, setTaskStatus, deleteTask } from "./_lib/wedding.js";
 
 const M = "tasks.manage";
 export const createWeddingTasksHandler = (deps) =>
@@ -17,6 +17,8 @@ export const createWeddingTasksHandler = (deps) =>
       create: { permission: M, created: true, fields: ["action", "task"], run: (c, b) => createTask({ ...c, input: b.task }) },
       update: { permission: M, fields: ["action", "taskId", "expectedRevision", "changes"], run: (c, b) => updateTask({ ...c, taskId: b.taskId, changes: b.changes, expectedRevision: b.expectedRevision ?? null }) },
       setStatus: { permission: M, fields: ["action", "taskId", "status"], run: (c, b) => setTaskStatus({ ...c, taskId: b.taskId, status: b.status }) },
+      // Phase 18.5: a task holds no money; deleting it is audited.
+      delete: { permission: M, fields: ["action", "taskId"], run: (c, b) => deleteTask({ ...c, taskId: b.taskId }) },
     },
   });
 

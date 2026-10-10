@@ -1,4 +1,5 @@
-// Advances (Phase 14): one compact row per advance.
+// Advances = Work (Phase 14; Phase 18.5 layout): "What was advanced, and
+// what is still to be deducted?" One compact row per advance.
 //   Date | Employee | Description | Amount | Status ▾ | Paid date | Deducted | View details
 // Status is a controlled value (Not Yet Paid / Paid), never free text.
 // Choosing Paid records the release (date, method, reference). Release is
@@ -6,7 +7,7 @@
 // person's next payroll.
 
 import { html, render } from "../../lib/html.js";
-import { pageHeader, emptyState, badge } from "../../components/ui.js";
+import { pageHeader, emptyState, badge, filterBar, bindFilterBar, mobileCell, openButton, bindRowOpen, skeleton } from "../../components/ui.js";
 import { formDialog } from "../../components/form-dialog.js";
 import { confirmDialog, toast as defaultToast } from "../../components/feedback.js";
 import { formatCentavos, formatDayId } from "../../lib/format.js";
@@ -50,35 +51,37 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     render(
       container,
       html`
-        ${pageHeader({ title: "Advances", subtitle: "Cash advances (bale). Once paid, an advance is deducted in full from the next payroll.", actions: canManage ? html`<button type="button" class="btn btn-primary" data-act="new">New advance</button>` : "" })}
-        <form class="section card filters filters-inline" data-role="filters">
-          <select class="select" name="staffId" aria-label="Employee">${opt("", "All employees", state.staffId)}${state.staff.map((s) => opt(s.id, s.name, state.staffId))}</select>
-          <select class="select" name="status" aria-label="Status">${opt("", "All", state.status)}${Object.entries(ADVANCE_STATUSES).map(([k, s]) => opt(k, s.label, state.status))}</select>
-          <input class="input" type="date" name="from" value="${state.from}" aria-label="From" />
-          <input class="input" type="date" name="to" value="${state.to}" aria-label="To" />
-          <button type="submit" class="btn">Apply</button>
-          ${mayExport(session, "advances") ? html`${exportButton("advances")}<span class="stat-hint">${exportHint}</span>` : ""}
-        </form>
-        <section class="section card">
+        ${pageHeader({ title: "Advances", subtitle: "Cash advances (bale). Once paid out, an advance is deducted in full from the person's next payroll.", actions: canManage ? html`<button type="button" class="btn btn-primary" data-act="new">+ New advance</button>` : "" })}
+        ${filterBar({
+          fields: [
+            { name: "staffId", label: "Employee", type: "select", primary: true, all: "All employees", options: state.staff.map((x) => [x.id, x.name]), value: state.staffId },
+            { name: "status", label: "Status", type: "select", primary: true, all: "Any status", options: Object.entries(ADVANCE_STATUSES).map(([k, x]) => [k, x.label]), value: state.status },
+            { name: "from", label: "From", type: "date", value: state.from },
+            { name: "to", label: "To", type: "date", value: state.to },
+          ],
+          end: mayExport(session, "advances") ? html`<span class="visually-hidden">${exportHint}</span>${exportButton("advances")}` : "",
+        })}
+        <section class="card">
           ${state.error
             ? emptyState({ title: "Couldn't load", body: state.error })
             : state.loading
-              ? emptyState({ title: "Loading…" })
+              ? skeleton(4)
               : !state.rows.length
                 ? emptyState({ iconName: "advance", title: "No advances", body: "Advances you give household staff appear here." })
-                : html`<div class="table-wrap"><table class="table table-compact" data-role="advances">
-                    <thead><tr><th>Date</th><th>Employee</th><th class="col-secondary">Description</th><th class="num">Amount</th><th>Status</th><th class="col-secondary">Paid date</th><th class="col-secondary">Deducted</th><th></th></tr></thead>
+                : html`<div class="table-wrap"><table class="table table-compact rows" data-role="advances">
+                    <thead><tr><th class="m-only"></th><th>Date</th><th>Employee</th><th class="col-secondary">Description</th><th class="num">Amount</th><th>Status</th><th class="col-secondary">Paid date</th><th class="col-secondary">Deducted</th><th><span class="visually-hidden">Details</span></th></tr></thead>
                     <tbody>${state.rows.map(
-                      (a) => html`<tr data-advance="${a.id}">
+                      (a) => html`<tr data-advance="${a.id}" data-open>
+                        ${mobileCell({ title: a.staffName, sub: `${formatDayId(a.date)}${a.description ? ` · ${a.description}` : ""} · ${a.deducted ? "deducted" : a.status === "paid" ? "deduct next payroll" : "not paid out yet"}`, end: formatCentavos(a.amount) })}
                         <td>${formatDayId(a.date)}</td><td>${a.staffName}</td><td class="col-secondary">${a.description || "—"}</td><td class="num">${formatCentavos(a.amount)}</td>
-                        <td>${statusCell(a)}</td><td class="col-secondary">${a.paidDate ? formatDayId(a.paidDate) : "—"}</td>
+                        <td data-m="ctl">${statusCell(a)}</td><td class="col-secondary">${a.paidDate ? formatDayId(a.paidDate) : "—"}</td>
                         <td class="col-secondary">${a.deducted ? "Yes" : a.deductionPayrollId ? "In unpaid payroll" : a.status === "paid" ? "Next payroll" : "—"}</td>
-                        <td class="row-actions"><button type="button" class="btn btn-compact" data-act="view" data-id="${a.id}">View details</button></td>
+                        <td class="row-actions" data-m="more">${openButton(a.id, `View advance of ${a.staffName}`, { act: "view" })}</td>
                       </tr>`
                     )}</tbody></table></div>
-                  <div class="modal-footer">
-                    <button type="button" class="btn" data-act="prev" ${state.cursors.length ? "" : "disabled"}>Previous</button>
-                    <button type="button" class="btn" data-act="next" ${state.hasMore ? "" : "disabled"}>Next</button>
+                  <div class="pager">
+                    <button type="button" class="btn btn-ghost" data-act="prev" ${state.cursors.length ? "" : "disabled"}>‹ Previous</button>
+                    <button type="button" class="btn btn-ghost" data-act="next" ${state.hasMore ? "" : "disabled"}>Next ›</button>
                   </div>`}
         </section>`
     );
@@ -99,7 +102,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
 
   async function view(a) {
     const backdrop = document.createElement("div");
-    backdrop.className = "modal-backdrop";
+    backdrop.className = "modal-backdrop is-panel";
     document.body.appendChild(backdrop);
     render(
       backdrop,
@@ -178,6 +181,8 @@ export function mount(container, session, { data = defaultData, toast = defaultT
   container.addEventListener("change", onChange);
   container.addEventListener("submit", onSubmit);
   const unbindExport = bindExport(container, filters, { toast, deps: exportDeps });
+  const unbindFilters = bindFilterBar(container);
+  const unbindRows = bindRowOpen(container, { act: "view" });
   load();
   return () => {
     alive = false;
@@ -185,5 +190,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     container.removeEventListener("change", onChange);
     container.removeEventListener("submit", onSubmit);
     unbindExport();
+    unbindFilters();
+    unbindRows();
   };
 }

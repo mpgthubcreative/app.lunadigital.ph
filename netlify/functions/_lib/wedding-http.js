@@ -20,6 +20,7 @@ export const WEDDING_STATUS = {
   "not-upcoming": 409,
   "over-agreed": 409,
   "below-committed": 409,
+  "supplier-in-use": 409,
   "invalid-category": 400,
   "invalid-supplier": 400,
   "not-available": 403,

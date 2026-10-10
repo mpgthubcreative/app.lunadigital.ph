@@ -18,6 +18,7 @@ export const BABY_STATUS = {
   stale: 409,
   "history-full": 409,
   "duplicate-category": 409,
+  "provider-in-use": 409,
   "too-many-categories": 409,
   "category-in-use": 409,
   "not-upcoming": 409,

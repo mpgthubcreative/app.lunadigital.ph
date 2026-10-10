@@ -276,6 +276,27 @@ export async function setProviderStatus({ db, tenant, FieldValue, providerId, st
   }, TX_OPTIONS);
 }
 
+// Phase 18.5 · ⋯ More -> Delete provider: only a provider no expense or
+// scheduled payment ever used (added by mistake); anyone with history is
+// deactivated instead. A snapshot goes to the audit log.
+export async function deleteProvider({ db, tenant, FieldValue, providerId, actor }) {
+  const pRef = ref(tenant, "providers", providerId, "provider");
+  return db.runTransaction(async (tx) => {
+    const snap = await tx.get(pRef);
+    if (!snap.exists) throw new BabyError("not-found", "Provider not found");
+    const [exps, sched] = await Promise.all([
+      tx.get(tenant.collection("expenses").where("providerId", "==", providerId).limit(1)),
+      tx.get(tenant.collection("scheduledPayments").where("providerId", "==", providerId).limit(1)),
+    ]);
+    if (!exps.empty || !sched.empty) throw new BabyError("provider-in-use", "This provider has expenses or scheduled payments. Deactivate it instead");
+    const p = snap.data();
+    const stamp = FieldValue.serverTimestamp();
+    tx.delete(pRef);
+    tx.set(tenant.collection("auditLog").doc(), { type: "provider.deleted", providerId, snapshot: { name: p.name, type: p.type ?? null, phone: p.phone ?? null, email: p.email ?? null, notes: p.notes ?? null, status: p.status, history: p.history ?? [] }, actor: who(actor), at: stamp });
+    return { providerId, deleted: true };
+  }, TX_OPTIONS);
+}
+
 // ---------- Payment schedule ----------
 
 const scheduleRef = (tenant, id) => ref(tenant, "scheduledPayments", id, "payment");

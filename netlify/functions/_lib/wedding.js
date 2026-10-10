@@ -160,6 +160,31 @@ export async function setSupplierStatus({ db, tenant, FieldValue, supplierId, st
   }, TX_OPTIONS);
 }
 
+// Phase 18.5 · ⋯ More -> Delete supplier: only a supplier nothing was ever
+// recorded against (added by mistake): no supplier payment of any status,
+// no expense, nothing paid or scheduled. Anyone with history is
+// deactivated instead, so payments, expenses and the budget keep their
+// supplier. Its agreed amount leaves the contracted total in the same
+// transaction; a snapshot goes to the audit log.
+export async function deleteSupplier({ db, tenant, FieldValue, supplierId, actor }) {
+  const sRef = supplierRef(tenant, supplierId);
+  return db.runTransaction(async (tx) => {
+    const snap = await tx.get(sRef);
+    if (!snap.exists) throw new WeddingError("not-found", "Supplier not found");
+    const [pays, exps] = await Promise.all([
+      tx.get(tenant.collection("supplierPayments").where("supplierId", "==", supplierId).limit(1)),
+      tx.get(tenant.collection("expenses").where("supplierId", "==", supplierId).limit(1)),
+    ]);
+    const s = snap.data();
+    if (!pays.empty || !exps.empty || int(s.paid) > 0 || int(s.upcomingCount) > 0) throw new WeddingError("supplier-in-use", "This supplier has payments or expenses. Deactivate it instead");
+    const stamp = FieldValue.serverTimestamp();
+    tx.delete(sRef);
+    if (Number.isSafeInteger(s.agreedAmount)) tx.set(budgetRef(tenant), { schemaVersion: WEDDING_SCHEMA_VERSION, contracted: FieldValue.increment(-s.agreedAmount), updatedAt: stamp }, { merge: true });
+    tx.set(tenant.collection("auditLog").doc(), { type: "supplier.deleted", supplierId, snapshot: { name: s.name, service: s.service ?? null, agreedAmount: s.agreedAmount ?? null, contactPerson: s.contactPerson ?? null, phone: s.phone ?? null, email: s.email ?? null, notes: s.notes ?? null, status: s.status, history: s.history ?? [] }, actor: who(actor), at: stamp });
+    return { supplierId, deleted: true };
+  }, TX_OPTIONS);
+}
+
 // ---------- Supplier payments ----------
 
 // The supplier's earliest Upcoming due date after a change: drop `without`
@@ -492,6 +517,24 @@ export async function setRsvp({ db, tenant, FieldValue, business, guestId, rsvp,
 
 // A guest added by mistake: removed (no money is attached to a guest), with
 // an audit-log line; the totals drop its contribution.
+// Phase 18.5 · ⋯ More -> Delete task: a task holds no money, so a task
+// added by mistake (or no longer wanted) is deleted outright; the task
+// totals drop its contribution and a snapshot goes to the audit log.
+export async function deleteTask({ db, tenant, FieldValue, taskId, actor }) {
+  const tRef = taskRef(tenant, taskId);
+  return db.runTransaction(async (tx) => {
+    const snap = await tx.get(tRef);
+    await tx.get(taskTotalsRef(tenant));
+    if (!snap.exists) throw new WeddingError("not-found", "Task not found");
+    const t = snap.data();
+    const stamp = FieldValue.serverTimestamp();
+    tx.delete(tRef);
+    tx.set(taskTotalsRef(tenant), { schemaVersion: WEDDING_SCHEMA_VERSION, ...incTotals(FieldValue, taskTotalsDelta(t, null)), updatedAt: stamp }, { merge: true });
+    tx.set(tenant.collection("auditLog").doc(), { type: "task.deleted", taskId, snapshot: { title: t.title, status: t.status, dueDate: t.dueDate ?? null, assignee: t.assignee ?? null, category: t.category ?? null, history: t.history ?? [] }, actor: who(actor), at: stamp });
+    return { taskId, deleted: true };
+  }, TX_OPTIONS);
+}
+
 export async function removeGuest({ db, tenant, FieldValue, guestId, actor }) {
   const gRef = guestRef(tenant, guestId);
   return db.runTransaction(async (tx) => {

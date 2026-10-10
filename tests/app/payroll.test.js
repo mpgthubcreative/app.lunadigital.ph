@@ -57,7 +57,7 @@ describe("Attendance", () => {
     const data = fakeData();
     mountAttendance(container, home(), { data, now: NOW, toast: () => {} });
     await flush();
-    container.querySelector('[data-view="employee"]').click();
+    container.querySelector('[data-seg="view"][data-value="employee"]').click();
     await flush();
     expect(data.listAttendance).toHaveBeenLastCalledWith("demo-distributor-a", { staffId: maria.id, from: "2026-10-16", to: "2026-10-31" }, { pageSize: 100 });
     const form = container.querySelector('[data-role="filters"]');
@@ -71,21 +71,42 @@ describe("Attendance", () => {
     expect(container.querySelector('[data-role="totals"]').textContent).toMatch(/Present 10 · Official Leave 2 · Absent 3 · Not marked 0 → 12 payable days · ₱7,200\.00 base pay/);
   });
 
-  it("inline status change (Present ▾ -> Absent) goes to the server, then reloads", async () => {
+  it("by day: one tap (Present / Leave / Absent) goes to the server, then reloads", async () => {
     const data = fakeData();
     mountAttendance(container, home(), { data, now: NOW, toast: () => {} });
+    await flush();
+    container.querySelector('[data-act="mark-btn"][data-status="absent"]').click();
+    await flush();
+    expect(data.setAttendance).toHaveBeenCalledWith(maria.id, "2026-10-16", "absent");
+  });
+
+  it("by employee: inline status change (Present ▾ -> Absent) on any day of the range", async () => {
+    const data = fakeData();
+    mountAttendance(container, home(), { data, now: NOW, toast: () => {} });
+    await flush();
+    container.querySelector('[data-seg="view"][data-value="employee"]').click();
     await flush();
     const sel = container.querySelector('select[data-act="mark"]');
     sel.value = "absent";
     sel.dispatchEvent(new Event("change", { bubbles: true }));
     await flush();
-    expect(data.setAttendance).toHaveBeenCalledWith(maria.id, "2026-10-16", "absent");
+    expect(data.setAttendance).toHaveBeenCalledWith(maria.id, sel.dataset.date, "absent");
+  });
+
+  it("‹ › step through days (never into the future)", async () => {
+    const data = fakeData();
+    mountAttendance(container, home(), { data, now: NOW, toast: () => {} });
+    await flush();
+    expect(container.querySelector('[data-act="step"][data-step="1"]').disabled).toBe(true);
+    container.querySelector('[data-act="step"][data-step="-1"]').click();
+    await flush();
+    expect(data.listAttendance).toHaveBeenLastCalledWith("demo-distributor-a", { from: "2026-10-15", to: "2026-10-15" }, { pageSize: 100 });
   });
 
   it("without attendance.edit the status is read-only", async () => {
     mountAttendance(container, home("manager", { revoke: ["attendance.edit"] }), { data: fakeData(), now: NOW });
     await flush();
-    expect(container.querySelector('select[data-act="mark"]').disabled).toBe(true);
+    expect([...container.querySelectorAll('[data-act="mark-btn"]')].every((b) => b.disabled)).toBe(true);
   });
 });
 
@@ -180,6 +201,37 @@ describe("Household Staff", () => {
     submit(form);
     await flush();
     expect(data.staffApi).toHaveBeenCalledWith({ action: "create", staff: { name: "Lito", position: null, dailyWage: 65050, payCycle: "weekly", phone: null, startDate: null, notes: null } });
+  });
+});
+
+describe("Household Staff: ⋯ Delete (added by mistake)", () => {
+  it("asks first, then deletes; a refusal (has history) shows the server's message", async () => {
+    const data = fakeData();
+    const toast = vi.fn();
+    mountStaff(container, home(), { data, toast, confirm: async () => true });
+    await flush();
+    container.querySelector('[data-act="row-menu"]').click();
+    container.querySelector('.menu-item[data-act="delete"]').click();
+    await flush();
+    expect(data.staffApi).toHaveBeenCalledWith({ action: "delete", staffId: maria.id });
+    data.staffApi.mockRejectedValueOnce(new Error("This person has attendance, payroll or advances. Deactivate them instead"));
+    container.querySelector('.menu-item[data-act="delete"]').click();
+    await flush();
+    expect(toast).toHaveBeenLastCalledWith(expect.stringMatching(/Deactivate them instead/), "danger");
+  });
+
+  it("cancelling the confirmation sends nothing; staff without household.manage get no menu", async () => {
+    const data = fakeData();
+    mountStaff(container, home(), { data, toast: () => {}, confirm: async () => false });
+    await flush();
+    container.querySelector('.menu-item[data-act="delete"]').click();
+    await flush();
+    expect(data.staffApi).not.toHaveBeenCalled();
+    document.body.innerHTML = '<main id="content"></main>';
+    container = document.getElementById("content");
+    mountStaff(container, home("manager", { revoke: ["household.manage"] }), { data: fakeData(), toast: () => {} });
+    await flush();
+    expect(container.querySelector('[data-act="row-menu"]')).toBeNull();
   });
 });
 
