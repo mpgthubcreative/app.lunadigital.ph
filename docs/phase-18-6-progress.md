@@ -90,7 +90,7 @@ Recorded so the calculation method is explicit. Not legal advice: confirm with D
 | 3 Household access | done | 1c889d9 | unit 1218, rules payroll 18/18 (emulator) |
 | 4 Household payroll | done | 373a05f | unit 1227/1227 |
 | 5 Shared | done | a53a43f + (users commit) | unit full suite green |
-| 6 UI polish | done | fdea8e2 + (css commit) | unit 1242/1242; 22 pages × 390px + 1280px audited (no horizontal overflow, no unnamed buttons/links, no unlabelled inputs) |
+| 6 UI polish | done | fdea8e2, 9cc8c0d, 0d1c972 | unit 1242/1242; 22 pages × 390px + 1280px audited (no horizontal overflow, no unnamed buttons/links, no unlabelled inputs) |
 | 7 Release gate | pending | | |
 
 ## Known blockers
@@ -99,6 +99,10 @@ Recorded so the calculation method is explicit. Not legal advice: confirm with D
 
 ## Next action
 Stage 7 release gate: full unit, emulator in foreground batches, mutation, build, staging deploy (rules first), `adopt-baby-category-totals` dry run then `--apply`, `resync-permissions --all`, live probes, CI.
+
+User request (2026-10-11, mid stage 7): order form uses a dropdown of every active SKU, a source dropdown (note only for Other) and an optional Delivery address (`orders.deliveryAddress`, max 300; in details, history and the Orders export). Done in 0d1c972.
+
+Stage 7 emulator progress: batch 1 (payroll/baby/membership rules + payroll/baby concurrency) 79/79 after fixing the Baby concurrency fixture (it set a manual total, which Baby now refuses).
 
 Stage 6 notes: terms are now Budget left / Still to pay / Coming up (UI + Excel); inventory Adjust uses In stock / left after orders set aside; phone KPI hints wrap to 2 lines instead of an ellipsis. The audit script (CDP device emulation on the preview build) lives in the session scratchpad, not the repo.
 
