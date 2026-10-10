@@ -1941,3 +1941,94 @@ tr.is-saving {
 .filter-toolbar .select {
   max-width: 220px;
 }
+
+.select.select-chip[data-tone="primary"] { color: var(--luna-primary); border-color: #c9d0f5; background-color: var(--luna-primary-soft); }
+
+@media (max-width: 719px) {
+  /* Inline controls share one line; the › stays at the end of it. */
+  .rows tr {
+    flex-wrap: wrap;
+  }
+
+  .rows td[data-m="ctl"] {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+
+  .rows td[data-m="ctl"] .select {
+    width: 100%;
+    max-width: none;
+  }
+
+  .rows td[data-m="more"] {
+    flex: 0 0 auto;
+  }
+}
+
+/* Absolutely positioned helpers (e.g. visually-hidden header labels) stay
+   inside the table's own scroll area instead of widening the page. */
+.table-wrap {
+  position: relative;
+}
+
+.visually-hidden {
+  top: 0;
+  left: 0;
+}
+
+/* Tablets and narrow desktops: secondary columns step aside. */
+@media (max-width: 999px) {
+  .table-compact .col-secondary {
+    display: none;
+  }
+}
+
+/* KPI values never break mid-number; six figures go 3 + 3 below 1400px. */
+.kpi-value {
+  white-space: nowrap;
+  overflow-wrap: normal;
+}
+
+.kpis[data-cols="6"] .kpi-value {
+  font-size: 1.375rem;
+}
+
+@media (max-width: 1399px) {
+  .kpis[data-cols="6"] { --kpi-cols: 3; }
+  .kpis[data-cols="6"] .kpi:nth-child(n + 4) { border-top: 1px solid var(--border); }
+  .kpis[data-cols="6"] .kpi:nth-child(4) { border-left: 0; }
+}
+
+/* Small figure groups inside a chart card. */
+.kpis-compact {
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+}
+
+.kpis-compact .kpi + .kpi {
+  border-left: 0;
+}
+
+.kpis-compact .kpi-value {
+  font-size: 1.125rem;
+}
+
+.kpis-compact .kpi-label {
+  white-space: normal;
+}
+
+/* Charts keep a readable scale in wide cards. */
+.chart svg {
+  max-height: 300px;
+}
+
+@media (max-width: 719px) {
+  .kpis[data-cols="6"] { --kpi-cols: 2; }
+  .kpis[data-cols="6"] .kpi { border-left: 0; border-top: 1px solid var(--border); }
+  .kpis[data-cols="6"] .kpi:nth-child(-n + 2) { border-top: 0; }
+  .kpis[data-cols="6"] .kpi:nth-child(even) { border-left: 1px solid var(--border); }
+  .kpis[data-cols="6"] .kpi-value { font-size: 1.125rem; }
+}
+
+.stat-grid + .page-actions {
+  margin: var(--space-3) 0 var(--space-4);
+}

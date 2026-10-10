@@ -6,7 +6,7 @@
 // never stored. Not a project-management board: a focused list.
 
 import { html, render } from "../../lib/html.js";
-import { pageHeader, emptyState, badge, statCard, skeleton, mobileCell, openButton, bindRowOpen, bindFilterBar, rowMenu, bindRowMenus } from "../../components/ui.js";
+import { pageHeader, emptyState, badge, statCard, skeleton, mobileCell, openButton, bindRowOpen, bindFilterBar, rowMenu, bindRowMenus, filterBar } from "../../components/ui.js";
 import { formDialog } from "../../components/form-dialog.js";
 import { toast as defaultToast, confirmDialog } from "../../components/feedback.js";
 import { formatDayId } from "../../lib/format.js";
@@ -74,17 +74,18 @@ export function mount(container, session, { data = defaultData, toast = defaultT
       container,
       html`
         ${pageHeader({ title: "Wedding Tasks", subtitle: "Everything still to do before the big day, who's on it and when it's due.", actions: canManage ? html`<button type="button" class="btn btn-primary" data-act="new">Add task</button>` : "" })}
-        <form class="filter-form toolbar filter-toolbar" data-role="filters" data-auto-apply>
-          <select class="select" name="state" aria-label="Show">${STATE_OPTIONS.map(([k, l]) => opt(k, l, f.status ? "all" : f.state))}</select>
-          <select class="select" name="status" aria-label="Status">${opt("", "Any status", f.status || "")}${Object.entries(TASK_STATUSES).map(([k, s]) => opt(k, s.label, f.status))}</select>
-          <input class="input" name="category" placeholder="Category" value="${f.category || ""}" autocomplete="off" aria-label="Category" />
-          <input class="input" name="assignee" placeholder="Assigned to" value="${f.assignee || ""}" autocomplete="off" aria-label="Assigned to" />
-          <select class="select" name="priority" aria-label="Priority">${opt("", "Any priority", f.priority || "")}${PRIORITY_OPTIONS.map((p) => opt(p.value, p.label, f.priority))}</select>
-          <input class="input" type="date" name="from" value="${f.from || ""}" aria-label="Due from" />
-          <input class="input" type="date" name="to" value="${f.to || ""}" aria-label="Due to" />
-          <button type="submit" class="visually-hidden" tabindex="-1">Apply</button>
-          ${mayExport(session, "weddingTasks") ? html`<span class="toolbar-end">${exportButton("weddingTasks")}<span class="visually-hidden">${exportHint}</span></span>` : ""}
-        </form>
+        ${filterBar({
+          fields: [
+            { name: "state", label: "Show", type: "select", primary: true, options: STATE_OPTIONS, value: f.status ? "all" : f.state || "open", def: "open" },
+            { name: "assignee", label: "Assigned to", type: "search", primary: true, value: f.assignee },
+            { name: "status", label: "Status", type: "select", primary: false, options: Object.entries(TASK_STATUSES).map(([k, s]) => [k, s.label]), value: f.status, all: "Any status" },
+            { name: "priority", label: "Priority", type: "select", primary: false, options: PRIORITY_OPTIONS.map((p) => [p.value, p.label]), value: f.priority, all: "Any priority" },
+            { name: "category", label: "Category", type: "search", primary: false, value: f.category },
+            { name: "from", label: "Due from", type: "date", value: f.from },
+            { name: "to", label: "Due to", type: "date", value: f.to },
+          ],
+          end: mayExport(session, "weddingTasks") ? html`<span class="visually-hidden">${exportHint}</span>${exportButton("weddingTasks")}` : "",
+        })}
         <section class="card">
           ${state.error
             ? emptyState({ title: "Couldn't load", body: state.error })

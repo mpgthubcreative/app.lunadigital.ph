@@ -7,7 +7,7 @@
 // refused (money still to be paid belongs in Supplier Payments).
 
 import { html, render } from "../../lib/html.js";
-import { pageHeader, emptyState, badge, statCard, skeleton, mobileCell, openButton, bindRowOpen, bindFilterBar, rowMenu, bindRowMenus } from "../../components/ui.js";
+import { pageHeader, emptyState, badge, statCard, skeleton, mobileCell, openButton, bindRowOpen, bindFilterBar, rowMenu, bindRowMenus, filterBar } from "../../components/ui.js";
 import { formDialog } from "../../components/form-dialog.js";
 import { toast as defaultToast } from "../../components/feedback.js";
 import { formatCentavos, formatDayId } from "../../lib/format.js";
@@ -88,17 +88,18 @@ export function mount(container, session, { data = defaultData, toast = defaultT
       container,
       html`
         ${pageHeader({ title: "Wedding Expenses", subtitle: "What you've paid for the wedding. Payments to a saved supplier count toward its balance.", actions: can.create ? html`<button type="button" class="btn btn-primary" data-act="new">Add expense</button>` : "" })}
-        <form class="filter-form toolbar filter-toolbar" data-role="filters" data-auto-apply>
-          <input class="input" type="date" name="from" value="${f.from || ""}" aria-label="From" />
-          <input class="input" type="date" name="to" value="${f.to || ""}" aria-label="To" />
-          <select class="select" name="category" aria-label="Category">${opt("", "Any category", f.category || "")}${state.categories.map((c) => opt(c.id, c.name, f.category))}</select>
-          <select class="select" name="supplierId" aria-label="Supplier">${opt("", "Any supplier", f.supplierId || "")}${state.suppliers.map((s) => opt(s.id, s.name, f.supplierId))}</select>
-          <select class="select" name="method" aria-label="Method">${opt("", "Any method", f.method || "")}${METHOD_OPTIONS.map((m) => opt(m.value, m.label, f.method))}</select>
-          <input class="input" name="search" placeholder="Payee or reference" value="${f.search || ""}" autocomplete="off" aria-label="Search payee or reference" />
-          <select class="select" name="status" aria-label="Show">${opt("active", "Active", f.status)}${opt("removed", "Removed", f.status)}</select>
-          <button type="submit" class="visually-hidden" tabindex="-1">Apply</button>
-          ${mayExport(session, "weddingExpenses") && (f.status || "active") === "active" ? html`<span class="toolbar-end">${exportButton("weddingExpenses")}<span class="visually-hidden">${exportHint}</span></span>` : ""}
-        </form>
+        ${filterBar({
+          fields: [
+            { name: "search", label: "Payee or reference", type: "search", primary: true, value: f.search },
+            { name: "category", label: "Category", type: "select", primary: true, options: state.categories.map((c) => [c.id, c.name]), value: f.category, all: "Any category" },
+            { name: "supplierId", label: "Supplier", type: "select", primary: false, options: state.suppliers.map((s) => [s.id, s.name]), value: f.supplierId, all: "Any supplier" },
+            { name: "method", label: "Method", type: "select", primary: false, options: METHOD_OPTIONS.map((m) => [m.value, m.label]), value: f.method, all: "Any method" },
+            { name: "from", label: "From", type: "date", value: f.from },
+            { name: "to", label: "To", type: "date", value: f.to },
+            { name: "status", label: "Show", type: "select", primary: false, options: [["active", "Active"], ["removed", "Removed"]], value: f.status || "active", def: "active" },
+          ],
+          end: mayExport(session, "weddingExpenses") && (f.status || "active") === "active" ? html`<span class="visually-hidden">${exportHint}</span>${exportButton("weddingExpenses")}` : "",
+        })}
         <section class="card">
           ${state.error
             ? emptyState({ title: "Couldn't load", body: state.error })

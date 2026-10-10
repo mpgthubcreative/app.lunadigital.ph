@@ -6,7 +6,7 @@
 // Attending / Declined count invitations. Luna keeps the totals.
 
 import { html, render } from "../../lib/html.js";
-import { pageHeader, emptyState, badge, statCard, skeleton, mobileCell, openButton, bindRowOpen, bindFilterBar, rowMenu, bindRowMenus } from "../../components/ui.js";
+import { pageHeader, emptyState, badge, statCard, skeleton, mobileCell, openButton, bindRowOpen, bindFilterBar, rowMenu, bindRowMenus, filterBar } from "../../components/ui.js";
 import { formDialog } from "../../components/form-dialog.js";
 import { confirmDialog, toast as defaultToast } from "../../components/feedback.js";
 import { formatDayId, formatNumber } from "../../lib/format.js";
@@ -86,14 +86,15 @@ export function mount(container, session, { data = defaultData, toast = defaultT
             ${statCard({ id: "awaiting", label: "Awaiting RSVP (invitations)", value: formatNumber(t.awaiting), hint: `${t.awaitingSeats} people not yet answered` })}
           </div>
         </section>
-        <form class="filter-form toolbar filter-toolbar" data-role="filters" data-auto-apply>
-          <input class="input" name="search" placeholder="Name starts with…" value="${f.search || ""}" autocomplete="off" aria-label="Search name" />
-          <select class="select" name="rsvp" aria-label="RSVP">${opt("", "Any RSVP", f.rsvp || "")}${RSVP_OPTIONS.map((r) => opt(r.value, r.label, f.rsvp))}</select>
-          <select class="select" name="side" aria-label="Side">${opt("", "Any side", f.side || "")}${SIDE_OPTIONS.map((s) => opt(s.value, s.label, f.side))}</select>
-          <select class="select" name="invited" aria-label="Invitation">${opt("", "Invitation: any", f.invited || "")}${opt("sent", "Sent", f.invited)}${opt("not_sent", "Not sent", f.invited)}</select>
-          <button type="submit" class="visually-hidden" tabindex="-1">Apply</button>
-          ${mayExport(session, "guests") ? html`<span class="toolbar-end">${exportButton("guests")}<span class="visually-hidden">${exportHint}</span></span>` : ""}
-        </form>
+        ${filterBar({
+          fields: [
+            { name: "search", label: "Name starts with…", type: "search", primary: true, value: f.search },
+            { name: "rsvp", label: "RSVP", type: "select", primary: true, options: RSVP_OPTIONS.map((r) => [r.value, r.label]), value: f.rsvp, all: "Any RSVP" },
+            { name: "side", label: "Side", type: "select", primary: false, options: SIDE_OPTIONS.map((s) => [s.value, s.label]), value: f.side, all: "Any side" },
+            { name: "invited", label: "Invitation", type: "select", primary: false, options: [["sent", "Sent"], ["not_sent", "Not sent"]], value: f.invited, all: "Invitation: any" },
+          ],
+          end: mayExport(session, "guests") ? html`<span class="visually-hidden">${exportHint}</span>${exportButton("guests")}` : "",
+        })}
         <section class="card">
           ${state.error
             ? emptyState({ title: "Couldn't load", body: state.error })

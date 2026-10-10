@@ -5,7 +5,7 @@
 // Distributor Customers, not Baby providers.
 
 import { html, render } from "../../lib/html.js";
-import { pageHeader, emptyState, badge, statCard, skeleton, mobileCell, openButton, bindRowOpen, bindFilterBar, rowMenu, bindRowMenus } from "../../components/ui.js";
+import { pageHeader, emptyState, badge, statCard, skeleton, mobileCell, openButton, bindRowOpen, bindFilterBar, rowMenu, bindRowMenus, filterBar } from "../../components/ui.js";
 import { formDialog } from "../../components/form-dialog.js";
 import { toast as defaultToast, confirmDialog } from "../../components/feedback.js";
 import { formatCentavos, formatDayId } from "../../lib/format.js";
@@ -74,13 +74,14 @@ export function mount(container, session, { data = defaultData, toast = defaultT
       container,
       html`
         ${pageHeader({ title: "Wedding Suppliers", subtitle: "Your venue, caterer, photographer and other suppliers: what you agreed, what you've paid and what's left.", actions: canManage ? html`<button type="button" class="btn btn-primary" data-act="new">Add supplier</button>` : "" })}
-        <form class="filter-form toolbar filter-toolbar" data-role="filters" data-auto-apply>
-          <input class="input" name="search" placeholder="Name starts with…" value="${f.search || ""}" autocomplete="off" aria-label="Search name" />
-          <select class="select" name="service" aria-label="Service">${opt("", "Any service", f.service || "")}${SERVICE_OPTIONS.map((s) => opt(s.value, s.label, f.service))}</select>
-          <select class="select" name="status" aria-label="Status">${Object.entries(SUPPLIER_STATUSES).map(([k, s]) => opt(k, s.label, f.status))}</select>
-          <button type="submit" class="visually-hidden" tabindex="-1">Apply</button>
-          ${mayExport(session, "weddingSuppliers") ? html`<span class="toolbar-end">${exportButton("weddingSuppliers")}<span class="visually-hidden">${exportHint}</span></span>` : ""}
-        </form>
+        ${filterBar({
+          fields: [
+            { name: "search", label: "Name starts with…", type: "search", primary: true, value: f.search },
+            { name: "service", label: "Service", type: "select", primary: true, options: SERVICE_OPTIONS.map((s) => [s.value, s.label]), value: f.service, all: "Any service" },
+            { name: "status", label: "Status", type: "select", primary: false, options: Object.entries(SUPPLIER_STATUSES).map(([k, s]) => [k, s.label]), value: f.status || "active", def: "active" },
+          ],
+          end: mayExport(session, "weddingSuppliers") ? html`<span class="visually-hidden">${exportHint}</span>${exportButton("weddingSuppliers")}` : "",
+        })}
         <section class="card">
           ${state.error
             ? emptyState({ title: "Couldn't load", body: state.error })

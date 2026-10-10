@@ -173,9 +173,12 @@ export function mount(container, session, { api = defaultApi, now = () => new Da
         : []),
     ];
     const per100 = (v) => Math.round((v / o.netSales) * 100);
+    const left = o.estimatedOperatingProfit;
     const note =
-      o.cogs !== null && o.estimatedOperatingProfit !== null && o.estimatedOperatingProfit !== undefined
-        ? `Of every ₱100 of sales, ₱${per100(o.cogs)} paid for the goods and ₱${per100(o.estimatedOperatingProfit)} is left after operating expenses.`
+      o.cogs !== null && left !== null && left !== undefined
+        ? left >= 0
+          ? `Of every ₱100 of sales, ₱${per100(o.cogs)} paid for the goods and ₱${per100(left)} is left after operating expenses. ${ESTIMATED_PROFIT_NOTE}`
+          : `Of every ₱100 of sales, ₱${per100(o.cogs)} paid for the goods, and operating expenses were more than the gross profit: an estimated loss of ${formatCentavos(-left, currency)} for the period. ${ESTIMATED_PROFIT_NOTE}`
         : o.cogs !== null
           ? `Of every ₱100 of sales, ₱${per100(o.cogs)} paid for the goods.`
           : "";
@@ -233,7 +236,7 @@ export function mount(container, session, { api = defaultApi, now = () => new Da
             kpi("Gross profit", money(o.grossProfit, currency), `Gross margin ${pct(o.grossMarginPct)}`),
             kpi("Gross margin", pct(o.grossMarginPct)),
             kpi("Operating expenses", money(o.operatingExpenses, currency)),
-            kpi("Estimated operating profit", money(o.estimatedOperatingProfit, currency), ESTIMATED_PROFIT_NOTE),
+            kpi("Estimated operating profit", money(o.estimatedOperatingProfit, currency), "An estimate, not net income"),
           ])
         : ""}
       ${fin ? html`<div class="split section">${profitStory(r)}${trend(r)}</div>` : ""}
@@ -253,7 +256,7 @@ export function mount(container, session, { api = defaultApi, now = () => new Da
         ${r.payments
           ? html`<section class="card" data-chart="payments">
               <div class="section-head"><h2>Payments received <span class="hint">not sales</span></h2><button type="button" class="link-more btn-linklike" data-act="tab" data-tab="payments">Details ›</button></div>
-              <div class="kpis kpis-flat" data-cols="2" data-role="payments">
+              <div class="kpis kpis-flat kpis-compact" data-cols="3" data-role="payments">
                 ${fin ? kpi("Payments received", money(o.paymentsReceived, currency)) : ""}
                 ${fin ? kpi("Unpaid balance (now)", money(r.payments.unpaidBalanceNow, currency)) : ""}
                 ${kpi("Unpaid orders (now)", count(r.payments.unpaidOrdersNow))}
@@ -264,7 +267,7 @@ export function mount(container, session, { api = defaultApi, now = () => new Da
       </div>
       <section class="card section" data-chart="orders">
         <div class="section-head"><h2>Orders</h2><button type="button" class="link-more btn-linklike" data-act="tab" data-tab="sales">Details ›</button></div>
-        <div class="kpis kpis-flat" data-cols="3" data-role="orders">
+        <div class="kpis kpis-flat kpis-compact" data-cols="3" data-role="orders">
           ${kpi("Orders created", count(o.ordersCreated))}
           ${kpi("Orders fulfilled", count(o.fulfilledOrders))}
           ${kpi("Orders cancelled", count(o.cancelledOrders))}

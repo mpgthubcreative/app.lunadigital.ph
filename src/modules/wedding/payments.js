@@ -6,7 +6,7 @@
 // one); only then do Spent and the supplier's Paid go up.
 
 import { html, render } from "../../lib/html.js";
-import { pageHeader, emptyState, badge, statCard, skeleton, mobileCell, openButton, bindRowOpen, bindFilterBar, rowMenu, bindRowMenus } from "../../components/ui.js";
+import { pageHeader, emptyState, badge, statCard, skeleton, mobileCell, openButton, bindRowOpen, bindFilterBar, rowMenu, bindRowMenus, filterBar } from "../../components/ui.js";
 import { formDialog } from "../../components/form-dialog.js";
 import { toast as defaultToast } from "../../components/feedback.js";
 import { formatCentavos, formatDayId } from "../../lib/format.js";
@@ -93,15 +93,16 @@ export function mount(container, session, { data = defaultData, toast = defaultT
       container,
       html`
         ${pageHeader({ title: "Supplier Payments", subtitle: "Deposits and balances due to your suppliers. They count as spent only once you mark them paid.", actions: canManage ? html`<button type="button" class="btn btn-primary" data-act="new">Schedule payment</button>` : "" })}
-        <form class="filter-form toolbar filter-toolbar" data-role="filters" data-auto-apply>
-          <select class="select" name="status" aria-label="Status">${Object.entries(SUPPLIER_PAYMENT_STATUSES).map(([k, s]) => opt(k, s.label, f.status))}</select>
-          <input class="input" type="date" name="from" value="${f.from || ""}" aria-label="Due from" />
-          <input class="input" type="date" name="to" value="${f.to || ""}" aria-label="Due to" />
-          <select class="select" name="supplierId" aria-label="Supplier">${opt("", "Any supplier", f.supplierId || "")}${state.suppliers.map((s) => opt(s.id, s.name, f.supplierId))}</select>
-          <select class="select" name="category" aria-label="Category">${opt("", "Any category", f.category || "")}${state.categories.map((c) => opt(c.id, c.name, f.category))}</select>
-          <button type="submit" class="visually-hidden" tabindex="-1">Apply</button>
-          ${mayExport(session, "supplierPayments") ? html`<span class="toolbar-end">${exportButton("supplierPayments")}<span class="visually-hidden">${exportHint}</span></span>` : ""}
-        </form>
+        ${filterBar({
+          fields: [
+            { name: "status", label: "Status", type: "select", primary: true, options: Object.entries(SUPPLIER_PAYMENT_STATUSES).map(([k, s]) => [k, s.label]), value: f.status || "upcoming", def: "upcoming" },
+            { name: "supplierId", label: "Supplier", type: "select", primary: true, options: state.suppliers.map((s) => [s.id, s.name]), value: f.supplierId, all: "Any supplier" },
+            { name: "category", label: "Category", type: "select", primary: false, options: state.categories.map((c) => [c.id, c.name]), value: f.category, all: "Any category" },
+            { name: "from", label: "Due from", type: "date", value: f.from },
+            { name: "to", label: "Due to", type: "date", value: f.to },
+          ],
+          end: mayExport(session, "supplierPayments") ? html`<span class="visually-hidden">${exportHint}</span>${exportButton("supplierPayments")}` : "",
+        })}
         <section class="card">
           ${state.error
             ? emptyState({ title: "Couldn't load", body: state.error })

@@ -10,8 +10,8 @@ export const fulfillmentLabel = (id) => FULFILLMENT_STATUSES[id]?.label ?? id;
 export const paymentLabel = (id) => PAYMENT_STATUSES[id]?.label ?? id;
 export const qtyText = (scaled, unit) => `${formatQuantity(scaled)} ${UNITS[unit]?.label ?? unit}`;
 
-export const FULFILLMENT_TONE = { pending: "warning", fulfilled: "success", cancelled: "neutral" };
-export const PAYMENT_TONE = { unpaid: "danger", partial: "warning", paid: "success" };
+export const FULFILLMENT_TONE = { pending: "warning", preparing: "info", ready: "primary", fulfilled: "success", cancelled: "neutral" };
+export const PAYMENT_TONE = { unpaid: "danger", partial: "warning", for_verification: "info", paid: "success" };
 
 function toDate(at) {
   if (!at) return null;
