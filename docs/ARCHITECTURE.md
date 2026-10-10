@@ -1346,6 +1346,7 @@ An internal console at `/console`, a separate bundle from the business app at `/
 - **Access** comes from an active `operators/{uid}` record (`role: "superadmin"`, `status: "active"`).
   - The record is server-only: the rules' default deny means no browser can read or write it, not even the operator.
   - It is created and disabled by `scripts/set-operator.js` (audited). The console can't create operators, so the first one is bootstrapped with the CLI.
+  - For a brand-new Luna staff address, `--create-account` creates the Firebase Auth account (no password, no business membership). `--send-password-email` has Firebase Auth email its own password-setup link, which is not new Luna email infrastructure and prints nothing secret. The operator then signs in at `<SITE_URL>/console`, and re-running with `--send-password-email` resets a forgotten password.
 - **Never** from a business role, an email domain, a custom claim, a query parameter or a client flag. A business Owner who opens `/console` gets "Luna staff only" and no data.
 - **Every request** to `POST /api/operator` verifies the ID token, then the operator record (`requireOperator`), before reading the body. A non-operator learns nothing from validation (403 `not-operator` for any action).
 - **The console never reads Firestore directly.** `operators`, `provisioning` and `platformAudit` stay closed to every browser.
