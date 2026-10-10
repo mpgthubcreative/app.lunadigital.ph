@@ -154,7 +154,7 @@ describe("Customers page", () => {
 });
 
 describe("order editor: saved customer or walk-in", () => {
-  const editorDeps = (over = {}) => ({ searchProducts: vi.fn(async () => []), getProducts: vi.fn(async () => ({})), searchCustomers: vi.fn(async () => [abc]), api: vi.fn(async () => ({ success: true })), ...over });
+  const editorDeps = (over = {}) => ({ listActiveProducts: vi.fn(async () => []), getProducts: vi.fn(async () => ({})), searchCustomers: vi.fn(async () => [abc]), api: vi.fn(async () => ({ success: true })), ...over });
   const form = () => document.querySelector(".modal-backdrop form");
 
   it("Find saved customer -> Use links it; the payload carries customerId", async () => {
@@ -169,6 +169,8 @@ describe("order editor: saved customer or walk-in", () => {
     expect(form().elements.name.value).toBe("ABC Store");
     expect(form().elements.name.readOnly).toBe(true);
     expect(form().querySelector('[data-role="linked"]').textContent).toMatch(/Saved customer: ABC Store/);
+    form().elements.source.value = "walk_in";
+    form().elements.source.dispatchEvent(new Event("change", { bubbles: true }));
     form().dispatchEvent(new Event("submit", { cancelable: true }));
     await flush();
     expect(d.api.mock.calls[0][1].body.order).toMatchObject({ customerId: abc.id, customer: { name: "ABC Store", phone: "0917 123 4567" } });
@@ -180,6 +182,8 @@ describe("order editor: saved customer or walk-in", () => {
     const done = openOrderEditor({ session: session("staff"), deps: d });
     form().elements.name.value = "Juan";
     form().elements.name.dispatchEvent(new Event("input", { bubbles: true }));
+    form().elements.source.value = "walk_in";
+    form().elements.source.dispatchEvent(new Event("change", { bubbles: true }));
     form().dispatchEvent(new Event("submit", { cancelable: true }));
     await flush();
     expect(d.api.mock.calls[0][1].body.order).not.toHaveProperty("customerId");

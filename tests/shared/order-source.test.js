@@ -32,3 +32,13 @@ describe("parseSourceText", () => {
     expect(() => validateOrderInput(order)).toThrow(/where the order came from/i);
   });
 });
+
+describe("delivery address (Phase 18.6)", () => {
+  const order = (extra) => ({ customer: { name: "Ana" }, source: "messenger", items: [{ productId: "prodAAAAAAAA", quantity: 1000 }], ...extra });
+  it("is optional, trimmed, and capped at 300 characters", async () => {
+    const { validateOrderInput } = await import("../../shared/orders.js");
+    expect(validateOrderInput(order()).deliveryAddress).toBe("");
+    expect(validateOrderInput(order({ deliveryAddress: "  12 Mabini St, QC  " })).deliveryAddress).toBe("12 Mabini St, QC");
+    expect(() => validateOrderInput(order({ deliveryAddress: "x".repeat(301) }))).toThrow(/Delivery address/);
+  });
+});

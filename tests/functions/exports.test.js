@@ -190,7 +190,7 @@ describe("Orders: filter -> view -> download", () => {
     order(102, { day: "2026-09-30" });
     const r = await call(world.uids.ownera, { dataset: "orders", filters: { paymentStatus: "paid", fulfillmentStatus: "fulfilled", from: "2026-10-01", to: "2026-10-31" } });
     const all = sheet(r.bytes, "Orders");
-    expect(all[0]).toEqual(["Record", "Order #", "Order date", "Created", "Customer", "Phone", "Came from", "Source note", "SKU", "Product", "Quantity", "Unit", "Unit price", "Line amount", "Line cost (COGS)", "Order subtotal", "Discount", "Order total", "Amount paid", "Balance", "Payment", "Fulfillment", "Last payment ref", "Gross profit", "Notes"]);
+    expect(all[0]).toEqual(["Record", "Order #", "Order date", "Created", "Customer", "Phone", "Came from", "Source note", "Delivery address", "SKU", "Product", "Quantity", "Unit", "Unit price", "Line amount", "Line cost (COGS)", "Order subtotal", "Discount", "Order total", "Amount paid", "Balance", "Payment", "Fulfillment", "Last payment ref", "Gross profit", "Notes"]);
     // One sheet: each order row followed by its line rows.
     const rows = records(all, "Order");
     expect(rows).toHaveLength(61);

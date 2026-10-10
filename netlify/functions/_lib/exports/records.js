@@ -34,6 +34,7 @@ const ORDER_COLUMNS = [
   { header: "Phone", format: "text", width: 15, value: (r) => (isOrder(r) ? r.order.customer?.phone : null) },
   { header: "Came from", format: "text", width: 12, value: (r) => (isOrder(r) ? label(ORDER_SOURCES, r.order.source) : null) },
   { header: "Source note", format: "text", width: 22, value: (r) => (isOrder(r) ? r.order.sourceNote : null) },
+  { header: "Delivery address", format: "text", width: 30, value: (r) => (isOrder(r) ? r.order.deliveryAddress : null) },
   { header: "SKU", format: "text", width: 14, value: (r) => r.line?.sku },
   { header: "Product", format: "text", width: 28, value: (r) => (isOrder(r) ? `${r.order.itemCount ?? (r.order.items || []).length} item(s)` : r.line.name) },
   { header: "Quantity", format: "quantity", width: 10, value: (r) => r.line?.quantity },

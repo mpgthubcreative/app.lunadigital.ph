@@ -1,5 +1,5 @@
 // POST /api/orders   (Orders + Inventory modules, write access, and per action:)
-//   { action: "create", idempotencyKey, order: { customer, source, sourceNote?, items: [{ productId, quantity }], discount?, notes? } }   orders.create
+//   { action: "create", idempotencyKey, order: { customer, source, sourceNote?, deliveryAddress?, items: [{ productId, quantity }], discount?, notes? } }   orders.create
 //   { action: "update", orderId, expectedRevision?, order: { ...same shape } }                                                     orders.update
 //   { action: "fulfill", orderId }                                                                                                 orders.fulfill
 //   { action: "cancel", orderId, reason }                                                                                          orders.cancel

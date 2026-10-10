@@ -1,17 +1,17 @@
 // New / edit order dialog, built for speed when an order arrives by chat or
-// phone: customer -> source -> add products -> quantities -> (discount) ->
-// notes -> create. Totals shown here are a PREVIEW from shared/orders.js;
+// phone: customer -> source -> delivery address (if delivered) -> pick
+// products -> quantities -> (discount) -> notes -> create. Totals shown here are a PREVIEW from shared/orders.js;
 // the server re-reads every product and computes the real totals.
 // One idempotency key per dialog: double-clicks and retries can't create a
 // second order.
 
 import { html, render } from "../../lib/html.js";
 import { formatCentavos } from "../../lib/format.js";
-import { ORDER_SOURCES, ORDER_SOURCE_IDS, sourceText, parseSourceText, computeTotals, parseQuantity, parseCentavos, formatQuantity, UNITS, canUseModule } from "@shared/index.js";
+import { ORDER_SOURCES, ORDER_SOURCE_IDS, computeTotals, parseQuantity, parseCentavos, formatQuantity, UNITS, canUseModule } from "@shared/index.js";
 
 const newKey = () => (globalThis.crypto && crypto.randomUUID ? crypto.randomUUID() : `k${Date.now()}${Math.random().toString(36).slice(2)}`).replace(/[^A-Za-z0-9_-]/g, "");
 
-// deps: { searchProducts(term) -> rows, getProducts(ids) -> map, api,
+// deps: { listActiveProducts() -> every active product, getProducts(ids) -> map, api,
 //         searchCustomers?(term) -> active customers (Phase 9) }
 // Customer: a saved customer (linked by id; the server copies its name and
 // phone) or a walk-in name typed here. An already-linked order keeps its
@@ -28,14 +28,17 @@ export function openOrderEditor({ session, deps, order = null }) {
     customer: { name: order?.customer?.name ?? "", phone: order?.customer?.phone ?? "", notes: order?.customer?.notes ?? "" },
     customerId: order?.customerId ?? null,
     customerMatches: [],
-    // One plain box (Phase 18.6), parsed into source + sourceNote on save.
-    sourceText: order ? sourceText(order.source, order.sourceNote) : "",
+    // A source dropdown; the "where" note is asked only for Other. A note on
+    // an older order (from the earlier free-text box) is kept as it was.
+    source: order?.source ?? "",
+    sourceNote: order?.sourceNote ?? "",
+    deliveryAddress: order?.deliveryAddress ?? "",
     notes: order?.notes ?? "",
     reason: "",
     discountText: order ? (order.discount / 100).toFixed(2) : "0",
     // Open orders hold their quantity in reserve; a fulfilled order holds none.
     lines: (order?.items || []).map((l) => ({ productId: l.productId, sku: l.sku, name: l.name, unit: l.unit, unitPrice: l.unitPrice, quantityText: formatQuantity(l.quantity), reservedHere: correcting ? 0 : l.quantity, available: null })),
-    results: [],
+    products: null, // every active product, for the dropdown (null = loading)
     error: "",
     busy: false,
   };
@@ -87,7 +90,7 @@ export function openOrderEditor({ session, deps, order = null }) {
       }
     }
 
-    const sourceOptions = ORDER_SOURCE_IDS.filter((id) => id !== "other").map((id) => html`<option value="${ORDER_SOURCES[id].label}"></option>`);
+    const sourceOptions = ORDER_SOURCE_IDS.map((id) => html`<option value="${id}" ${state.source === id ? "selected" : ""}>${ORDER_SOURCES[id].label}</option>`);
 
     render(
       backdrop,
@@ -98,13 +101,12 @@ export function openOrderEditor({ session, deps, order = null }) {
           <div class="stat-grid">
             <div class="field"><label for="oeName">Customer name *</label><input class="input" id="oeName" name="name" value="${state.customer.name}" autocomplete="off" ${state.customerId ? "readonly" : ""} /></div>
             <div class="field"><label for="oePhone">Phone</label><input class="input" id="oePhone" name="phone" value="${state.customer.phone}" inputmode="tel" autocomplete="off" ${state.customerId ? "readonly" : ""} /></div>
-            <div class="field"><label for="oeSource">Where did the order come from? *</label><input class="input" id="oeSource" name="sourceText" value="${state.sourceText}" list="oeSourceList" placeholder="e.g. Messenger, Viber, Walk-in" autocomplete="off" /><datalist id="oeSourceList">${sourceOptions}</datalist><div class="stat-hint">Add a note after a dash, e.g. "Viber - returning customer".</div></div>
+            <div class="field"><label for="oeSource">Where did the order come from? *</label><select class="input" id="oeSource" name="source"><option value="" ${state.source ? "" : "selected"}>Choose…</option>${sourceOptions}</select></div>
+            <div class="field" data-role="source-other" ${state.source === "other" ? "" : "hidden"}><label for="oeSourceNote">Where? *</label><input class="input" id="oeSourceNote" name="sourceNote" value="${state.source === "other" ? state.sourceNote : ""}" maxlength="120" placeholder="e.g. Instagram, referral" autocomplete="off" /></div>
           </div>
           <div data-role="customer-link"></div>
-          <div class="field"><label for="oeSearch">Add product (name or exact SKU)</label>
-            <div class="page-actions"><input class="input" id="oeSearch" name="search" autocomplete="off" /><button type="button" class="btn" data-act="search">Search</button></div>
-          </div>
-          <div data-role="results"></div>
+          <div class="field"><label for="oeAddress">Delivery address</label><textarea class="input" id="oeAddress" name="deliveryAddress" rows="2" maxlength="300" placeholder="Leave blank for pick-up or walk-in">${state.deliveryAddress}</textarea></div>
+          <div class="field"><label for="oeProduct">Add product</label><select class="input" id="oeProduct" name="product" data-role="product-select" disabled><option value="">Loading products…</option></select></div>
           <div class="table-wrap"><table class="table"><thead><tr><th>Product</th><th class="num">Available</th><th class="num">Price</th><th class="num">Quantity</th><th class="num">Subtotal</th><th></th></tr></thead><tbody data-role="lines"></tbody></table></div>
           <div class="stat-grid">
             ${canDiscount ? html`<div class="field"><label for="oeDiscount">Discount (${currency})</label><input class="input" id="oeDiscount" name="discount" value="${state.discountText}" inputmode="decimal" autocomplete="off" /></div>` : ""}
@@ -123,7 +125,8 @@ export function openOrderEditor({ session, deps, order = null }) {
     const form = backdrop.querySelector("form");
     const linesEl = form.querySelector('[data-role="lines"]');
     const totalsEl = form.querySelector('[data-role="totals"]');
-    const resultsEl = form.querySelector('[data-role="results"]');
+    const productSelect = form.querySelector('[data-role="product-select"]');
+    const otherEl = form.querySelector('[data-role="source-other"]');
     const errorEl = form.querySelector('[data-role="error"]');
     const submitBtn = form.querySelector('[data-act="submit"]');
     const linkEl = form.querySelector('[data-role="customer-link"]');
@@ -197,46 +200,54 @@ export function openOrderEditor({ session, deps, order = null }) {
       }
     }
 
-    function paintResults() {
+    // Every active product, by name; ones already on the order are disabled.
+    function paintProducts() {
+      if (state.products === null) return;
+      productSelect.disabled = !state.products.length;
       render(
-        resultsEl,
-        state.results.length
-          ? html`<ul class="list">${state.results.map(
-              (p) => html`<li><button type="button" class="btn" data-act="add" data-id="${p.id}" ${state.lines.some((l) => l.productId === p.id) ? "disabled" : ""}>Add</button>
-                ${p.sku} · ${p.name} · ${formatCentavos(p.sellingPrice, currency)} · ${formatQuantity(p.available)} ${UNITS[p.unit]?.label ?? p.unit} available</li>`
-            )}</ul>`
-          : ""
+        productSelect,
+        state.products.length
+          ? html`<option value="">Choose a product (${state.products.length})…</option>${state.products.map(
+              (p) => html`<option value="${p.id}" ${state.lines.some((l) => l.productId === p.id) ? "disabled" : ""}>${p.sku} · ${p.name} · ${formatCentavos(p.sellingPrice, currency)} · ${formatQuantity(p.available)} ${UNITS[p.unit]?.label ?? p.unit} left</option>`
+            )}`
+          : html`<option value="">No active products yet: add them in Inventory</option>`
       );
+      productSelect.value = "";
     }
 
-    async function search() {
-      const term = form.elements.search.value.trim();
-      if (!term) return;
-      try {
-        state.results = (await deps.searchProducts(term)).filter((p) => p.status === "active");
-        if (!state.results.length) state.results = [];
-      } catch {
-        state.results = [];
-      }
-      paintResults();
-      if (!state.results.length) render(resultsEl, html`<p class="stat-hint">No active product matches.</p>`);
-    }
+    deps
+      .listActiveProducts()
+      .then((rows) => (state.products = rows.filter((p) => p.status === "active")))
+      .catch(() => (state.products = []))
+      .then(paintProducts);
 
     form.addEventListener("input", (e) => {
       const t = e.target;
       if (t.dataset.lineIndex !== undefined) state.lines[Number(t.dataset.lineIndex)].quantityText = t.value;
       else if (t.name === "name") state.customer.name = t.value;
       else if (t.name === "phone") state.customer.phone = t.value;
-      else if (t.name === "sourceText") state.sourceText = t.value;
+      else if (t.name === "sourceNote") state.sourceNote = t.value;
+      else if (t.name === "deliveryAddress") state.deliveryAddress = t.value;
       else if (t.name === "notes") state.notes = t.value;
       else if (t.name === "discount") state.discountText = t.value;
       else if (t.name === "reason") state.reason = t.value;
       paintTotals();
     });
-    form.addEventListener("keydown", (e) => {
-      if (e.key === "Enter" && e.target.name === "search") {
-        e.preventDefault();
-        search();
+    form.addEventListener("change", (e) => {
+      const t = e.target;
+      if (t.name === "source") {
+        state.source = t.value;
+        otherEl.hidden = state.source !== "other";
+        if (state.source === "other") form.elements.sourceNote.focus();
+      }
+      if (t.name === "product" && t.value) {
+        const p = (state.products || []).find((r) => r.id === t.value);
+        if (p && !state.lines.some((l) => l.productId === p.id)) {
+          state.lines.push({ productId: p.id, sku: p.sku, name: p.name, unit: p.unit, unitPrice: p.sellingPrice, quantityText: "1", reservedHere: 0, available: p.available });
+          paintLines();
+          paintProducts();
+          form.elements[`qty-${state.lines.length - 1}`]?.focus();
+        }
       }
     });
     form.addEventListener("click", (e) => {
@@ -244,7 +255,6 @@ export function openOrderEditor({ session, deps, order = null }) {
       if (!el) return;
       const act = el.dataset.act;
       if (act === "cancel") close(null);
-      if (act === "search") search();
       if (act === "find-customer") findCustomer();
       if (act === "use-customer") {
         const c = state.customerMatches.find((r) => r.id === el.dataset.id);
@@ -263,18 +273,10 @@ export function openOrderEditor({ session, deps, order = null }) {
         paintLink();
         form.elements.name.focus();
       }
-      if (act === "add") {
-        const p = state.results.find((r) => r.id === el.dataset.id);
-        if (p && !state.lines.some((l) => l.productId === p.id)) {
-          state.lines.push({ productId: p.id, sku: p.sku, name: p.name, unit: p.unit, unitPrice: p.sellingPrice, quantityText: "1", reservedHere: 0, available: p.available });
-          paintLines();
-          paintResults();
-        }
-      }
       if (act === "remove") {
         state.lines.splice(Number(el.dataset.index), 1);
         paintLines();
-        paintResults();
+        paintProducts();
       }
     });
 
@@ -287,10 +289,14 @@ export function openOrderEditor({ session, deps, order = null }) {
         const bad = p.lines.find((l) => !l.quantity);
         if (bad) throw new Error(`${bad.name}: ${bad.qtyError || "enter a quantity"}`);
         if (p.discountError) throw new Error(p.discountError);
+        if (!state.source) throw new Error("Choose where the order came from");
         const payload = {
           customer: { name: state.customer.name, phone: state.customer.phone, notes: state.customer.notes },
           ...(state.customerId ? { customerId: state.customerId } : {}),
-          ...parseSourceText(state.sourceText),
+          source: state.source,
+          // Other needs its note; any other source keeps an older order's note unchanged.
+          sourceNote: state.source === "other" || state.source === order?.source ? state.sourceNote : "",
+          deliveryAddress: state.deliveryAddress,
           items: p.lines.map((l) => ({ productId: l.productId, quantity: l.quantity })),
           notes: state.notes,
           ...(canDiscount ? { discount: p.discount } : order ? { discount: order.discount } : {}),

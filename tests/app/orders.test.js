@@ -51,7 +51,7 @@ function deps({ rows = [pendingOrder, fulfilledOrder], hasMore = false } = {}) {
       getOrderCosts: vi.fn(async () => ({ cogs: 100000, grossProfit: 50000, lines: [{ lineId: "L1", costConsumed: 100000 }] })),
       getProducts: vi.fn(async () => ({ [wings.id]: wings })),
     },
-    searchProducts: vi.fn(async () => [wings, fries]),
+    listActiveProducts: vi.fn(async () => [wings, fries]),
     api: vi.fn(async () => ({ success: true, orderId: "newOrder000000000001", orderNumber: "ORD-20261008-003" })),
     toast: vi.fn(),
   };
@@ -74,18 +74,48 @@ async function composeOrder() {
   };
   type("name", "Maria Santos");
   type("phone", "0918 555 0000");
-  type("sourceText", "Viber");
-  form.elements.search.value = "wing";
-  modal().querySelector('[data-act="search"]').click();
+  const pick = (name, value) => {
+    form.elements[name].value = value;
+    form.elements[name].dispatchEvent(new Event("change", { bubbles: true }));
+  };
+  pick("source", "viber");
+  type("deliveryAddress", "12 Mabini St, Quezon City");
   await flush();
-  modal().querySelector(`[data-act="add"][data-id="${wings.id}"]`).click();
-  modal().querySelector(`[data-act="add"][data-id="${fries.id}"]`).click();
+  pick("product", wings.id);
+  pick("product", fries.id);
   type("qty-0", "2.5");
   type("qty-1", "3");
   return { form, type };
 }
 
 describe("new order flow", () => {
+  it("lists every active product in a dropdown; one already added is disabled", async () => {
+    await show(session("staff"));
+    const { form } = await composeOrder();
+    const opts = [...form.elements.product.options].filter((o) => o.value);
+    expect(opts.map((o) => o.value)).toEqual([wings.id, fries.id]);
+    expect(opts.every((o) => o.disabled)).toBe(true);
+    expect(opts[0].textContent).toContain(wings.sku);
+  });
+
+  it("asks 'Where?' only for Other, and refuses an order with no source", async () => {
+    const d = await show(session("staff"));
+    container.querySelector('[data-act="new"]').click();
+    await flush();
+    const form = modal().querySelector("form");
+    const other = modal().querySelector('[data-role="source-other"]');
+    expect(other.hidden).toBe(true);
+    form.elements.source.value = "other";
+    form.elements.source.dispatchEvent(new Event("change", { bubbles: true }));
+    expect(other.hidden).toBe(false);
+    form.elements.source.value = "";
+    form.elements.source.dispatchEvent(new Event("change", { bubbles: true }));
+    form.dispatchEvent(new Event("submit", { cancelable: true }));
+    await flush();
+    expect(d.api).not.toHaveBeenCalled();
+    expect(modal().querySelector('[data-role="error"]').textContent).toMatch(/where the order came from/);
+  });
+
   it("shows live preview totals and sends only ids, scaled quantities and an idempotency key", async () => {
     const d = await show(session("staff"));
     const { form } = await composeOrder();
@@ -100,6 +130,7 @@ describe("new order flow", () => {
       customer: { name: "Maria Santos", phone: "0918 555 0000", notes: "" },
       source: "viber",
       sourceNote: "",
+      deliveryAddress: "12 Mabini St, Quezon City",
       items: [{ productId: wings.id, quantity: 2500 }, { productId: fries.id, quantity: Q(3) }],
       notes: "",
     });

@@ -62,6 +62,7 @@ export function historyRows(order, { currency = "PHP", timezone } = {}) {
     if (h.changes?.total) effects.push(`Total ${formatCentavos(h.changes.total.from, currency)} → ${formatCentavos(h.changes.total.to, currency)}`);
     if (h.changes?.discount) lines.push(`Discount ${formatCentavos(h.changes.discount.from, currency)} → ${formatCentavos(h.changes.discount.to, currency)}`);
     if (h.changes?.customer) lines.push("Customer details changed");
+    if (h.changes?.deliveryAddress) lines.push("Delivery address changed");
     if (h.changes?.source) lines.push(`Source ${sourceLabel(h.changes.source.from)} → ${sourceLabel(h.changes.source.to)}`);
     if (h.reason) lines.push(`Reason: ${h.reason}`);
     const actor = h.actor?.name ?? "";

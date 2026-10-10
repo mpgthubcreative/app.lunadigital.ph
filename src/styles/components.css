@@ -1565,6 +1565,21 @@ a.item:hover {
   gap: var(--space-1);
 }
 
+/* A select sizes itself to its longest option (e.g. "SKU · name · price ·
+   stock"); keep fields, and the modal around them, inside the screen. */
+.field,
+.modal,
+.modal-body > * {
+  min-width: 0;
+}
+
+.field > select.input,
+.field > .select {
+  width: 100%;
+  max-width: 100%;
+  text-overflow: ellipsis;
+}
+
 .field label {
   font-weight: 600;
   font-size: var(--text-sm);

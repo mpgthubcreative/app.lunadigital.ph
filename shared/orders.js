@@ -132,13 +132,13 @@ function text(value, { field, max, required = false }) {
 
 // Validates the parts of an order the browser may supply. Quantities are
 // checked against each product's unit later, by the inventory planner.
-// Returns { customer, customerId, source, sourceNote, items: [{ productId, quantity }], discount, notes }.
+// Returns { customer, customerId, source, sourceNote, deliveryAddress, items: [{ productId, quantity }], discount, notes }.
 // customerId (Phase 9) links a saved customer; the server then copies the
 // name and phone from the customer record. Without it the order is a
 // walk-in and the typed name is required.
 export function validateOrderInput(input, { requireItems = true } = {}) {
   if (!input || typeof input !== "object" || Array.isArray(input)) throw new OrderError("invalid-input", "Invalid order");
-  const allowed = ["customer", "customerId", "source", "sourceNote", "items", "discount", "notes"];
+  const allowed = ["customer", "customerId", "source", "sourceNote", "deliveryAddress", "items", "discount", "notes"];
   for (const key of Object.keys(input)) if (!allowed.includes(key)) throw new OrderError("invalid-input", `Field ${key} can't be set here`);
 
   const c = input.customer || {};
@@ -156,6 +156,8 @@ export function validateOrderInput(input, { requireItems = true } = {}) {
   if (!ORDER_SOURCE_IDS.includes(input.source)) throw new OrderError("invalid-input", `Source must be one of ${ORDER_SOURCE_IDS.join(", ")}`);
   const sourceNote = text(input.sourceNote, { field: "Source note", max: 120 });
   if (ORDER_SOURCES[input.source].needsNote && !sourceNote) throw new OrderError("invalid-input", "Say where the order came from");
+  // Optional: blank for pick-up / walk-in.
+  const deliveryAddress = text(input.deliveryAddress, { field: "Delivery address", max: 300 });
 
   if (!Array.isArray(input.items)) throw new OrderError("invalid-input", "Items are required");
   if (requireItems && !input.items.length) throw new OrderError("invalid-input", "Add at least one product");
@@ -174,7 +176,7 @@ export function validateOrderInput(input, { requireItems = true } = {}) {
   const discount = input.discount === undefined || input.discount === null ? 0 : input.discount;
   if (!isCentavos(discount)) throw new OrderError("invalid-discount", "Discount must be a whole number of centavos, 0 or more");
 
-  return { customer, customerId, source: input.source, sourceNote, items, discount, notes: text(input.notes, { field: "Notes", max: 500 }) };
+  return { customer, customerId, source: input.source, sourceNote, deliveryAddress, items, discount, notes: text(input.notes, { field: "Notes", max: 500 }) };
 }
 
 // Server-priced lines -> totals. lines: [{ quantity, unitPrice }].

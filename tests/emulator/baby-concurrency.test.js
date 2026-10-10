@@ -42,7 +42,6 @@ async function world() {
   const business = { id, timezone: "Asia/Manila" };
   const actor = (n = "Owner") => ({ uid: `${n}-${id}`, name: n, email: "" });
   const c = { db, tenant, FieldValue, business, workspace: W, actor: actor(), now: NOW };
-  await baby.setBudgetTotal({ ...c, total: 15000000 });
   const medical = (await baby.createCategory({ ...c, input: { name: "Medical", budget: 6000000 } })).categoryId;
   const nursery = (await baby.createCategory({ ...c, input: { name: "Nursery", budget: 4000000 } })).categoryId;
   return { c, tenant, actor, medical, nursery };
@@ -94,19 +93,21 @@ describe("expenses racing each other", () => {
     await consistent(w);
   });
 
-  it("expense edits and removals while the budget total changes: Remaining always = Budget − Spent", async () => {
+  // Phase 18.6: the Baby total is the sum of category budgets (no manual total).
+  it("expense edits and removals while category budgets change: Total = Σ category budgets, Remaining = Total − Spent", async () => {
     const w = await world();
     const ids = [];
     for (let i = 0; i < 6; i++) ids.push((await add(w, { category: w.medical, amount: 100000 })).expenseId);
     const r = await Promise.allSettled([
       ...ids.slice(0, 3).map((expenseId, i) => exp.updateExpense({ ...w.c, expenseId, changes: { amount: 200000 + i } })),
       ...ids.slice(3).map((expenseId) => exp.removeExpense({ ...w.c, expenseId, reason: "Duplicate" })),
-      baby.setBudgetTotal({ ...w.c, total: 18000000 }),
-      baby.setBudgetTotal({ ...w.c, total: 20000000 }),
+      baby.updateCategory({ ...w.c, categoryId: w.medical, changes: { budget: 8000000 } }),
+      baby.updateCategory({ ...w.c, categoryId: w.nursery, changes: { budget: 6000000 } }),
     ]);
     expectExplicit(r, ["stale"]);
     const { budget } = await consistent(w);
-    expect([18000000, 20000000]).toContain(budget.total);
+    expect(budget.total).toBe(14000000);
+    await expect(baby.setBudgetTotal({ ...w.c, total: 1 })).rejects.toMatchObject({ code: "budget-total-automatic" });
   });
 });
 

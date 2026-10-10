@@ -58,7 +58,7 @@ function deps() {
       getOrderCosts: vi.fn(async () => costs),
       getProducts: vi.fn(async () => ({ [wings.productId]: { id: wings.productId, available: 50000 } })),
     },
-    searchProducts: vi.fn(async () => []),
+    listActiveProducts: vi.fn(async () => []),
     api: vi.fn(async () => ({ success: true })),
     toast: vi.fn(),
   };

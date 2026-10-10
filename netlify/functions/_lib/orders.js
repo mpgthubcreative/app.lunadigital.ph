@@ -187,6 +187,7 @@ export async function createOrder({ db, tenant, FieldValue, business, entitlemen
         orderDate: day,
         source: data.source,
         sourceNote: data.sourceNote || null,
+        deliveryAddress: data.deliveryAddress || null,
         customer,
         customerId: data.customerId,
         customerNameLower: customer.name.toLocaleLowerCase("en"),
@@ -308,6 +309,8 @@ export async function updateOrder({ db, tenant, FieldValue, business = null, ord
         ...(totals.total !== order.total ? { total: { from: order.total, to: totals.total } } : {}),
         ...(customerChanged ? { customer: true } : {}),
         ...(data.source !== order.source ? { source: { from: order.source, to: data.source } } : {}),
+      ...((order.deliveryAddress || null) !== (data.deliveryAddress || null) ? { deliveryAddress: true } : {}),
+        ...((order.deliveryAddress || null) !== (data.deliveryAddress || null) ? { deliveryAddress: true } : {}),
       },
     });
 
@@ -317,6 +320,7 @@ export async function updateOrder({ db, tenant, FieldValue, business = null, ord
       customerNameLower: link.data.customer.name.toLocaleLowerCase("en"),
       source: data.source,
       sourceNote: data.sourceNote || null,
+      deliveryAddress: data.deliveryAddress || null,
       notes: data.notes || null,
       items: totals.lines,
       itemCount: totals.lines.length,
@@ -437,6 +441,7 @@ async function correctFulfilled(tx, { tenant, FieldValue, business, ref, orderId
     customerNameLower: data.customer.name.toLocaleLowerCase("en"),
     source: data.source,
     sourceNote: data.sourceNote || null,
+    deliveryAddress: data.deliveryAddress || null,
     notes: data.notes || null,
     items: totals.lines,
     itemCount: totals.lines.length,

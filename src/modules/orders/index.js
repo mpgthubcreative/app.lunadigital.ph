@@ -34,11 +34,21 @@ import { exportButton, bindExport, mayExport, exportHint } from "../../lib/expor
 const defaultDeps = {
   data: ordersData,
   listOrderPayments,
-  searchProducts: (businessId, term) => listProducts(businessId, { search: term, status: "active" }).then((r) => r.rows),
+  // Every active product for the order form's dropdown, a page at a time.
+  listActiveProducts: async (businessId) => {
+    const rows = [];
+    for (let cursor = null, more = true; more; ) {
+      const page = await listProducts(businessId, { status: "active", cursor, pageSize: 200 });
+      rows.push(...page.rows);
+      more = page.hasMore && page.rows.length > 0;
+      cursor = page.rows[page.rows.length - 1];
+    }
+    return rows;
+  },
   searchCustomers: defaultSearchCustomers,
 };
 
-export function mount(container, session, { data = defaultDeps.data, payments = { listOrderPayments: defaultDeps.listOrderPayments }, searchProducts = defaultDeps.searchProducts, searchCustomers = defaultDeps.searchCustomers, api = defaultApi, toast = defaultToast, exportDeps = {} } = {}) {
+export function mount(container, session, { data = defaultDeps.data, payments = { listOrderPayments: defaultDeps.listOrderPayments }, listActiveProducts = defaultDeps.listActiveProducts, searchCustomers = defaultDeps.searchCustomers, api = defaultApi, toast = defaultToast, exportDeps = {} } = {}) {
   const perms = session.member.permissions;
   const can = orderPermissions(perms);
   const businessId = session.business.id;
@@ -49,7 +59,7 @@ export function mount(container, session, { data = defaultDeps.data, payments = 
   const initial = Object.fromEntries([["fulfillmentStatus", FULFILLMENT_STATUSES], ["paymentStatus", PAYMENT_STATUSES], ["source", ORDER_SOURCES]].filter(([k, allowed]) => fromUrl.get(k) && Object.hasOwn(allowed, fromUrl.get(k))).map(([k]) => [k, fromUrl.get(k)]));
   const state = { filters: initial, cursors: [], rows: [], hasMore: false, loading: true, error: null };
   let alive = true;
-  const editorDeps = { searchProducts: (term) => searchProducts(businessId, term), searchCustomers: (term) => searchCustomers(businessId, term), getProducts: (ids) => data.getProducts(businessId, ids), api };
+  const editorDeps = { listActiveProducts: () => listActiveProducts(businessId), searchCustomers: (term) => searchCustomers(businessId, term), getProducts: (ids) => data.getProducts(businessId, ids), api };
 
   async function load() {
     state.loading = true;
@@ -162,6 +172,7 @@ export function mount(container, session, { data = defaultDeps.data, payments = 
             <dt>Customer</dt><dd>${order.customer?.name}${order.customer?.phone ? ` · ${order.customer.phone}` : ""}${order.customerId ? html` ${badge("Saved customer", "info")}` : ""}</dd>
             <dt>Came from</dt><dd>${sourceText(order.source, order.sourceNote) || sourceLabel(order.source)}</dd>
             <dt>Created by</dt><dd>${order.createdBy?.name ?? ""}</dd>
+            ${order.deliveryAddress ? html`<dt>Delivery address</dt><dd>${order.deliveryAddress}</dd>` : ""}
             ${order.notes ? html`<dt>Notes</dt><dd>${order.notes}</dd>` : ""}
             ${order.cancellationReason ? html`<dt>Cancelled because</dt><dd>${order.cancellationReason}</dd>` : ""}
           </dl>
