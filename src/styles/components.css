@@ -606,6 +606,13 @@ a.item:hover {
   overflow-y: auto;
 }
 
+/* Order lines: a quantity box sized for a quantity, so the product name and
+   the line subtotal keep their room. */
+.input-qty {
+  width: 6.5rem;
+  text-align: right;
+}
+
 /* Wedding Suppliers: the Scheduled dropdown names a date and amount; keep
    the row (and its View button) inside the card. */
 [data-role="suppliers"] [data-role="scheduled"] {

@@ -177,7 +177,7 @@ export function openOrderEditor({ session, deps, order = null }) {
             <td>${l.sku} · ${l.name}</td>
             <td class="num">${l.available === null ? "…" : `${formatQuantity(l.available + (l.reservedHere || 0))} ${UNITS[l.unit]?.label ?? l.unit}`}</td>
             <td class="num">${formatCentavos(l.unitPrice, currency)}</td>
-            <td class="num"><input class="input" name="qty-${i}" data-line-index="${i}" value="${state.lines[i].quantityText}" inputmode="decimal" aria-label="Quantity for ${l.name}" autocomplete="off" />${l.qtyError ? html`<div class="form-error">${l.qtyError}</div>` : ""}</td>
+            <td class="num"><input class="input input-qty" name="qty-${i}" data-line-index="${i}" value="${state.lines[i].quantityText}" inputmode="decimal" aria-label="Quantity for ${l.name}" autocomplete="off" />${l.qtyError ? html`<div class="form-error">${l.qtyError}</div>` : ""}</td>
             <td class="num" data-col="lineSubtotal">${l.quantity ? formatCentavos(computeTotals([l]).subtotal, currency) : "—"}</td>
             <td><button type="button" class="btn" data-act="remove" data-index="${i}">Remove</button></td>
           </tr>`

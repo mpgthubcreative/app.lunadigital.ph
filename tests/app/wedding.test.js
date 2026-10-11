@@ -112,7 +112,7 @@ describe("Wedding Suppliers", () => {
     expect(paid.value).toBe("partly");
     const sched = container.querySelector('[data-role="scheduled"]');
     expect([...sched.options].map((o) => o.value)).toEqual(["", PAY.id, "new"]);
-    expect(sched.options[0].textContent).toMatch(/Dec 1, 2026 · ₱30,000\.00/);
+    expect(sched.options[0].textContent.trim()).toBe("Due Dec 1");
     expect(paidState({ paid: 0, agreedAmount: 100 })).toBe("unpaid");
     expect(paidState({ paid: 100, agreedAmount: 100 })).toBe("paid");
     expect(paidState({ paid: 5, agreedAmount: null })).toBe("paid");

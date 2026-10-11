@@ -105,7 +105,9 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     const t = today();
     const canAdd = canSchedule && s.status === "active";
     if (!list.length && !canAdd) return "—";
-    const head = list.length ? `${formatDayId(list[0].dueDate)} · ${money(list[0].amount)}${list.length > 1 ? ` (+${list.length - 1})` : ""}${list[0].dueDate < t ? " · overdue" : ""}` : "None scheduled";
+    // Short head so it fits a phone row ("Due Jan 15 (+1)"); the options carry the amounts.
+    const short = (d) => formatDayId(d).replace(/, \d{4}$/, "");
+    const head = list.length ? `${list[0].dueDate < t ? "Overdue" : "Due"} ${short(list[0].dueDate)}${list.length > 1 ? ` (+${list.length - 1})` : ""}` : "Nothing yet";
     return html`<select class="select select-compact" data-role="scheduled" data-id="${s.id}" aria-label="Scheduled payments for ${s.name}">
       <option value="" selected>${head}</option>
       ${list.map((p) => html`<option value="${p.id}">${formatDayId(p.dueDate)} · ${p.description} · ${money(p.amount)}${p.dueDate < t ? " (overdue)" : ""}</option>`)}
