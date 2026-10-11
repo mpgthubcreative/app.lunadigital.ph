@@ -2375,6 +2375,98 @@ tr.is-saving {
   align-items: center;
 }
 
+/* Owner-pilot batch: approval list per employee, its own filter. */
+.inline-field {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+  max-width: 100%;
+}
+.inline-field .select {
+  min-width: 0;
+  max-width: 220px;
+}
+.request-person + .request-person {
+  margin-top: var(--space-4);
+  padding-top: var(--space-3);
+  border-top: 2px solid var(--border-strong);
+}
+.request-person-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: var(--space-2) 0;
+  font-size: var(--text-base, 1rem);
+}
+.history-head {
+  margin-top: var(--space-4);
+}
+/* Payroll: the pay-period chooser. */
+.period-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+}
+.period-bar .select {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 260px;
+}
+/* Household dashboard: pending requests per helper. */
+.helper-pending {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.helper-pending li + li {
+  border-top: 1px solid var(--border);
+}
+.helper-pending-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: 52px;
+  padding: var(--space-2) 0;
+  color: inherit;
+  text-decoration: none;
+}
+.helper-pending-main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.helper-pending-main small {
+  color: var(--text-muted);
+}
+.helper-pending-end {
+  flex: none;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.helper-pending-also {
+  display: inline-block;
+  margin: 0 0 var(--space-2);
+  font-size: var(--text-sm);
+}
+/* Staff: cash advance limit. */
+.advance-limit {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 2px var(--space-3);
+  margin: 0 0 var(--space-3);
+}
+.advance-limit dd {
+  margin: 0;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.advance-limit .is-available {
+  font-weight: 700;
+}
+
 /* Owner: staff requests grouped per person and pay period. */
 .request-group + .request-group {
   margin-top: var(--space-4);

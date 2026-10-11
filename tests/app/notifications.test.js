@@ -214,3 +214,35 @@ describe("route", () => {
     expect(routeAllowed(noFeature, { path: "/notifications", moduleId: "notifications" })).toBe(false);
   });
 });
+
+describe("Owner-pilot batch: household requests in the bell", () => {
+  const req = (extra = {}) => n("h1", { type: "household.attendance_request", category: "requests", title: "Attendance request", message: "Yanie submitted 6 days for Oct 1–6. 4 Present, 1 Absent, 1 Paid Leave.", recordType: "attendanceRequest", recordId: "staffYanie0001_2026-10-01", ...extra });
+  it("Review requests opens Attendance filtered to that helper; a bad record id falls back to the plain page", () => {
+    const s = sessionFixture({ workspaceTemplateId: "household-payroll" });
+    expect(notificationRow(req(), s, NOW).action).toEqual({ label: "Review requests", route: "/attendance?staff=staffYanie0001" });
+    expect(notificationRow(req({ recordId: "../../x?y=1" }), s, NOW).action.route).toBe("/attendance");
+  });
+  it("the drawer reads in plain words, has a Close button, and following the link closes it", async () => {
+    const data = fakeData([req()]);
+    const bell = mountBell(slot, sessionFixture({ workspaceTemplateId: "household-payroll" }), { data, now: () => NOW });
+    await flush();
+    slot.querySelector('[data-act="bell"]').click();
+    await flush();
+    const item = slot.querySelector(".bell-item");
+    expect(item.textContent).toContain("Yanie submitted 6 days for Oct 1–6. 4 Present, 1 Absent, 1 Paid Leave.");
+    expect(item.textContent).not.toMatch(/\d{4}-\d{2}-\d{2}/);
+    expect(slot.querySelector('[data-act="bell-close"]').getAttribute("aria-label")).toBe("Close notifications");
+    slot.querySelector('[data-act="bell-close"]').click();
+    await flush();
+    expect(slot.querySelector('[data-role="bell-drawer"]')).toBeNull();
+    slot.querySelector('[data-act="bell"]').click();
+    await flush();
+    const link = slot.querySelector('[data-act="bell-open"]');
+    expect(link.getAttribute("href")).toBe("/attendance?staff=staffYanie0001");
+    link.addEventListener("click", (e) => e.preventDefault());
+    link.click();
+    await flush();
+    expect(slot.querySelector('[data-role="bell-drawer"]')).toBeNull();
+    bell.stop();
+  });
+});

@@ -35,6 +35,9 @@ const maria = { id: "staffMaria0001", name: "Maria", position: "Kasambahay", dai
 const STATUSES = ["present", "present", "absent", "present", "official_leave", "present", "present", "absent", "present", "present", "official_leave", "present", "absent", "present", "present"];
 const lines = STATUSES.map((status, i) => ({ id: `staffMaria0001_2026-10-${String(i + 1).padStart(2, "0")}`, staffId: maria.id, staffName: "Maria", date: `2026-10-${String(i + 1).padStart(2, "0")}`, status, dailyWage: 60000, payableAmount: status === "absent" ? 0 : 60000 }));
 
+// The server's automatic period view (Owner-pilot batch).
+const PERIODS = [{ start: "2026-10-16", end: "2026-10-31", current: true }, { start: "2026-10-01", end: "2026-10-15", current: false }, { start: "2026-09-16", end: "2026-09-30", current: false }];
+const periodView = (rows, period = { start: "2026-10-01", end: "2026-10-15", state: "ended" }) => ({ view: { today: "2026-10-16", periods: PERIODS, period, rows } });
 function fakeData(extra = {}) {
   return {
     activeStaff: vi.fn(async () => [maria]),
@@ -43,7 +46,7 @@ function fakeData(extra = {}) {
     setAttendance: vi.fn(async () => ({})),
     listPayrolls: vi.fn(async () => ({ rows: [payroll()], hasMore: false })),
     getPayroll: vi.fn(async () => payroll()),
-    payrollApi: vi.fn(async (b) => (b.action === "release" ? { receiptToken: "tokTOKtokTOKtokTOKtokTOKtokTOKto" } : { payrollId: "staffMaria0001_2026-10-01" })),
+    payrollApi: vi.fn(async (b) => (b.action === "period" ? periodView([payroll()]) : b.action === "release" ? { receiptToken: "tokTOKtokTOKtokTOKtokTOKtokTOKto" } : { payrollId: "staffMaria0001_2026-10-01" })),
     listAdvances: vi.fn(async () => ({ rows: [{ id: "adv0000000001", staffId: maria.id, staffName: "Maria", date: "2026-10-05", amount: 50000, status: "not_yet_paid", description: "Fare" }], hasMore: false })),
     advancesApi: vi.fn(async () => ({})),
     staffApi: vi.fn(async () => ({ staffId: "x" })),
@@ -125,7 +128,7 @@ describe("Payroll", () => {
 
   it("Phase 18.6: the breakdown shows Gross and Net; Add bonus / 13th month / deduction; pay with an optional proof", async () => {
     const data = fakeData({ getPayroll: vi.fn(async () => payroll({ additions: [{ id: "bon-1", type: "bonus", description: "Christmas", amount: 100000 }], additionsTotal: 100000, grossPay: 820000, netPay: 770000 })) });
-    data.payrollApi = vi.fn(async (b) => (b.action === "thirteenth" ? { year: 2026, basicPay: 7200000, entitlement: 600000, onPayrolls: 0, remaining: 600000 } : b.action === "release" ? { receiptToken: "tokTOKtokTOKtokTOKtokTOKtokTOKto" } : {}));
+    data.payrollApi = vi.fn(async (b) => (b.action === "period" ? periodView([payroll()]) : b.action === "thirteenth" ? { year: 2026, basicPay: 7200000, entitlement: 600000, onPayrolls: 0, remaining: 600000 } : b.action === "release" ? { receiptToken: "tokTOKtokTOKtokTOKtokTOKtokTOKto" } : {}));
     mountPayroll(container, home(), { data, now: NOW, toast: () => {} });
     await flush();
     container.querySelector('[data-act="view"]').click();
@@ -166,7 +169,7 @@ describe("Payroll", () => {
     form.elements.method.value = "gcash";
     submit(form);
     await until(() => document.querySelector('[data-role="link-text"]'));
-    expect(data.payrollApi).toHaveBeenCalledWith({ action: "release", payrollId: "staffMaria0001_2026-10-01", payment: { method: "gcash", paidDate: "2026-10-16" } });
+    expect(data.payrollApi).toHaveBeenCalledWith({ action: "release", payrollId: "staffMaria0001_2026-10-01", payment: { method: "gcash", paidDate: "2026-10-16" }, expectedNetPay: 670000 });
     expect(document.querySelector('[data-role="link-text"]').value).toBe(receiptUrl("tokTOKtokTOKtokTOKtokTOKtokTOKto"));
     document.querySelector('[data-x="copy"]').click();
     await until(() => copy.mock.calls.length);
@@ -182,15 +185,20 @@ describe("Payroll", () => {
     expect(document.querySelector('[data-x="defer"]')).not.toBeNull();
   });
 
-  it("the 'Paid, awaiting receipt' filter asks for the receipt status", async () => {
+  it("'Not confirmed' asks for the receipt status; 'All records' filters by payment", async () => {
     const data = fakeData();
     mountPayroll(container, home(), { data, now: NOW });
     await flush();
-    const form = container.querySelector('[data-role="filters"]');
-    form.elements.status.value = "awaiting";
-    submit(form);
+    container.querySelector('[data-seg="view"][data-value="awaiting"]').click();
     await flush();
     expect(data.listPayrolls.mock.calls.at(-1)[1]).toEqual({ receiptStatus: "awaiting" });
+    container.querySelector('[data-seg="view"][data-value="all"]').click();
+    await flush();
+    const form = container.querySelector('[data-role="filters"]');
+    form.elements.status.value = "released";
+    submit(form);
+    await flush();
+    expect(data.listPayrolls.mock.calls.at(-1)[1]).toEqual({ status: "released" });
   });
 
   it("recent periods follow the cycle", () => {
@@ -231,7 +239,33 @@ describe("Household Staff", () => {
     form.elements.payCycle.value = "weekly";
     submit(form);
     await flush();
-    expect(data.staffApi).toHaveBeenCalledWith({ action: "create", staff: { name: "Lito", position: null, dailyWage: 65050, payCycle: "weekly", phone: null, startDate: null, endDate: null, notes: null } });
+    expect(data.staffApi).toHaveBeenCalledWith({ action: "create", staff: { name: "Lito", position: null, dailyWage: 65050, payCycle: "weekly", cutoffs: null, advanceLimit: null, phone: null, startDate: null, endDate: null, notes: null } });
+  });
+
+  it("Owner-pilot batch: custom cutoffs (14 and 29) and a ₱5,000 advance limit", async () => {
+    const data = fakeData();
+    mountStaff(container, home(), { data, toast: () => {} });
+    await flush();
+    container.querySelector('[data-act="new"]').click();
+    await flush();
+    const form = lastForm();
+    form.elements.name.value = "Yanie";
+    form.elements.dailyWage.value = "411";
+    form.elements.cutoffs.value = "14 and 29";
+    form.elements.advanceLimit.value = "5000";
+    submit(form);
+    await flush();
+    expect(data.staffApi).toHaveBeenCalledWith({ action: "create", staff: expect.objectContaining({ name: "Yanie", dailyWage: 41100, payCycle: "semi_monthly", cutoffs: [14, 29], advanceLimit: 500000 }) });
+    // Blank cutoffs = 1–15 / 16–end; 0 = no advances.
+    container.querySelector('[data-act="new"]').click();
+    await flush();
+    const f2 = lastForm();
+    f2.elements.name.value = "Riza";
+    f2.elements.dailyWage.value = "500";
+    f2.elements.advanceLimit.value = "0";
+    submit(f2);
+    await flush();
+    expect(data.staffApi).toHaveBeenLastCalledWith({ action: "create", staff: expect.objectContaining({ name: "Riza", cutoffs: null, advanceLimit: 0 }) });
   });
 });
 
@@ -300,31 +334,70 @@ describe("navigation", () => {
   });
 });
 
-describe("Payroll: the staff record drives it (Owner-pilot fix)", () => {
-  it("Prepare payroll -> Everyone on payroll sends ONE prepareAll for the chosen date and reports who isn't on payroll", async () => {
-    const toast = vi.fn();
-    const data = fakeData({ payrollApi: vi.fn(async () => ({ prepared: [{ name: "Maria" }], existing: [], skipped: [{ staffId: "s2", name: "Lito", reason: "Starts 2026-10-20" }] })) });
-    mountPayroll(container, home(), { data, now: NOW, toast });
-    await flush();
-    container.querySelector('[data-act="prepare"]').click();
-    const f = lastForm();
-    expect(f.elements.who.value).toBe("all");
-    submit(f);
-    await until(() => data.payrollApi.mock.calls.length > 0);
-    expect(data.payrollApi).toHaveBeenCalledWith({ action: "prepareAll", asOf: f.elements.asOf.value });
-    await until(() => toast.mock.calls.length > 0);
-    expect(toast).toHaveBeenCalledWith(expect.stringMatching(/1 prepared.*Lito \(Starts 2026-10-20\)/), "success");
-  });
-  it("one person: the period follows their own pay cycle", async () => {
-    const data = fakeData();
+describe("Payroll: automatic pay periods (Owner-pilot batch)", () => {
+  const auto = (o = {}) => payroll({ id: "staffMaria0001_2026-10-16", periodStart: "2026-10-16", periodEnd: "2026-10-31", present: 1, officialLeave: 0, absent: 0, payableDays: 1, basePay: 60000, deductions: [], deductionsTotal: 0, netPay: 60000, automatic: true, ...o });
+  it("opens on the server's current period with everyone on payroll; no Prepare button; switching period asks for that period", async () => {
+    const data = fakeData({ payrollApi: vi.fn(async (b) => (b.action === "period" ? periodView([auto()], b.period ? { ...b.period, state: "ended" } : { start: "2026-10-16", end: "2026-10-31", state: "in_progress" }) : {})) });
     mountPayroll(container, home(), { data, now: NOW, toast: () => {} });
     await flush();
-    container.querySelector('[data-act="prepare"]').click();
-    const f = lastForm();
-    f.elements.who.value = maria.id;
-    f.elements.asOf.value = "2026-10-05";
-    submit(f);
-    await until(() => data.payrollApi.mock.calls.length > 0);
-    expect(data.payrollApi).toHaveBeenCalledWith({ action: "prepare", staffId: maria.id, periodStart: "2026-10-01" });
+    expect(data.payrollApi.mock.calls[0][0]).toEqual({ action: "period" });
+    expect(container.querySelector('[data-act="prepare"]')).toBeNull();
+    const sel = container.querySelector('[data-role="period-select"]');
+    expect([...sel.options].map((o) => o.textContent)).toEqual(["Oct 16–31 (now)", "Oct 1–15", "Sep 16–30"]);
+    expect(container.querySelector('[data-role="period-state"]').textContent).toMatch(/In progress.*Ends Oct 16|In progress.*Ends Oct 31/);
+    expect(container.querySelector("tr[data-payroll]").textContent).toMatch(/Maria[\s\S]*₱600\.00/);
+    sel.value = "2026-09-16_2026-09-30";
+    sel.dispatchEvent(new Event("change", { bubbles: true }));
+    await flush();
+    expect(data.payrollApi).toHaveBeenLastCalledWith({ action: "period", period: { start: "2026-09-16", end: "2026-09-30" } });
+    container.querySelector('[data-act="period"][aria-label="Newer period"]').click();
+    await flush();
+    expect(data.payrollApi).toHaveBeenLastCalledWith({ action: "period", period: { start: "2026-10-01", end: "2026-10-15" } });
+  });
+  it("an automatic row: Pay sends staff + period (stored once by the server), labelled Early salary payment while the period is ongoing", async () => {
+    const data = fakeData({ getPayroll: vi.fn(async () => null), payrollApi: vi.fn(async (b) => (b.action === "period" ? periodView([auto()], { start: "2026-10-16", end: "2026-10-31", state: "in_progress" }) : b.action === "release" ? { payrollId: "staffMaria0001_2026-10-16", paymentTiming: "early", receiptToken: "tokTOKtokTOKtokTOKtokTOKtokTOKto" } : {})) });
+    mountPayroll(container, home(), { data, now: NOW, toast: () => {} });
+    await flush();
+    container.querySelector('[data-act="view"]').click();
+    await flush();
+    expect(document.querySelector('[data-role="automatic"]').textContent).toMatch(/Worked out automatically.*still ongoing/);
+    document.querySelector('[data-x="release"]').click();
+    await flush();
+    const form = lastForm();
+    expect(document.querySelector(".modal-backdrop:last-child .card-title").textContent).toMatch(/^Early salary payment: Pay ₱600\.00 to Maria/);
+    expect(form.textContent).toMatch(/This pay period is still ongoing \(ends Oct 31\)\. Attendance after the payment date may still change the final salary/);
+    submit(form);
+    await until(() => data.payrollApi.mock.calls.some((c) => c[0].action === "release"));
+    expect(data.payrollApi).toHaveBeenCalledWith({ action: "release", staffId: maria.id, periodStart: "2026-10-16", payment: { method: "cash", paidDate: "2026-10-16" }, expectedNetPay: 60000 });
+    expect(data.payrollApi.mock.calls.some((c) => c[0].action === "prepare" || c[0].action === "prepareAll")).toBe(false);
+  });
+  it("an automatic row: adding a bonus stores the payroll first (prepare), then adds to it", async () => {
+    const data = fakeData({ getPayroll: vi.fn(async () => null), payrollApi: vi.fn(async (b) => (b.action === "period" ? periodView([auto()]) : b.action === "prepare" ? { payrollId: "staffMaria0001_2026-10-16" } : {})) });
+    mountPayroll(container, home(), { data, now: NOW, toast: () => {} });
+    await flush();
+    container.querySelector('[data-act="view"]').click();
+    await flush();
+    document.querySelector('[data-x="add-bonus"]').click();
+    const form = lastForm();
+    form.elements.amount.value = "200";
+    submit(form);
+    await until(() => data.payrollApi.mock.calls.some((c) => c[0].action === "addAddition"));
+    const actions = data.payrollApi.mock.calls.map((c) => c[0].action).filter((x) => x !== "period" && x !== "thirteenth");
+    expect(actions).toEqual(["prepare", "addAddition"]);
+    expect(data.payrollApi).toHaveBeenCalledWith({ action: "addAddition", payrollId: "staffMaria0001_2026-10-16", addition: { type: "bonus", amount: 20000 } });
+  });
+  it("a salary paid early shows what was paid against the final take-home", async () => {
+    const paid = payroll({ status: "released", paymentTiming: "early", ownerPayment: "paid", receiptStatus: "awaiting", netPay: 730000, salary: { amount: 670000, paidDate: "2026-10-11", method: "cash", timing: "early" } });
+    const data = fakeData({ getPayroll: vi.fn(async () => paid), payrollApi: vi.fn(async (b) => (b.action === "period" ? periodView([paid]) : {})) });
+    mountPayroll(container, home(), { data, now: NOW, toast: () => {} });
+    await flush();
+    const row = container.querySelector("tr[data-payroll]");
+    expect(row.querySelector('[data-col="payment"]').textContent).toBe("Paid early");
+    expect(row.textContent).toMatch(/paid ₱6,700\.00/);
+    container.querySelector('[data-act="view"]').click();
+    await flush();
+    expect(document.querySelector('[data-role="early"]').textContent).toMatch(/Paid ₱6,700\.00 on Oct 11, before the period ended \(Oct 15\)\. Final take-home is now ₱7,300\.00: ₱600\.00 more than paid\./);
+    // The employee's receipt is still their own step.
+    expect(document.querySelector('[data-role="receipt"]').textContent).toMatch(/Not confirmed/);
   });
 });

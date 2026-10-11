@@ -13,11 +13,13 @@
 //   last salary     the latest paid salary's employee confirmation:
 //                   Received / Waiting for confirmation / Reported not received
 // Total to pay = sum of the estimated nets. Pending staff requests
-// (attendance / leave, advances) are counted for the "Waiting for you" box.
+// (attendance / leave, advances) are counted for the "Waiting for you" box,
+// and (Owner-pilot batch) grouped per helper: who needs attention, how
+// many requests and of what type (attendance, leave, cash advance).
 // Reads: a household has a handful of people, so per-person equality
 // queries (no composite index) are fine.
 
-import { periodFor, daysIn, attendanceId, summarizeAttendance, advanceRemaining, nextDeduction } from "../../../shared/payroll.js";
+import { staffPeriod, daysIn, attendanceId, summarizeAttendance, advanceRemaining, nextDeduction } from "../../../shared/payroll.js";
 import { businessDate } from "../../../shared/metrics.js";
 
 const int = (v) => (Number.isSafeInteger(v) ? v : 0);
@@ -32,7 +34,7 @@ export async function householdSummary({ db, tenant, business, now = new Date() 
   const rows = await Promise.all(
     staffSnap.docs.map(async (d) => {
       const s = d.data();
-      const period = periodFor(s.payCycle, today);
+      const period = staffPeriod(s, today);
       const days = daysIn(period).filter((x) => x <= today);
       const [paySnap, advSnap, lineSnaps] = await Promise.all([
         tenant.collection("payrolls").where("staffId", "==", d.id).get(),
@@ -64,13 +66,25 @@ export async function householdSummary({ db, tenant, business, now = new Date() 
     })
   );
   rows.sort((a, b) => a.name.localeCompare(b.name));
+  const byStaff = new Map();
+  const bump = (staffId, name, kind) => {
+    if (!byStaff.has(staffId)) byStaff.set(staffId, { staffId, name: name || "Staff", attendance: 0, leave: 0, advances: 0, total: 0 });
+    const g = byStaff.get(staffId);
+    g[kind] += 1;
+    g.total += 1;
+  };
+  for (const d of pendingReq.docs) {
+    const r = d.data();
+    bump(r.staffId, r.staffName, r.status === "official_leave" || r.status === "unpaid_leave" ? "leave" : "attendance");
+  }
+  for (const d of requestedAdv.docs) bump(d.data().staffId, d.data().staffName, "advances");
   const toPay = rows.filter((r) => r.payment === "not_paid");
   return {
     today,
     totalToPay: toPay.reduce((t, r) => t + Math.max(0, r.estimatedNet), 0),
     nextCutoff: toPay.length ? toPay.map((r) => r.period.end).sort()[0] : null,
     overdueTotal: rows.reduce((t, r) => t + r.overdue.reduce((x, o) => x + o.netPay, 0), 0),
-    pending: { attendance: pendingReq.size, advances: requestedAdv.size },
+    pending: { attendance: pendingReq.size, advances: requestedAdv.size, byStaff: [...byStaff.values()].sort((a, b) => b.total - a.total || a.name.localeCompare(b.name)) },
     staff: rows,
   };
 }

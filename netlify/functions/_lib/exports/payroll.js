@@ -11,7 +11,7 @@
 // totalled, so nothing is counted twice.
 
 import { householdStaffQuery, attendanceQuery, payrollsQuery, advancesQuery } from "../../../../shared/list-queries.js";
-import { ATTENDANCE_STATUSES, PAY_CYCLES, ADVANCE_STATUSES, SALARY_METHODS, weekdayLabel, advanceRemaining } from "../../../../shared/payroll.js";
+import { ATTENDANCE_STATUSES, PAY_CYCLES, ADVANCE_STATUSES, SALARY_METHODS, weekdayLabel, advanceRemaining, cycleLabel } from "../../../../shared/payroll.js";
 
 const label = (map, key) => map[key]?.label ?? key ?? "";
 const int = (v) => (Number.isSafeInteger(v) ? v : 0);
@@ -29,7 +29,7 @@ const STAFF_COLUMNS = [
   { header: "Employee ID", format: "text", width: 22, value: (s) => s.id },
   { header: "Position", format: "text", width: 18, value: (s) => s.position },
   { header: "Daily wage", format: "money", width: 12, value: (s) => s.dailyWage },
-  { header: "Pay cycle", format: "text", width: 26, value: (s) => label(PAY_CYCLES, s.payCycle) },
+  { header: "Pay cycle", format: "text", width: 26, value: (s) => (Array.isArray(s.cutoffs) ? cycleLabel(s) : label(PAY_CYCLES, s.payCycle)) },
   { header: "Phone", format: "text", width: 16, value: (s) => s.phone },
   { header: "Start date", format: "date", width: 12, value: (s) => s.startDate },
   { header: "Employment status", format: "text", width: 12, value: (s) => (s.status === "active" ? "Active" : "Inactive") },

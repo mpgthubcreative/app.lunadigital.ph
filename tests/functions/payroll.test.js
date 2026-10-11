@@ -301,10 +301,13 @@ describe("salary release and the one-time receipt link", () => {
     expect(payroll(payrollId).receiptStatus).toBe("awaiting");
   });
 
-  it("release waits for the period's last day, refuses a negative net pay, and only once", async () => {
+  it("release may be early (Owner-pilot batch), refuses a negative net pay, and only once", async () => {
     const id = await maria();
     const { payrollId } = (await api("payroll", u.mom, { action: "prepare", staffId: id, periodStart: "2026-10-16" })).body;
-    expect((await api("payroll", u.mom, { action: "release", payrollId, payment: { method: "cash" } })).body.error).toBe("period-not-ended");
+    // Paid on Oct 16 for Oct 16-31: an early salary payment, allowed and labelled.
+    const early = await api("payroll", u.mom, { action: "release", payrollId, payment: { method: "cash" } });
+    expect(early.status).toBe(200);
+    expect(payroll(payrollId)).toMatchObject({ status: "released", paymentTiming: "early", salary: { paidDate: "2026-10-16", timing: "early" } });
     const id2 = await maria({ name: "Rosa" });
     await mark(id2, "2026-10-01", "present");
     const p2 = (await api("payroll", u.mom, { action: "prepare", staffId: id2, periodStart: "2026-10-01" })).body.payrollId;

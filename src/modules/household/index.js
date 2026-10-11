@@ -16,7 +16,7 @@ import { toast as defaultToast, confirmDialog } from "../../components/feedback.
 import { formatCentavos } from "../../lib/format.js";
 import { shareLinkDialog, activationUrl } from "../../components/share-link.js";
 import { exportButton, bindExport, mayExport, exportHint } from "../../lib/export.js";
-import { PAY_CYCLES, STAFF_STATUSES, parseCentavos } from "@shared/index.js";
+import { PAY_CYCLES, STAFF_STATUSES, parseCentavos, cycleLabel } from "@shared/index.js";
 import * as defaultData from "./data.js";
 
 const cycleOptions = Object.entries(PAY_CYCLES).map(([value, c]) => ({ value, label: c.label }));
@@ -28,6 +28,9 @@ function staffFields(s = {}) {
     { name: "position", label: "Position", value: s.position ?? "", hint: "e.g. Kasambahay, Yaya, Driver" },
     { name: "dailyWage", label: "Daily wage (₱)", value: centsText(s.dailyWage), required: true, inputmode: "decimal" },
     { name: "payCycle", label: "Pay cycle", type: "select", value: s.payCycle ?? "semi_monthly", options: cycleOptions },
+    // Owner-pilot batch: custom semi-monthly cutoffs and the advance limit.
+    { name: "cutoffs", label: "Semi-monthly cutoff days", value: Array.isArray(s.cutoffs) ? `${s.cutoffs[0]} and ${s.cutoffs[1]}` : "", placeholder: "15 and end of month", hint: "Last day of each period, e.g. 14 and 29. Leave blank for 1–15 and 16–end. Short months stop at their last day." },
+    { name: "advanceLimit", label: "Cash advance limit (₱)", value: Number.isSafeInteger(s.advanceLimit) ? String(s.advanceLimit / 100) : "", inputmode: "decimal", placeholder: "No limit", hint: "The most they can owe at once. Blank = no limit; 0 = no advances." },
     { name: "phone", label: "Phone", value: s.phone ?? "", inputmode: "tel" },
     { name: "startDate", label: "Start date", type: "date", value: s.startDate ?? "", hint: "Payroll includes them from this date." },
     { name: "endDate", label: "End date (if they've left)", type: "date", value: s.endDate ?? "", hint: "No payroll after this date; their history stays." },
@@ -35,8 +38,19 @@ function staffFields(s = {}) {
   ];
 }
 
+// "14 and 29" -> [14, 29]; blank -> null (1–15 / 16–end). "end" = 31.
+export function parseCutoffs(text) {
+  const t = String(text ?? "").trim().toLowerCase();
+  if (!t) return null;
+  const nums = t.replace(/end( of (the )?month)?/g, "31").match(/\d+/g) || [];
+  if (nums.length !== 2) throw new Error("Write the two cutoff days, e.g. 14 and 29");
+  return nums.map(Number);
+}
+
 function toInput(v) {
-  const out = { ...v, dailyWage: parseCentavos(v.dailyWage) };
+  const out = { ...v, dailyWage: parseCentavos(v.dailyWage), cutoffs: v.payCycle === "semi_monthly" ? parseCutoffs(v.cutoffs) : null, advanceLimit: String(v.advanceLimit ?? "").trim() === "" ? null : parseCentavos(v.advanceLimit) };
+  if (out.cutoffs && out.cutoffs[0] === 15 && out.cutoffs[1] === 31) out.cutoffs = null;
+  if (out.advanceLimit !== null && !(out.advanceLimit >= 0)) throw new Error("The advance limit must be ₱0 or more (blank = no limit)");
   for (const k of ["position", "phone", "startDate", "endDate", "notes"]) if (out[k] === "") out[k] = null;
   return out;
 }
@@ -87,9 +101,9 @@ export function mount(container, session, { data = defaultData, toast = defaultT
                     <thead><tr><th class="m-only"></th><th>Name</th><th class="col-secondary">Position</th><th class="num">Daily wage</th><th class="col-secondary">Pay cycle</th><th>Luna login</th><th>Status</th><th><span class="visually-hidden">Actions</span></th></tr></thead>
                     <tbody>${state.rows.map(
                       (x) => html`<tr data-staff="${x.id}">
-                        ${mobileCell({ title: x.name, sub: `${x.position || "Staff"} · ${PAY_CYCLES[x.payCycle]?.label ?? x.payCycle}`, end: formatCentavos(x.dailyWage), endSub: "per day" })}
+                        ${mobileCell({ title: x.name, sub: `${x.position || "Staff"} · ${cycleLabel(x)}${Number.isSafeInteger(x.advanceLimit) ? ` · advance limit ${formatCentavos(x.advanceLimit)}` : ""}`, end: formatCentavos(x.dailyWage), endSub: "per day" })}
                         <td class="cell-strong">${x.name}</td><td class="col-secondary">${x.position || "—"}</td>
-                        <td class="num">${formatCentavos(x.dailyWage)}</td><td class="col-secondary">${PAY_CYCLES[x.payCycle]?.label ?? x.payCycle}</td>
+                        <td class="num">${formatCentavos(x.dailyWage)}</td><td class="col-secondary">${cycleLabel(x)}${Number.isSafeInteger(x.advanceLimit) ? html`<span class="cell-sub">Advance limit ${formatCentavos(x.advanceLimit)}</span>` : ""}</td>
                         <td data-col="login">${loginBadge(x)}</td>
                         <td>${badge(STAFF_STATUSES[x.status]?.label ?? x.status, x.status === "active" ? "success" : "neutral")}</td>
                         <td class="row-actions" data-m="more">${canManage
@@ -125,7 +139,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
           fields: staffFields(s),
           onSubmit: (v) => {
             const next = toInput(v);
-            const changes = Object.fromEntries(Object.entries(next).filter(([k, val]) => (s[k] ?? null) !== (val ?? null)));
+            const changes = Object.fromEntries(Object.entries(next).filter(([k, val]) => JSON.stringify(s[k] ?? null) !== JSON.stringify(val ?? null)));
             return Object.keys(changes).length ? data.staffApi({ action: "update", staffId: s.id, changes }) : { unchanged: true };
           },
         });

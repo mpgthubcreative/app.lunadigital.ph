@@ -8,7 +8,7 @@
 // their requests, their salaries and their advances. Never another
 // person's record, never the Owner's private notes.
 
-import { PayrollError, periodFor, daysIn, attendanceId, summarizeAttendance, isValidStaffId, advanceRemaining, nextDeduction, selfDayLock, MAX_DAYS_AHEAD, ATTENDANCE_STATUSES, ADVANCE_STATUSES, SALARY_METHODS, payrollId as payrollIdOf } from "../../../shared/payroll.js";
+import { PayrollError, staffPeriod, paidPayrollLocks, advanceCapacity, cycleLabel, daysIn, attendanceId, summarizeAttendance, isValidStaffId, advanceRemaining, nextDeduction, selfDayLock, MAX_DAYS_AHEAD, ATTENDANCE_STATUSES, ADVANCE_STATUSES, SALARY_METHODS, payrollId as payrollIdOf } from "../../../shared/payroll.js";
 import { businessDate, addDays, isDayId } from "../../../shared/metrics.js";
 import { prepareNotifications } from "./notifications.js";
 
@@ -78,14 +78,14 @@ export async function myHousehold({ db, tenant, business, staffId, now = new Dat
   if (!staffSnap.exists) throw new PayrollError("not-linked", "Your staff record wasn't found. Ask your employer.");
   const staff = staffSnap.data();
   const today = businessDate(business.timezone, now);
-  const period = periodFor(staff.payCycle, today);
+  const period = staffPeriod(staff, today);
   const days = daysIn(period);
   // The attendance sheet: this period, or another one they asked for.
   const bounds = sheetBounds(staff, today);
   let sheetPeriod = period;
   if (periodStart !== null) {
-    if (!isDayId(periodStart) || periodFor(staff.payCycle, periodStart).start !== periodStart) throw new PayrollError("invalid-date", "Invalid pay period");
-    sheetPeriod = periodFor(staff.payCycle, periodStart);
+    if (!isDayId(periodStart) || staffPeriod(staff, periodStart).start !== periodStart) throw new PayrollError("invalid-date", "Invalid pay period");
+    sheetPeriod = staffPeriod(staff, periodStart);
     if (sheetPeriod.end < bounds.lo || sheetPeriod.start > bounds.hi) throw new PayrollError("invalid-date", "That pay period isn't available");
   }
   const sheetDays = daysIn(sheetPeriod);
@@ -110,9 +110,12 @@ export async function myHousehold({ db, tenant, business, staffId, now = new Dat
     ? { basicPay: int(draft.basePay), additions: int(draft.additionsTotal), deductions: int(draft.deductionsTotal), netPay: int(draft.netPay), prepared: true }
     : { basicPay: sum.basePay, additions: 0, deductions: toDeduct, netPay: sum.basePay - toDeduct, prepared: false };
 
-  const sheetPaid = payrolls.some((p) => p.periodStart === sheetPeriod.start && p.status !== "draft");
-  const prevPeriod = periodFor(staff.payCycle, addDays(sheetPeriod.start, -1));
-  const nextPeriod = periodFor(staff.payCycle, addDays(sheetPeriod.end, 1));
+  // Paid days are read-only; after an EARLY payment the days after the
+  // payment date stay open until the period ends.
+  const sheetPayroll = payrolls.find((p) => p.periodStart === sheetPeriod.start) || null;
+  const sheetPaid = Boolean(sheetPayroll) && sheetPayroll.status !== "draft";
+  const prevPeriod = staffPeriod(staff, addDays(sheetPeriod.start, -1));
+  const nextPeriod = staffPeriod(staff, addDays(sheetPeriod.end, 1));
   const sheet = {
     start: sheetPeriod.start,
     end: sheetPeriod.end,
@@ -129,14 +132,16 @@ export async function myHousehold({ db, tenant, business, staffId, now = new Dat
         status: line?.status ?? null,
         pending,
         rejected: latest?.state === "rejected" && !line ? latest.status : null,
-        lock: selfDayLock({ staff, date: d, today, recorded: Boolean(line) && !pending, paid: sheetPaid }),
+        lock: selfDayLock({ staff, date: d, today, recorded: Boolean(line) && !pending, paid: paidPayrollLocks(sheetPayroll, d) }),
       };
     }),
   };
 
   return {
     sheet,
-    staff: { name: staff.name, position: staff.position ?? null, dailyWage: staff.dailyWage, payCycle: staff.payCycle, startDate: staff.startDate ?? null, endDate: staff.endDate ?? null },
+    staff: { name: staff.name, position: staff.position ?? null, dailyWage: staff.dailyWage, payCycle: staff.payCycle, payCycleLabel: cycleLabel(staff), startDate: staff.startDate ?? null, endDate: staff.endDate ?? null },
+    // Owner-pilot batch: their cash advance limit (null limit = no limit set).
+    advanceLimit: advanceCapacity(staff, advances),
     today,
     todayStatus: lines.find((l) => l.date === today)?.status ?? null,
     period: { start: period.start, end: period.end, days: days.map((d) => ({ date: d, status: lines.find((l) => l.date === d)?.status ?? null, pending: requests.find((r) => r.date === d && r.state === "pending")?.status ?? null })), counts: sum, estimate },

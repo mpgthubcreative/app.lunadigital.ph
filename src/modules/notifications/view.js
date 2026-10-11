@@ -17,9 +17,13 @@ export function ago(at, now = new Date(), timezone = "Asia/Manila") {
 }
 
 // A route a notification may link to: an internal path of a known rule only.
+// Owner-pilot batch: a staff request opens the approval list filtered to
+// that person (the staff id is the first part of the request's record id).
 const safeRoute = (n) => {
   const route = NOTIFICATION_TYPES[n.type]?.action.route;
-  return typeof route === "string" && /^\/[a-z-]*$/.test(route) ? route : null;
+  if (typeof route !== "string" || !/^\/[a-z-]*$/.test(route)) return null;
+  const staff = n.type === "household.attendance_request" ? /^([A-Za-z0-9]{8,40})_\d{4}-\d{2}-\d{2}$/.exec(typeof n.recordId === "string" ? n.recordId : "")?.[1] : null;
+  return staff ? `${route}?staff=${staff}` : route;
 };
 
 export function notificationRow(n, session, now = new Date()) {

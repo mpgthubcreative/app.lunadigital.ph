@@ -48,6 +48,9 @@ export const PAYROLL_STATUS = {
   "no-dispute": 409,
   "proof-too-large": 413,
   "storage-limit-reached": 409,
+  // Owner-pilot batch
+  "over-advance-limit": 409,
+  "amount-changed": 409,
 };
 const FORBIDDEN = () => new RequestError("forbidden", "This feature isn't available for your account.", 403);
 

@@ -690,6 +690,50 @@ tr.is-read {
   padding: var(--space-3);
   margin: 0;
 }
+/* Owner-pilot batch: readable on phones. Long words wrap; on a phone the
+   drawer is a sheet across the screen under the top bar (never clipped). */
+.bell-head-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+.bell-item,
+.bell-title {
+  overflow-wrap: anywhere;
+}
+.bell-action {
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
+  font-weight: 600;
+}
+@media (max-width: 719px) {
+  .bell-drawer {
+    position: fixed;
+    left: 8px;
+    right: 8px;
+    top: calc(var(--topbar-height) + 4px);
+    width: auto;
+    max-width: none;
+    max-height: calc(100dvh - var(--topbar-height) - 16px);
+  }
+  .bell-close {
+    min-width: 44px;
+    min-height: 44px;
+  }
+  .bell-head,
+  .bell-item {
+    padding: var(--space-3);
+  }
+  .bell-action {
+    min-height: 44px;
+  }
+  .bell-foot a {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+  }
+}
 .nowrap {
   white-space: nowrap;
 }

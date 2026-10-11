@@ -15,6 +15,13 @@
 //   { action: "attachProof", payrollId, proof }                                    payroll.release (after paying)
 //   { action: "proof", payrollId }                                                 payroll.view (the image)
 //   { action: "resolveDispute", payrollId, note }                                  payroll.release
+// Owner-pilot batch (automatic payroll):
+//   { action: "period", period?: { start, end } }   payroll.view: the pay periods and, for one
+//        period, everyone on payroll (stored payroll or worked out now; nothing is stored)
+//   { action: "release", staffId, periodStart, payment, expectedNetPay?, proof? }   payroll.release:
+//        pays a period nobody touched yet (its payroll is stored first, once). A salary may be
+//        paid before the period ends (early payment); never with a future payment date.
+//        expectedNetPay: refused if the take-home changed since the Owner looked.
 // 13th month = 1/12 of the year's basic pay, never more than what's left.
 // Counts, base pay, deductions and net pay are computed by the server. A
 // release returns the employee's one-time receipt link token ONCE. Reads go
@@ -22,7 +29,7 @@
 
 import { getAdmin } from "./_lib/firebase-admin.js";
 import { payrollActionHandler } from "./_lib/payroll-http.js";
-import { preparePayroll, prepareEligible, addDeduction, removeDeduction, deferAdvance, deleteDraftPayroll, releaseSalary, newReceiptLink, addAddition, removeAddition, thirteenthMonthSummary, attachSalaryProof, readSalaryProof, resolveSalaryDispute } from "./_lib/payroll.js";
+import { payrollPeriodView, preparePayroll, prepareEligible, addDeduction, removeDeduction, deferAdvance, deleteDraftPayroll, releaseSalary, newReceiptLink, addAddition, removeAddition, thirteenthMonthSummary, attachSalaryProof, readSalaryProof, resolveSalaryDispute } from "./_lib/payroll.js";
 
 const M = "payroll.manage";
 const R = "payroll.release";
@@ -37,7 +44,12 @@ export const createPayrollHandler = (deps) =>
       removeDeduction: { permission: M, fields: ["action", "payrollId", "deductionId"], run: (c, b) => removeDeduction({ ...c, payrollId: b.payrollId, deductionId: b.deductionId }) },
       deferAdvance: { permission: M, fields: ["action", "payrollId", "advanceId"], run: (c, b) => deferAdvance({ ...c, payrollId: b.payrollId, advanceId: b.advanceId }) },
       deleteDraft: { permission: M, fields: ["action", "payrollId"], run: (c, b) => deleteDraftPayroll({ ...c, payrollId: b.payrollId }) },
-      release: { permission: R, fields: ["action", "payrollId", "payment", "proof"], run: (c, b) => releaseSalary({ ...c, payrollId: b.payrollId, release: b.payment, proof: b.proof ?? null }) },
+      period: { permission: "payroll.view", fields: ["action", "period"], run: async (c, b) => ({ view: await payrollPeriodView({ ...c, period: b.period ?? null }) }) },
+      release: {
+        permission: R,
+        fields: ["action", "payrollId", "staffId", "periodStart", "payment", "proof", "expectedNetPay"],
+        run: (c, b) => releaseSalary({ ...c, payrollId: b.payrollId ?? null, staffId: b.payrollId ? null : b.staffId ?? null, periodStart: b.periodStart ?? null, release: b.payment, proof: b.proof ?? null, expectedNetPay: b.expectedNetPay ?? null }),
+      },
       addAddition: { permission: M, fields: ["action", "payrollId", "addition"], run: (c, b) => addAddition({ ...c, payrollId: b.payrollId, addition: b.addition }) },
       removeAddition: { permission: M, fields: ["action", "payrollId", "additionId"], run: (c, b) => removeAddition({ ...c, payrollId: b.payrollId, additionId: b.additionId }) },
       thirteenth: { permission: "payroll.view", fields: ["action", "staffId", "year"], run: (c, b) => thirteenthMonthSummary({ ...c, staffId: b.staffId, year: b.year }) },

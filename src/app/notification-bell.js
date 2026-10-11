@@ -7,6 +7,9 @@
 // reads the latest 8 only when opened. Firestore code lives in the lazy
 // notifications data chunk. The bell belongs to one business: switching
 // business re-renders the shell and mounts a new bell for the new one.
+// Owner-pilot batch: on a phone the drawer is a full-width sheet under the
+// top bar (inside the viewport, wrapped text, a Close button); desktop and
+// tablet keep the compact popover.
 
 import { html, render } from "../lib/html.js";
 import { icon } from "../components/icons.js";
@@ -35,7 +38,7 @@ export function mountBell(slot, session, { data = null, now = () => new Date() }
         </button>
         ${state.open
           ? html`<div class="bell-drawer" role="dialog" aria-label="Notifications" data-role="bell-drawer">
-              <div class="bell-head"><strong>Notifications</strong>${state.count ? html`<button type="button" class="btn btn-compact" data-act="bell-read-all">Mark all as read</button>` : ""}</div>
+              <div class="bell-head"><strong>Notifications</strong><span class="bell-head-actions">${state.count ? html`<button type="button" class="btn btn-compact" data-act="bell-read-all">Mark all read</button>` : ""}<button type="button" class="btn btn-compact btn-ghost bell-close" data-act="bell-close" aria-label="Close notifications">✕</button></span></div>
               ${state.error
                 ? html`<p class="stat-hint bell-empty">Couldn't load notifications.</p>`
                 : state.rows === null
@@ -46,7 +49,7 @@ export function mountBell(slot, session, { data = null, now = () => new Date() }
                         (r) => html`<li class="bell-item ${r.unread ? "is-unread" : "is-read"}" data-notification="${r.id}">
                           <div class="bell-title">${r.unread ? html`<span class="bell-dot" aria-label="Unread">●</span> ` : ""}${r.title}${r.resolved ? html` <span class="stat-hint">· Resolved</span>` : ""}</div>
                           <div class="stat-hint">${r.message}</div>
-                          <div class="bell-meta"><span class="stat-hint">${r.time}</span>${r.action ? html`<a href="${r.action.route}" data-link data-act="bell-open" data-id="${r.id}">${r.action.label}</a>` : html`<span class="stat-hint">No access</span>`}</div>
+                          <div class="bell-meta"><span class="stat-hint">${r.time}</span>${r.action ? html`<a class="bell-action" href="${r.action.route}" data-link data-act="bell-open" data-id="${r.id}">${r.action.label}</a>` : html`<span class="stat-hint">No access</span>`}</div>
                         </li>`
                       )}</ul>`}
               <div class="bell-foot"><a href="/notifications" data-link data-act="bell-all">View all notifications</a></div>
@@ -111,7 +114,7 @@ export function mountBell(slot, session, { data = null, now = () => new Date() }
       const row = (state.rows || []).find((n) => n.id === el.dataset.id);
       if (row && row.read !== true) getData().then((d) => d.markRead(row.id)).then(refresh, () => {});
       close();
-    } else if (a === "bell-all") {
+    } else if (a === "bell-all" || a === "bell-close") {
       close();
     }
   };

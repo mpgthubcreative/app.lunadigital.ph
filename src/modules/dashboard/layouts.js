@@ -192,6 +192,30 @@ export function distributorDashboard(ctx) {
 const PAY_STATE = { not_paid: ["Not paid", "warning"], paid: ["Paid", "success"], disputed: ["Disputed", "danger"] };
 const LAST_STATE = { received: ["Received", "success"], waiting: ["Not confirmed", "warning"], not_received: ["Not received", "danger"] };
 
+// Owner-pilot batch: pending requests grouped under each helper (only
+// helpers with something pending): who, how many, and what type. A tap
+// opens the approval list filtered to that person (attendance and leave
+// first; cash advances when that's all they have, or from a second link).
+const KINDS = [["attendance", "Attendance"], ["leave", "Leave"], ["advances", "Advance"]];
+function pendingByHelper(pending) {
+  const people = pending.byStaff || [];
+  if (!people.length) {
+    // An older server answer: counts only.
+    return html`<section class="card section" data-section="waiting"><h2 class="card-title">Pending requests</h2><div class="waiting-links">
+      ${pending.attendance ? html`<a class="btn" href="/attendance" data-link data-role="waiting-attendance">${plural(pending.attendance, "attendance / leave request")} ›</a>` : ""}
+      ${pending.advances ? html`<a class="btn" href="/advances" data-link data-role="waiting-advances">${plural(pending.advances, "advance request")} ›</a>` : ""}
+    </div></section>`;
+  }
+  return html`<section class="card section" data-section="waiting"><h2 class="card-title">Pending requests</h2>
+    <ul class="helper-pending" data-role="pending-by-helper">${people.map((g) => {
+      const href = g.attendance || g.leave ? `/attendance?staff=${encodeURIComponent(g.staffId)}` : `/advances?staff=${encodeURIComponent(g.staffId)}`;
+      return html`<li><a class="helper-pending-row" href="${href}" data-link data-staff="${g.staffId}">
+        <span class="helper-pending-main"><strong>${g.name}</strong><small>${KINDS.filter(([k]) => g[k]).map(([k, l]) => `${l} ${g[k]}`).join(" · ")}</small></span>
+        <span class="helper-pending-end">${g.total} pending <span aria-hidden="true">›</span></span>
+      </a>${(g.attendance || g.leave) && g.advances ? html`<a class="helper-pending-also" href="/advances?staff=${encodeURIComponent(g.staffId)}" data-link>Review ${plural(g.advances, "advance request")} ›</a>` : ""}</li>`;
+    })}</ul></section>`;
+}
+
 function householdSummaryView(ctx) {
   const { currency, summary } = ctx;
   const s = summary.data;
@@ -207,12 +231,7 @@ function householdSummaryView(ctx) {
       </div>
       ${s.overdueTotal ? html`<a class="hero-pay-warn" href="/payroll" data-link data-role="overdue">${money(s.overdueTotal)} from ended pay periods is still not paid ›</a>` : ""}
     </section>
-    ${waiting
-      ? html`<section class="card section" data-section="waiting"><h2 class="card-title">Waiting for you</h2><div class="waiting-links">
-          ${s.pending.attendance ? html`<a class="btn" href="/attendance" data-link data-role="waiting-attendance">${plural(s.pending.attendance, "attendance / leave request")} ›</a>` : ""}
-          ${s.pending.advances ? html`<a class="btn" href="/advances" data-link data-role="waiting-advances">${plural(s.pending.advances, "advance request")} ›</a>` : ""}
-        </div></section>`
-      : ""}
+    ${waiting ? pendingByHelper(s.pending) : ""}
     ${section({
       title: "This cutoff, per person",
       id: "staff-pay",

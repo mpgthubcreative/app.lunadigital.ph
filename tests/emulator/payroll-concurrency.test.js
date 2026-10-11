@@ -159,3 +159,69 @@ describe("receipt confirmation", () => {
     expect(inbox.docs.filter((d) => d.data().type === "payroll.receipt_confirmed")).toHaveLength(1);
   });
 });
+
+// Owner-pilot batch: the per-helper cash advance limit under contention.
+// Every path writes the staff document, so parallel requests, approvals and
+// releases are serialized and can never push a helper over the limit.
+const helperUid = (w) => `helper-${w.c.business.id}`;
+const outstandingOf = async (w) => (await w.tenant.collection("advances").where("staffId", "==", w.staffId).get()).docs.map((d) => d.data()).reduce((t, a) => t + (a.status === "paid" ? a.amount - (a.deductedAmount || 0) : 0), 0);
+
+describe("cash advance limit: never exceeded by parallel actions", () => {
+  it("6 staff requests of ₱2,000 at once with a ₱5,000 limit: at most ₱4,000 waiting", async () => {
+    const w = await world();
+    await pay.updateStaff({ ...w.c, staffId: w.staffId, changes: { advanceLimit: 500000 } });
+    const actor = { uid: helperUid(w), name: "Maria" };
+    const r = await Promise.allSettled(Array.from({ length: 6 }, () => pay.requestAdvance({ ...w.c, staffId: w.staffId, input: { amount: 200000 }, actor })));
+    expectExplicit(r, ["over-advance-limit", "too-many-requests"]);
+    const requested = (await w.tenant.collection("advances").where("status", "==", "requested").get()).docs.reduce((t, d) => t + d.data().amount, 0);
+    expect(ok(r).length).toBe(2);
+    expect(requested).toBe(400000);
+  });
+
+  it("approvals racing: the approved total stays within the limit", async () => {
+    const w = await world();
+    const actor = { uid: helperUid(w), name: "Maria" };
+    const ids = [];
+    for (let i = 0; i < 3; i++) ids.push((await pay.requestAdvance({ ...w.c, staffId: w.staffId, input: { amount: 200000 }, actor })).advanceId);
+    await pay.updateStaff({ ...w.c, staffId: w.staffId, changes: { advanceLimit: 500000 } });
+    const r = await Promise.allSettled(ids.map((advanceId) => pay.decideAdvanceRequest({ ...w.c, advanceId, decision: { decision: "approve" } })));
+    expectExplicit(r, ["over-advance-limit"]);
+    expect(ok(r).length).toBe(2);
+    const approved = (await w.tenant.collection("advances").where("status", "==", "not_yet_paid").get()).docs.reduce((t, d) => t + d.data().amount, 0);
+    expect(approved).toBeLessThanOrEqual(500000);
+  });
+
+  it("releases racing after the limit was lowered: what's outstanding never passes it", async () => {
+    const w = await world();
+    const ids = [];
+    for (let i = 0; i < 3; i++) ids.push((await pay.createAdvance({ ...w.c, input: { staffId: w.staffId, date: "2026-10-02", amount: 200000 } })).advanceId);
+    await pay.updateStaff({ ...w.c, staffId: w.staffId, changes: { advanceLimit: 500000 } });
+    const r = await Promise.allSettled(ids.map((advanceId) => pay.markAdvancePaid({ ...w.c, advanceId, release: {} })));
+    expectExplicit(r, ["over-advance-limit"]);
+    expect(ok(r).length).toBe(2);
+    expect(await outstandingOf(w)).toBe(400000);
+  });
+});
+
+describe("early salary payment racing attendance", () => {
+  it("paid on Oct 11 while days after it are approved: the days up to it are locked, later ones count, totals stay consistent", async () => {
+    const w = await world();
+    const early = { ...w.c, now: new Date("2026-10-11T04:00:00Z") };
+    for (const d of ["2026-10-01", "2026-10-02", "2026-10-06"]) await pay.setAttendance({ ...early, input: { staffId: w.staffId, date: d, status: "present" } });
+    const { payrollId } = await pay.preparePayroll({ ...early, staffId: w.staffId, periodStart: "2026-10-01" });
+    const later = { ...w.c, now: new Date("2026-10-15T04:00:00Z") };
+    const r = await Promise.allSettled([
+      pay.releaseSalary({ ...early, payrollId, release: { method: "cash" } }),
+      ...["2026-10-12", "2026-10-13", "2026-10-14"].map((d) => pay.setAttendance({ ...later, input: { staffId: w.staffId, date: d, status: "present" } })),
+      pay.setAttendance({ ...later, input: { staffId: w.staffId, date: "2026-10-03", status: "present" } }),
+    ]);
+    expectExplicit(r, ["payroll-released"]);
+    const p = await consistent(w, payrollId);
+    expect(p.status).toBe("released");
+    expect(p.paymentTiming).toBe("early");
+    // Oct 12-14 always count (after the payment date); the payment itself is kept as paid.
+    for (const d of ["2026-10-12", "2026-10-13", "2026-10-14"]) expect((await w.tenant.doc("attendance", `${w.staffId}_${d}`).get()).data().status).toBe("present");
+    expect(p.salary.amount).toBeLessThanOrEqual(p.netPay);
+    await expect(pay.setAttendance({ ...later, input: { staffId: w.staffId, date: "2026-10-05", status: "present" } })).rejects.toMatchObject({ code: "payroll-released" });
+  });
+});

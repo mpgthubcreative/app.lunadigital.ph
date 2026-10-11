@@ -128,7 +128,7 @@ describe("self-service: their own record only; requests change nothing until app
     expect(r1.body.state).toBe("pending");
     expect(docAt(`attendance/${id}_2026-10-16`)).toBeUndefined();
     // The Owner was told.
-    expect(docAt(`members/${u.mom}/inbox/${notificationId("household.attendance_request", `${id}_2026-10-16-1`)}`)).toMatchObject({ title: "Maria Santos: Present on 2026-10-16" });
+    expect(docAt(`members/${u.mom}/inbox/${notificationId("household.attendance_request", `${id}_2026-10-16-1`)}`)).toMatchObject({ title: "Attendance request", message: "Maria Santos asked for Present on Oct 16." });
     // Planned leave ahead is fine; Present ahead isn't.
     expect((await me(uid, { action: "attendance", date: "2026-10-24", status: "official_leave", note: "Fiesta sa probinsya" })).status).toBe(200);
     expect((await me(uid, { action: "attendance", date: "2026-10-20", status: "present" })).body.error).toBe("invalid-date");

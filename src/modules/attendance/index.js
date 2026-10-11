@@ -9,13 +9,19 @@
 // unpaid payroll. Present and Paid Leave are payable; Absent, Unpaid Leave,
 // Rest Day and unmarked days aren't (a daily-paid rest day is a day not
 // worked, never a deduction). Released periods are locked by the server.
+// Owner-pilot batch: the two parts have distinct jobs. "Waiting for your
+// approval" (top) = what needs the Owner's action now, with its OWN
+// Employee filter (All employees: grouped per person, then pay period);
+// Approve all / Reject all act only on what's visible. "Attendance history"
+// (below) = review and correct recorded days. ?staff=<id> opens the
+// approval list filtered to that person (dashboard, notifications).
 
 import { html, render } from "../../lib/html.js";
 import { pageHeader, emptyState, segmented, skeleton, mobileCell } from "../../components/ui.js";
 import { toast as defaultToast } from "../../components/feedback.js";
 import { formatCentavos, formatDayId } from "../../lib/format.js";
 import { exportButton, bindExport, mayExport, exportHint } from "../../lib/export.js";
-import { ATTENDANCE_STATUSES, businessDate, periodFor, daysIn, weekdayLabel, summarizeAttendance, addDays } from "@shared/index.js";
+import { ATTENDANCE_STATUSES, businessDate, staffPeriod, daysIn, weekdayLabel, summarizeAttendance, addDays } from "@shared/index.js";
 import * as defaultData from "../household/data.js";
 import { formDialog } from "../../components/form-dialog.js";
 
@@ -39,7 +45,9 @@ export function mount(container, session, { data = defaultData, toast = defaultT
   const businessId = session.business.id;
   const canEdit = session.member.permissions["attendance.edit"] === true;
   const today = businessDate(session.business.timezone, now());
-  const state = { view: "day", date: today, staffId: "", from: "", to: "", staff: [], lines: [], requests: [], loading: true, error: null, saving: null, deciding: null };
+  const fromUrl = new URLSearchParams(typeof location === "undefined" ? "" : location.search).get("staff") || "";
+  const state = { view: "day", date: today, staffId: "", from: "", to: "", staff: [], lines: [], requests: [], requestStaff: /^[A-Za-z0-9]{8,40}$/.test(fromUrl) ? fromUrl : "", loading: true, error: null, saving: null, deciding: null };
+  const cycleOf = (staffId) => state.staff.find((s) => s.id === staffId) || { payCycle: "semi_monthly" };
   let alive = true;
 
   async function load() {
@@ -50,7 +58,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
       if (state.view === "employee" && !state.staffId && state.staff.length) state.staffId = state.staff[0].id;
       if (state.view === "employee" && state.staffId && !state.from) {
         const s = state.staff.find((x) => x.id === state.staffId);
-        const p = periodFor(s?.payCycle || "semi_monthly", today);
+        const p = staffPeriod(s || { payCycle: "semi_monthly" }, today);
         state.from = p.start;
         state.to = p.end;
       }
@@ -101,31 +109,48 @@ export function mount(container, session, { data = defaultData, toast = defaultT
   // Requests staff sent from their own accounts (Phase 18.6), grouped per
   // person and pay period (Owner-pilot polish): "Approve all" decides the
   // whole period at once; each day is still its own decision and history.
+  // Only the employee chosen in the approval list's own filter.
+  const visibleRequests = () => (state.requestStaff ? state.requests.filter((r) => r.staffId === state.requestStaff) : state.requests);
+  // Per employee, then per pay period (each person's own cycle / cutoffs).
   function requestGroups() {
-    const groups = new Map();
-    for (const r of state.requests) {
-      const cycle = state.staff.find((s) => s.id === r.staffId)?.payCycle ?? "semi_monthly";
-      const p = periodFor(cycle, r.date);
+    const people = new Map();
+    for (const r of visibleRequests()) {
+      const p = staffPeriod(cycleOf(r.staffId), r.date);
+      if (!people.has(r.staffId)) people.set(r.staffId, { staffId: r.staffId, staffName: r.staffName, count: 0, groups: new Map() });
+      const person = people.get(r.staffId);
+      person.count += 1;
       const key = `${r.staffId}|${p.start}`;
-      if (!groups.has(key)) groups.set(key, { key, staffName: r.staffName, period: p, items: [] });
-      groups.get(key).items.push(r);
+      if (!person.groups.has(key)) person.groups.set(key, { key, staffName: r.staffName, period: p, items: [] });
+      person.groups.get(key).items.push(r);
     }
-    return [...groups.values()];
+    return [...people.values()].sort((a, b) => a.staffName.localeCompare(b.staffName)).map((x) => ({ ...x, groups: [...x.groups.values()] }));
   }
 
   function requestsSection() {
     if (!canEdit || !state.requests.length) return "";
     const short = (d) => formatDayId(d).replace(/, \d{4}$/, "");
+    const range = (p) => (p.start.slice(0, 7) === p.end.slice(0, 7) ? `${short(p.start)}–${Number(p.end.slice(8))}` : `${short(p.start)} – ${short(p.end)}`);
+    const names = [...new Map(state.requests.map((r) => [r.staffId, r.staffName])).entries()].sort((a, b) => a[1].localeCompare(b[1]));
+    const people = requestGroups();
     return html`<section class="card section" data-section="requests">
-      <h2 class="card-title">Waiting for your approval (${state.requests.length})</h2>
-      ${requestGroups().map((g) => {
+      <div class="section-head">
+        <div><h2 class="card-title">Waiting for your approval (${state.requests.length})</h2><p class="stat-hint">What your staff sent. Nothing changes pay until you approve.</p></div>
+        <label class="inline-field">Employee <select class="select select-compact" data-role="request-staff" aria-label="Employee (waiting for approval)">
+          <option value="" ${state.requestStaff ? "" : "selected"}>All employees</option>
+          ${names.map(([id, name]) => html`<option value="${id}" ${state.requestStaff === id ? "selected" : ""}>${name} (${state.requests.filter((r) => r.staffId === id).length})</option>`)}
+        </select></label>
+      </div>
+      ${!people.length ? html`<p class="stat-hint" data-role="no-requests">Nothing waiting from this employee.</p>` : ""}
+      ${people.map((person) => html`<div class="request-person" data-person="${person.staffId}">
+        <h3 class="request-person-head"><strong>${person.staffName}</strong> <span class="badge badge-warning">${person.count} pending</span></h3>
+      ${person.groups.map((g) => {
         const counts = {};
         for (const r of g.items) counts[r.status] = (counts[r.status] || 0) + 1;
         const ids = g.items.map((r) => r.id).join(",");
         const busy = state.deciding === g.key;
         return html`<div class="request-group" data-group="${g.key}">
           <div class="request-group-head">
-            <div class="request-main"><strong>${g.staffName}</strong> · ${short(g.period.start)} to ${short(g.period.end)}<small>${g.items.length} day${g.items.length === 1 ? "" : "s"}: ${Object.entries(counts).map(([s, n]) => `${n} ${ATTENDANCE_STATUSES[s]?.label ?? s}`).join(", ")}</small></div>
+            <div class="request-main"><strong>${range(g.period)}</strong> · ${g.items.length} pending<small>${Object.entries(counts).map(([s, n]) => `${n} ${ATTENDANCE_STATUSES[s]?.label ?? s}`).join(", ")}</small></div>
             ${g.items.length > 1 ? html`<div class="request-actions"><button type="button" class="btn btn-compact" data-act="reject-all" data-group="${g.key}" data-ids="${ids}" ${busy ? "disabled" : ""}>Reject all</button><button type="button" class="btn btn-compact btn-primary" data-act="approve-all" data-group="${g.key}" data-ids="${ids}" ${busy ? "disabled" : ""}>Approve all ${g.items.length}</button></div>` : ""}
           </div>
       <ul class="request-list" data-role="requests">${g.items.map(
@@ -136,10 +161,15 @@ export function mount(container, session, { data = defaultData, toast = defaultT
       )}</ul>
         </div>`;
       })}
+      </div>`)}
     </section>`;
   }
 
-  async function decideAll(key, ids, decision) {
+  async function decideAll(key, rawIds, decision) {
+    // Only requests that are visible right now (the filtered employee).
+    const visible = new Set(visibleRequests().map((r) => r.id));
+    const ids = rawIds.filter((id) => visible.has(id));
+    if (!ids.length) return;
     state.deciding = key;
     draw();
     try {
@@ -174,6 +204,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
       html`
         ${pageHeader({ title: "Attendance", subtitle: "Who worked each day. Present and Paid Leave are paid; Absent, Unpaid Leave and Rest Day aren't." })}
         ${requestsSection()}
+        <div class="section-head history-head"><div><h2 class="card-title">Attendance history</h2><p class="stat-hint">Review and correct recorded days. Corrections keep their history.</p></div></div>
         <div class="toolbar">
           ${segmented("view", [["day", "By day"], ["employee", "By employee"]], state.view, { label: "View" })}
         </div>
@@ -212,6 +243,10 @@ export function mount(container, session, { data = defaultData, toast = defaultT
   };
   const onChange = async (event) => {
     const el = event.target;
+    if (el.dataset.role === "request-staff") {
+      state.requestStaff = el.value;
+      return draw();
+    }
     if (el.dataset.act !== "mark" || !el.value) return;
     el.disabled = true;
     await mark(el.dataset.staff, el.dataset.date, el.value);

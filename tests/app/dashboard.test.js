@@ -398,3 +398,32 @@ describe("Household (Phase 18.6): total salary to pay at the next cutoff, per pe
     expect(container.querySelector('[data-role="waiting-advances"]').textContent).toMatch(/1 advance request/);
   });
 });
+
+describe("Household (Owner-pilot batch): pending requests per helper", () => {
+  it("one row per helper with something pending: name, count and types; a tap opens the filtered approval list", async () => {
+    const summary = {
+      today: "2026-10-11",
+      totalToPay: 0,
+      nextCutoff: null,
+      overdueTotal: 0,
+      pending: {
+        attendance: 2,
+        advances: 1,
+        byStaff: [
+          { staffId: "staffYanie0001", name: "Yanie", attendance: 1, leave: 0, advances: 1, total: 2 },
+          { staffId: "staffRiza00001", name: "Riza", attendance: 0, leave: 1, advances: 0, total: 1 },
+        ],
+      },
+      staff: [],
+    };
+    const api = vi.fn(async (path) => (path === "household-summary" ? { summary } : {}));
+    await show(sessionFixture({ workspaceTemplateId: "household-payroll" }), {}, {}, { api });
+    const rows = [...container.querySelectorAll('[data-role="pending-by-helper"] .helper-pending-row')];
+    expect(rows.map((r) => r.textContent.replace(/\s+/g, " ").trim())).toEqual(["YanieAttendance 1 · Advance 1 2 pending ›", "RizaLeave 1 1 pending ›"]);
+    expect(rows.map((r) => r.getAttribute("href"))).toEqual(["/attendance?staff=staffYanie0001", "/attendance?staff=staffRiza00001"]);
+    expect(container.querySelector(".helper-pending-also").getAttribute("href")).toBe("/advances?staff=staffYanie0001");
+    // No anonymous "2 pending requests".
+    expect(container.querySelector('[data-role="waiting-attendance"]')).toBeNull();
+    expect(container.querySelector('[data-role="waiting-advances"]')).toBeNull();
+  });
+});

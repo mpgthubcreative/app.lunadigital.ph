@@ -120,8 +120,36 @@ export const weekdayOf = (day) => {
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 export const weekdayLabel = (day) => WEEKDAYS[weekdayOf(day)];
 
-// The pay period of `cycle` that contains `day`.
-export function periodFor(cycle, day) {
+// Owner-pilot batch (2026-10-11): semi-monthly cutoffs. A cutoff is the LAST
+// day of a period: [15, 31] is the usual 1–15 / 16–end; [14, 29] gives
+// 30th–14th / 15th–29th. The second cutoff stops at the month's last day
+// (29 in February = Feb 28 / 29), so short months never lose or repeat a day.
+// null = the usual [15, 31].
+export const STANDARD_CUTOFFS = Object.freeze([15, 31]);
+export function validateCutoffs(value) {
+  if (value === undefined || value === null || value === "") return null;
+  if (!Array.isArray(value) || value.length !== 2 || !value.every((n) => Number.isSafeInteger(n))) throw new PayrollError("invalid-input", "Cutoffs are two days of the month, e.g. 14 and 29");
+  const [a, b] = value;
+  if (a < 1 || a > 28 || b > 31 || b - a < 7 || b - a > 23) throw new PayrollError("invalid-input", "Choose cutoffs about half a month apart: the first from 1 to 28, the second 7 to 23 days later (at most 31)");
+  return a === 15 && b === 31 ? null : [a, b];
+}
+const monthBefore = (y, m) => (m === 1 ? [y - 1, 12] : [y, m - 1]);
+const monthAfter = (y, m) => (m === 12 ? [y + 1, 1] : [y, m + 1]);
+const ymd = (y, m, d) => `${y}-${pad(m)}-${pad(d)}`;
+function semiMonthly(y, m, d, [a, b]) {
+  const second = (yy, mm) => Math.min(b, lastDayOfMonth(yy, mm));
+  if (d <= a) {
+    const [py, pm] = monthBefore(y, m);
+    const pc = second(py, pm);
+    return { start: pc === lastDayOfMonth(py, pm) ? ymd(y, m, 1) : ymd(py, pm, pc + 1), end: ymd(y, m, a) };
+  }
+  if (d <= second(y, m)) return { start: ymd(y, m, a + 1), end: ymd(y, m, second(y, m)) };
+  const [ny, nm] = monthAfter(y, m);
+  return { start: ymd(y, m, second(y, m) + 1), end: ymd(ny, nm, a) };
+}
+
+// The pay period of `cycle` that contains `day` (`cutoffs`: semi-monthly only).
+export function periodFor(cycle, day, cutoffs = null) {
   if (!PAY_CYCLES[cycle]) throw new PayrollError("invalid-cycle", "Unknown pay cycle");
   if (!isDayId(day)) throw new PayrollError("invalid-date", "Invalid date");
   const [y, m, d] = parts(day);
@@ -130,14 +158,35 @@ export function periodFor(cycle, day) {
     return { start, end: addDays(start, 6) };
   }
   if (cycle === "monthly") return { start: `${y}-${pad(m)}-01`, end: `${y}-${pad(m)}-${pad(lastDayOfMonth(y, m))}` };
-  return d <= 15 ? { start: `${y}-${pad(m)}-01`, end: `${y}-${pad(m)}-15` } : { start: `${y}-${pad(m)}-16`, end: `${y}-${pad(m)}-${pad(lastDayOfMonth(y, m))}` };
+  return semiMonthly(y, m, d, Array.isArray(cutoffs) && cutoffs.length === 2 ? cutoffs : STANDARD_CUTOFFS);
 }
+// A person's own period (their pay cycle and cutoffs).
+export const staffPeriod = (staff, day) => periodFor(staff.payCycle, day, staff.payCycle === "semi_monthly" ? staff.cutoffs ?? null : null);
+export const cycleLabel = (staff) =>
+  staff?.payCycle === "semi_monthly" && Array.isArray(staff.cutoffs) ? `Semi-monthly (cutoffs ${staff.cutoffs[0]} and ${staff.cutoffs[1] >= 31 ? "end" : staff.cutoffs[1]})` : PAY_CYCLES[staff?.payCycle]?.label ?? staff?.payCycle ?? "";
+
+// Is a day of this payroll still open after its salary was paid? Only an
+// EARLY payment leaves the days after the payment date open (the period
+// hadn't finished); a payment at or after the end locks every day.
+export const paidPayrollLocks = (payroll, date) => Boolean(payroll) && payroll.status !== "draft" && !(payroll.paymentTiming === "early" && payroll.salary?.paidDate && date > payroll.salary.paidDate);
 
 // Is {start, end} exactly one period of `cycle`?
-export function isPeriodOf(cycle, { start, end } = {}) {
+export function isPeriodOf(cycle, { start, end } = {}, cutoffs = null) {
   if (!isDayId(start) || !isDayId(end)) return false;
-  const p = periodFor(cycle, start);
+  const p = periodFor(cycle, start, cutoffs);
   return p.start === start && p.end === end;
+}
+
+// A person's periods from `from` to `to` (inclusive, newest first), at most `max`.
+export function staffPeriods(staff, from, to, max = 24) {
+  const out = [];
+  if (!isDayId(from) || !isDayId(to) || from > to) return out;
+  let p = staffPeriod(staff, to);
+  while (out.length < max && p.end >= from) {
+    out.push(p);
+    p = staffPeriod(staff, addDays(p.start, -1));
+  }
+  return out;
 }
 
 export function daysIn({ start, end }) {
@@ -210,7 +259,33 @@ const money = (v, { field, max }) => {
   return v;
 };
 
-export const STAFF_FIELDS = Object.freeze(["name", "position", "dailyWage", "payCycle", "phone", "startDate", "endDate", "notes"]);
+export const STAFF_FIELDS = Object.freeze(["name", "position", "dailyWage", "payCycle", "cutoffs", "advanceLimit", "phone", "startDate", "endDate", "notes"]);
+
+// Owner-pilot batch: a per-person cash advance limit (centavos). null = no
+// limit (shown as "No limit"); 0 = no advances.
+export function validateAdvanceLimit(value) {
+  if (value === undefined || value === null || value === "") return null;
+  if (!isCentavos(value) || value < 0 || value > MAX_ADVANCE) throw new PayrollError("invalid-amount", "The advance limit can't be negative");
+  return value;
+}
+
+// What a person may still borrow. Outstanding = what's left to repay of
+// released advances; approved = approved, not yet released (committed);
+// requested = waiting for the Owner. available = limit - outstanding -
+// approved (null when there's no limit). `exclude`: an advance being decided.
+export function advanceCapacity(staff, advances, { exclude = null } = {}) {
+  const limit = Number.isSafeInteger(staff?.advanceLimit) ? staff.advanceLimit : null;
+  let outstanding = 0;
+  let approved = 0;
+  let requested = 0;
+  for (const a of advances || []) {
+    if (exclude && a.id === exclude) continue;
+    if (a.status === "paid") outstanding += advanceRemaining(a);
+    else if (a.status === "not_yet_paid") approved += a.amount;
+    else if (a.status === "requested") requested += a.requestedAmount ?? a.amount;
+  }
+  return { limit, outstanding, approved, requested, available: limit === null ? null : Math.max(0, limit - outstanding - approved) };
+}
 
 // New staff (all required fields) or an edit (`partial`: only given keys).
 export function validateStaffInput(input, { partial = false } = {}) {
@@ -225,6 +300,12 @@ export function validateStaffInput(input, { partial = false } = {}) {
     if (!PAY_CYCLES[input.payCycle]) throw new PayrollError("invalid-input", "Choose a pay cycle");
     out.payCycle = input.payCycle;
   }
+  if (has("cutoffs")) {
+    out.cutoffs = validateCutoffs(input.cutoffs);
+    const cycle = input.payCycle ?? (partial ? undefined : "semi_monthly");
+    if (out.cutoffs && cycle !== undefined && cycle !== "semi_monthly") throw new PayrollError("invalid-input", "Cutoff days are for semi-monthly pay");
+  }
+  if (has("advanceLimit")) out.advanceLimit = validateAdvanceLimit(input.advanceLimit);
   if (has("phone")) out.phone = text(input.phone, { field: "Phone", max: 30 });
   if (has("startDate")) {
     if (input.startDate !== null && input.startDate !== undefined && input.startDate !== "" && !isDayId(input.startDate)) throw new PayrollError("invalid-date", "Invalid start date");

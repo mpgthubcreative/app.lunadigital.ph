@@ -12,14 +12,16 @@ import { formDialog } from "../../components/form-dialog.js";
 import { confirmDialog, toast as defaultToast } from "../../components/feedback.js";
 import { formatCentavos, formatDayId } from "../../lib/format.js";
 import { exportButton, bindExport, mayExport, exportHint } from "../../lib/export.js";
-import { ADVANCE_STATUSES, SALARY_METHODS, businessDate, parseCentavos, advanceRemaining } from "@shared/index.js";
+import { ADVANCE_STATUSES, SALARY_METHODS, businessDate, parseCentavos, advanceRemaining, advanceCapacity } from "@shared/index.js";
 import * as defaultData from "../household/data.js";
 
 export function mount(container, session, { data = defaultData, toast = defaultToast, now = () => new Date(), exportDeps = {} } = {}) {
   const canManage = session.member.permissions["advances.manage"] === true;
   const businessId = session.business.id;
   const today = businessDate(session.business.timezone, now());
-  const state = { staffId: "", status: "", from: "", to: "", cursors: [], rows: [], requests: [], hasMore: false, staff: [], loading: true, error: null };
+  // Owner-pilot batch: ?staff=<id> (dashboard) opens filtered to that person.
+  const fromUrl = new URLSearchParams(typeof location === "undefined" ? "" : location.search).get("staff") || "";
+  const state = { staffId: /^[A-Za-z0-9]{8,40}$/.test(fromUrl) ? fromUrl : "", status: "", from: "", to: "", cursors: [], rows: [], requests: [], hasMore: false, staff: [], loading: true, error: null };
   const optionalPesos = (v) => (v && String(v).trim() ? parseCentavos(v) : null);
   let alive = true;
   const filters = () => Object.fromEntries(Object.entries({ staffId: state.staffId, status: state.status, from: state.from, to: state.to }).filter(([, v]) => v));
@@ -30,7 +32,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     try {
       if (!state.staff.length) state.staff = await data.activeStaff(businessId);
       const [page, requests] = await Promise.all([data.listAdvances(businessId, filters(), { cursor: state.cursors.at(-1) || null }), canManage ? data.listAdvances(businessId, { status: "requested" }, { pageSize: 50 }).then((p) => p.rows).catch(() => []) : []]);
-      state.requests = requests;
+      state.requests = state.staffId ? requests.filter((r) => r.staffId === state.staffId) : requests;
       state.rows = page.rows;
       state.hasMore = page.hasMore;
       state.error = null;
@@ -149,6 +151,19 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     });
   }
 
+  // Owner-pilot batch: the person's advance limit, for the approval dialog.
+  async function limitLine(staffId, exclude) {
+    const person = state.staff.find((x) => x.id === staffId);
+    if (!person || !Number.isSafeInteger(person.advanceLimit)) return "";
+    try {
+      const all = (await data.listAdvances(businessId, { staffId }, { pageSize: 100 })).rows;
+      const cap = advanceCapacity(person, all, { exclude });
+      return `Limit ${formatCentavos(cap.limit)} · outstanding ${formatCentavos(cap.outstanding)}${cap.approved ? ` · approved, not released ${formatCentavos(cap.approved)}` : ""} · available ${formatCentavos(cap.available)}. `;
+    } catch {
+      return "";
+    }
+  }
+
   const onClick = async (event) => {
     const el = event.target.closest("[data-act]");
     if (!el || !container.contains(el) || el.tagName === "SELECT") return;
@@ -174,9 +189,10 @@ export function mount(container, session, { data = defaultData, toast = defaultT
       const req = state.rows.find((r) => r.id === el.dataset.id) || state.requests.find((r) => r.id === el.dataset.id);
       if (!req) return undefined;
       const asked = req.requestedAmount ?? req.amount;
+      const limitText = await limitLine(req.staffId, req.id);
       const r = await formDialog({
         title: `Approve ${req.staffName}'s advance`,
-        intro: `${req.staffName} asked for ${formatCentavos(asked)}${req.description ? ` (${req.description})` : ""}. Approving doesn't move money: mark it released when you hand it over.`,
+        intro: `${req.staffName} asked for ${formatCentavos(asked)}${req.description ? ` (${req.description})` : ""}. ${limitText}Approving doesn't move money: mark it released when you hand it over.`,
         fields: [
           { name: "amount", label: "Approved amount (₱)", value: String(asked / 100), inputmode: "decimal", required: true },
           { name: "installment", label: "Take from each payroll (₱, optional)", inputmode: "decimal", hint: "Leave blank to take it all from the next payroll." },

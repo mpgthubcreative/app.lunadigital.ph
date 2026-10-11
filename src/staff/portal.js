@@ -9,6 +9,9 @@
 //   My salary      this pay period so far, past salaries, "I received it"
 //   My requests    what's waiting, approved or not approved
 //   My advances    what's left to repay
+// Owner-pilot batch: the cash advance limit the employer set (Limit,
+// Outstanding, Available); a request above what's available is stopped
+// here and refused by the server too.
 //
 // Everything comes from /api/me (their OWN record only). Nothing they send
 // changes pay until their employer approves it; the screen says so.
@@ -42,6 +45,24 @@ export function mountStaffPortal(root, session, { api = defaultApi, onSignOut = 
   }
 
   const pill = (text, tone) => html`<span class="badge badge-${tone}">${text}</span>`;
+  // What they can still ask for right now (null = no limit set).
+  const roomFor = (cap) => (!cap || cap.limit === null ? null : Math.max(0, cap.available - cap.requested));
+  function blockedText(cap) {
+    if (!cap || cap.limit === null || roomFor(cap) > 0) return "";
+    if (cap.limit === 0) return "Cash advances aren't available for you right now. Ask your employer.";
+    if (cap.outstanding > 0 && cap.outstanding + cap.approved >= cap.limit) return `You still have ${money(cap.outstanding)} to repay before you can request another advance.`;
+    return "You can't request more right now. Wait for your employer to answer your other request.";
+  }
+  const limitBox = (cap) =>
+    cap && cap.limit !== null
+      ? html`<dl class="advance-limit" data-role="advance-limit">
+          <dt>Limit</dt><dd>${money(cap.limit)}</dd>
+          <dt>Outstanding</dt><dd>${money(cap.outstanding)}</dd>
+          ${cap.approved ? html`<dt>Approved, not given yet</dt><dd>${money(cap.approved)}</dd>` : ""}
+          ${cap.requested ? html`<dt>Waiting for approval</dt><dd>${money(cap.requested)}</dd>` : ""}
+          <dt class="is-available">Available</dt><dd class="is-available" data-role="available">${money(roomFor(cap))}</dd>
+        </dl>`
+      : "";
 
   function todayCard(m) {
     const pending = m.period.days.find((d) => d.date === m.today)?.pending;
@@ -76,14 +97,20 @@ export function mountStaffPortal(root, session, { api = defaultApi, onSignOut = 
     const today = m.today;
     const err = state.formError ? html`<p class="form-error" role="alert">${state.formError}</p>` : "";
     if (state.panel === "advance") {
+      const cap = m.advanceLimit;
+      const blocked = blockedText(cap);
       return html`<section class="card staff-card staff-panel" data-panel="advance">
-        <h2 class="staff-h">Ask for a cash advance</h2>
+        <h2 class="staff-h">Cash advance</h2>
+        ${limitBox(cap)}
+        ${blocked
+          ? html`<p class="form-notice" role="status" data-role="advance-blocked">${blocked}</p><div class="staff-actions"><button type="button" class="btn" data-act="close">Back</button></div>`
+          : html`
         <form class="form" data-role="advance-form" novalidate>
           <div class="field"><label for="sAmt">How much? (₱)</label><input class="input input-big" id="sAmt" name="amount" inputmode="decimal" required /></div>
           <div class="field"><label for="sWhy">What is it for? (optional)</label><input class="input" id="sWhy" name="reason" maxlength="200" /></div>
           ${err}
           <div class="staff-actions"><button type="button" class="btn" data-act="close">Cancel</button><button type="submit" class="btn btn-primary" ${state.busy ? "disabled" : ""}>Send request</button></div>
-        </form>
+        </form>`}
       </section>`;
     }
     const ahead = state.panel === "leave";
@@ -367,6 +394,11 @@ export function mountStaffPortal(root, session, { api = defaultApi, onSignOut = 
       const amount = parseCentavos(f.elements.amount.value);
       if (!(amount > 0)) {
         state.formError = "Enter an amount, e.g. 1500";
+        return draw();
+      }
+      const room = roomFor(state.me?.advanceLimit);
+      if (room !== null && amount > room) {
+        state.formError = `You can request up to ${money(room)} right now.`;
         return draw();
       }
       return send({ action: "advance", amount, ...(f.elements.reason.value.trim() ? { reason: f.elements.reason.value.trim() } : {}) }, "Sent. Your employer will answer your request.");
