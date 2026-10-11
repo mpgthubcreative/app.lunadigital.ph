@@ -18,6 +18,9 @@ Post-close fix (2026-10-11, recorded separately): the Baby / Bridal planning Tot
 
 Owner pilot: the user is now testing Luna as a tenant across the four workspaces and Super Luna. Track their observations below; consolidate them (possibly a "Phase 18.7 — Owner Pilot Polish", only if the user asks). No speculative changes while they test.
 
+## Post-close
+- c3992c5 (2026-10-11): active-categories-only planning total, deployed to staging (CI passed, Netlify ready). No rules or index changes. Staging data needed no change: the adopt-baby-category-totals dry run reported every Baby / Bridal tenant already on the active-category total (no tenant has a budget on an inactive category).
+
 ## Owner pilot observations
 (none yet)
 
