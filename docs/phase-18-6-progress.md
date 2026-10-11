@@ -22,7 +22,28 @@ Owner pilot: the user is now testing Luna as a tenant across the four workspaces
 - c3992c5 (2026-10-11): active-categories-only planning total, deployed to staging (CI passed, Netlify ready). No rules or index changes. Staging data needed no change: the adopt-baby-category-totals dry run reported every Baby / Bridal tenant already on the active-category total (no tenant has a budget on an inactive category).
 
 ## Owner pilot observations
-(none yet)
+
+### 2026-10-11: Household Staff account, permissions and payroll (fixed, `cc293f9`)
+- **Report:** the kasambahay was added from Users as Manager / Admin, and staff, payroll and login felt like separate enrollments.
+- **Root cause:**
+  - Add member in a household offered only "manager", so the kasambahay ("Yanie", `rwp-d419`) got Manager access with no staff link.
+  - The real staff-login flow (Household Staff → Create login) lived only on the staff page.
+  - Payroll was prepared one person at a time, and inactive staff had no end date.
+- **Fix:** one staff record is the employee master.
+  - **Users page:** Add member asks for the access type (Household Staff is the default). Household Staff logins are always linked to a staff record. The ⋯ menu has **Make household staff**, which converts a mistaken Manager / Admin login in one audited transaction.
+  - **Payroll:** "Prepare payroll → Everyone on payroll" includes everyone employed in their own pay period (start / end date, status), skips the rest with a reason, and never enrolls anyone twice.
+  - **Deactivation** sets the end date to today, keeps the history and excludes later periods. Reactivation clears that end date.
+  - **Corrections:** correcting a day the employee sent needs a reason, which is kept in its history with before / after / editor / time.
+  - **Label:** the role is now "Household Staff".
+- **Tests:**
+  - Unit: 1293 pass, including the new `tests/functions/household-access.test.js`.
+  - Emulator batch (rules payroll + membership, payroll + safe-deletes concurrency): 55/55.
+  - Build: OK.
+- **Staging smoke test** on a temporary household `p186h-home-tmp` (deleted afterwards):
+  - 31/31 API checks: real activation → own password → sign-in; attendance, leave and advance requests; Owner-only approve / release (staff 403); a correction needs a reason; the advance is deducted; Prepare-all includes Yanie and skips a Dec 1 starter; own salary only; Owner release → staff "received"; Super Luna and other tenants 403; Make household staff; deactivate / reactivate.
+  - Headless browser, 8/8: the staff login ID opens only the staff portal (typed `/payroll` and `/users` URLs stay on the portal). The Owner's Users page shows "Household Staff".
+- **Not changed:** Yanie's live member on `rwp-d419` is still Manager. The Owner converts her with Users → ⋯ → Make household staff after adding her staff record.
+- **Polish candidate (18.7, not done):** when an advance is larger than the pay earned so far, the staff portal shows a negative "Estimated take-home". Release is already blocked with "move an advance to the next payroll".
 
 
 Resume file for Phase 18.6 (usability, Baby payers, household self-service and payroll, one-sheet exports, Users page, usage meter). Started 2026-10-11 from `0769cff`. Checkpoint tag: `phase-18-6-start`.
