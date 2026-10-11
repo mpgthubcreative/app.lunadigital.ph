@@ -210,18 +210,23 @@ export async function updateCategory({ db, tenant, FieldValue, categoryId, chang
 
 // Deactivate (kept for its expenses' history; no new expenses or
 // scheduled payments can use it) / reactivate.
-export async function setCategoryStatus({ db, tenant, FieldValue, categoryId, status, actor }) {
+// Hide / deactivate or bring back. With the automatic total (Baby, Bridal)
+// the category's budget leaves / rejoins the planning total; its expenses
+// and history are untouched.
+export async function setCategoryStatus({ db, tenant, FieldValue, categoryId, status, actor, workspace = null }) {
   if (!Object.hasOwn(CATEGORY_STATUSES, status)) throw new BabyError("invalid-input", "Invalid status");
   const cRef = ref(tenant, "expenseCategories", categoryId, "category");
   return db.runTransaction(async (tx) => {
-    await loadBudget(tx, tenant);
+    const b = await loadBudget(tx, tenant);
     const snap = await tx.get(cRef);
     if (!snap.exists) throw new BabyError("not-found", "Category not found");
     const c = snap.data();
     if (c.status === status) return { categoryId, unchanged: true };
+    const all = autoTotal(workspace) ? await categoriesOf(tx, tenant) : null;
+    const totals = all ? autoTotalFields(b, all.map((x) => (x.id === categoryId ? { ...x, status } : x))) : {};
     const stamp = FieldValue.serverTimestamp();
     tx.update(cRef, { status, history: append(c.history, entry(actor, status === "active" ? "Reactivated" : "Deactivated")), revision: c.revision + 1, updatedBy: who(actor), updatedAt: stamp });
-    tx.set(budgetRef(tenant), { schemaVersion: BABY_SCHEMA_VERSION, updatedAt: stamp }, { merge: true });
+    tx.set(budgetRef(tenant), { schemaVersion: BABY_SCHEMA_VERSION, ...totals, updatedAt: stamp }, { merge: true });
     return { categoryId, status };
   }, TX_OPTIONS);
 }

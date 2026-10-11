@@ -100,7 +100,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
                             <td class="row-actions" data-m="more">${canManage ? rowMenu(l.id, [{ act: "edit", label: "Edit" }, { act: "status", label: l.status === "active" ? "Deactivate" : "Reactivate" }, ...((state.categories.find((x) => x.id === l.id)?.useCount ?? 0) > 0 ? [] : [{ sep: true }, { act: "delete", label: "Delete (never used)", danger: true }])], { label: `Actions for ${l.name}` }) : ""}</td>
                           </tr>`
                         )}</tbody></table></div>
-                        <p class="stat-hint" data-role="allocated">Total wedding budget = the category budgets added up${s.total === null ? "" : ` (${money(s.total, currency)})`}. Deactivated categories still count: their spending is real.</p>`}
+                        <p class="stat-hint" data-role="allocated">Total wedding budget = the category budgets added up${s.total === null ? "" : ` (${money(s.total, currency)})`}. Only active categories count; a deactivated category's spending stays in Total spent and its history.</p>`}
             </section>
             ${history.length ? html`<section class="card"><h2 class="card-title">Recent budget changes</h2><ul class="list activity" data-role="budget-history">${history.map((l) => html`<li>${l}</li>`)}</ul></section>` : ""}`}
       `

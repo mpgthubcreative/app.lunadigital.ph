@@ -1599,6 +1599,38 @@ The new deletes run their "never used" check in the same transaction as the dele
 - No new Reports module for Baby or Bridal.
 - The Imports, Users, Settings and Super Admin console screens keep their layouts under the new shell and tokens.
 
+## Luna subscriptions and platform economics (Phase 18.6)
+
+Luna's own money is a platform-level domain, separate from every tenant's operational finances (a Distributor's customer payments, wedding supplier payments, household salaries and baby expenses are never subscription payments; Luna's platform expenses are never tenant Expenses). The model is documented at the top of `shared/billing.js`.
+
+- **Plans per workspace.** Every plan has a `workspaceTemplateId`. Distributor: Starter / Growth / Pro. Household, Baby and Bridal: Basic / Plus (pricing hypotheses). Creating a business or changing its plan refuses a plan from another workspace. `subscription.monthlyAmount` snapshots the price when the plan is assigned.
+- **Bills and payments.** These top-level collections are server-only (the rules deny browsers):
+  - `subscriptionInvoices/{bid}_{YYYY-MM}`: one bill per business per month, with the price snapshot.
+  - `subscriptionPayments/{id}`: bank transfer + proof. Proofs are stored at Storage `platformBilling/`, private and not tenant storage.
+  - The Owner (`billing.view`) pays from Subscription; a payment then waits For Verification. Operators confirm or reject it in Super Luna. Both actions are idempotent transactions with an audit record.
+- **Summaries.** `platformMetrics/{YYYY-MM}` holds verified revenue by month, workspace and plan (cash basis). `platformMetrics/current` holds awaiting verification and still to collect. MRR is an aggregate sum over active / past-due subscriptions.
+- **Costs.** `platformExpenses` holds Luna's own bills: Firebase / GCP and Netlify count as the actual infrastructure bill, everything else as shared cost. `platformCostRates` is an append-only, versioned rate card.
+  - The per-business estimate uses measured usage only: storage and Excel download bytes. Unmetered resources show as Unavailable.
+  - Estimated Platform Gross Profit = verified revenue − platform expenses (not net profit).
+- **One bank account** for every workspace: `platform/billingSettings`, entered by an operator in Super Luna → Payments → Payment settings.
+
+### Budget total (Baby and Bridal)
+
+The current planning Total budget is the sum of the **active** category budgets (decision 2026-10-11). A hidden / deactivated category stops contributing and reactivating it brings its budget back. Its expenses are never rewritten: they stay in Total spent, the category history and the reports. The server keeps the total; nobody types it.
+
+## Deferred backlog (recorded 2026-10-11, not started)
+
+Not part of any phase until the user asks for it:
+- Automatic overdue / past-due scheduler for Luna subscriptions (today an operator marks a subscription past due).
+- Editable plan catalog in Super Luna (plans stay seeded and read-only there).
+- A dedicated Super Luna notification inbox (operators see the For Verification count on the Overview).
+- Automated Firebase / Google Cloud billing integration.
+- Netlify billing API integration.
+- Automatic payment gateway / bank reconciliation.
+- Production deployment.
+- Phase 19.
+- Bridal (approved concept, not built): customizable digital wedding invitation + secure per-guest / per-party RSVP links + QR codes. Don't start it during the owner pilot unless the user asks.
+
 ## Build phases
 
 1. Foundation ✅
@@ -1619,10 +1651,11 @@ The new deletes run their "never used" check in the same transaction as the dele
 14. Household / Kasambahay Payroll MVP ✅ (the household-payroll workspace)
 15. Baby Expense Tracker MVP ✅ (the baby-expense workspace)
 16. Bridal / Wedding Command Center MVP ✅ (the bridal-expense workspace)
-17. Luna Super Admin console (operators, provisioning, plans, overrides, subscription, tenant configuration): local gate passed; staging awaiting approval
+17. Luna Super Admin console (operators, provisioning, plans, overrides, subscription, tenant configuration) ✅
 18. Usage metering (shared meter registry, storage accounting, warnings, history, limit overrides, recount) ✅
-18.5. UX/UI simplification, information architecture, visual polish and mobile redesign: built, gate passed, live on staging (awaiting review)
-19. Reliability, backups and recovery
+18.5. UX/UI simplification, information architecture, visual polish and mobile redesign ✅
+18.6. Usability, Baby payers, household self-service and payroll, one-sheet exports, Users page, Luna subscriptions and platform economics ✅ (CLOSED 2026-10-11, staging verified)
+19. Reliability, backups and recovery (not started)
 
 - Phases 6 and 7 are in this order because orders need products to reserve and a cost to snapshot.
 - Expenses come before Reports so the P&L has operating expenses to subtract.

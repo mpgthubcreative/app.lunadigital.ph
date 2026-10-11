@@ -327,13 +327,15 @@ export function budgetLines(doc, categories) {
   });
 }
 
-// Phase 18.6 (Baby): the Total budget is the sum of the category budgets
-// (every category, hidden ones included, because their spending still
-// counts in Spent). null when no category has a budget: expenses are still
-// tracked, there's just no budget to compare against.
+// Phase 18.6 (Baby and Bridal): the current planning Total budget is the sum
+// of the ACTIVE category budgets (decision 2026-10-11). A hidden /
+// deactivated category stops contributing; reactivating it brings its
+// budget back. Its expenses are never touched: they stay in Spent, the
+// category's history and the reports. null when no active category has a
+// budget: expenses are still tracked, there's just no budget to compare.
 export function totalFromCategories(categories) {
   let total = null;
-  for (const c of categories || []) if (Number.isSafeInteger(c.budget)) total = (total ?? 0) + c.budget;
+  for (const c of categories || []) if ((c.status ?? "active") === "active" && Number.isSafeInteger(c.budget)) total = (total ?? 0) + c.budget;
   return total;
 }
 

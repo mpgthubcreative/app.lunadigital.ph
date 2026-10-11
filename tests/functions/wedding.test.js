@@ -89,6 +89,11 @@ describe("Wedding Budget: the shared budget primitive with wedding categories", 
     expect((await api("budget", u.camille, { action: "setTotal", total: 1 })).status).toBe(409);
     ok(await api("budget", u.camille, { action: "updateCategory", categoryId: cats.Venue, changes: { budget: 25000000 } }));
     expect(summary().total).toBe(55000000);
+    // Only ACTIVE categories count: deactivating Venue takes its ₱250,000 out; its spending stays.
+    expect((await api("budget", u.camille, { action: "setCategoryStatus", categoryId: cats.Venue, status: "inactive" })).status).toBe(200);
+    expect(summary()).toMatchObject({ total: 30000000, spent: 1500000 });
+    expect((await api("budget", u.camille, { action: "setCategoryStatus", categoryId: cats.Venue, status: "active" })).status).toBe(200);
+    expect(summary().total).toBe(55000000);
   });
 });
 

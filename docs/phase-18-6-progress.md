@@ -1,5 +1,27 @@
 # Phase 18.6 progress
 
+**Phase 18.6: CLOSED — staging verified (approved by the user 2026-10-11).**
+
+| | |
+|---|---|
+| Final deployed commit | aed3b61 (staging, Netlify; CI passed) |
+| Unit | 1,281 |
+| Emulator | 2,944 (40 files) |
+| Release mutations | 34/34 killed |
+| Billing mutations | 28/28 killed |
+| Live release probe | 48/48 |
+| Live billing probe | 23/23 |
+| Responsive / live UI | 82/82 (1280 / 820 / 390) |
+| Phase 19 | not started |
+
+Post-close fix (2026-10-11, recorded separately): the Baby / Bridal planning Total budget now counts ACTIVE categories only. Deactivating a category takes its budget out and reactivating it brings it back; expenses and history are untouched (setCategoryStatus recomputes the total). Targeted tests: unit 538 (baby, wedding, billing, shared), emulator 37 (baby + wedding concurrency, baby rules). See "Post-close" below for the deploy.
+
+Owner pilot: the user is now testing Luna as a tenant across the four workspaces and Super Luna. Track their observations below; consolidate them (possibly a "Phase 18.7 — Owner Pilot Polish", only if the user asks). No speculative changes while they test.
+
+## Owner pilot observations
+(none yet)
+
+
 Resume file for Phase 18.6 (usability, Baby payers, household self-service and payroll, one-sheet exports, Users page, usage meter). Started 2026-10-11 from `0769cff`. Checkpoint tag: `phase-18-6-start`.
 
 Scope boundaries: staging only (Firebase `luna-business-os`, Netlify `luna-business-os`). No production deploy, no Phase 19, no rule weakening, no pricing changes, never delete `C:\MONPRA~1`.
@@ -147,6 +169,19 @@ Recorded so the calculation method is explicit. Not legal advice: confirm with D
 
 ## Phase 18.6 status
 Complete on staging, pending the user's review. Do NOT start Phase 19.
+
+## Deferred backlog (recorded 2026-10-11, not started)
+
+Not part of any phase until the user asks for it:
+- Automatic overdue / past-due scheduler for Luna subscriptions (today an operator marks a subscription past due).
+- Editable plan catalog in Super Luna (plans stay seeded and read-only there).
+- A dedicated Super Luna notification inbox (operators see the For Verification count on the Overview).
+- Automated Firebase / Google Cloud billing integration.
+- Netlify billing API integration.
+- Automatic payment gateway / bank reconciliation.
+- Production deployment.
+- Phase 19.
+- Bridal (approved concept, not built): customizable digital wedding invitation + secure per-guest / per-party RSVP links + QR codes. Don't start it during the owner pilot unless the user asks.
 
 ## Known blockers
 - Low memory on the dev machine (about 280 MB free at the start). Unit tests run with `--maxWorkers=2`, emulator suites in small foreground batches.

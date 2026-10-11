@@ -112,6 +112,21 @@ describe("THE live scenario: ₱150,000 budget, Medical ₱60,000, Nursery ₱40
     expect(pathsUnder(`businesses/${B}/spendingMetrics/`)).toEqual([]);
   });
 
+  it("the planning total counts ACTIVE categories only: hiding one takes its budget out (spending and history untouched), bringing it back adds it again", async () => {
+    const c = await scenarioBudget();
+    const e = await expense({ category: c.clothing, amount: 300000 });
+    expect(summary()).toMatchObject({ total: 15000000, spent: 300000 });
+    expect((await api("budget", u.camille, { action: "setCategoryStatus", categoryId: c.clothing, status: "inactive" })).status).toBe(200);
+    expect(summary()).toMatchObject({ total: 14000000, spent: 300000, remaining: 13700000 });
+    expect(budget().spentByCategory[c.clothing]).toBe(300000);
+    expect(docAt(`expenses/${e}`)).toMatchObject({ status: "active", category: c.clothing, amount: 300000 });
+    // A budget edit on a hidden category doesn't move the total either.
+    await setCategoryBudget(c.clothing, 2000000);
+    expect(summary().total).toBe(14000000);
+    expect((await api("budget", u.camille, { action: "setCategoryStatus", categoryId: c.clothing, status: "active" })).status).toBe(200);
+    expect(summary().total).toBe(16000000);
+  });
+
   it("Phase 18.6: the total can't be typed; it follows category adds, budget edits and deletes", async () => {
     expect(summary().total).toBeNull(); // no budget yet: expenses are still tracked
     const r = await api("budget", u.camille, { action: "setTotal", total: 100 });
@@ -125,9 +140,10 @@ describe("THE live scenario: ₱150,000 budget, Medical ₱60,000, Nursery ₱40
     expect(summary().total).toBe(9000000);
     expect((await api("budget", u.camille, { action: "deleteCategory", categoryId: a })).status).toBe(200);
     expect(summary().total).toBe(1000000);
-    // Hiding a category keeps its budget in the total (its spending still counts).
+    // Only active categories count (decision 2026-10-11): hiding the last
+    // budgeted one leaves no planning total.
     expect((await api("budget", u.camille, { action: "setCategoryStatus", categoryId: b, status: "inactive" })).status).toBe(200);
-    expect(summary().total).toBe(1000000);
+    expect(summary().total).toBeNull();
   });
 
   it("Baby spending never touches Distributor sinks (no sales, COGS, operating expenses, report rollups)", async () => {

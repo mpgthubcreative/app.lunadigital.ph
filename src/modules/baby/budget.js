@@ -108,7 +108,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
                             <td class="row-actions" data-m="more">${canManage ? categoryActions(l) : ""}</td>
                           </tr>`
                         )}</tbody></table></div>
-                        <p class="stat-hint" data-role="allocated">Total budget = the category budgets added up${s.total === null ? "" : ` (${money(s.total, currency)})`}. Hidden categories still count: their spending is real.</p>`}
+                        <p class="stat-hint" data-role="allocated">Total budget = the category budgets added up${s.total === null ? "" : ` (${money(s.total, currency)})`}. Only active categories count; a hidden category's spending stays in Total spent and its history.</p>`}
             </section>
             ${history.length ? html`<section class="card"><h2 class="card-title">Recent budget changes</h2><ul class="list activity" data-role="budget-history">${history.map((l) => html`<li>${l}</li>`)}</ul></section>` : ""}`}
       `
