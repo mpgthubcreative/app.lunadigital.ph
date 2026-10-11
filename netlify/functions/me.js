@@ -1,7 +1,9 @@
 // /api/me   (Phase 18.6: household staff self-service, their OWN record only)
-//   GET                                                   their attendance this period, requests,
+//   GET [?period=YYYY-MM-DD]                              their attendance this period (or that one), requests,
 //                                                         salaries and advances (any self permission)
 //   POST { action: "attendance", date, status, note? }    ask for a day's status (attendance.self)
+//   POST { action: "attendanceDays", days: [{ date, status }], note? }   several days in one go,
+//        all or nothing (attendance.self)
 //   POST { action: "advance", amount, reason? }           ask for a cash advance (advances.self)
 //   POST { action: "received", payrollId }                "I received my salary" (payroll.self)
 //   POST { action: "notReceived", payrollId, note? }      "I didn't receive it" (payroll.self)
@@ -14,13 +16,14 @@ import { getAdmin } from "./_lib/firebase-admin.js";
 import { requireTenant } from "./_lib/tenant.js";
 import { actorOf, only } from "./_lib/inventory-http.js";
 import { PAYROLL_STATUS } from "./_lib/payroll-http.js";
-import { submitAttendanceRequest, requestAdvance } from "./_lib/payroll.js";
+import { submitAttendanceRequest, submitAttendanceDays, requestAdvance } from "./_lib/payroll.js";
 import { myHousehold, confirmSalaryReceived, reportSalaryNotReceived } from "./_lib/household-self.js";
 import { PayrollError } from "../../shared/payroll.js";
 
 const SELF = ["attendance.self", "advances.self", "payroll.self"];
 const ACTIONS = {
   attendance: { permission: "attendance.self", fields: ["action", "date", "status", "note"], run: (c, b) => submitAttendanceRequest({ ...c, input: { date: b.date, status: b.status, ...(b.note !== undefined ? { note: b.note } : {}) } }) },
+  attendanceDays: { permission: "attendance.self", fields: ["action", "days", "note"], run: (c, b) => submitAttendanceDays({ ...c, input: { days: b.days, ...(b.note !== undefined ? { note: b.note } : {}) } }) },
   advance: { permission: "advances.self", fields: ["action", "amount", "reason"], run: (c, b) => requestAdvance({ ...c, input: { amount: b.amount, ...(b.reason !== undefined ? { reason: b.reason } : {}) } }) },
   received: { permission: "payroll.self", fields: ["action", "payrollId"], run: (c, b) => confirmSalaryReceived({ ...c, payrollId: b.payrollId }) },
   notReceived: { permission: "payroll.self", fields: ["action", "payrollId", "note"], run: (c, b) => reportSalaryNotReceived({ ...c, payrollId: b.payrollId, note: b.note ?? null }) },
@@ -33,7 +36,7 @@ export function createMeHandler({ getAdmin: loadAdmin, now = () => new Date() })
       if (event.httpMethod === "GET") {
         const ctx = await requireTenant(event, { db, auth });
         if (!SELF.some((p) => ctx.permissions[p] === true)) throw new RequestError("forbidden", "This page is for household staff accounts.", 403);
-        return respond(200, { success: true, me: await myHousehold({ db, tenant: ctx.tenant, business: ctx.business, staffId: ctx.member.staffId, now: now() }) });
+        return respond(200, { success: true, me: await myHousehold({ db, tenant: ctx.tenant, business: ctx.business, staffId: ctx.member.staffId, now: now(), periodStart: event.queryStringParameters?.period ?? null }) });
       }
       if (event.httpMethod !== "POST") throw new RequestError("method-not-allowed", "Method not allowed.", 405);
       const body = parseJsonBody(event, 4000);

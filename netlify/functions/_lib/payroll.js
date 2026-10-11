@@ -43,6 +43,8 @@ import { payrollEligibility,
   validateManualDeduction,
   validateSalaryRelease,
   validateAttendanceRequest,
+  validateAttendanceDays,
+  selfDayLock,
   validateDecision,
   validateAdvanceRequest,
   validateAdvanceApproval,
@@ -653,6 +655,7 @@ export async function submitAttendanceRequest({ db, tenant, FieldValue, business
     const staff = await loadStaff(tx, tenant, id);
     if (staff.status !== "active") throw new PayrollError("inactive-staff", "Your staff record is inactive. Ask your employer.");
     if (staff.startDate && data.date < staff.startDate) throw new PayrollError("invalid-date", `You started on ${staff.startDate}`);
+    if (staff.endDate && data.date > staff.endDate) throw new PayrollError("invalid-date", `Your last day was ${staff.endDate}`);
     const period = periodFor(staff.payCycle, data.date);
     const [rSnap, lineSnap, paySnap] = await Promise.all([tx.get(rRef), tx.get(tenant.doc("attendance", attendanceId(id, data.date))), tx.get(tenant.doc("payrolls", payrollIdOf(id, period.start)))]);
     if (paySnap.exists && paySnap.data().status !== "draft") throw new PayrollError("payroll-released", "That day is in a salary that's already paid. Ask your employer.");
@@ -688,6 +691,98 @@ export async function submitAttendanceRequest({ db, tenant, FieldValue, business
     notes.commit({ FieldValue, actor });
     return { requestId: rRef.id, state: "pending" };
   }, TX_OPTIONS);
+}
+
+// Owner-pilot polish: the staff member's pay-period sheet, several days in
+// ONE transaction (all or nothing: if any day isn't allowed, nothing is
+// sent and every refused day is named). Per day, the same rules as above:
+//   - a day the employer already approved is never overwritten (same status
+//     = unchanged; a different one is refused: the employer corrects it);
+//   - a pending day is replaced by the new status (same status = unchanged);
+//   - a rejected day can be sent again (a new revision of that request).
+// Retrying the same submission changes nothing (no duplicate history). One
+// notification for the whole submission.
+export async function submitAttendanceDays({ db, tenant, FieldValue, business, staffId, input, actor, now = new Date() }) {
+  const today = businessDate(business.timezone, now);
+  const { days, note } = validateAttendanceDays(input, { today });
+  const id = linkedStaff(staffId);
+  return db.runTransaction(async (tx) => {
+    const staff = await loadStaff(tx, tenant, id);
+    if (staff.status !== "active") throw new PayrollError("inactive-staff", "Your staff record is inactive. Ask your employer.");
+    const periodStarts = [...new Set(days.map((d) => periodFor(staff.payCycle, d.date).start))];
+    const [reqSnaps, lineSnaps, paySnaps] = await Promise.all([
+      Promise.all(days.map((d) => tx.get(requestRef(tenant, id, d.date)))),
+      Promise.all(days.map((d) => tx.get(tenant.doc("attendance", attendanceId(id, d.date))))),
+      Promise.all(periodStarts.map((p) => tx.get(tenant.doc("payrolls", payrollIdOf(id, p))))),
+    ]);
+    const paid = new Set(periodStarts.filter((p, i) => paySnaps[i].exists && paySnaps[i].data().status !== "draft"));
+    const refused = [];
+    const writes = [];
+    let unchanged = 0;
+    days.forEach((d, i) => {
+      const prev = reqSnaps[i].exists ? reqSnaps[i].data() : null;
+      const line = lineSnaps[i].exists ? lineSnaps[i].data() : null;
+      const pending = prev?.state === "pending";
+      if (line && !pending && line.status === d.status) return void unchanged++;
+      if (pending && prev.status === d.status && (prev.note ?? null) === note) return void unchanged++;
+      const lock = selfDayLock({ staff, date: d.date, today, recorded: Boolean(line) && !pending, paid: paid.has(periodFor(staff.payCycle, d.date).start) });
+      if (lock) return void refused.push(`${d.date}: ${lock}`);
+      writes.push({ d, ref: reqSnaps[i].ref, prev, line });
+    });
+    if (refused.length) throw new PayrollError("days-not-allowed", `Nothing was sent. ${refused.join("; ")}.`);
+    if (!writes.length) return { sent: 0, unchanged };
+    const first = writes[0].d.date;
+    const last = writes[writes.length - 1].d.date;
+    const kinds = [...new Set(writes.map((w) => statusLabel(w.d.status)))].join(", ");
+    const notes = await prepareNotifications(tx, {
+      tenant,
+      actor,
+      events: [{ type: "household.attendance_request", key: `${id}_${first}_${last}_${writes.map((w) => `${w.d.date.slice(8)}${w.d.status[0]}${(w.prev?.revision || 0) + 1}`).join("")}`.slice(0, 200), title: `${staff.name}: ${writes.length === 1 ? `${kinds} on ${first}` : `${writes.length} days (${first} to ${last}) · ${kinds}`}`, message: note ? `Note: ${note}` : "Waiting for your approval.", recordType: "attendanceRequest", recordId: `${id}_${first}` }],
+    });
+    const stamp = FieldValue.serverTimestamp();
+    for (const { d, ref, prev, line } of writes) {
+      tx.set(ref, {
+        schemaVersion: PAYROLL_SCHEMA_VERSION,
+        staffId: id,
+        staffName: staff.name,
+        date: d.date,
+        status: d.status,
+        note,
+        state: "pending",
+        current: line?.status ?? null,
+        submittedBy: actor,
+        submittedAt: stamp,
+        decidedBy: null,
+        decidedAt: null,
+        decisionNote: null,
+        history: append(prev?.history, entry(actor, `Asked for ${statusLabel(d.status)}${prev?.state === "pending" ? ` (replaces ${statusLabel(prev.status)})` : prev?.state === "rejected" ? " (sent again)" : ""}`)),
+        revision: (prev?.revision || 0) + 1,
+        updatedAt: stamp,
+      });
+    }
+    notes.commit({ FieldValue, actor });
+    return { sent: writes.length, unchanged };
+  }, TX_OPTIONS);
+}
+
+// Owner: several requests at once ("Approve all" for a person's period).
+// Each day is decided in its own transaction, exactly like a single
+// decision (per-day history and payroll update); the result lists any day
+// that couldn't be decided.
+export async function decideAttendanceRequests({ db, tenant, FieldValue, requestIds, decision, actor }) {
+  if (!Array.isArray(requestIds) || !requestIds.length || requestIds.length > 62 || new Set(requestIds).size !== requestIds.length) throw new PayrollError("invalid-input", "Choose the requests");
+  validateDecision(decision);
+  const decided = [];
+  const failed = [];
+  for (const requestId of requestIds) {
+    try {
+      decided.push((await decideAttendanceRequest({ db, tenant, FieldValue, requestId, decision, actor })).requestId);
+    } catch (err) {
+      if (!(err instanceof PayrollError)) throw err;
+      failed.push({ requestId, error: err.message });
+    }
+  }
+  return { decided, failed };
 }
 
 // Owner: approve (the day is marked exactly as asked, in the same

@@ -2,6 +2,9 @@
 // menu, no tables: one screen with big buttons.
 //
 //   Today          "I'm here today" (Present) and the other day types
+//   My attendance  a pay period, one row per date: choose each day's status
+//                  (or select days and mark them together), review, submit
+//                  all at once. Approved days are read-only.
 //   Ask            Leave / rest day ahead · Cash advance
 //   My salary      this pay period so far, past salaries, "I received it"
 //   My requests    what's waiting, approved or not approved
@@ -23,14 +26,14 @@ const label = (s) => ATTENDANCE_STATUSES[s]?.label ?? s;
 const shortDay = (d) => formatDayId(d).replace(/, \d{4}$/, "");
 
 export function mountStaffPortal(root, session, { api = defaultApi, onSignOut = () => {} } = {}) {
-  const state = { me: null, error: "", panel: null, busy: false, message: "", formError: "" };
+  const state = { me: null, error: "", panel: null, busy: false, message: "", formError: "", period: null, edits: {}, selected: new Set(), review: false };
   const currency = session.business.currency || "PHP";
   const money = (c) => formatCentavos(c ?? 0, currency);
   const can = { attendance: session.member.permissions?.["attendance.self"] === true, advance: session.member.permissions?.["advances.self"] === true, salary: session.member.permissions?.["payroll.self"] === true };
 
   async function load() {
     try {
-      state.me = (await api("me")).me;
+      state.me = (await api(state.period ? `me?period=${state.period}` : "me")).me;
       state.error = "";
     } catch (err) {
       state.error = err.message || "Couldn't load. Check your connection.";
@@ -96,6 +99,78 @@ export function mountStaffPortal(root, session, { api = defaultApi, onSignOut = 
         ${err}
         <div class="staff-actions"><button type="button" class="btn" data-act="close">Cancel</button><button type="submit" class="btn btn-primary" ${state.busy ? "disabled" : ""}>Send for approval</button></div>
       </form>
+    </section>`;
+  }
+
+  // ---- My attendance: the pay-period sheet (Owner-pilot polish) ----
+  const weekday = (d) => new Date(`${d}T00:00:00Z`).toLocaleDateString("en-PH", { weekday: "short", timeZone: "UTC" });
+  // What a day can be set to: future days only leave / rest day.
+  const typesFor = (date, today) => (date > today ? DAY_TYPES.filter((t) => ATTENDANCE_STATUSES[t].ahead) : DAY_TYPES);
+  // The value shown in a row: an unsent change, else what's waiting.
+  const shownStatus = (d) => (d.date in state.edits ? state.edits[d.date] : d.pending ?? "");
+  // The changes to send: rows whose value differs from what's waiting / recorded.
+  const changes = (sheet) => sheet.days.filter((d) => !d.lock && d.date in state.edits && state.edits[d.date] && state.edits[d.date] !== (d.pending ?? d.status ?? "")).map((d) => ({ date: d.date, status: state.edits[d.date] }));
+
+  function dayRow(d, today) {
+    const sel = state.selected.has(d.date);
+    const when = html`<span class="sheet-date"><strong>${shortDay(d.date)}</strong> <small>${weekday(d.date)}</small></span>`;
+    if (d.lock) {
+      if (d.lock === "Before your start date" || d.lock === "After your last day") return html`<li class="sheet-row is-off" data-day="${d.date}"><span class="sheet-check" aria-hidden="true"></span>${when}<small class="sheet-lock">${d.lock}</small></li>`;
+      return html`<li class="sheet-row is-locked" data-day="${d.date}"><span class="sheet-check" aria-hidden="true"></span>${when}<span class="sheet-value">${d.status ? html`${label(d.status)} ${pill(d.lock === "Approved by your employer" ? "Approved" : "Paid", "success")}` : html`<small class="sheet-lock">${d.lock}</small>`}</span></li>`;
+    }
+    const value = shownStatus(d);
+    const edited = d.date in state.edits && state.edits[d.date] !== (d.pending ?? "");
+    return html`<li class="sheet-row${sel ? " is-selected" : ""}${edited ? " is-edited" : ""}" data-day="${d.date}">
+      <label class="sheet-check"><input type="checkbox" data-sel="${d.date}" ${sel ? "checked" : ""} aria-label="Select ${shortDay(d.date)}" /></label>
+      ${when}
+      <span class="sheet-value">
+        <select class="input sheet-select" data-day-status="${d.date}" aria-label="Status for ${shortDay(d.date)}">
+          <option value="" ${value ? "" : "selected"}>${d.status && !d.pending ? `${label(d.status)} (recorded)` : "Not marked"}</option>
+          ${typesFor(d.date, today).map((t) => html`<option value="${t}" ${value === t ? "selected" : ""}>${label(t)}</option>`)}
+        </select>
+        ${d.pending && !edited ? html`<small class="sheet-flag is-wait">Waiting</small>` : d.rejected && !edited ? html`<small class="sheet-flag">Not approved: ${label(d.rejected)}</small>` : edited ? html`<small class="sheet-flag is-new">Not sent yet</small>` : ""}
+      </span>
+    </li>`;
+  }
+
+  function sheetCard(m) {
+    if (!can.attendance || !m.sheet) return "";
+    const s = m.sheet;
+    const open = s.days.filter((d) => !d.lock);
+    const pend = changes(s);
+    if (state.review) {
+      return html`<section class="card staff-card" data-section="sheet-review">
+        <h2 class="staff-h">Check before sending</h2>
+        <p class="staff-note">${shortDay(s.start)} to ${shortDay(s.end)} · ${pend.length} day${pend.length === 1 ? "" : "s"}. Your employer approves each day.</p>
+        <ul class="staff-list" data-role="review">${pend.map((c) => html`<li><div class="staff-row"><span>${shortDay(c.date)} <small>${weekday(c.date)}</small></span><strong>${label(c.status)}</strong></div></li>`)}</ul>
+        <form class="form" data-role="sheet-form" novalidate>
+          <div class="field"><label for="sSheetNote">Note for your employer (optional)</label><input class="input" id="sSheetNote" name="note" maxlength="200" /></div>
+          ${state.formError ? html`<p class="form-error" role="alert">${state.formError}</p>` : ""}
+          <div class="staff-actions"><button type="button" class="btn" data-act="sheet-back">Back</button><button type="submit" class="btn btn-primary" ${state.busy ? "disabled" : ""}>Submit attendance</button></div>
+        </form>
+      </section>`;
+    }
+    return html`<section class="card staff-card" data-section="sheet">
+      <h2 class="staff-h">My attendance</h2>
+      <div class="sheet-nav">
+        <button type="button" class="btn btn-compact" data-act="sheet-period" data-period="${s.prev ?? ""}" ${s.prev ? "" : "disabled"} aria-label="Previous pay period">‹</button>
+        <strong data-role="sheet-period">${shortDay(s.start)} – ${shortDay(s.end)}</strong>
+        <button type="button" class="btn btn-compact" data-act="sheet-period" data-period="${s.next ?? ""}" ${s.next ? "" : "disabled"} aria-label="Next pay period">›</button>
+      </div>
+      ${s.paid ? html`<p class="staff-note">This salary is already paid. Ask your employer about any change.</p>` : ""}
+      ${open.length
+        ? html`<div class="sheet-bulk" data-role="bulk">
+            <span class="staff-note">${state.selected.size ? `${state.selected.size} selected:` : "Select days, then:"}</span>
+            <button type="button" class="btn btn-compact" data-act="bulk" data-status="present" ${state.selected.size ? "" : "disabled"}>Present</button>
+            <button type="button" class="btn btn-compact" data-act="bulk" data-status="rest_day" ${state.selected.size ? "" : "disabled"}>Rest Day</button>
+            <button type="button" class="btn btn-compact btn-ghost" data-act="${state.selected.size ? "sel-clear" : "sel-open"}">${state.selected.size ? "Clear selection" : "Select all open days"}</button>
+          </div>`
+        : ""}
+      <ul class="sheet-list" data-role="sheet">${s.days.map((d) => dayRow(d, m.today))}</ul>
+      ${open.length
+        ? html`<div class="staff-actions"><button type="button" class="btn btn-primary btn-big" data-act="sheet-review" ${pend.length ? "" : "disabled"}>${pend.length ? `Review ${pend.length} day${pend.length === 1 ? "" : "s"}` : "Choose a status for a day"}</button></div>
+            <p class="staff-note">Days your employer approved can't be changed here. Ask them to correct it.</p>`
+        : ""}
     </section>`;
   }
 
@@ -172,7 +247,7 @@ export function mountStaffPortal(root, session, { api = defaultApi, onSignOut = 
               ? html`<p class="staff-note">Loading…</p>`
               : html`<h1 class="staff-hello">Hi, ${m.staff.name.split(" ")[0]}!</h1>
                   ${state.message ? html`<p class="form-notice" role="status" data-role="message">${state.message}</p>` : ""}
-                  ${panel(m)}${state.panel ? "" : html`${todayCard(m)}${askCard()}`}${salaryCard(m)}${requestsCard(m)}${advancesCard(m)}`}
+                  ${panel(m)}${state.panel ? "" : html`${state.review ? "" : html`${todayCard(m)}${askCard()}`}${sheetCard(m)}`}${state.review ? "" : html`${salaryCard(m)}${requestsCard(m)}${advancesCard(m)}`}`}
         </main>
       </div>`
     );
@@ -195,6 +270,26 @@ export function mountStaffPortal(root, session, { api = defaultApi, onSignOut = 
     draw();
   }
 
+  // One submission for the whole sheet: all days or none (the server says
+  // which days weren't allowed).
+  async function sendSheet(days, note) {
+    state.busy = true;
+    state.formError = "";
+    draw();
+    try {
+      const r = await api("me", { method: "POST", body: { action: "attendanceDays", days, ...(note ? { note } : {}) } });
+      state.review = false;
+      state.edits = {};
+      state.selected = new Set();
+      state.message = r.sent ? `Sent ${r.sent} day${r.sent === 1 ? "" : "s"}. Your employer will approve them.` : "Nothing new to send.";
+      await load();
+    } catch (err) {
+      state.formError = err.message || "Couldn't send. Try again.";
+    }
+    state.busy = false;
+    draw();
+  }
+
   root.addEventListener("click", (event) => {
     const el = event.target.closest("[data-act]");
     if (!el) return;
@@ -211,14 +306,63 @@ export function mountStaffPortal(root, session, { api = defaultApi, onSignOut = 
       state.panel = null;
       return draw();
     }
+    if (act === "sheet-period" && el.dataset.period) {
+      state.period = el.dataset.period;
+      state.edits = {};
+      state.selected = new Set();
+      return load();
+    }
+    if (act === "bulk") {
+      for (const d of state.selected) state.edits[d] = el.dataset.status;
+      // A future day can't be Present: those keep their value.
+      if (el.dataset.status === "present") for (const d of state.selected) if (d > state.me.today) delete state.edits[d];
+      state.selected = new Set();
+      return draw();
+    }
+    if (act === "sel-clear") {
+      state.selected = new Set();
+      return draw();
+    }
+    if (act === "sel-open") {
+      state.selected = new Set(state.me.sheet.days.filter((d) => !d.lock).map((d) => d.date));
+      return draw();
+    }
+    if (act === "sheet-review") {
+      state.review = true;
+      state.formError = "";
+      draw();
+      return root.querySelector('[data-section="sheet-review"]')?.scrollIntoView?.({ block: "start" });
+    }
+    if (act === "sheet-back") {
+      state.review = false;
+      return draw();
+    }
     if (act === "present") return send({ action: "attendance", date: state.me.today, status: "present" }, "Sent. Your employer will approve it.");
     if (act === "received") return send({ action: "received", payrollId: el.dataset.id }, "Thank you! Your employer can see you received it.");
     if (act === "notReceived") return send({ action: "notReceived", payrollId: el.dataset.id }, "We told your employer. They'll check the payment.");
     return undefined;
   });
+  root.addEventListener("change", (event) => {
+    const t = event.target;
+    if (t.dataset.sel) {
+      if (t.checked) state.selected.add(t.dataset.sel);
+      else state.selected.delete(t.dataset.sel);
+      return draw();
+    }
+    if (t.dataset.dayStatus) {
+      state.edits[t.dataset.dayStatus] = t.value;
+      return draw();
+    }
+    return undefined;
+  });
   root.addEventListener("submit", (event) => {
     event.preventDefault();
     const f = event.target;
+    if (f.dataset.role === "sheet-form") {
+      const days = changes(state.me.sheet);
+      const note = f.elements.note.value.trim();
+      return sendSheet(days, note);
+    }
     if (f.dataset.role === "advance-form") {
       const amount = parseCentavos(f.elements.amount.value);
       if (!(amount > 0)) {

@@ -34,3 +34,4 @@ export async function pendingAttendanceRequests(businessId) {
   return snap.docs.map((d) => ({ id: d.id, ...d.data() })).sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : a.staffName < b.staffName ? -1 : 1));
 }
 export const decideAttendance = (requestId, decision, note) => post("attendance", { action: "decide", requestId, decision: { decision, ...(note ? { note } : {}) } });
+export const decideAttendanceMany = (requestIds, decision) => post("attendance", { action: "decideMany", requestIds, decision: { decision } });

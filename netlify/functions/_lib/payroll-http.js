@@ -16,6 +16,7 @@ import { moduleForPermission } from "../../../shared/permissions.js";
 
 export const PAYROLL_STATUS = {
   "not-found": 404,
+  "days-not-allowed": 409,
   "has-draft-payroll": 409,
   "staff-in-use": 409,
   "not-eligible": 409,

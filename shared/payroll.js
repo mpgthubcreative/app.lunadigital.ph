@@ -279,6 +279,40 @@ export function validateAttendanceRequest(input, { today }) {
   return { date: input.date, status: input.status, note: text(input.note, { field: "Note", max: 200 }) };
 }
 
+// Why a staff member can't change a day themselves (null = they can).
+// Shared by the staff screen (read-only rows) and the server (refusals).
+// `recorded`: the employer already marked/approved it (corrections go
+// through the employer). `paid`: the day is in a released salary.
+export function selfDayLock({ staff, date, today, recorded = false, paid = false }) {
+  if (staff?.startDate && date < staff.startDate) return "Before your start date";
+  if (staff?.endDate && date > staff.endDate) return "After your last day";
+  if (paid) return "In a paid salary";
+  if (recorded) return "Approved by your employer";
+  if (today && date < addDays(today, -SELF_DAYS_BACK)) return `More than ${SELF_DAYS_BACK} days ago`;
+  if (today && date > addDays(today, MAX_DAYS_AHEAD)) return "Too far ahead";
+  return null;
+}
+
+// Owner-pilot polish: a staff member's own pay-period sheet, several days in
+// one submission ({ days: [{ date, status }], note? }). Every day must pass
+// the single-day rules; dates are unique; at most MAX_SHEET_DAYS.
+export const MAX_SHEET_DAYS = 31;
+export function validateAttendanceDays(input, { today }) {
+  if (!input || typeof input !== "object" || Array.isArray(input)) throw new PayrollError("invalid-input", "Invalid request");
+  for (const k of Object.keys(input)) if (!["days", "note"].includes(k)) throw new PayrollError("invalid-input", `Unknown field ${k}`);
+  if (!Array.isArray(input.days) || !input.days.length) throw new PayrollError("invalid-input", "Choose at least one day");
+  if (input.days.length > MAX_SHEET_DAYS) throw new PayrollError("invalid-input", `Up to ${MAX_SHEET_DAYS} days at a time`);
+  const seen = new Set();
+  const days = input.days.map((d) => {
+    if (!d || typeof d !== "object" || Array.isArray(d) || Object.keys(d).some((k) => !["date", "status"].includes(k))) throw new PayrollError("invalid-input", "Invalid day");
+    const v = validateAttendanceRequest({ date: d.date, status: d.status }, { today });
+    if (seen.has(v.date)) throw new PayrollError("invalid-input", `${v.date} is listed twice`);
+    seen.add(v.date);
+    return { date: v.date, status: v.status };
+  });
+  return { days: days.sort((a, b) => (a.date < b.date ? -1 : 1)), note: text(input.note, { field: "Note", max: 200 }) };
+}
+
 // The owner's decision on a request.
 export function validateDecision(input) {
   if (!input || typeof input !== "object" || Array.isArray(input)) throw new PayrollError("invalid-input", "Invalid decision");

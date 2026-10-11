@@ -120,6 +120,67 @@ describe("sign in with a login ID; the activation page", () => {
   });
 });
 
+describe("staff attendance sheet (Owner-pilot polish)", () => {
+  const sheetMe = (extra = {}) => ({
+    ...ME,
+    sheet: {
+      start: "2026-10-01", end: "2026-10-15", current: false, prev: "2026-09-16", next: "2026-10-16", paid: false,
+      days: [
+        { date: "2026-10-01", status: null, pending: null, rejected: null, lock: "More than 14 days ago" },
+        { date: "2026-10-02", status: "present", pending: null, rejected: null, lock: "Approved by your employer" },
+        { date: "2026-10-03", status: null, pending: "present", rejected: null, lock: null },
+        { date: "2026-10-04", status: null, pending: null, rejected: "present", lock: null },
+        { date: "2026-10-05", status: null, pending: null, rejected: null, lock: null },
+        { date: "2026-10-06", status: null, pending: null, rejected: null, lock: null },
+      ],
+      ...extra,
+    },
+  });
+
+  it("one row per date; approved days read-only; select days -> Present; review; one submission", async () => {
+    const api = vi.fn(async (path, opts) => (opts?.method === "POST" ? { sent: 2, unchanged: 0 } : { me: sheetMe() }));
+    await mountStaffPortal(container, staffSession(), { api });
+    const rows = [...container.querySelectorAll('[data-role="sheet"] .sheet-row')];
+    expect(rows).toHaveLength(6);
+    expect(container.querySelector('[data-role="sheet-period"]').textContent).toMatch(/Oct 1 – Oct 15/);
+    // Approved: no dropdown, shown as Approved. Pending: prefilled + Waiting. Rejected: says so.
+    expect(rows[1].querySelector("select")).toBeNull();
+    expect(rows[1].textContent).toMatch(/Present\s*Approved/);
+    expect(rows[2].querySelector("select").value).toBe("present");
+    expect(rows[2].textContent).toMatch(/Waiting/);
+    expect(rows[3].textContent).toMatch(/Not approved: Present/);
+    // Bulk: select Oct 5 and 6, mark Present.
+    for (const d of ["2026-10-05", "2026-10-06"]) {
+      const box = container.querySelector(`[data-sel="${d}"]`);
+      box.checked = true;
+      box.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+    container.querySelector('[data-act="bulk"][data-status="present"]').click();
+    // And Oct 4 (rejected) as Rest Day from its dropdown.
+    const sel = container.querySelector('[data-day-status="2026-10-04"]');
+    sel.value = "rest_day";
+    sel.dispatchEvent(new Event("change", { bubbles: true }));
+    container.querySelector('[data-act="sheet-review"]').click();
+    expect(container.querySelector('[data-role="review"]').textContent).toMatch(/Oct 4.*Rest Day.*Oct 5.*Present.*Oct 6.*Present/s);
+    expect(api).not.toHaveBeenCalledWith("me", expect.objectContaining({ method: "POST" }));
+    submit(container.querySelector('[data-role="sheet-form"]'));
+    await flush();
+    expect(api).toHaveBeenCalledWith("me", { method: "POST", body: { action: "attendanceDays", days: [{ date: "2026-10-04", status: "rest_day" }, { date: "2026-10-05", status: "present" }, { date: "2026-10-06", status: "present" }] } });
+    expect(container.querySelector('[data-role="message"]').textContent).toMatch(/Sent 2 days/);
+  });
+
+  it("moves between pay periods; future days offer leave / rest day only", async () => {
+    const future = sheetMe({ start: "2026-10-16", end: "2026-10-31", current: true, days: [{ date: "2026-10-16", status: null, pending: null, rejected: null, lock: null }, { date: "2026-10-17", status: null, pending: null, rejected: null, lock: null }] });
+    const api = vi.fn(async () => ({ me: future }));
+    await mountStaffPortal(container, staffSession(), { api });
+    expect([...container.querySelector('[data-day-status="2026-10-17"]').options].map((o) => o.value)).toEqual(["", "official_leave", "unpaid_leave", "rest_day"]);
+    expect([...container.querySelector('[data-day-status="2026-10-16"]').options].map((o) => o.value)).toContain("present");
+    container.querySelector('[data-act="sheet-period"][data-period="2026-09-16"]').click();
+    await flush();
+    expect(api).toHaveBeenLastCalledWith("me?period=2026-09-16");
+  });
+});
+
 describe("the Owner's side", () => {
   const home = () => sessionFixture({ workspaceTemplateId: "household-payroll" });
   const maria = { id: "staffMaria0001", name: "Maria Santos", dailyWage: 60000, payCycle: "semi_monthly", status: "active" };
@@ -133,11 +194,31 @@ describe("the Owner's side", () => {
     };
     mountAttendance(container, home(), { data, now: NOW, toast: () => {} });
     await flush();
-    expect(container.querySelector('[data-role="requests"]').textContent).toMatch(/Maria Santos · Paid Leave · Oct 24, 2026/);
+    expect(container.querySelector('[data-section="requests"] .request-group-head').textContent).toMatch(/Maria Santos · Oct 16 to Oct 31/);
+    expect(container.querySelector('[data-role="requests"]').textContent).toMatch(/Paid Leave · Oct 24, 2026/);
     expect([...container.querySelectorAll('[data-staff="staffMaria0001"] .pla-btn')].map((b) => b.textContent)).toEqual(["Present", "Absent", "Leave", "Unpaid", "Rest"]);
     container.querySelector('[data-act="approve"]').click();
     await flush();
     expect(data.decideAttendance).toHaveBeenCalledWith("staffMaria0001_2026-10-24", "approve");
+  });
+
+  it("requests are grouped per person and pay period with Approve all", async () => {
+    const reqs = ["2026-10-02", "2026-10-03", "2026-10-04"].map((d, i) => ({ id: `staffMaria0001_${d}`, staffId: "staffMaria0001", staffName: "Maria Santos", date: d, status: i === 2 ? "rest_day" : "present", state: "pending" }));
+    const data = {
+      activeStaff: vi.fn(async () => [maria]),
+      listAttendance: vi.fn(async () => ({ rows: [], hasMore: false })),
+      pendingAttendanceRequests: vi.fn(async () => reqs),
+      decideAttendance: vi.fn(async () => ({})),
+      decideAttendanceMany: vi.fn(async (ids) => ({ decided: ids, failed: [] })),
+    };
+    mountAttendance(container, home(), { data, now: NOW, toast: () => {} });
+    await flush();
+    const head = container.querySelector(".request-group-head").textContent;
+    expect(head).toMatch(/Maria Santos · Oct 1 to Oct 15/);
+    expect(head).toMatch(/3 days: 2 Present, 1 Rest Day/);
+    container.querySelector('[data-act="approve-all"]').click();
+    await flush();
+    expect(data.decideAttendanceMany).toHaveBeenCalledWith(reqs.map((r) => r.id), "approve");
   });
 
   it("Advances: a request is approved with an amount per payroll", async () => {

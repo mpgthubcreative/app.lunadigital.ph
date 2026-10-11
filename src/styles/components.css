@@ -2374,6 +2374,111 @@ tr.is-saving {
   align-items: center;
 }
 
+/* Owner: staff requests grouped per person and pay period. */
+.request-group + .request-group {
+  margin-top: var(--space-4);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border-strong);
+}
+.request-group-head {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+}
+
+/* Staff attendance sheet (Owner-pilot polish): one compact row per date. */
+.sheet-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+.sheet-nav .btn {
+  min-width: 44px;
+  min-height: 44px;
+  font-size: var(--text-lg);
+}
+.sheet-bulk {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+.sheet-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+.sheet-row {
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr) minmax(0, 1.3fr);
+  align-items: center;
+  gap: var(--space-2);
+  padding: 6px 0;
+  border-top: 1px solid var(--border);
+  min-height: 52px;
+}
+.sheet-row:first-child {
+  border-top: 0;
+}
+.sheet-row.is-off {
+  grid-template-columns: 32px minmax(0, 1fr) auto;
+  opacity: 0.6;
+}
+.sheet-row.is-selected {
+  background: var(--surface-muted);
+}
+.sheet-check {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 32px;
+  min-height: 44px;
+}
+.sheet-check input {
+  width: 20px;
+  height: 20px;
+}
+.sheet-date small,
+.sheet-lock {
+  color: var(--text-muted);
+}
+.sheet-value {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+  min-width: 0;
+}
+.sheet-row.is-locked .sheet-value {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+.sheet-select {
+  min-height: 44px;
+  width: 100%;
+}
+.sheet-row.is-edited .sheet-select {
+  border-color: var(--luna-primary);
+}
+.sheet-flag {
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+}
+.sheet-flag.is-wait {
+  color: var(--warning);
+}
+.sheet-flag.is-new {
+  color: var(--luna-primary);
+}
+
 /* Household Dashboard (Phase 18.6): the next cutoff's total. */
 .hero-pay {
   display: flex;

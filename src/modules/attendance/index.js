@@ -98,18 +98,60 @@ export function mount(container, session, { data = defaultData, toast = defaultT
       })}</tbody></table></div>`;
   }
 
-  // Requests staff sent from their own accounts (Phase 18.6).
+  // Requests staff sent from their own accounts (Phase 18.6), grouped per
+  // person and pay period (Owner-pilot polish): "Approve all" decides the
+  // whole period at once; each day is still its own decision and history.
+  function requestGroups() {
+    const groups = new Map();
+    for (const r of state.requests) {
+      const cycle = state.staff.find((s) => s.id === r.staffId)?.payCycle ?? "semi_monthly";
+      const p = periodFor(cycle, r.date);
+      const key = `${r.staffId}|${p.start}`;
+      if (!groups.has(key)) groups.set(key, { key, staffName: r.staffName, period: p, items: [] });
+      groups.get(key).items.push(r);
+    }
+    return [...groups.values()];
+  }
+
   function requestsSection() {
     if (!canEdit || !state.requests.length) return "";
+    const short = (d) => formatDayId(d).replace(/, \d{4}$/, "");
     return html`<section class="card section" data-section="requests">
       <h2 class="card-title">Waiting for your approval (${state.requests.length})</h2>
-      <ul class="request-list" data-role="requests">${state.requests.map(
+      ${requestGroups().map((g) => {
+        const counts = {};
+        for (const r of g.items) counts[r.status] = (counts[r.status] || 0) + 1;
+        const ids = g.items.map((r) => r.id).join(",");
+        const busy = state.deciding === g.key;
+        return html`<div class="request-group" data-group="${g.key}">
+          <div class="request-group-head">
+            <div class="request-main"><strong>${g.staffName}</strong> · ${short(g.period.start)} to ${short(g.period.end)}<small>${g.items.length} day${g.items.length === 1 ? "" : "s"}: ${Object.entries(counts).map(([s, n]) => `${n} ${ATTENDANCE_STATUSES[s]?.label ?? s}`).join(", ")}</small></div>
+            ${g.items.length > 1 ? html`<div class="request-actions"><button type="button" class="btn btn-compact" data-act="reject-all" data-group="${g.key}" data-ids="${ids}" ${busy ? "disabled" : ""}>Reject all</button><button type="button" class="btn btn-compact btn-primary" data-act="approve-all" data-group="${g.key}" data-ids="${ids}" ${busy ? "disabled" : ""}>Approve all ${g.items.length}</button></div>` : ""}
+          </div>
+      <ul class="request-list" data-role="requests">${g.items.map(
         (r) => html`<li data-request="${r.id}">
-          <div class="request-main"><strong>${r.staffName}</strong> · ${ATTENDANCE_STATUSES[r.status]?.label ?? r.status} · ${formatDayId(r.date)}<small>${r.note ? `"${r.note}"` : r.current ? `Now marked ${ATTENDANCE_STATUSES[r.current]?.label ?? r.current}` : "Not marked yet"} · ${ATTENDANCE_STATUSES[r.status]?.payable ? "paid day" : "not paid"}</small></div>
+          <div class="request-main">${ATTENDANCE_STATUSES[r.status]?.label ?? r.status} · ${formatDayId(r.date)}<small>${r.note ? `"${r.note}"` : r.current ? `Now marked ${ATTENDANCE_STATUSES[r.current]?.label ?? r.current}` : "Not marked yet"} · ${ATTENDANCE_STATUSES[r.status]?.payable ? "paid day" : "not paid"}</small></div>
           <div class="request-actions"><button type="button" class="btn btn-compact" data-act="reject" data-id="${r.id}" ${state.deciding === r.id ? "disabled" : ""}>Reject</button><button type="button" class="btn btn-compact btn-primary" data-act="approve" data-id="${r.id}" ${state.deciding === r.id ? "disabled" : ""}>Approve</button></div>
         </li>`
       )}</ul>
+        </div>`;
+      })}
     </section>`;
+  }
+
+  async function decideAll(key, ids, decision) {
+    state.deciding = key;
+    draw();
+    try {
+      const r = await data.decideAttendanceMany(ids, decision);
+      const n = r.decided.length;
+      if (r.failed.length) toast(`${n} ${decision === "approve" ? "approved" : "rejected"}. ${r.failed.length} couldn't be: ${r.failed[0].error}`, "danger");
+      else toast(decision === "approve" ? `${n} days approved and marked.` : `${n} days rejected. Nothing was changed.`, "success");
+    } catch (err) {
+      toast(err.message || "Couldn't save", "danger");
+    }
+    state.deciding = null;
+    load();
   }
 
   async function decide(id, decision) {
@@ -184,6 +226,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     }
     if (el.dataset.act === "mark-btn" && el.getAttribute("aria-pressed") !== "true") mark(el.dataset.staff, el.dataset.date, el.dataset.status);
     if (el.dataset.act === "approve" || el.dataset.act === "reject") decide(el.dataset.id, el.dataset.act);
+    if (el.dataset.act === "approve-all" || el.dataset.act === "reject-all") decideAll(el.dataset.group, el.dataset.ids.split(","), el.dataset.act === "approve-all" ? "approve" : "reject");
     if (el.dataset.act === "step") {
       const next = el.dataset.step === "today" ? today : addDays(state.date, Number(el.dataset.step));
       if (next > today) return;
