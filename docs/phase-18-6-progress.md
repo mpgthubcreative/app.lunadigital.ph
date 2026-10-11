@@ -135,6 +135,12 @@ Recorded so the calculation method is explicit. Not legal advice: confirm with D
 - resync-permissions --all: every owner/manager gained attendance.self / advances.self / payroll.self (owner = ALL by design; manager = ALL minus 4). They're inert without member.staffId.
 - Budget-total dry run: demo-baby-a 150,000 -> 150,000; demo-bridal-a 500,000 -> 390,000; sample-baby none -> 10,000; veah-bridal none -> none. No tenant has a budget on an inactive category, so the sums of all and of active categories are the same. Apply after the code push.
 
+## Stage 8 log
+- S1 0ac1ce4 workspace plans; S2 617258e billing backend; S3 28cd6af tenant Subscription page; S4 1531720 Super Luna screens; S5 e9caf0d layout polish; plus test commits.
+- Mutation (scratchpad mutate186b.cjs): 28/28 killed after adding tests for decided-stays-decided, paid-through-never-back, suspension-kept, no-bill-for-suspended and Cancel-confirms-nothing.
+- Emulator suite (re-run sequentially after a parallel-run mistake): 2944 tests / 40 files green, including billing races and billing rules.
+- Staging 2026-10-11: indexes deployed (rules unchanged); seed-plans --overwrite (6 workspace plans created, Distributor plans tagged with the same prices and limits); adopt-workspace-plans: demo-baby-a / sample-baby -> baby-plus, demo-bridal-a / veah-bridal -> bridal-plus, demo-household-a / rwp-d419 -> household-plus, demo-household-b -> household-basic; Distributor tenants kept their plan and got monthlyAmount recorded. No usage alerts were sent. Fixed: operator warnings listed orders/imports limits for workspaces without those modules.
+
 ## Known blockers
 - Low memory on the dev machine (about 280 MB free at the start). Unit tests run with `--maxWorkers=2`, emulator suites in small foreground batches.
 - I can't sign in to staging in a browser with real passwords, so screenshots use the preview harness with realistic data.

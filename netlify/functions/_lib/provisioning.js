@@ -21,7 +21,7 @@ import { tenantDb } from "./tenant-db.js";
 import { getWorkspaceTemplate, WORKSPACE_TEMPLATE_IDS } from "../../../shared/workspaces.js";
 import { OPERATOR_ROLES, OPERATOR_STATUSES } from "../../../shared/operators.js";
 import { TENANT_CONFIG_VERSION, TENANT_CONFIG_DOC_ID, validateTerminologyChange } from "../../../shared/tenant-config.js";
-import { LIMIT_METER, METERS, MeteringError, effectiveLimit, overrideImpact, validateLimitOverride, thresholdUnits, WARNING_THRESHOLDS, monthlyAlertKey } from "../../../shared/metering.js";
+import { LIMIT_METER, METERS, MeteringError, effectiveLimit, overrideImpact, meterApplies, validateLimitOverride, thresholdUnits, WARNING_THRESHOLDS, monthlyAlertKey } from "../../../shared/metering.js";
 import { LIMIT_DEFINITIONS } from "../../../shared/plans.seed.js";
 import { usageMonthRef, usageCurrentRef, nonNegative, prepareRunningAlerts, usageEvent, noteLimitReached } from "./metering.js";
 import { prepareNotifications } from "./notifications.js";
@@ -309,6 +309,8 @@ async function changeEntitlements({ db, admin, businessId, actor, reason, action
     }
     for (const [limitKey, meterId] of Object.entries(LIMIT_METER)) {
       if (limitKey === "users") continue;
+      // A meter whose module this workspace doesn't have (e.g. orders in Baby) means nothing.
+      if (!meterApplies(meterId, entitlements)) continue;
       const changed = business.entitlements?.limits?.[limitKey] !== entitlements.limits[limitKey];
       const w = changed ? overrideImpact({ limitKey, value: entitlements.limits[limitKey], current: usage.values[meterId] }) : null;
       if (w) warnings.push(w);

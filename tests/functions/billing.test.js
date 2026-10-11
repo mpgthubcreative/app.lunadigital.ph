@@ -63,7 +63,9 @@ describe("plans and invoices", () => {
 
   it("changing plan snapshots the new price for the NEXT bills only", async () => {
     await ensureInvoice({ db: world.db, FieldValue: FV(), businessId: "biz-home", period: "2026-10" });
-    await assignPlan({ ...world, businessId: "biz-home", planId: "household-basic", actor: "ops", reason: "downgrade" });
+    const r = await assignPlan({ ...world, businessId: "biz-home", planId: "household-basic", actor: "ops", reason: "downgrade" });
+    // Orders / imports don't exist in a household: no limit warning about them.
+    expect(r.warnings.join(" ")).not.toMatch(/Orders|imports/i);
     expect(docAt("businesses/biz-home").subscription.monthlyAmount).toBe(14900);
     expect(docAt("subscriptionInvoices/biz-home_2026-10").amountDue).toBe(29900);
     await ensureInvoice({ db: world.db, FieldValue: FV(), businessId: "biz-home", period: "2026-11" });
