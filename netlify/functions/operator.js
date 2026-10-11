@@ -10,6 +10,11 @@
 // Writes:  createBusiness, changePlan, setModuleOverride, setLimitOverride,
 //          setStatus, addMember, setMemberStatus, updateGeneral,
 //          setTerminology, setupLink
+// Phase 18.6 (Luna's own money; operators only):
+//   money (Overview story), subscriptions, payments, payment, paymentProof,
+//   confirmPayment, rejectPayment, billingSettings, saveBillingSettings,
+//   expenses, addExpense, editExpense, removeExpense, copyRecurring,
+//   costRates, addCostRate, usageCost, economics
 
 import { respond, withErrorHandling, requireMethod, parseJsonBody, RequestError } from "./_lib/http.js";
 import { getAdmin } from "./_lib/firebase-admin.js";
@@ -19,6 +24,9 @@ import { tenantDb } from "./_lib/tenant-db.js";
 import { OperatorError, validateCreateBusinessInput, validateSubscriptionStatus, validateReason, overrideChange } from "../../shared/operators.js";
 import { ROLE_TEMPLATES } from "../../shared/permissions.js";
 import { isValidBusinessId } from "../../shared/tenancy.js";
+import { BillingError } from "../../shared/billing.js";
+import { confirmPayment, rejectPayment, readPaymentProof, getBillingSettings, setBillingSettings } from "./_lib/billing.js";
+import { platformOverview, listSubscriptionPayments, paymentDetail, listSubscriptions, listPlatformExpenses, createPlatformExpense, updatePlatformExpense, removePlatformExpense, copyRecurringExpenses, listCostRates, addCostRate, usageCost, economics } from "./_lib/platform.js";
 
 const STATUS = {
   "invalid-input": 400,
@@ -33,7 +41,11 @@ const STATUS = {
   "owner-protected": 409,
   "user-limit-reached": 409,
   "business-misconfigured": 409,
+  "invalid-proof": 400,
+  "no-invoice": 404,
+  "already-paid": 409,
 };
+const obj = (v) => (v && typeof v === "object" && !Array.isArray(v) ? v : {});
 
 const rev = (v) => {
   if (v === undefined || v === null) return null;
@@ -156,6 +168,28 @@ const ACTIONS = {
     fields: ["businessId", "terminology", "reason"],
     run: async ({ db, admin, op }, b) => setTenantTerminology({ db, admin, businessId: bid(b.businessId), terminology: b.terminology, actor: actorOf(op), reason: b.reason }),
   },
+
+  // ---- Phase 18.6: Luna subscriptions, revenue and platform costs ----
+  money: { fields: [], run: async ({ db, admin }) => ({ money: await platformOverview({ db, FieldValue: admin.firestore.FieldValue, AggregateField: admin.firestore.AggregateField }) }) },
+  subscriptions: { fields: ["filters", "after"], run: async ({ db }, b) => listSubscriptions({ db, filters: obj(b.filters), after: b.after ?? null }) },
+  payments: { fields: ["filters", "after"], run: async ({ db }, b) => listSubscriptionPayments({ db, filters: obj(b.filters), after: b.after ?? null }) },
+  payment: { fields: ["paymentId"], run: async ({ db }, b) => paymentDetail({ db, paymentId: b.paymentId }) },
+  paymentProof: { fields: ["paymentId"], run: async ({ db, bucket }, b) => ({ proof: await readPaymentProof({ db, bucket, paymentId: String(b.paymentId || "-") }) }) },
+  // Confirm needs the explicit confirmation step in the console; the server
+  // is idempotent (a second confirm credits nothing).
+  confirmPayment: { fields: ["paymentId"], run: async ({ db, admin, op }, b) => confirmPayment({ db, FieldValue: admin.firestore.FieldValue, paymentId: String(b.paymentId || "-"), operator: actorOf(op) }) },
+  rejectPayment: { fields: ["paymentId", "reason"], run: async ({ db, admin, op }, b) => rejectPayment({ db, FieldValue: admin.firestore.FieldValue, paymentId: String(b.paymentId || "-"), reason: b.reason, operator: actorOf(op) }) },
+  billingSettings: { fields: [], run: async ({ db }) => ({ settings: await getBillingSettings({ db }) }) },
+  saveBillingSettings: { fields: ["settings"], run: async ({ db, admin, op }, b) => setBillingSettings({ db, FieldValue: admin.firestore.FieldValue, input: b.settings, actor: actorOf(op) }) },
+  expenses: { fields: ["month"], run: async ({ db }, b) => listPlatformExpenses({ db, month: b.month }) },
+  addExpense: { fields: ["expense"], run: async ({ db, admin, op }, b) => createPlatformExpense({ db, FieldValue: admin.firestore.FieldValue, input: b.expense, actor: actorOf(op) }) },
+  editExpense: { fields: ["expenseId", "changes"], run: async ({ db, admin, op }, b) => updatePlatformExpense({ db, FieldValue: admin.firestore.FieldValue, expenseId: b.expenseId, changes: b.changes, actor: actorOf(op) }) },
+  removeExpense: { fields: ["expenseId", "reason"], run: async ({ db, admin, op }, b) => removePlatformExpense({ db, FieldValue: admin.firestore.FieldValue, expenseId: b.expenseId, reason: b.reason, actor: actorOf(op) }) },
+  copyRecurring: { fields: ["month"], run: async ({ db, admin, op }, b) => copyRecurringExpenses({ db, FieldValue: admin.firestore.FieldValue, month: b.month, actor: actorOf(op) }) },
+  costRates: { fields: [], run: async ({ db }) => ({ rates: await listCostRates({ db }) }) },
+  addCostRate: { fields: ["rate"], run: async ({ db, admin, op }, b) => addCostRate({ db, FieldValue: admin.firestore.FieldValue, input: b.rate, actor: actorOf(op) }) },
+  usageCost: { fields: ["period", "after"], run: async ({ db }, b) => usageCost({ db, period: b.period, after: b.after ?? null }) },
+  economics: { fields: ["period"], run: async ({ db }, b) => economics({ db, period: b.period }) },
 };
 
 export function createOperatorHandler({ getAdmin: loadAdmin }) {
@@ -168,7 +202,7 @@ export function createOperatorHandler({ getAdmin: loadAdmin }) {
     } catch (err) {
       bodyError = err;
     }
-    const { db, auth, admin } = await loadAdmin();
+    const { db, auth, admin, bucket } = await loadAdmin();
     // Operator first: a non-operator learns nothing from validation.
     const op = await requireOperator(event, { db, auth });
     if (bodyError) throw bodyError;
@@ -176,9 +210,9 @@ export function createOperatorHandler({ getAdmin: loadAdmin }) {
     if (!action) throw new RequestError("invalid-request", "Unknown action.", 400);
     for (const k of Object.keys(body)) if (k !== "action" && !action.fields.includes(k)) throw new RequestError("invalid-request", `Unknown field ${k}.`, 400);
     try {
-      return respond(200, { success: true, ...(await action.run({ db, auth, admin, op }, body)) });
+      return respond(200, { success: true, ...(await action.run({ db, auth, admin, bucket, op }, body)) });
     } catch (err) {
-      if (err instanceof ProvisioningError || err instanceof OperatorError) throw new RequestError(err.code, err.message, STATUS[err.code] || 400);
+      if (err instanceof ProvisioningError || err instanceof OperatorError || err instanceof BillingError) throw new RequestError(err.code, err.message, STATUS[err.code] || 400);
       throw err;
     }
   });

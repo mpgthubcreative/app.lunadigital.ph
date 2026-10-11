@@ -132,6 +132,9 @@ export async function runExport({ db, ctx, admin, descriptor, builder, rawFilter
   // Phase 18: meter-only counters (no plan limit; the row ceiling above is a
   // technical safety limit, not a commercial one).
   meterActivity(batch, { tenant, FieldValue, timezone: business.timezone, now, period: month, counts: { exportsGenerated: 1, rowsExported: built.rowCount } });
+  // Phase 18.6: bytes downloaded, for Luna's own usage-cost estimate (not a
+  // tenant meter: never shown as a limit).
+  batch.set(tenant.doc("usage", month), { exportBytes: FieldValue.increment(bytes.length) }, { merge: true });
   await batch.commit();
 
   return { fileName, bytes, rowCount: built.rowCount, filters };

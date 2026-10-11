@@ -46,6 +46,8 @@ export const NOTIFICATION_CATEGORIES = Object.freeze({
   usage: { label: "Plan limits (80% and 100% used)", mandatory: false },
   // Phase 18.6: a household staff member is waiting for an answer.
   requests: { label: "Staff requests (attendance, leave, advances)", mandatory: true },
+  // Phase 18.6: the Owner's Luna subscription payment was sent / confirmed / not accepted.
+  billing: { label: "Luna subscription payments", mandatory: true },
 });
 export const NOTIFICATION_CATEGORY_IDS = Object.freeze(Object.keys(NOTIFICATION_CATEGORIES));
 
@@ -122,6 +124,14 @@ export const NOTIFICATION_TYPES = Object.freeze({
   // Event key: monthly "<meter>-<YYYY-MM>-<pct>", running
   // "<meter>-e<episode>-<pct>" (shared/metering.js): never repeated for the
   // same month or usage episode.
+  // Phase 18.6: the business's Luna subscription payment (Owner only).
+  "billing.payment_update": {
+    category: "billing",
+    module: "settings",
+    permissions: ["billing.view"],
+    excludeActor: false,
+    action: { label: "Open subscription", route: "/subscription" },
+  },
   "usage.threshold": {
     category: "usage",
     module: "settings",

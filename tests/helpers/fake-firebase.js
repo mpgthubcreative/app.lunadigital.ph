@@ -9,6 +9,8 @@ const SERVER_TS = Symbol("serverTimestamp");
 const ARRAY_UNION = Symbol("arrayUnion");
 const INCREMENT = Symbol("increment");
 
+export const AggregateField = { sum: (field) => ({ kind: "sum", field }), count: () => ({ kind: "count" }) };
+
 export const FieldValue = {
   serverTimestamp: () => ({ [SERVER_TS]: true }),
   arrayUnion: (...values) => ({ [ARRAY_UNION]: values }),
@@ -199,6 +201,24 @@ class Query {
   count() {
     return { get: async () => ({ data: () => ({ count: this._matches().length }) }) };
   }
+  // Like Query.aggregate({ alias: AggregateField.sum(path) | AggregateField.count() }).
+  aggregate(spec) {
+    return {
+      get: async () => {
+        const docs = this._matches();
+        const out = {};
+        for (const [alias, a] of Object.entries(spec)) {
+          if (a.kind === "count") out[alias] = docs.length;
+          else
+            out[alias] = docs.reduce((t, d) => {
+              const v = a.field.split(".").reduce((o, k) => (o == null ? o : o[k]), d.data());
+              return typeof v === "number" ? t + v : t;
+            }, 0);
+        }
+        return { data: () => out };
+      },
+    };
+  }
 }
 
 class CollectionRef extends Query {
@@ -379,7 +399,7 @@ export class FakeBucket {
 export function fakeAdmin() {
   const db = new FakeFirestore();
   const auth = new FakeAuth();
-  const admin = { firestore: { FieldValue, FieldPath } };
+  const admin = { firestore: { FieldValue, FieldPath, AggregateField } };
   const storage = new FakeBucket();
   return { db, auth, admin, storage, bucket: async () => storage };
 }
