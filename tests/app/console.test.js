@@ -37,11 +37,42 @@ const DETAIL = {
 };
 
 describe("console views", () => {
-  it("overview shows counts from the operator API", async () => {
-    const call = vi.fn(async () => ({ overview: { total: 8, byStatus: { active: 6, past_due: 0, suspended: 1, cancelled: 1 }, byWorkspace: { distributor: 4 }, byPlan: { growth: 5 } } }));
+  it("overview tells the money story (collected, MRR, still to collect, for verification, costs, estimated GP + margin, trend, by workspace, due) then the counts", async () => {
+    const trend = Array.from({ length: 12 }, (_, i) => ({ period: `2026-${String(i + 1).padStart(2, "0")}`, revenue: i * 100000, costs: 50000, grossProfit: i * 100000 - 50000 }));
+    const money = {
+      period: "2026-10",
+      collected: 2485000,
+      mrr: 3142000,
+      activeSubscriptions: 14,
+      stillToCollect: 657000,
+      outstanding: 1200000,
+      awaiting: { count: 3, amount: 543000 },
+      pastDueCount: 1,
+      platformCosts: 377000,
+      infraCosts: 252000,
+      estimatedGrossProfit: 2108000,
+      estimatedGrossMargin: 84.8,
+      trend,
+      revenueByWorkspace: [{ workspaceTemplateId: "distributor", revenue: 1800000, mrr: 2000000, subscriptions: 8 }, { workspaceTemplateId: "household-payroll", revenue: 420000, mrr: 450000, subscriptions: 14 }],
+      revenueByPlan: [],
+      dueThisMonth: [{ businessId: "abc", businessName: "ABC Trading", workspaceTemplateId: "distributor", planName: "Growth", amountDue: 199000, amountPaid: 0, status: "due", dueDate: "2026-10-07" }],
+      pastDue: [],
+    };
+    const call = vi.fn(async (action) => (action === "money" ? { money } : { overview: { total: 8, byStatus: { active: 6, past_due: 0, suspended: 1, cancelled: 1 }, byWorkspace: { distributor: 4 }, byPlan: { growth: 5 } } }));
     overviewView(el, ctxWith(call));
     await flush();
+    expect(call).toHaveBeenCalledWith("money");
     expect(call).toHaveBeenCalledWith("overview");
+    const v = (id) => el.querySelector(`[data-widget="${id}"] .kpi-value`).textContent.trim();
+    expect([v("collected"), v("mrr"), v("toCollect")]).toEqual(["₱24,850.00", "₱31,420.00", "₱6,570.00"]);
+    expect(v("verify")).toMatch(/3 · ₱5,430\.00/);
+    expect(el.querySelector('[data-widget="verify"] a').getAttribute("href")).toBe("/console/payments");
+    expect([v("costs"), v("gp"), v("margin")]).toEqual(["₱3,770.00", "₱21,080.00", "84.8%"]);
+    expect(el.querySelector('[data-role="profit"]').textContent).toMatch(/not net profit/);
+    expect(el.querySelector('[data-section="trend"] svg.line-chart')).not.toBeNull();
+    expect(el.querySelectorAll('[data-role="trend-table"] tbody tr')).toHaveLength(12);
+    expect(el.querySelector('[data-row="household-payroll"]').textContent).toMatch(/14 subscriptions/);
+    expect(el.querySelector('[data-role="due-list"]').textContent).toMatch(/ABC Trading/);
     expect(el.querySelector('[data-widget="total"] .stat-value').textContent).toBe("8");
     expect(el.querySelector('[data-widget="suspended"] .stat-value').textContent).toBe("1");
   });

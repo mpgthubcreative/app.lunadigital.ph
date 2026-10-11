@@ -19,14 +19,17 @@ import { createRouter } from "../app/router.js";
 import { api, setTokenProvider } from "../lib/api.js";
 import { watchUser, signIn, signOutUser, currentIdToken, friendlyAuthError } from "../app/auth.js";
 import { renderLogin, renderBoot } from "../app/screens.js";
-import { overviewView, businessesView, plansView, auditView, usageView } from "./views.js";
+import { overviewView, businessesView, plansView, auditView } from "./views.js";
+import { subscriptionsView, paymentsView, usageCostView } from "./money.js";
 
 const BASE = "/console";
 const SECTIONS = [
   { path: "/", label: "Overview", icon: "dashboard", view: overviewView },
   { path: "/businesses", label: "Businesses", icon: "businesses", view: businessesView },
-  { path: "/usage", label: "Usage", icon: "budget", view: usageView },
+  { path: "/subscriptions", label: "Subscriptions", icon: "calendar", view: subscriptionsView },
+  { path: "/payments", label: "Payments", icon: "payments", view: paymentsView },
   { path: "/plans", label: "Plans", icon: "plans", view: plansView },
+  { path: "/usage", label: "Usage", icon: "budget", view: usageCostView },
   { path: "/audit", label: "Audit", icon: "reports", view: auditView },
 ];
 

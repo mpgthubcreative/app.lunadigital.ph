@@ -9,6 +9,7 @@ import { pageHeader, card, emptyState, badge, statCard } from "../components/ui.
 import { formDialog } from "../components/form-dialog.js";
 import { formatMoney, planWorkspace, WORKSPACE_TEMPLATES, SUBSCRIPTION_LABELS, SUBSCRIPTION_ACTIONS, OVERRIDE_CHOICES, ROLE_TEMPLATES, METERS, MONTHLY_METER_IDS, overrideImpact } from "@shared/index.js";
 import { formatBytes, formatNumber } from "../lib/format.js";
+import { moneySections } from "./money.js";
 
 const TONE = { active: "success", past_due: "warning", suspended: "danger", cancelled: "neutral" };
 const statusBadge = (s) => badge(SUBSCRIPTION_LABELS[s] ?? s ?? "—", TONE[s] || "neutral");
@@ -20,18 +21,21 @@ const failed = (err) => card({ body: emptyState({ title: "Couldn't load", body: 
 // ---------- Overview ----------
 
 export async function overviewView(el, ctx) {
-  render(el, html`${pageHeader({ title: "Overview", subtitle: "Luna businesses at a glance." })}${loading()}`);
+  render(el, html`${pageHeader({ title: "Overview", subtitle: "How is Luna doing?" })}${loading()}`);
   try {
-    const { overview: o } = await ctx.call("overview");
+    // Phase 18.6: the money story first, then the tenant counts.
+    const [{ money: m }, { overview: o }] = await Promise.all([ctx.call("money"), ctx.call("overview")]);
     const row = (title, map, label = (k) => k) => card({ title, body: html`<dl class="dl dl-compact">${Object.entries(map).map(([k, v]) => html`<dt>${label(k)}</dt><dd>${formatNumber(v)}</dd>`)}</dl>` });
     render(
       el,
-      html`${pageHeader({ title: "Overview", subtitle: "Luna businesses at a glance (no revenue analytics yet)." })}
+      html`${pageHeader({ title: "Overview", subtitle: "How is Luna doing? Money collected, recurring revenue, what's owed, costs and estimated gross profit." })}
+        ${moneySections(m, ctx)}
+        <h2 class="section-title">Businesses</h2>
         <section class="section stat-grid" data-role="counts">
           ${statCard({ id: "total", label: "Total businesses", value: formatNumber(o.total) })}
           ${Object.entries(o.byStatus).map(([s, n]) => statCard({ id: s, label: SUBSCRIPTION_LABELS[s] ?? s, value: formatNumber(n) }))}
         </section>
-        <div class="section grid grid-2">${row("By workspace", o.byWorkspace, (k) => ctx.workspaceName(k))}${row("By plan", o.byPlan)}</div>`
+        <div class="section grid grid-2">${row("Subscription mix by workspace", o.byWorkspace, (k) => ctx.workspaceName(k))}${row("Subscription mix by plan", o.byPlan, (k) => ctx.planName(k))}</div>`
     );
   } catch (err) {
     render(el, failed(err));
@@ -369,52 +373,6 @@ export async function limitOverrideDialog(ctx, { businessId, row, clear = false,
 }
 
 // ---------- Usage across businesses (Phase 18) ----------
-
-export function usageView(el, ctx) {
-  const state = { cursors: [null], page: null };
-  const cell = (l) => (l ? html`${limitFormat(l.unit)(l.current)} / ${l.effective === null ? "—" : limitFormat(l.unit)(l.effective)}${l.percent !== null ? html` <span class="stat-hint">${l.percent}%</span>` : ""}${l.atOrOver ? html` ${badge("At limit", "warning")}` : ""}` : "—");
-  async function load() {
-    render(el, html`${pageHeader({ title: "Usage" })}${loading()}`);
-    try {
-      state.page = await ctx.call("usageOverview", { after: state.cursors.at(-1) });
-    } catch (err) {
-      render(el, failed(err));
-      return;
-    }
-    const rows = state.page.rows;
-    render(
-      el,
-      html`${pageHeader({ title: "Usage", subtitle: "This month's usage against each business's effective limits (25 per page). Exports and records created are informational." })}
-        ${card({
-          body: rows.length
-            ? html`<div class="table-wrap"><table class="table table-compact" data-role="usage">
-                <thead><tr><th>Business</th><th>Plan</th><th class="num">Users</th><th class="num">Orders / mo</th><th class="num">Imports / mo</th><th class="num">Storage</th><th class="num col-secondary">Exports</th><th class="num col-secondary">Records created</th></tr></thead>
-                <tbody>${rows.map((r) => {
-                  const by = Object.fromEntries(r.limits.map((l) => [l.limitKey, l]));
-                  return html`<tr data-business="${r.id}">
-                    <td><a href="${ctx.base}/businesses?b=${r.id}" data-link>${r.name}</a><div class="stat-hint">${ctx.workspaceName(r.workspaceTemplateId)} · ${r.period}</div></td>
-                    <td>${ctx.planName(r.planId)} ${statusBadge(r.status)}</td>
-                    <td class="num">${cell(by.users)}</td><td class="num">${cell(by.ordersPerMonth)}</td><td class="num">${cell(by.importsPerMonth)}</td><td class="num">${cell(by.storageBytes)}</td>
-                    <td class="num col-secondary">${formatNumber(r.exports)}</td><td class="num col-secondary">${formatNumber(r.recordsCreated)}</td>
-                  </tr>`;
-                })}</tbody></table></div>
-              <div class="modal-footer"><button type="button" class="btn" data-act="prev" ${state.cursors.length > 1 ? "" : "disabled"}>Previous</button><button type="button" class="btn" data-act="next" ${state.page.next ? "" : "disabled"}>Next</button></div>`
-            : emptyState({ title: "No businesses yet" }),
-        })}`
-    );
-  }
-  el.onclick = (e) => {
-    const act = e.target.closest("[data-act]")?.dataset.act;
-    if (act === "next") {
-      state.cursors.push(state.page.next);
-      load();
-    } else if (act === "prev") {
-      state.cursors.pop();
-      load();
-    }
-  };
-  load();
-}
 
 // ---------- Plans (read-only) ----------
 

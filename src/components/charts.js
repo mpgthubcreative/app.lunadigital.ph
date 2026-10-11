@@ -134,3 +134,35 @@ export function shareBar(parts, { aria = "" } = {}) {
 
 // Four distinct, restrained fills for part-to-whole (ordered by size).
 export const SHARE_FILLS = ["fill-sales", "fill-profit", "fill-expense", "fill-neutral"];
+
+// Phase 18.6 (Super Luna): a few series over the same periods on ONE money
+// axis. series: [{ label, cls, values: [centavos|null per period], dashed? }].
+// The axis includes zero (a loss shows below it). Each line ends with a
+// direct label; every point has a hover title; the caller adds a table.
+export function lineChart(periods, series, { aria = "", format = compactMoney, maxLabels = 6 } = {}) {
+  const all = series.flatMap((s) => s.values.filter((v) => v !== null && v !== undefined));
+  const hi = niceMax(Math.max(1, ...all));
+  const lowRaw = Math.min(0, ...all);
+  const lo = lowRaw < 0 ? -niceMax(-lowRaw) : 0;
+  const top = 14;
+  const bottom = 150;
+  const left = 40;
+  const right = W - 70;
+  const y = (v) => bottom - ((v - lo) / (hi - lo)) * (bottom - top);
+  const x = (i) => left + (periods.length <= 1 ? 0 : (i / (periods.length - 1)) * (right - left));
+  const every = Math.ceil(periods.length / maxLabels);
+  const ticks = lo < 0 ? [lo, 0, hi] : [0, hi / 2, hi];
+  return html`<svg viewBox="0 0 ${W} 176" role="img" aria-label="${aria}" class="line-chart">
+    ${ticks.map((t) => html`<line class="${t === 0 ? "zero-line" : "grid-line"}" x1="${left}" y1="${y(t).toFixed(1)}" x2="${right}" y2="${y(t).toFixed(1)}"></line><text x="${left - 6}" y="${(y(t) + 4).toFixed(1)}" text-anchor="end">${format(Math.round(t))}</text>`)}
+    ${series.map((s) => {
+      const pts = s.values.map((v, i) => (v === null || v === undefined ? null : [x(i), y(v), v, i])).filter(Boolean);
+      if (!pts.length) return "";
+      const d = pts.map(([px, py], k) => `${k ? "L" : "M"}${px.toFixed(1)} ${py.toFixed(1)}`).join(" ");
+      const last = pts.at(-1);
+      return html`<path class="${s.cls}${s.dashed ? " is-dashed" : ""}" d="${d}"></path>
+        ${pts.map(([px, py, v, i]) => html`<circle class="point ${s.cls}" cx="${px.toFixed(1)}" cy="${py.toFixed(1)}" r="4"><title>${s.label} · ${periods[i].label}: ${format(v)}</title></circle>`)}
+        <text class="end-label" x="${(last[0] + 7).toFixed(1)}" y="${(last[1] + 4).toFixed(1)}">${s.short ?? s.label} ${format(last[2])}</text>`;
+    })}
+    ${periods.map((p, i) => (i % every === 0 || i === periods.length - 1 ? html`<text x="${x(i).toFixed(1)}" y="168" text-anchor="middle">${p.label}</text>` : ""))}
+  </svg>`;
+}

@@ -10,7 +10,7 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 vi.mock("../../src/lib/api.js", () => ({ api: vi.fn(), apiDownload: vi.fn(), setTokenProvider: vi.fn(), setBusinessSelector: vi.fn() }));
 import { api } from "../../src/lib/api.js";
 import { mount as mountSettings } from "../../src/modules/settings/index.js";
-import { businessDetailView, usageView, limitOverrideDialog } from "../../src/console/views.js";
+import { businessDetailView, limitOverrideDialog } from "../../src/console/views.js";
 import { sessionFixture } from "../helpers/session-fixture.js";
 import { PLAN_SEED } from "../../shared/plans.seed.js";
 import { creatableWorkspaces, moduleTable } from "../../shared/operators.js";
@@ -154,15 +154,6 @@ describe("console: limits, overrides and usage", () => {
     expect(call).toHaveBeenCalledWith("setLimitOverride", { businessId: "abc", limitKey: "storageBytes", value: null, reason: "Back to plan", expectedRevision: 4 });
   });
 
-  it("the Usage page lists businesses with usage vs effective limits and pages with a cursor", async () => {
-    const rows = [{ id: "abc", name: "ABC", workspaceTemplateId: "distributor", planId: "starter", status: "active", period: "2026-10", limits: DETAIL.limitRows.map((l) => ({ limitKey: l.limitKey, unit: l.unit, current: l.current, effective: l.effective, percent: l.percent, atOrOver: l.atOrOver })), exports: 3, recordsCreated: 300 }];
-    const call = vi.fn(async () => ({ rows, next: "abc" }));
-    usageView(el, ctxWith(call));
-    await flush();
-    expect(call).toHaveBeenCalledWith("usageOverview", { after: null });
-    expect(el.querySelector('[data-business="abc"]').textContent.replace(/\s+/g, " ")).toMatch(/284 \/ 1,000 28%/);
-    el.querySelector('[data-act="next"]').click();
-    await flush();
-    expect(call).toHaveBeenLastCalledWith("usageOverview", { after: "abc" });
-  });
+  // (The Usage page is Phase 18.6 usageCostView: tests/app/console-money.test.js.)
+
 });
