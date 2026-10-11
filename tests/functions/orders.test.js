@@ -206,6 +206,22 @@ describe("discounts", () => {
   });
 });
 
+describe("delivery address (Phase 18.6)", () => {
+  it("saved on create (blank = pick-up), changed on edit with a history note, kept on corrections", async () => {
+    const pid = await stockedProduct({ price: 7500, qty: 100 });
+    const pickup = await create([{ productId: pid, quantity: Q(1) }]);
+    expect(docAt(`businesses/biz-a/orders/${pickup.orderId}`).deliveryAddress).toBeNull();
+    const { orderId } = await create([{ productId: pid, quantity: Q(2) }], { input: { deliveryAddress: "12 Mabini St, QC" } });
+    expect(docAt(`businesses/biz-a/orders/${orderId}`).deliveryAddress).toBe("12 Mabini St, QC");
+    await edit(orderId, [{ productId: pid, quantity: Q(2) }], { input: { deliveryAddress: "45 Rizal Ave, Manila" } });
+    const o = docAt(`businesses/biz-a/orders/${orderId}`);
+    expect(o.deliveryAddress).toBe("45 Rizal Ave, Manila");
+    expect(o.statusHistory.at(-1)).toMatchObject({ type: "edited", changes: expect.objectContaining({ deliveryAddress: true }) });
+    await edit(orderId, [{ productId: pid, quantity: Q(3) }], { input: { deliveryAddress: "45 Rizal Ave, Manila" } });
+    expect(docAt(`businesses/biz-a/orders/${orderId}`).statusHistory.at(-1).changes).not.toHaveProperty("deliveryAddress");
+  });
+});
+
 describe("editing pending orders", () => {
   it("20 -> 15 releases 5; 15 -> 30 reserves 15 more; price snapshot kept; history records it", async () => {
     const pid = await stockedProduct({ price: 7500, qty: 100 });

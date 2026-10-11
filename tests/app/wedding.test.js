@@ -143,9 +143,12 @@ describe("Wedding Suppliers", () => {
 
   it("Scheduled -> a payment opens it (Mark paid); '+ Schedule a payment' schedules for THIS supplier", async () => {
     const data = fakeData();
+    // Another supplier's payment never shows in this supplier's list.
+    data.listSupplierPayments = vi.fn(async () => ({ rows: [PAY, { ...PAY, id: "payOtherSup001", supplierId: "supOtherOne01", supplierName: "Other" }], hasMore: false }));
     mountSuppliers(container, wedding(), { data, now: NOW, toast: () => {} });
     await flush();
     const sched = container.querySelector('[data-role="scheduled"]');
+    expect([...sched.options].map((o) => o.value)).toEqual(["", PAY.id, "new"]);
     sched.value = "new";
     sched.dispatchEvent(new Event("change", { bubbles: true }));
     await flush();

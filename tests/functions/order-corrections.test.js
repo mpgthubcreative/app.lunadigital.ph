@@ -213,3 +213,13 @@ describe("POST /api/orders: corrections and deletes", () => {
     expect(docAt(`businesses/biz-b/products/${bp}`).onHand).toBe(Q(8));
   });
 });
+
+describe("delivery address on a fulfilled order (Phase 18.6)", () => {
+  it("correcting only the address needs no reason, saves it and notes it in the history", async () => {
+    const { pid, orderId } = await fulfilledTen();
+    await correct(orderId, [{ productId: pid, quantity: Q(10) }], { reason: "", extra: { deliveryAddress: "7 Luna St, Pasig" } });
+    const o = docAt(`businesses/biz-a/orders/${orderId}`);
+    expect(o.deliveryAddress).toBe("7 Luna St, Pasig");
+    expect(o.statusHistory.at(-1)).toMatchObject({ type: "corrected", changes: expect.objectContaining({ deliveryAddress: true }) });
+  });
+});

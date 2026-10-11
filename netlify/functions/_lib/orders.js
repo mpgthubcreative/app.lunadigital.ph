@@ -309,7 +309,6 @@ export async function updateOrder({ db, tenant, FieldValue, business = null, ord
         ...(totals.total !== order.total ? { total: { from: order.total, to: totals.total } } : {}),
         ...(customerChanged ? { customer: true } : {}),
         ...(data.source !== order.source ? { source: { from: order.source, to: data.source } } : {}),
-      ...((order.deliveryAddress || null) !== (data.deliveryAddress || null) ? { deliveryAddress: true } : {}),
         ...((order.deliveryAddress || null) !== (data.deliveryAddress || null) ? { deliveryAddress: true } : {}),
       },
     });
@@ -432,6 +431,7 @@ async function correctFulfilled(tx, { tenant, FieldValue, business, ref, orderId
       ...(totals.total !== order.total ? { sales: { from: order.total, to: totals.total } } : {}),
       ...(customerChanged ? { customer: true } : {}),
       ...(data.source !== order.source ? { source: { from: order.source, to: data.source } } : {}),
+      ...((order.deliveryAddress || null) !== (data.deliveryAddress || null) ? { deliveryAddress: true } : {}),
     },
   });
   const stamp = FieldValue.serverTimestamp();

@@ -60,7 +60,7 @@ async function member(key, roleTemplate, overrides = {}, businessId = "biz-a") {
   return u.uid;
 }
 
-function order(i, { day = "2026-10-05", pay = "paid", ful = "fulfilled", source = "phone", total = 10000, name = `Customer ${i}` } = {}) {
+function order(i, { day = "2026-10-05", pay = "paid", ful = "fulfilled", source = "phone", total = 10000, name = `Customer ${i}`, deliveryAddress = null } = {}) {
   const id = `ord${String(i).padStart(17, "0")}`;
   seed(`orders/${id}`, {
     orderNumber: `ORD-${String(i).padStart(5, "0")}`,
@@ -77,6 +77,7 @@ function order(i, { day = "2026-10-05", pay = "paid", ful = "fulfilled", source 
     paymentStatus: pay,
     fulfillmentStatus: ful,
     source,
+    deliveryAddress,
   });
   if (ful === "fulfilled") seed(`orderCosts/${id}`, { cogs: total * 0.6, grossProfit: total * 0.4, lines: [{ lineId: "L1", costConsumed: total * 0.6 }] });
   return id;
@@ -184,7 +185,7 @@ async function ctxFor(uid) {
 describe("Orders: filter -> view -> download", () => {
   it("exactly the matching orders across all pages; non-matching ones absent; amounts and labels", async () => {
     const match = [];
-    for (let i = 1; i <= 60; i++) match.push(order(i, { day: "2026-10-03", total: 12345 }));
+    for (let i = 1; i <= 60; i++) match.push(order(i, { day: "2026-10-03", total: 12345, deliveryAddress: i === 1 ? "12 Mabini St, QC" : null }));
     order(100, { pay: "unpaid", ful: "fulfilled" });
     order(101, { pay: "paid", ful: "pending" });
     order(102, { day: "2026-09-30" });
@@ -199,6 +200,7 @@ describe("Orders: filter -> view -> download", () => {
     expect(new Set(col(rows, "Order total"))).toEqual(new Set(["123.45"]));
     expect(new Set(col(rows, "Payment"))).toEqual(new Set(["Paid"]));
     expect(new Set(col(rows, "Came from"))).toEqual(new Set(["Phone"]));
+    expect(col(rows, "Delivery address").filter(Boolean)).toEqual(["12 Mabini St, QC"]);
     expect(col(rows, "Order date")[0]).toBe("46298"); // 2026-10-03 as an Excel date
     expect(col(records(all, "Line"), "Line cost (COGS)")[0]).toBe("74.07");
     expect(col(rows, "Gross profit")[0]).toBe("49.38");

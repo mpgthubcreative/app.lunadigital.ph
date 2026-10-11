@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { guestCategoryDelta, rsvpByCategory, validateGuestInput, GUEST_CATEGORY_IDS } from "../../shared/wedding.js";
+import { guestsQuery } from "../../shared/list-queries.js";
 
 const g = (over) => ({ partySize: 4, rsvp: "awaiting", confirmed: 0, ...over });
 
@@ -16,6 +17,11 @@ describe("guest categories (Phase 18.6)", () => {
     expect(guestCategoryDelta(g({ category: "family" }), g({ category: "family", rsvp: "attending", confirmed: 3 }))).toEqual({ family: { attending: 1, attendingSeats: 3, awaiting: -1, awaitingSeats: -4 } });
     expect(guestCategoryDelta(g({ category: "family" }), g({ category: "work" }))).toEqual({ family: { invitations: -1, invitedSeats: -4, awaiting: -1, awaitingSeats: -4 }, work: { invitations: 1, invitedSeats: 4, awaiting: 1, awaitingSeats: 4 } });
     expect(guestCategoryDelta(g({}), g({ partySize: 6 }))).toEqual({});
+  });
+
+  it("the guests list (and its Excel) filters on the stored category", () => {
+    expect(guestsQuery({ category: "family", rsvp: "attending" }).parts[0].where).toEqual([["category", "==", "family"], ["rsvp", "==", "attending"]]);
+    expect(guestsQuery({}).parts[0].where).toEqual([]);
   });
 
   it("dashboard rows: categories in order, then Not set = totals minus categories", () => {

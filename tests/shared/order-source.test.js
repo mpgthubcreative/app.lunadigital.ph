@@ -42,3 +42,12 @@ describe("delivery address (Phase 18.6)", () => {
     expect(() => validateOrderInput(order({ deliveryAddress: "x".repeat(301) }))).toThrow(/Delivery address/);
   });
 });
+
+describe("one line per product (server)", () => {
+  it("the same product twice is refused: combine the quantities", async () => {
+    const { validateOrderInput } = await import("../../shared/orders.js");
+    const line = { productId: "prodAAAAAAAA", quantity: 1000 };
+    expect(() => validateOrderInput({ customer: { name: "Ana" }, source: "viber", items: [line, { ...line, quantity: 2000 }] })).toThrow(/combine the quantities/);
+    expect(validateOrderInput({ customer: { name: "Ana" }, source: "viber", items: [line] }).items).toHaveLength(1);
+  });
+});

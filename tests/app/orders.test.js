@@ -51,7 +51,7 @@ function deps({ rows = [pendingOrder, fulfilledOrder], hasMore = false } = {}) {
       getOrderCosts: vi.fn(async () => ({ cogs: 100000, grossProfit: 50000, lines: [{ lineId: "L1", costConsumed: 100000 }] })),
       getProducts: vi.fn(async () => ({ [wings.id]: wings })),
     },
-    listActiveProducts: vi.fn(async () => [wings, fries]),
+    listActiveProducts: vi.fn(async () => [wings, fries, { ...fries, id: "prodInactive00001", sku: "OLD-1", name: "Old item", status: "inactive" }]),
     api: vi.fn(async () => ({ success: true, orderId: "newOrder000000000001", orderNumber: "ORD-20261008-003" })),
     toast: vi.fn(),
   };
@@ -93,9 +93,28 @@ describe("new order flow", () => {
     await show(session("staff"));
     const { form } = await composeOrder();
     const opts = [...form.elements.product.options].filter((o) => o.value);
-    expect(opts.map((o) => o.value)).toEqual([wings.id, fries.id]);
+    expect(opts.map((o) => o.value)).toEqual([wings.id, fries.id]); // inactive OLD-1 not offered
+    // Choosing an added SKU again (e.g. keyboard) adds no second line.
+    form.elements.product.value = wings.id;
+    form.elements.product.dispatchEvent(new Event("change", { bubbles: true }));
+    expect(modal().querySelectorAll("[data-line]")).toHaveLength(2);
     expect(opts.every((o) => o.disabled)).toBe(true);
     expect(opts[0].textContent).toContain(wings.sku);
+  });
+
+  it("editing an older order keeps its earlier source note and its delivery address", async () => {
+    const d = deps();
+    d.data.getOrder = vi.fn(async () => ({ ...pendingOrder, source: "viber", sourceNote: "returning customer", deliveryAddress: "12 Mabini St" }));
+    const { openOrderEditor } = await import("../../src/modules/orders/editor.js");
+    const done = openOrderEditor({ session: session("staff"), deps: { ...d, listActiveProducts: d.listActiveProducts, getProducts: d.data.getProducts }, order: { ...pendingOrder, source: "viber", sourceNote: "returning customer", deliveryAddress: "12 Mabini St" } });
+    await flush();
+    const form = modal().querySelector("form");
+    expect(form.elements.deliveryAddress.value).toBe("12 Mabini St");
+    expect(modal().querySelector('[data-role="source-other"]').hidden).toBe(true);
+    form.dispatchEvent(new Event("submit", { cancelable: true }));
+    await flush();
+    expect(d.api.mock.calls[0][1].body.order).toMatchObject({ source: "viber", sourceNote: "returning customer", deliveryAddress: "12 Mabini St" });
+    await done;
   });
 
   it("asks 'Where?' only for Other, and refuses an order with no source", async () => {
