@@ -50,6 +50,34 @@ Owner pilot: the user is now testing Luna as a tenant across the four workspaces
   - With her own account: the session is Household Staff, `/api/me` loads only her records, and Owner / Manager endpoints return 403.
 - **Polish candidate (18.7, not done):** when an advance is larger than the pay earned so far, the staff portal shows a negative "Estimated take-home". Release is already blocked with "move an advance to the next payroll".
 
+### 2026-10-11: Household Staff pay-period attendance (polish, `5af4472`, `7f349e9`)
+- **Report:** the staff portal only allowed marking today; the user asked for multi-date attendance for a pay period (e.g. Oct 1–15).
+- **Staff portal, "My attendance":**
+  - Shows the pay period (‹ Sep 16 – 30 · Oct 1 – 15 · Oct 16 – 31 ›), one compact row per date with a status dropdown.
+  - Future days offer leave / rest day only.
+  - Bulk actions: select days → Present / Rest Day, Clear selection, Select all open days.
+  - "Review N days" lists the changes, then "Submit attendance" sends them as ONE submission.
+  - Locked rows: days before the start date or after the end date, Owner-approved days ("Approved", read-only), days in a paid salary, and days more than 14 days back (the existing rule).
+  - Pending days show "Waiting" and can be changed until approved. Rejected days say so and can be sent again.
+  - Navigation: from the start-date period (at most about 2 months back) up to 90 days ahead, never past the end date.
+- **Server:** `/api/me` `attendanceDays { days: [{date, status}], note? }`.
+  - Runs in one transaction, all or nothing: any refused day sends nothing and names each refused date (409 `days-not-allowed`).
+  - Uses the linked staff id only; a staffId in the body is refused (400).
+  - Writes one request per day with its own revision and history, plus one notification for the Owner.
+  - Retrying the same submission is a no-op: no new history and no new notification.
+  - `GET /api/me?period=` returns the sheet; the single-day request now also refuses dates after the end date.
+- **Owner Attendance page:** requests are grouped per person and pay period, e.g. "Yanie · Oct 1 to Oct 15 · 3 days: 2 Rest Day, 1 Paid Leave", with **Approve all / Reject all**.
+  - `attendance` `decideMany` decides each day in its own transaction, the same as a single decision, so per-day history and payroll updates are kept.
+  - Per-day Approve / Reject is kept.
+  - The requests cards (Attendance, Advances) got the missing inner padding.
+- **Tests:**
+  - Unit: 1304 pass, including the new `tests/functions/household-sheet.test.js` (8) and UI tests for the sheet, review, period navigation and Approve all.
+  - The database rules are unchanged, so the emulator rules batch was not rerun.
+  - Build: OK.
+- **Staging** (temporary household, deleted afterwards):
+  - 18/18 live API checks: own-password sign-in, sheet and period navigation, an approved day refused with nothing sent, future Present refused, another employee refused, 11 days in one submission, retry no-op, pending change, rejected resend, staff Approve-all 403, Owner Approve all 11, payroll counts 6 present + 2 paid leave = 8 × ₱411.
+  - Headless browser at 390px and 1280px, 12/12: sheet rows, review, submit, period navigation, the Owner's grouped list; no sideways scroll; every control labelled.
+
 
 Resume file for Phase 18.6 (usability, Baby payers, household self-service and payroll, one-sheet exports, Users page, usage meter). Started 2026-10-11 from `0769cff`. Checkpoint tag: `phase-18-6-start`.
 
