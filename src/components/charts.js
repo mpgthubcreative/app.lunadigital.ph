@@ -146,11 +146,13 @@ export function lineChart(periods, series, { aria = "", format = compactMoney, m
   const lo = lowRaw < 0 ? -niceMax(-lowRaw) : 0;
   const top = 14;
   const bottom = 150;
-  const left = 40;
-  const right = W - 70;
+  const left = 50;
+  const right = W - 74;
   const y = (v) => bottom - ((v - lo) / (hi - lo)) * (bottom - top);
   const x = (i) => left + (periods.length <= 1 ? 0 : (i / (periods.length - 1)) * (right - left));
   const every = Math.ceil(periods.length / maxLabels);
+  // Count from the newest period so the last label is always shown, never crowded.
+  const showLabel = (i) => (periods.length - 1 - i) % every === 0;
   const ticks = lo < 0 ? [lo, 0, hi] : [0, hi / 2, hi];
   return html`<svg viewBox="0 0 ${W} 176" role="img" aria-label="${aria}" class="line-chart">
     ${ticks.map((t) => html`<line class="${t === 0 ? "zero-line" : "grid-line"}" x1="${left}" y1="${y(t).toFixed(1)}" x2="${right}" y2="${y(t).toFixed(1)}"></line><text x="${left - 6}" y="${(y(t) + 4).toFixed(1)}" text-anchor="end">${format(Math.round(t))}</text>`)}
@@ -163,6 +165,6 @@ export function lineChart(periods, series, { aria = "", format = compactMoney, m
         ${pts.map(([px, py, v, i]) => html`<circle class="point ${s.cls}" cx="${px.toFixed(1)}" cy="${py.toFixed(1)}" r="4"><title>${s.label} · ${periods[i].label}: ${format(v)}</title></circle>`)}
         <text class="end-label" x="${(last[0] + 7).toFixed(1)}" y="${(last[1] + 4).toFixed(1)}">${s.short ?? s.label} ${format(last[2])}</text>`;
     })}
-    ${periods.map((p, i) => (i % every === 0 || i === periods.length - 1 ? html`<text x="${x(i).toFixed(1)}" y="168" text-anchor="middle">${p.label}</text>` : ""))}
+    ${periods.map((p, i) => (showLabel(i) ? html`<text x="${x(i).toFixed(1)}" y="168" text-anchor="middle">${p.label}</text>` : ""))}
   </svg>`;
 }

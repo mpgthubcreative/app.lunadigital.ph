@@ -5,7 +5,7 @@
 // plan id + reason), never entitlement objects or permission lists.
 
 import { html, render } from "../lib/html.js";
-import { pageHeader, card, emptyState, badge, statCard } from "../components/ui.js";
+import { pageHeader, card, emptyState, badge, statCard, kpiStrip } from "../components/ui.js";
 import { formDialog } from "../components/form-dialog.js";
 import { formatMoney, planWorkspace, WORKSPACE_TEMPLATES, SUBSCRIPTION_LABELS, SUBSCRIPTION_ACTIONS, OVERRIDE_CHOICES, ROLE_TEMPLATES, METERS, MONTHLY_METER_IDS, overrideImpact } from "@shared/index.js";
 import { formatBytes, formatNumber } from "../lib/format.js";
@@ -31,10 +31,7 @@ export async function overviewView(el, ctx) {
       html`${pageHeader({ title: "Overview", subtitle: "How is Luna doing? Money collected, recurring revenue, what's owed, costs and estimated gross profit." })}
         ${moneySections(m, ctx)}
         <h2 class="section-title">Businesses</h2>
-        <section class="section stat-grid" data-role="counts">
-          ${statCard({ id: "total", label: "Total businesses", value: formatNumber(o.total) })}
-          ${Object.entries(o.byStatus).map(([s, n]) => statCard({ id: s, label: SUBSCRIPTION_LABELS[s] ?? s, value: formatNumber(n) }))}
-        </section>
+        <section class="card hero-card section" data-role="counts">${kpiStrip([{ id: "total", label: "Total businesses", value: formatNumber(o.total) }, ...Object.entries(o.byStatus).map(([k, n]) => ({ id: k, label: SUBSCRIPTION_LABELS[k] ?? k, value: formatNumber(n) }))], { role: "business-counts" })}</section>
         <div class="section grid grid-2">${row("Subscription mix by workspace", o.byWorkspace, (k) => ctx.workspaceName(k))}${row("Subscription mix by plan", o.byPlan, (k) => ctx.planName(k))}</div>`
     );
   } catch (err) {
@@ -405,7 +402,7 @@ export async function plansView(el, ctx) {
                   <td class="num">${formatNumber(p.limits.users)}</td>
                   <td class="num">${formatBytes(p.limits.storageBytes)}</td>
                   ${distributorLike(g.w.id) ? html`<td class="num">${formatNumber(p.limits.ordersPerMonth)}</td><td class="num">${formatNumber(p.limits.importsPerMonth)}</td>` : ""}
-                  <td class="col-secondary">${Object.entries(p.modules).filter(([id, on]) => on && WORKSPACE_TEMPLATES[g.w.id]?.modules.includes(id)).map(([id]) => moduleLabel(id)).join(", ")}</td>
+                  <td class="col-secondary col-wrap">${Object.entries(p.modules).filter(([id, on]) => on && WORKSPACE_TEMPLATES[g.w.id]?.modules.includes(id)).map(([id]) => moduleLabel(id)).join(", ")}</td>
                   <td class="num" data-col="subscribers">${formatNumber(counts[p.id] ?? 0)}</td>
                 </tr>`
               )}</tbody></table></div>`,

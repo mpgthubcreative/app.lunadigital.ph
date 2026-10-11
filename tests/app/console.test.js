@@ -73,8 +73,8 @@ describe("console views", () => {
     expect(el.querySelectorAll('[data-role="trend-table"] tbody tr')).toHaveLength(12);
     expect(el.querySelector('[data-row="household-payroll"]').textContent).toMatch(/14 subscriptions/);
     expect(el.querySelector('[data-role="due-list"]').textContent).toMatch(/ABC Trading/);
-    expect(el.querySelector('[data-widget="total"] .stat-value').textContent).toBe("8");
-    expect(el.querySelector('[data-widget="suspended"] .stat-value').textContent).toBe("1");
+    expect(el.querySelector('[data-role="business-counts"] [data-widget="total"] .kpi-value').textContent).toBe("8");
+    expect(el.querySelector('[data-role="business-counts"] [data-widget="suspended"] .kpi-value').textContent).toBe("1");
   });
 
   it("businesses: compact rows from listBusinesses; filters are sent as filters; Manage opens the detail", async () => {

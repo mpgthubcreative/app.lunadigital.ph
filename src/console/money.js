@@ -373,7 +373,7 @@ export function usageCostView(el, ctx) {
           ])}
           <p class="stat-note">Measured per business today: storage retained and Excel downloads. ${unmeasured.join(", ")}: <b>Unavailable</b> per business (not metered yet), so they're never guessed from orders or page views. Shared costs (e.g. a Netlify subscription) aren't split across businesses.</p>
         </section>
-        <div class="grid grid-2 section">
+        <div class="stack-sections">
           ${section({ title: "By workspace", hint: "revenue − direct estimated cost", id: "econ-workspace", body: econRows(econ.byWorkspace, "workspace") })}
           ${section({ title: "By plan", hint: "revenue − direct estimated cost", id: "econ-plan", body: econRows(econ.byPlan, "plan") })}
         </div>
