@@ -31,6 +31,7 @@ export function paidState(s) {
   return "paid";
 }
 const PAID_STATES = { unpaid: "Unpaid", partly: "Partly paid", paid: "Paid" };
+const newKey = () => (globalThis.crypto && crypto.randomUUID ? crypto.randomUUID() : `k${Date.now()}${Math.random().toString(36).slice(2)}`).replace(/[^A-Za-z0-9_-]/g, "");
 
 const SERVICE_OPTIONS = Object.entries(SUPPLIER_SERVICES).map(([value, s]) => ({ value, label: s.label }));
 const serviceLabel = (s) => SUPPLIER_SERVICES[s]?.label ?? s;
@@ -220,6 +221,8 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     const scheduled = upcomingOf(s).reduce((sum, p) => sum + p.amount, 0);
     const open = balance === null ? null : Math.max(0, balance - scheduled);
     const active = state.categories.filter((c) => c.status === "active");
+    // One key per dialog: a double click or a retry records ONE expense.
+    const idempotencyKey = newKey();
     return formDialog({
       title: full ? `${s.name}: paid in full` : `${s.name}: record a payment`,
       intro: `Records ONE Wedding Expense paid to ${s.name}.${scheduled ? ` ${money(scheduled)} is already scheduled: pay those from Scheduled.` : ""}`,
@@ -235,7 +238,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
         const amount = parseCentavos(v.amount);
         if (!(amount > 0)) throw new Error("Enter an amount more than ₱0");
         if (!v.category) throw new Error("Choose a budget category");
-        return data.expensesApi({ action: "create", expense: { date: v.date, category: v.category, amount, supplierId: s.id, method: v.method, ...(v.reference.trim() ? { reference: v.reference.trim() } : {}) } });
+        return data.expensesApi({ action: "create", idempotencyKey, expense: { date: v.date, category: v.category, amount, supplierId: s.id, method: v.method, ...(v.reference.trim() ? { reference: v.reference.trim() } : {}) } });
       },
     });
   }
@@ -256,7 +259,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
         }
         const r = await recordPayment(s, want === "paid");
         if (r) {
-          toast("Payment recorded.", "success");
+          toast(r.alreadyRecorded ? "Already recorded: no second payment was added." : "Payment recorded.", "success");
           load();
         }
       } else if (el.dataset.role === "scheduled") {

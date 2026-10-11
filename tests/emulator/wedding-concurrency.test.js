@@ -160,6 +160,16 @@ describe("one supplier payment, one Wedding Expense", () => {
 });
 
 describe("budget, expenses, tasks and guests under concurrency", () => {
+  it("Suppliers Paid?: the same payment submitted 5 times at once (one idempotency key) records ONE expense", async () => {
+    const w = await world();
+    const input = { date: "2026-10-10", method: "gcash", category: w.photo, amount: 1000000, supplierId: w.supplierId };
+    const r = await Promise.allSettled(Array.from({ length: 5 }, () => exp.createExpense({ ...w.c, input, idempotencyKey: "same-dialog-key-00001" })));
+    expectExplicit(r);
+    expect(new Set(ok(r).map((x) => x.value.expenseId)).size).toBe(1);
+    const { b } = await consistent(w);
+    expect(b.spent).toBe(1000000);
+  });
+
   it("expenses (direct and to a supplier) racing category budget changes: Spent / supplier paid exact; Total = Σ category budgets", async () => {
     const w = await world();
     const r = await Promise.allSettled([

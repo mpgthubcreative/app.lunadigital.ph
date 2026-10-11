@@ -25,6 +25,7 @@
 // Each write is ONE transaction: the engine's reads, then the sink's reads
 // (prepare), then every write (commit).
 
+import { createHash } from "node:crypto";
 import { applyRollup, expenseContribution, diffRollup } from "./reports.js";
 import { validateExpenseInput, ExpenseError, EXPENSE_SCHEMA_VERSION, expenseCategoryLabel, expenseProfile, EXPENSE_METHODS } from "../../../shared/expenses.js";
 import { businessDate } from "../../../shared/metrics.js";
@@ -178,9 +179,21 @@ export async function prepareExpenseCreate(tx, { tenant, business, workspace, in
   };
 }
 
-export async function createExpense({ db, tenant, FieldValue, business, workspace, input, actor, now = new Date() }) {
+// Phase 18.6: an optional idempotency key (one per dialog) makes a retry
+// return the expense the first attempt recorded instead of adding a second
+// one. The expense id is derived from the key inside this business.
+const IDEMPOTENCY_KEY = /^[A-Za-z0-9_-]{16,64}$/;
+export const expenseIdForKey = (key) => `k${createHash("sha256").update(key).digest("hex").slice(0, 31)}`;
+
+export async function createExpense({ db, tenant, FieldValue, business, workspace, input, actor, now = new Date(), idempotencyKey = null }) {
+  if (idempotencyKey !== null && (typeof idempotencyKey !== "string" || !IDEMPOTENCY_KEY.test(idempotencyKey))) throw new ExpenseError("invalid-input", "Invalid request key");
+  const expenseId = idempotencyKey ? expenseIdForKey(idempotencyKey) : null;
   return db.runTransaction(async (tx) => {
-    const plan = await prepareExpenseCreate(tx, { tenant, business, workspace, input, actor, now });
+    if (expenseId) {
+      const prior = await tx.get(expenseRef(tenant, expenseId));
+      if (prior.exists) return { expenseId, date: prior.data().date, amount: prior.data().amount, alreadyRecorded: true };
+    }
+    const plan = await prepareExpenseCreate(tx, { tenant, business, workspace, input, actor, now, expenseId });
     plan.commit({ FieldValue });
     return { expenseId: plan.ref.id, date: plan.record.date, amount: plan.record.amount };
   }, TX_OPTIONS);

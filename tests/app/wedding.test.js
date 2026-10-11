@@ -133,7 +133,7 @@ describe("Wedding Suppliers", () => {
     submit(lastForm());
     await flush();
     expect(data.expensesApi).toHaveBeenCalledTimes(1);
-    expect(data.expensesApi).toHaveBeenCalledWith({ action: "create", expense: { date: "2026-10-16", category: "catPhotoVid01", amount: 3000000, supplierId: SUP.id, method: "bank_transfer" } });
+    expect(data.expensesApi).toHaveBeenCalledWith({ action: "create", idempotencyKey: expect.stringMatching(/^[A-Za-z0-9_-]{16,64}$/), expense: { date: "2026-10-16", category: "catPhotoVid01", amount: 3000000, supplierId: SUP.id, method: "bank_transfer" } });
     const again = container.querySelector('[data-role="paid"]');
     again.value = "unpaid";
     again.dispatchEvent(new Event("change", { bubbles: true }));

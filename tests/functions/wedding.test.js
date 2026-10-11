@@ -188,6 +188,30 @@ describe("agreed-amount policy: never paid or scheduled beyond the agreement", (
     expect(docAt("spendingMetrics/2026-10-10")).toMatchObject({ spent: 1000000, supplierPaid: 1000000 });
   });
 
+  it("Suppliers Paid? (Phase 18.6): exact partial amount, retries add nothing, Paid covers only the remaining balance, a mistake is corrected in Expenses", async () => {
+    const cats = await setup();
+    const s = await photographer(cats); // agreed ₱80,000
+    const cat = cats["Photo / Video"];
+    const pay = (amount, idempotencyKey) => api("expenses", u.camille, { action: "create", idempotencyKey, expense: { date: "2026-10-10", method: "gcash", category: cat, amount, supplierId: s } });
+    await schedule(s, cat, 3000000, "2026-12-01"); // ₱30,000 scheduled
+    // Partly paid: exactly ₱10,000, then the same request retried.
+    const first = ok(await pay(1000000, "partly-paid-key-0001"), 201);
+    const retry = ok(await pay(1000000, "partly-paid-key-0001"), 201);
+    expect(retry).toMatchObject({ expenseId: first.expenseId, alreadyRecorded: true });
+    expect(docAt(`weddingSuppliers/${s}`).paid).toBe(1000000);
+    expect(paths(`businesses/${W}/expenses/`)).toHaveLength(1);
+    // Paid: the remaining unscheduled balance (80k − 10k − 30k scheduled = 40k), not the contract again.
+    ok(await pay(4000000, "paid-in-full-key-0002"), 201);
+    expect(docAt(`weddingSuppliers/${s}`)).toMatchObject({ paid: 5000000 });
+    expect(supplierBalance(docAt(`weddingSuppliers/${s}`))).toBe(3000000);
+    expect((await pay(8000000, "paid-again-key-00003")).status).toBe(409); // more than agreed
+    expect((await pay(1000000, "bad key")).status).toBe(400);
+    // A mistaken payment is removed under Wedding Expenses: Paid and Balance follow.
+    ok(await api("expenses", u.camille, { action: "remove", expenseId: first.expenseId, reason: "Recorded twice by mistake" }));
+    expect(docAt(`weddingSuppliers/${s}`).paid).toBe(4000000);
+    expect(supplierBalance(docAt(`weddingSuppliers/${s}`))).toBe(4000000);
+  });
+
   it("a supplier without an agreement: contact tracking only, no balance, no cap", async () => {
     const cats = await setup();
     const s = ok(await api("suppliers", u.camille, { action: "create", supplier: { name: "Tita Baby's Kakanin", service: "cake" } }), 201).supplierId;

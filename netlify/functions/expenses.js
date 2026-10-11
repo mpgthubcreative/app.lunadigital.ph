@@ -1,5 +1,6 @@
 // POST /api/expenses   (Expenses module; writes need subscription write access)
-//   { action: "create", expense: { date, category, amount, method, payee?, reference?, notes?, recurring? } }   expenses.create
+//   { action: "create", expense: { date, category, amount, method, payee?, reference?, notes?, recurring? }, idempotencyKey? }   expenses.create
+//     idempotencyKey (Phase 18.6): a retry with the same key returns the first expense (alreadyRecorded)
 //   { action: "update", expenseId, expectedRevision?, changes: { ...any of the above } }                       expenses.update
 //   { action: "remove", expenseId, reason }                                                                     expenses.delete
 // amount is integer centavos (> 0); date is the business-local day. The
@@ -16,7 +17,7 @@ import { actorOf, only } from "./_lib/inventory-http.js";
 import { ExpenseError } from "../../shared/expenses.js";
 
 const ACTIONS = {
-  create: { permission: "expenses.create", fields: ["action", "expense"] },
+  create: { permission: "expenses.create", fields: ["action", "expense", "idempotencyKey"] },
   update: { permission: "expenses.update", fields: ["action", "expenseId", "expectedRevision", "changes"] },
   remove: { permission: "expenses.delete", fields: ["action", "expenseId", "reason"] },
 };
@@ -62,7 +63,7 @@ export function createExpensesHandler({ getAdmin: loadAdmin, now = () => new Dat
     try {
       switch (body.action) {
         case "create":
-          return respond(201, { success: true, ...(await createExpense({ ...common, input: body.expense, now: now() })) });
+          return respond(201, { success: true, ...(await createExpense({ ...common, input: body.expense, idempotencyKey: body.idempotencyKey ?? null, now: now() })) });
         case "update":
           return respond(200, { success: true, ...(await updateExpense({ ...common, expenseId: body.expenseId, changes: body.changes, expectedRevision: body.expectedRevision ?? null, now: now() })) });
         default:
