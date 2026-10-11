@@ -19,7 +19,7 @@
 // Reads: a household has a handful of people, so per-person equality
 // queries (no composite index) are fine.
 
-import { staffPeriod, daysIn, attendanceId, summarizeAttendance, advanceRemaining, nextDeduction } from "../../../shared/payroll.js";
+import { staffPeriod, payrollEligibility, daysIn, attendanceId, summarizeAttendance, advanceRemaining, nextDeduction } from "../../../shared/payroll.js";
 import { businessDate } from "../../../shared/metrics.js";
 
 const int = (v) => (Number.isSafeInteger(v) ? v : 0);
@@ -31,8 +31,11 @@ export async function householdSummary({ db, tenant, business, now = new Date() 
     tenant.collection("attendanceRequests").where("state", "==", "pending").get(),
     tenant.collection("advances").where("status", "==", "requested").get(),
   ]);
+  // Owner-pilot batch: only people on payroll for their current period
+  // (start / end dates), the same rule as the Payroll page.
+  const onPayroll = staffSnap.docs.filter((d) => payrollEligibility(d.data(), staffPeriod(d.data(), today)).eligible);
   const rows = await Promise.all(
-    staffSnap.docs.map(async (d) => {
+    onPayroll.map(async (d) => {
       const s = d.data();
       const period = staffPeriod(s, today);
       const days = daysIn(period).filter((x) => x <= today);

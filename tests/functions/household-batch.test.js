@@ -354,10 +354,10 @@ describe("notifications and the dashboard", () => {
     expect(last).toMatchObject({ title: "Leave request", message: "Yanie submitted 2 days for Oct 20 – Nov 2. 1 Paid Leave, 1 Unpaid Leave." });
   });
 
-  it("pending requests are grouped per helper with their types; helpers with nothing pending aren't listed", async () => {
+  it("pending requests are grouped per helper with their types; helpers with nothing pending aren't listed; the cutoff rows follow employment dates", async () => {
     const y = await staff("Yanie", { advanceLimit: 500000 });
     const r = await staff("Riza");
-    await staff("Lito");
+    await staff("Lito", { startDate: "2026-11-01" }); // not employed yet: not on this cutoff
     const yu = await withLogin(y);
     const ru = await withLogin(r);
     await me(yu, { action: "attendanceDays", days: [{ date: OCT(9), status: "present" }] });
@@ -368,6 +368,7 @@ describe("notifications and the dashboard", () => {
       { staffId: y, name: "Yanie", attendance: 1, leave: 0, advances: 1, total: 2 },
       { staffId: r, name: "Riza", attendance: 0, leave: 1, advances: 0, total: 1 },
     ]);
+    expect(s.staff.map((x) => x.name)).toEqual(["Riza", "Yanie"]);
   });
 });
 

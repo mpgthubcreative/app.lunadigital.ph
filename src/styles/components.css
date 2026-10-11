@@ -1969,6 +1969,7 @@ a.item:hover {
 .request-main small { display: block; color: var(--text-muted); }
 .request-actions { display: flex; gap: var(--space-2); }
 .card[data-section="requests"] { padding: var(--space-4); display: flex; flex-direction: column; gap: var(--space-2); }
+.card[data-section="waiting"] { padding: var(--space-4); }
 
 tr.is-saving {
   opacity: 0.6;
