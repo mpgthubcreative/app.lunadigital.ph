@@ -161,7 +161,7 @@ describe("plans and templates are independent dimensions", () => {
 
 describe("effective modules = core + (template allows ∩ (override ?? plan))", () => {
   it("Distributor: core + the built modules the plan includes; every unbuilt module false", () => {
-    for (const planId of Object.keys(PLAN_SEED)) {
+    for (const planId of Object.keys(PLAN_SEED).filter((id) => PLAN_SEED[id].workspaceTemplateId === "distributor")) {
       const e = ent("distributor", planId);
       for (const id of MODULE_IDS) expect(e.modules[id], `${planId}/${id}`).toBe(CORE_MODULE_IDS.includes(id) || (BUILT.includes(id) && WORKSPACE_TEMPLATES.distributor.modules.includes(id) && PLAN_SEED[planId].modules[id] === true));
       expect(Object.keys(e.modules).filter((k) => e.modules[k])).toEqual(["dashboard", "orders", "payments", "inventory", "customers", "reports", "expenses", "imports", "users", "settings"]);

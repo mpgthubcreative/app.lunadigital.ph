@@ -22,7 +22,7 @@ beforeAll(async () => {
   await env.withSecurityRulesDisabled(async (ctx) => {
     const db = ctx.firestore();
     for (const bid of [K, K2]) {
-      await db.doc(`businesses/${bid}`).set(businessDoc(`Baby ${bid}`, "active", { planId: "growth", workspaceTemplateId: "baby-expense" }));
+      await db.doc(`businesses/${bid}`).set(businessDoc(`Baby ${bid}`, "active", { planId: "baby-plus", workspaceTemplateId: "baby-expense" }));
       for (const c of Object.keys(COLLECTIONS)) await db.doc(`businesses/${bid}/${c}/d1`).set({ ...doc, status: c === "scheduledPayments" ? "upcoming" : "active" });
       await seedMember(db, bid, `owner@${bid}`, { role: "owner", isAccountOwner: true });
     }
@@ -31,11 +31,11 @@ beforeAll(async () => {
     await seedMember(db, K, "noBudget@baby-a", { role: "manager", overrides: { revoke: ["budget.view"] } });
     // Baby collections in a Distributor and a Household business: not reachable.
     for (const c of BABY_ONLY) await db.doc(`businesses/${A}/${c}/d1`).set({ x: 1 });
-    await db.doc("businesses/home-x").set(businessDoc("Home", "active", { planId: "growth", workspaceTemplateId: "household-payroll" }));
+    await db.doc("businesses/home-x").set(businessDoc("Home", "active", { planId: "household-plus", workspaceTemplateId: "household-payroll" }));
     await seedMember(db, "home-x", "owner@home-x", { role: "owner", isAccountOwner: true });
     for (const c of Object.keys(COLLECTIONS)) await db.doc(`businesses/home-x/${c}/d1`).set({ x: 1 });
     // Strict step: a Baby business still on its v1 snapshot (no Baby keys, Expenses off) is stale.
-    const v1 = businessDoc("Baby v1", "active", { planId: "growth", workspaceTemplateId: "baby-expense" });
+    const v1 = businessDoc("Baby v1", "active", { planId: "baby-plus", workspaceTemplateId: "baby-expense" });
     for (const k of ["budget", "schedule", "providers"]) delete v1.entitlements.modules[k];
     v1.entitlements.modules.expenses = false;
     v1.entitlements.workspaceTemplateVersion = 1;
@@ -56,7 +56,7 @@ beforeAll(async () => {
       "baby-bad": (e) => { e.modules.budget = "yes"; },
     };
     for (const [bid, mutate] of Object.entries(STALE)) {
-      const b = businessDoc(bid, "active", { planId: "growth", workspaceTemplateId: "baby-expense" });
+      const b = businessDoc(bid, "active", { planId: "baby-plus", workspaceTemplateId: "baby-expense" });
       mutate(b.entitlements);
       await db.doc(`businesses/${bid}`).set(b);
       await seedMember(db, bid, `owner@${bid}`, { role: "owner", isAccountOwner: true });

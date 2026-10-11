@@ -272,7 +272,7 @@ describe("range validation and isolation", () => {
   });
 
   it("a bridal workspace doesn't get Reports, even with reports.view or a forged snapshot", async () => {
-    await createBusiness({ ...world, name: "Wedding", planId: "pro", workspaceTemplateId: "bridal-expense", businessId: "biz-w" });
+    await createBusiness({ ...world, name: "Wedding", planId: "bridal-plus", workspaceTemplateId: "bridal-expense", businessId: "biz-w" });
     const u = await ensureAuthUser({ auth: world.auth, email: "bride2@t.test", name: "Bride" });
     await addMember({ ...world, businessId: "biz-w", uid: u.uid, email: u.email, name: "Bride", roleTemplate: "owner", isAccountOwner: true });
     expect((await report(u.uid, "2026-10-08", "2026-10-08", "biz-w")).status).toBe(403);

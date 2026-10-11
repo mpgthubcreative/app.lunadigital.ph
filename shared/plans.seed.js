@@ -11,14 +11,37 @@
 // use formatMoney() for display. `*IsMinimum` marks "starts at" pricing
 // (e.g. Pro "₱19,990+").
 
-const GB = 1024 ** 3;
-
 export const CURRENCY = "PHP";
 
+const GB = 1024 ** 3;
+const MB = 1024 ** 2;
+
+// Every sellable module, off; a personal plan turns on its own.
+const ALL_SELLABLE_OFF = Object.freeze({ orders: false, payments: false, inventory: false, customers: false, reports: false, imports: false, expenses: false, suppliers: false, production: false, returns: false, household: false, attendance: false, payroll: false, advances: false, budget: false, schedule: false, providers: false, vendors: false, vendorpayments: false, tasks: false, guests: false });
+const HOUSEHOLD_MODULES = ["household", "attendance", "payroll", "advances"];
+const BABY_MODULES = ["expenses", "budget", "schedule", "providers"];
+const BRIDAL_MODULES = ["expenses", "budget", "vendors", "vendorpayments", "tasks", "guests"];
+function personalPlan({ id, name, workspace, monthly, sortOrder, users, storage, modules, plus = false }) {
+  return {
+    id,
+    name,
+    workspaceTemplateId: workspace,
+    recommended: plus,
+    sortOrder,
+    pricing: { currency: CURRENCY, setupFee: 0, setupFeeIsMinimum: false, monthly, monthlyIsMinimum: false },
+    limits: { users, ordersPerMonth: 0, storageBytes: storage, importsPerMonth: 0 },
+    modules: { ...ALL_SELLABLE_OFF, ...Object.fromEntries(modules.map((m) => [m, true])) },
+    features: { reportsLevel: plus ? "advanced" : "basic", inAppNotifications: true, pushNotifications: plus, googleSheets: false, advancedPermissions: false, workflowCustomization: false, support: plus ? "priority" : "standard" },
+  };
+}
+
+
 export const PLAN_SEED = Object.freeze({
+  // ---- Distributor (Phase 18.6: each plan belongs to ONE workspace) ----
   starter: {
     id: "starter",
     name: "Starter",
+    workspaceTemplateId: "distributor",
     recommended: false,
     sortOrder: 1,
     pricing: {
@@ -74,6 +97,7 @@ export const PLAN_SEED = Object.freeze({
   growth: {
     id: "growth",
     name: "Growth",
+    workspaceTemplateId: "distributor",
     recommended: true,
     sortOrder: 2,
     pricing: {
@@ -129,6 +153,7 @@ export const PLAN_SEED = Object.freeze({
   pro: {
     id: "pro",
     name: "Pro",
+    workspaceTemplateId: "distributor",
     recommended: false,
     sortOrder: 3,
     pricing: {
@@ -180,7 +205,21 @@ export const PLAN_SEED = Object.freeze({
       support: "priority",
     },
   },
+
+  // ---- Household / Kasambahay, Baby, Bridal / Wedding (Phase 18.6) ----
+  // PRICING HYPOTHESES, not final prices. Each plan enables only its own
+  // workspace's modules; limits use the shared vocabulary (orders and imports
+  // are 0: those modules don't exist in personal workspaces).
+  "household-basic": personalPlan({ id: "household-basic", name: "Household Basic", workspace: "household-payroll", monthly: 14900, sortOrder: 11, users: 3, storage: 500 * MB, modules: HOUSEHOLD_MODULES }),
+  "household-plus": personalPlan({ id: "household-plus", name: "Household Plus", workspace: "household-payroll", monthly: 29900, sortOrder: 12, users: 6, storage: 2 * GB, modules: HOUSEHOLD_MODULES, plus: true }),
+  "baby-basic": personalPlan({ id: "baby-basic", name: "Baby Basic", workspace: "baby-expense", monthly: 14900, sortOrder: 21, users: 2, storage: 500 * MB, modules: BABY_MODULES }),
+  "baby-plus": personalPlan({ id: "baby-plus", name: "Baby Plus", workspace: "baby-expense", monthly: 24900, sortOrder: 22, users: 5, storage: 2 * GB, modules: BABY_MODULES, plus: true }),
+  "bridal-basic": personalPlan({ id: "bridal-basic", name: "Bridal Basic", workspace: "bridal-expense", monthly: 19900, sortOrder: 31, users: 3, storage: 1 * GB, modules: BRIDAL_MODULES }),
+  "bridal-plus": personalPlan({ id: "bridal-plus", name: "Bridal Plus", workspace: "bridal-expense", monthly: 39900, sortOrder: 32, users: 6, storage: 5 * GB, modules: BRIDAL_MODULES, plus: true }),
 });
+
+// The workspace a plan belongs to (older stored plans had none: Distributor).
+export const planWorkspace = (plan) => (plan && typeof plan.workspaceTemplateId === "string" ? plan.workspaceTemplateId : "distributor");
 
 // Vocabulary every plan and override is validated against
 // (shared/entitlements.js). Adding a limit or feature means adding it here

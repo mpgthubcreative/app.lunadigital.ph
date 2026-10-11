@@ -37,7 +37,7 @@ const ok = (r) => r.filter((x) => x.status === "fulfilled");
 async function world() {
   run += 1;
   const id = `baby-${Date.now().toString(36)}-${run}`;
-  await prov.createBusiness({ db, admin, name: `Baby ${run}`, planId: "growth", workspaceTemplateId: W, businessId: id });
+  await prov.createBusiness({ db, admin, name: `Baby ${run}`, planId: "baby-plus", workspaceTemplateId: W, businessId: id });
   const tenant = tenantDb(db, id);
   const business = { id, timezone: "Asia/Manila" };
   const actor = (n = "Owner") => ({ uid: `${n}-${id}`, name: n, email: "" });

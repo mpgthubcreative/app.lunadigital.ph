@@ -24,7 +24,7 @@ beforeAll(async () => {
   await env.withSecurityRulesDisabled(async (ctx) => {
     const db = ctx.firestore();
     for (const bid of [W, W2]) {
-      await db.doc(`businesses/${bid}`).set(businessDoc(`Wedding ${bid}`, "active", { planId: "growth", workspaceTemplateId: "bridal-expense" }));
+      await db.doc(`businesses/${bid}`).set(businessDoc(`Wedding ${bid}`, "active", { planId: "bridal-plus", workspaceTemplateId: "bridal-expense" }));
       for (const c of Object.keys(COLLECTIONS)) await db.doc(`businesses/${bid}/${c}/d1`).set({ ...doc, status: c === "supplierPayments" ? "upcoming" : "active" });
       await seedMember(db, bid, `owner@${bid}`, { role: "owner", isAccountOwner: true });
     }
@@ -33,11 +33,11 @@ beforeAll(async () => {
     await seedMember(db, W, "noGuests@wed-a", { role: "manager", overrides: { revoke: ["guests.view"] } });
     // Wedding collections in Distributor A and a Baby business: not reachable.
     for (const c of WEDDING_ONLY) await db.doc(`businesses/${A}/${c}/d1`).set({ x: 1 });
-    await db.doc("businesses/baby-x").set(businessDoc("Baby", "active", { planId: "growth", workspaceTemplateId: "baby-expense" }));
+    await db.doc("businesses/baby-x").set(businessDoc("Baby", "active", { planId: "baby-plus", workspaceTemplateId: "baby-expense" }));
     await seedMember(db, "baby-x", "owner@baby-x", { role: "owner", isAccountOwner: true });
     for (const c of WEDDING_ONLY) await db.doc(`businesses/baby-x/${c}/d1`).set({ x: 1 });
     // Strict step: a Bridal business still on its v1 snapshot (no Wedding keys, Expenses / Budget off) is stale.
-    const v1 = businessDoc("Wedding v1", "active", { planId: "growth", workspaceTemplateId: "bridal-expense" });
+    const v1 = businessDoc("Wedding v1", "active", { planId: "bridal-plus", workspaceTemplateId: "bridal-expense" });
     for (const k of KEYS) delete v1.entitlements.modules[k];
     v1.entitlements.modules.expenses = false;
     v1.entitlements.modules.budget = false;
@@ -60,7 +60,7 @@ beforeAll(async () => {
       "wed-bad": (e) => { e.modules.guests = "yes"; },
     };
     for (const [bid, mutate] of Object.entries(STALE)) {
-      const b = businessDoc(bid, "active", { planId: "growth", workspaceTemplateId: "bridal-expense" });
+      const b = businessDoc(bid, "active", { planId: "bridal-plus", workspaceTemplateId: "bridal-expense" });
       mutate(b.entitlements);
       await db.doc(`businesses/${bid}`).set(b);
       await seedMember(db, bid, `owner@${bid}`, { role: "owner", isAccountOwner: true });

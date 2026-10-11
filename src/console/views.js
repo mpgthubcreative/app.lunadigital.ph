@@ -7,7 +7,7 @@
 import { html, render } from "../lib/html.js";
 import { pageHeader, card, emptyState, badge, statCard } from "../components/ui.js";
 import { formDialog } from "../components/form-dialog.js";
-import { formatMoney, SUBSCRIPTION_LABELS, SUBSCRIPTION_ACTIONS, OVERRIDE_CHOICES, ROLE_TEMPLATES, METERS, MONTHLY_METER_IDS, overrideImpact } from "@shared/index.js";
+import { formatMoney, planWorkspace, WORKSPACE_TEMPLATES, SUBSCRIPTION_LABELS, SUBSCRIPTION_ACTIONS, OVERRIDE_CHOICES, ROLE_TEMPLATES, METERS, MONTHLY_METER_IDS, overrideImpact } from "@shared/index.js";
 import { formatBytes, formatNumber } from "../lib/format.js";
 
 const TONE = { active: "success", past_due: "warning", suspended: "danger", cancelled: "neutral" };
@@ -125,15 +125,22 @@ export function businessesView(el, ctx) {
 
 // Create business: one call, one retry-safe workflow on the server. A
 // double click or retry converges on the same business.
+// Phase 18.6: plans belong to a workspace; the Plan list follows the
+// chosen Workspace (the server refuses a mismatch anyway).
+const plansFor = (ctx, workspaceId) => ctx.plans.filter((p) => planWorkspace(p) === workspaceId);
+const planLabel = (p) => `${p.name} · ${formatMoney(p.pricing.monthly, { minimum: p.pricing.monthlyIsMinimum })}/mo`;
+
 export function createBusinessDialog(ctx) {
-  return formDialog({
+  const first = ctx.workspaces[0]?.id;
+  const firstPlans = plansFor(ctx, first);
+  const done = formDialog({
     title: "Create business",
     intro: "Creates the business, its owner's account (if new) and owner membership, at the workspace's current version.",
     fields: [
       { name: "name", label: "Business name", required: true },
       { name: "businessId", label: "Business ID (lowercase, digits, dashes)", required: true, hint: "Permanent. e.g. abc-test-trading" },
       { name: "workspaceTemplateId", label: "Workspace", type: "select", options: ctx.workspaces.map((w) => ({ value: w.id, label: w.name })), value: ctx.workspaces[0]?.id },
-      { name: "planId", label: "Plan", type: "select", options: ctx.plans.map((p) => ({ value: p.id, label: p.name })), value: ctx.plans.find((p) => p.recommended)?.id ?? ctx.plans[0]?.id },
+      { name: "planId", label: "Plan", type: "select", options: firstPlans.map((p) => ({ value: p.id, label: planLabel(p) })), value: firstPlans.find((p) => p.recommended)?.id ?? firstPlans[0]?.id },
       { name: "ownerEmail", label: "Owner email", required: true },
       { name: "ownerName", label: "Owner name", required: true },
       { name: "timezone", label: "Timezone", value: "Asia/Manila" },
@@ -145,6 +152,17 @@ export function createBusinessDialog(ctx) {
       return r;
     },
   });
+  const form = [...document.querySelectorAll(".modal-backdrop form")].at(-1);
+  const ws = form?.elements.workspaceTemplateId;
+  const planSel = form?.elements.planId;
+  if (ws && planSel) {
+    ws.addEventListener("change", () => {
+      const list = plansFor(ctx, ws.value);
+      render(planSel, html`${list.map((p) => html`<option value="${p.id}" ${p.recommended ? "selected" : ""}>${planLabel(p)}</option>`)}`);
+      if (!list.some((p) => p.recommended) && list[0]) planSel.value = list[0].id;
+    });
+  }
+  return done;
 }
 
 // ---------- One business ----------
@@ -282,7 +300,7 @@ export async function businessDetailView(el, ctx, businessId) {
     if (!t || t.tagName === "SELECT") return;
     const act = t.dataset.act;
     if (act === "plan") {
-      run(() => withReason("Change plan", "Entitlements are recomputed; the workspace ceiling and valid overrides are kept. A downgrade never deletes data: modules become unavailable.", [{ name: "planId", label: "Plan", type: "select", options: ctx.plans.map((p) => ({ value: p.id, label: p.name })), value: b.planId }], "Change plan", (v) => ctx.call("changePlan", { businessId, planId: v.planId, reason: v.reason, expectedRevision: b.adminRevision })), "Plan changed.");
+      run(() => withReason("Change plan", "Entitlements are recomputed; the workspace ceiling and valid overrides are kept. A downgrade never deletes data: modules become unavailable.", [{ name: "planId", label: "Plan", type: "select", options: plansFor(ctx, b.workspaceTemplateId).map((p) => ({ value: p.id, label: planLabel(p) })), value: b.planId }], "Change plan", (v) => ctx.call("changePlan", { businessId, planId: v.planId, reason: v.reason, expectedRevision: b.adminRevision })), "Plan changed.");
     } else if (act === "status") {
       run(() => withReason(`Subscription · now ${SUBSCRIPTION_LABELS[b.status] ?? b.status}`, "Suspended businesses become read-only; cancelled keeps all data (owner export only). Nothing is deleted.", [{ name: "status", label: "New status", type: "select", options: Object.entries(SUBSCRIPTION_ACTIONS).map(([k, l]) => ({ value: k, label: l })), value: b.status === "active" ? "suspended" : "active" }], "Confirm", (v) => ctx.call("setStatus", { businessId, status: v.status, reason: v.reason, expectedRevision: b.adminRevision })), "Subscription updated.");
     } else if (act === "general") {
@@ -402,24 +420,40 @@ export function usageView(el, ctx) {
 
 export async function plansView(el, ctx) {
   render(el, html`${pageHeader({ title: "Plans" })}${loading()}`);
+  let counts = {};
+  try {
+    counts = (await ctx.call("plans")).subscribers || {};
+  } catch {
+    counts = {};
+  }
   const moduleLabel = (id) => ctx.moduleLabel(id);
+  // Phase 18.6: what Luna sells, grouped by workspace (each plan belongs to one).
+  const groups = ctx.workspaces.map((w) => ({ w, plans: plansFor(ctx, w.id) })).filter((g) => g.plans.length);
+  const distributorLike = (wId) => wId === "distributor";
   render(
     el,
-    html`${pageHeader({ title: "Plans", subtitle: "Stored plans (the authority). Read-only: plans change through the seeded definitions and their validation." })}
-      ${card({
-        body: html`<div class="table-wrap"><table class="table" data-role="plans">
-          <thead><tr><th>Plan</th><th class="num">Setup</th><th class="num">Monthly</th><th class="num">Users</th><th class="num">Orders / mo</th><th class="num">Storage</th><th class="num">Imports / mo</th><th>Modules (default on)</th></tr></thead>
-          <tbody>${ctx.plans.map(
-            (p) => html`<tr>
-              <td>${p.name} ${p.recommended ? badge("Recommended", "primary") : ""}</td>
-              <td class="num">${formatMoney(p.pricing.setupFee, { minimum: p.pricing.setupFeeIsMinimum })}</td>
-              <td class="num">${formatMoney(p.pricing.monthly, { minimum: p.pricing.monthlyIsMinimum })}</td>
-              <td class="num">${formatNumber(p.limits.users)}</td><td class="num">${formatNumber(p.limits.ordersPerMonth)}</td>
-              <td class="num">${formatBytes(p.limits.storageBytes)}</td><td class="num">${formatNumber(p.limits.importsPerMonth)}</td>
-              <td>${Object.entries(p.modules).filter(([, on]) => on).map(([id]) => moduleLabel(id)).join(", ")}</td>
-            </tr>`
-          )}</tbody></table></div>`,
-      })}`
+    html`${pageHeader({ title: "Plans", subtitle: "What Luna sells, per workspace. Prices for Household, Baby and Bridal are hypotheses. Subscribers = active + past due." })}
+      ${groups.map(
+        (g) => html`<section class="section" data-workspace="${g.w.id}">
+          <h2 class="section-title">${g.w.name}</h2>
+          ${card({
+            body: html`<div class="table-wrap"><table class="table table-compact" data-role="plans">
+              <thead><tr><th>Plan</th><th class="num">Monthly</th><th class="num col-secondary">Setup</th><th class="num">Users</th><th class="num">Storage</th>${distributorLike(g.w.id) ? html`<th class="num">Orders / mo</th><th class="num">Imports / mo</th>` : ""}<th class="col-secondary">Included</th><th class="num">Subscribers</th></tr></thead>
+              <tbody>${g.plans.map(
+                (p) => html`<tr data-plan="${p.id}">
+                  <td><span class="cell-strong">${p.name}</span> ${p.recommended ? badge("Recommended", "primary") : ""}</td>
+                  <td class="num">${formatMoney(p.pricing.monthly, { minimum: p.pricing.monthlyIsMinimum })}</td>
+                  <td class="num col-secondary">${p.pricing.setupFee ? formatMoney(p.pricing.setupFee, { minimum: p.pricing.setupFeeIsMinimum }) : "—"}</td>
+                  <td class="num">${formatNumber(p.limits.users)}</td>
+                  <td class="num">${formatBytes(p.limits.storageBytes)}</td>
+                  ${distributorLike(g.w.id) ? html`<td class="num">${formatNumber(p.limits.ordersPerMonth)}</td><td class="num">${formatNumber(p.limits.importsPerMonth)}</td>` : ""}
+                  <td class="col-secondary">${Object.entries(p.modules).filter(([id, on]) => on && WORKSPACE_TEMPLATES[g.w.id]?.modules.includes(id)).map(([id]) => moduleLabel(id)).join(", ")}</td>
+                  <td class="num" data-col="subscribers">${formatNumber(counts[p.id] ?? 0)}</td>
+                </tr>`
+              )}</tbody></table></div>`,
+          })}
+        </section>`
+      )}`
   );
 }
 

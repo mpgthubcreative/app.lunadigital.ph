@@ -21,7 +21,7 @@ const PNG = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a
 beforeEach(async () => {
   world = await buildWorld();
   clock = new Date("2026-12-20T04:00:00Z"); // Dec 20, 12:00 Manila
-  await createBusiness({ ...world, name: "Santos Household", planId: "growth", workspaceTemplateId: "household-payroll", businessId: H });
+  await createBusiness({ ...world, name: "Santos Household", planId: "household-plus", workspaceTemplateId: "household-payroll", businessId: H });
   u = {};
   for (const [key, role] of [["mom", "owner"], ["dad", "manager"]]) {
     const x = await ensureAuthUser({ auth: world.auth, email: `${key}@home.test`, name: key });

@@ -23,7 +23,7 @@ const audits = (bid) => [...world.db.docs.entries()].filter(([p]) => p.startsWit
 
 beforeEach(async () => {
   world = await buildWorld();
-  await createBusiness({ ...world, name: "Reyes Wedding", planId: "pro", workspaceTemplateId: "bridal-expense", businessId: "biz-w" });
+  await createBusiness({ ...world, name: "Reyes Wedding", planId: "bridal-plus", workspaceTemplateId: "bridal-expense", businessId: "biz-w" });
   for (const role of ["owner", "manager", "staff"]) {
     const u = await ensureAuthUser({ auth: world.auth, email: `${role}w@t.test`, name: `${role} W` });
     uid[role] = u.uid;
@@ -41,11 +41,11 @@ const session = async (who, businessId) => {
 };
 
 describe("a bridal workspace can't reach Distributor APIs", () => {
-  it("session: workspace identity, no Distributor modules on, Pro plan still Pro", async () => {
+  it("session: workspace identity, no Distributor modules on, its own Bridal plan", async () => {
     const s = await session(uid.owner, "biz-w");
     expect(s.status).toBe(200);
     expect(s.body.workspace).toEqual({ templateId: "bridal-expense", templateVersion: 2, name: "Bridal / Wedding Management Tracker" });
-    expect(s.body.plan).toEqual({ id: "pro", name: "Pro" });
+    expect(s.body.plan).toEqual({ id: "bridal-plus", name: "Bridal Plus" });
     for (const m of ["orders", "payments", "inventory", "customers", "reports", "imports"]) expect(s.body.entitlements.modules[m], m).toBe(false);
     expect(s.body.entitlements.workspaceTemplateId).toBe("bridal-expense");
   });
@@ -158,11 +158,16 @@ describe("operator tooling: assign / change template", () => {
     expect(biz("biz-a").workspaceTemplateId).toBe("distributor");
   });
 
-  it("disable overrides still work inside a workspace; plan changes keep the template", async () => {
+  it("disable overrides still work inside a workspace; plan changes keep the template; a plan from another workspace is refused", async () => {
     await updateOverrides({ ...world, businessId: "biz-a", set: { modules: { inventory: false } }, ...op });
     expect(biz("biz-a").entitlements.modules.inventory).toBe(false);
-    await assignPlan({ ...world, businessId: "biz-w", planId: "starter", ...op });
-    expect(biz("biz-w")).toMatchObject({ workspaceTemplateId: "bridal-expense", subscription: { planId: "starter" }, entitlements: { planId: "starter", workspaceTemplateId: "bridal-expense", modules: { orders: false } } });
+    await assignPlan({ ...world, businessId: "biz-w", planId: "bridal-basic", ...op });
+    expect(biz("biz-w")).toMatchObject({ workspaceTemplateId: "bridal-expense", subscription: { planId: "bridal-basic", monthlyAmount: 19900 }, entitlements: { planId: "bridal-basic", workspaceTemplateId: "bridal-expense", modules: { orders: false, guests: true } } });
+    // Phase 18.6: a Distributor plan never reaches a Bridal business (or the reverse).
+    await expect(assignPlan({ ...world, businessId: "biz-w", planId: "starter", ...op })).rejects.toMatchObject({ code: "plan-wrong-workspace" });
+    await expect(assignPlan({ ...world, businessId: "biz-a", planId: "baby-plus", ...op })).rejects.toMatchObject({ code: "plan-wrong-workspace" });
+    await expect(createBusiness({ ...world, name: "Wrong", planId: "growth", workspaceTemplateId: "baby-expense" })).rejects.toMatchObject({ code: "plan-wrong-workspace" });
+    expect(biz("biz-w").subscription.planId).toBe("bridal-basic");
   });
 
   it("re-assigning the same template is a no-op recompute, not a change", async () => {

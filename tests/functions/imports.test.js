@@ -228,7 +228,7 @@ describe("POST /api/imports", () => {
   });
 
   it("a bridal workspace has no Imports, even with a forged snapshot", async () => {
-    await createBusiness({ ...world, name: "Wedding", planId: "pro", workspaceTemplateId: "bridal-expense", businessId: "biz-w" });
+    await createBusiness({ ...world, name: "Wedding", planId: "bridal-plus", workspaceTemplateId: "bridal-expense", businessId: "biz-w" });
     const u = await ensureAuthUser({ auth: world.auth, email: "bride3@t.test", name: "Bride" });
     await addMember({ ...world, businessId: "biz-w", uid: u.uid, email: u.email, name: "Bride", roleTemplate: "owner", isAccountOwner: true });
     expect((await call(u.uid, pv(), "biz-w")).status).toBe(403);

@@ -36,7 +36,7 @@ function expectExplicit(results, codes = []) {
 async function world() {
   run += 1;
   const id = `payr-${Date.now().toString(36)}-${run}`;
-  await prov.createBusiness({ db, admin, name: `Home ${run}`, planId: "growth", workspaceTemplateId: "household-payroll", businessId: id });
+  await prov.createBusiness({ db, admin, name: `Home ${run}`, planId: "household-plus", workspaceTemplateId: "household-payroll", businessId: id });
   await prov.addMember({ db, admin, businessId: id, uid: `owner-${id}`, email: `o${run}@pay.test`, name: "Owner", roleTemplate: "owner", isAccountOwner: true });
   const tenant = tenantDb(db, id);
   const business = { id, timezone: "Asia/Manila" };

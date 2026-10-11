@@ -6,6 +6,7 @@ import { resolveDashboard, dashboardDocuments, combineDashboardDocs, DASHBOARD_W
 import { computeEntitlements, validatePlan, validateEntitlementsSnapshot } from "../../shared/entitlements.js";
 import { resolvePermissions, moduleForPermission, PERMISSIONS, ROLE_TEMPLATES } from "../../shared/permissions.js";
 import { PLAN_SEED } from "../../shared/plans.seed.js";
+import { WORKSPACE_TEMPLATES } from "../../shared/workspaces.js";
 import { getModule, MODULE_IDS, SELLABLE_MODULE_IDS, resolveNavigation, canUseModule, isModuleEnabled } from "../../shared/modules.js";
 import { DEFAULT_EXPENSE_CATEGORIES } from "../../shared/expenses.js";
 
@@ -126,9 +127,10 @@ describe("Expenses module registration", () => {
     expect(ROLE_TEMPLATES.staff.permissions).not.toContain("dashboard.financials");
   });
 
-  it("every seeded plan includes Expenses (same strategy as the other operational modules)", () => {
+  it("every seeded plan whose workspace has Expenses includes it (Phase 18.6: plans are per workspace)", () => {
     for (const plan of Object.values(PLAN_SEED)) {
-      expect(plan.modules.expenses).toBe(true);
+      if (WORKSPACE_TEMPLATES[plan.workspaceTemplateId].modules.includes("expenses")) expect(plan.modules.expenses, plan.id).toBe(true);
+      else expect(plan.modules.expenses, plan.id).toBe(false);
       expect(() => validatePlan(plan)).not.toThrow();
     }
   });

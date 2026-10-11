@@ -43,7 +43,7 @@ const ok = (r) => r.filter((x) => x.status === "fulfilled");
 async function world() {
   run += 1;
   const id = `wed-${Date.now().toString(36)}-${run}`;
-  await prov.createBusiness({ db, admin, name: `Wedding ${run}`, planId: "growth", workspaceTemplateId: WS, businessId: id });
+  await prov.createBusiness({ db, admin, name: `Wedding ${run}`, planId: "bridal-plus", workspaceTemplateId: WS, businessId: id });
   const tenant = tenantDb(db, id);
   const business = { id, timezone: "Asia/Manila" };
   const actor = (n = "Owner") => ({ uid: `${n}-${id}`, name: n, email: "" });

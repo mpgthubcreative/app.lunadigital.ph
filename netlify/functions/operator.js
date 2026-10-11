@@ -13,7 +13,7 @@
 
 import { respond, withErrorHandling, requireMethod, parseJsonBody, RequestError } from "./_lib/http.js";
 import { getAdmin } from "./_lib/firebase-admin.js";
-import { requireOperator, overview, listBusinesses, businessDetail, listAudit, listPlans, creatableWorkspaces, usageOverview } from "./_lib/operator.js";
+import { requireOperator, overview, listBusinesses, businessDetail, listAudit, listPlans, planSubscribers, creatableWorkspaces, usageOverview } from "./_lib/operator.js";
 import { provisionBusiness, assignPlan, updateOverrides, setLimitOverride, setSubscriptionStatus, addMember, setMemberStatus, updateBusinessGeneral, setTenantTerminology, ensureAuthUser, passwordSetupLink, ProvisioningError } from "./_lib/provisioning.js";
 import { tenantDb } from "./_lib/tenant-db.js";
 import { OperatorError, validateCreateBusinessInput, validateSubscriptionStatus, validateReason, overrideChange } from "../../shared/operators.js";
@@ -25,6 +25,7 @@ const STATUS = {
   "reason-required": 400,
   "not-overridable": 400,
   "unknown-plan": 400,
+  "plan-wrong-workspace": 400,
   "unknown-template": 400,
   "not-found": 404,
   "business-exists": 409,
@@ -60,7 +61,13 @@ async function memberDoc(db, businessId, uid) {
 const ACTIONS = {
   session: { fields: [], run: async ({ op }) => ({ operator: { email: op.email, name: op.name, role: op.role }, workspaces: creatableWorkspaces() }) },
   overview: { fields: [], run: async ({ db }) => ({ overview: await overview({ db, planIds: (await listPlans({ db })).map((p) => p.id) }) }) },
-  plans: { fields: [], run: async ({ db }) => ({ plans: await listPlans({ db }) }) },
+  plans: {
+    fields: [],
+    run: async ({ db }) => {
+      const plans = await listPlans({ db });
+      return { plans, subscribers: await planSubscribers({ db, planIds: plans.map((p) => p.id) }) };
+    },
+  },
   listBusinesses: { fields: ["filters", "after"], run: async ({ db, admin }, b) => listBusinesses({ db, FieldPath: admin.firestore.FieldPath, filters: b.filters && typeof b.filters === "object" && !Array.isArray(b.filters) ? b.filters : {}, after: b.after ?? null }) },
   business: { fields: ["businessId"], run: async ({ db }, b) => businessDetail({ db, businessId: b.businessId }) },
   audit: { fields: ["after"], run: async ({ db }, b) => listAudit({ db, after: b.after ?? null }) },

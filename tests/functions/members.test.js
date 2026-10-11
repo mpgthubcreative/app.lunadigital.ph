@@ -108,7 +108,7 @@ describe("roles and access", () => {
 
 describe("workspaces", () => {
   it("a Baby tracker offers Manager only (the Distributor Staff role means nothing there)", async () => {
-    await createBusiness({ ...world, name: "Baby", planId: "growth", workspaceTemplateId: "baby-expense", businessId: "biz-baby" });
+    await createBusiness({ ...world, name: "Baby", planId: "baby-plus", workspaceTemplateId: "baby-expense", businessId: "biz-baby" });
     const o = await ensureAuthUser({ auth: world.auth, email: "mom@t.test", name: "Mom" });
     await addMember({ ...world, businessId: "biz-baby", uid: o.uid, email: o.email, name: "Mom", roleTemplate: "owner", isAccountOwner: true });
     expect((await members(o.uid, null, "biz-baby")).body.roles).toEqual(["manager"]);

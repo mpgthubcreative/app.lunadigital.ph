@@ -346,7 +346,7 @@ describe("isolation, workspaces, permissions", () => {
 
   it("a Bridal / Payroll / Baby workspace is never eligible for Distributor rules", async () => {
     for (const tpl of ["bridal-expense", "household-payroll", "baby-expense"]) {
-      await createBusiness({ ...world, name: tpl, planId: "pro", workspaceTemplateId: tpl, businessId: `biz-${tpl}` });
+      await createBusiness({ ...world, name: tpl, planId: { "bridal-expense": "bridal-plus", "household-payroll": "household-plus", "baby-expense": "baby-plus" }[tpl], workspaceTemplateId: tpl, businessId: `biz-${tpl}` });
       const entitlements = docAt(`businesses/biz-${tpl}`).entitlements;
       const member = { status: "active", permissions: resolvePermissions("owner") };
       for (const type of ["payment.awaiting_verification", "inventory.low_stock", "order.ready"]) expect(isEligibleRecipient(type, { entitlements, member }), `${tpl}/${type}`).toBe(false);

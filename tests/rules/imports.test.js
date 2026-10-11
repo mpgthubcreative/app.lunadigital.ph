@@ -17,7 +17,7 @@ beforeAll(async () => {
       await db.doc(`businesses/${bid}/imports/${JOB}`).set({ type: "products", status: "completed", createdAt: new Date() });
       await db.doc(`businesses/${bid}/imports/${JOB}/rows/000`).set({ index: 0, rows: [{ n: 2, values: { sku: "A" } }], results: {} });
     }
-    await db.doc("businesses/imp-bridal").set(businessDoc("Wedding", "active", { planId: "pro", workspaceTemplateId: "bridal-expense" }));
+    await db.doc("businesses/imp-bridal").set(businessDoc("Wedding", "active", { planId: "bridal-plus", workspaceTemplateId: "bridal-expense" }));
     await seedMember(db, "imp-bridal", "ownerImpBridal", { role: "owner", isAccountOwner: true });
     await db.doc(`businesses/imp-bridal/imports/${JOB}`).set({ type: "products" });
     await db.doc("businesses/imp-off").set(businessDoc("Imports off", "active", { planId: "growth", overrides: { modules: { imports: false } } }));

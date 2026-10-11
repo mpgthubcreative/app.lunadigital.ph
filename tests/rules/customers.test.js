@@ -23,7 +23,7 @@ beforeAll(async () => {
     await db.doc("businesses/cust-off").set(businessDoc("Customers off", "active", { planId: "growth", overrides: { modules: { customers: false } } }));
     await seedMember(db, "cust-off", "ownerCustOff", { role: "owner", isAccountOwner: true });
     await db.doc(`businesses/cust-off/customers/${CID}`).set({ name: "x" });
-    await db.doc("businesses/cust-bridal").set(businessDoc("Wedding", "active", { planId: "pro", workspaceTemplateId: "bridal-expense" }));
+    await db.doc("businesses/cust-bridal").set(businessDoc("Wedding", "active", { planId: "bridal-plus", workspaceTemplateId: "bridal-expense" }));
     await seedMember(db, "cust-bridal", "ownerBridal", { role: "owner", isAccountOwner: true });
     await db.doc(`businesses/cust-bridal/customers/${CID}`).set({ name: "x" });
   });

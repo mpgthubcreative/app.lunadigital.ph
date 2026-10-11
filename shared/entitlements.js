@@ -61,6 +61,8 @@ export function validatePlan(plan) {
 
   if (!isValidPlanId(plan.id)) problems.push(`invalid plan id ${JSON.stringify(plan.id)}`);
   if (typeof plan.name !== "string" || !plan.name.trim()) problems.push("name is required");
+  // Phase 18.6: a plan belongs to one workspace (older stored plans: Distributor).
+  if (plan.workspaceTemplateId !== undefined && !getWorkspaceTemplate(plan.workspaceTemplateId)) problems.push(`unknown workspace ${JSON.stringify(plan.workspaceTemplateId)}`);
 
   const pricing = plan.pricing;
   if (!isPlainObject(pricing)) problems.push("pricing must be an object");

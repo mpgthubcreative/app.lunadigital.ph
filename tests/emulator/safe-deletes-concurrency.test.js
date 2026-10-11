@@ -31,7 +31,7 @@ beforeAll(async () => {
 async function world(workspace) {
   run += 1;
   const id = `del-${Date.now().toString(36)}-${run}`;
-  await prov.createBusiness({ db, admin, name: `Delete ${run}`, planId: "growth", workspaceTemplateId: workspace, businessId: id });
+  await prov.createBusiness({ db, admin, name: `Delete ${run}`, planId: { "bridal-expense": "bridal-plus", "baby-expense": "baby-plus", "household-payroll": "household-plus" }[workspace] ?? "growth", workspaceTemplateId: workspace, businessId: id });
   const tenant = tenantDb(db, id);
   const business = { id, timezone: "Asia/Manila" };
   const c = { db, tenant, FieldValue, business, workspace, actor: { uid: `owner-${id}`, name: "Owner", email: "" }, now: NOW };

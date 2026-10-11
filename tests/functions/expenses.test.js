@@ -232,7 +232,7 @@ describe("POST /api/expenses", () => {
   });
 
   it("a workspace without Expenses (Household Payroll): refused although the code exists", async () => {
-    await createBusiness({ ...world, name: "Home", planId: "pro", workspaceTemplateId: "household-payroll", businessId: "biz-w" });
+    await createBusiness({ ...world, name: "Home", planId: "household-plus", workspaceTemplateId: "household-payroll", businessId: "biz-w" });
     const u = await ensureAuthUser({ auth: world.auth, email: "home@t.test", name: "Home" });
     await addMember({ ...world, businessId: "biz-w", uid: u.uid, email: u.email, name: "Home", roleTemplate: "owner", isAccountOwner: true });
     expect(docAt("businesses/biz-w").entitlements.modules.expenses).toBe(false);

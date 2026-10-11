@@ -19,7 +19,7 @@ beforeAll(async () => {
   await env.withSecurityRulesDisabled(async (ctx) => {
     const db = ctx.firestore();
     for (const bid of [H, H2]) {
-      await db.doc(`businesses/${bid}`).set(businessDoc(`Home ${bid}`, "active", { planId: "growth", workspaceTemplateId: "household-payroll" }));
+      await db.doc(`businesses/${bid}`).set(businessDoc(`Home ${bid}`, "active", { planId: "household-plus", workspaceTemplateId: "household-payroll" }));
       for (const c of Object.keys(COLLECTIONS)) await db.doc(`businesses/${bid}/${c}/d1`).set({ staffId: "s1", status: "draft", date: "2026-10-01", periodStart: "2026-10-01" });
       await seedMember(db, bid, `owner@${bid}`, { role: "owner", isAccountOwner: true });
     }
@@ -39,7 +39,7 @@ beforeAll(async () => {
       "home-nokeys": (e) => { delete e.modules.payroll; },
     };
     for (const [bid, mutate] of Object.entries(STALE)) {
-      const b = businessDoc(bid, "active", { planId: "growth", workspaceTemplateId: "household-payroll" });
+      const b = businessDoc(bid, "active", { planId: "household-plus", workspaceTemplateId: "household-payroll" });
       mutate(b.entitlements);
       await db.doc(`businesses/${bid}`).set(b);
       await seedMember(db, bid, `owner@${bid}`, { role: "owner", isAccountOwner: true });

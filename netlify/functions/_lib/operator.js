@@ -232,4 +232,15 @@ export async function listPlans({ db }) {
   return snap.docs.map((d) => d.data()).sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
 }
 
+// Phase 18.6: active + past-due subscribers per plan (count() aggregations).
+export async function planSubscribers({ db, planIds }) {
+  const out = {};
+  await Promise.all(
+    planIds.map(async (id) => {
+      out[id] = (await db.collection("businesses").where("subscription.planId", "==", id).where("subscription.status", "in", ["active", "past_due"]).count().get()).data().count;
+    })
+  );
+  return out;
+}
+
 export { creatableWorkspaces };

@@ -33,7 +33,7 @@ beforeAll(async () => {
     await seedMember(db, "no-inapp", "ownerNoInApp", { role: "owner", isAccountOwner: true });
     await seed("no-inapp", "ownerNoInApp");
     // Notifications are core: a Bridal workspace member reads their own inbox.
-    await db.doc("businesses/notes-bridal").set(businessDoc("Bridal", "active", { planId: "pro", workspaceTemplateId: "bridal-expense" }));
+    await db.doc("businesses/notes-bridal").set(businessDoc("Bridal", "active", { planId: "bridal-plus", workspaceTemplateId: "bridal-expense" }));
     await seedMember(db, "notes-bridal", "ownerBridal", { role: "owner", isAccountOwner: true });
     await seed("notes-bridal", "ownerBridal");
     // Cancelled: export-only permissions don't include notifications.

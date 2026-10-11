@@ -234,7 +234,7 @@ describe("tenant configuration (controlled, fail-safe)", () => {
 
 describe("read models", () => {
   it("overview counts; businesses filtered, searched (id or name prefix) and paginated (25 per page); detail; plans; audit", async () => {
-    for (let i = 0; i < 27; i++) await createBusiness({ ...world, name: `Bulk ${i}`, planId: "starter", workspaceTemplateId: "household-payroll", businessId: `bulk-${String(i).padStart(2, "0")}` });
+    for (let i = 0; i < 27; i++) await createBusiness({ ...world, name: `Bulk ${i}`, planId: "household-basic", workspaceTemplateId: "household-payroll", businessId: `bulk-${String(i).padStart(2, "0")}` });
     const o = ok(await op({ action: "overview" })).overview;
     expect(o.total).toBe(31);
     expect(o.byWorkspace["household-payroll"]).toBe(27);
@@ -256,7 +256,7 @@ describe("read models", () => {
     expect(d.business).toMatchObject({ id: "biz-a", workspaceTemplateId: "distributor", entitlementsValid: true });
     expect(d.members.map((m) => m.email).sort()).toEqual(["disableda@t.test", "managera@t.test", "multi@t.test", "ownera@t.test", "staffa@t.test"]);
     expect((await op({ action: "business", businessId: "nope-nope" })).status).toBe(404);
-    expect(ok(await op({ action: "plans" })).plans.map((p) => p.id)).toEqual(["starter", "growth", "pro"]);
+    expect(ok(await op({ action: "plans" })).plans.map((p) => p.id)).toEqual(["starter", "growth", "pro", "household-basic", "household-plus", "baby-basic", "baby-plus", "bridal-basic", "bridal-plus"]);
     expect(ok(await op({ action: "audit" })).rows.length).toBeGreaterThan(0);
   });
 });

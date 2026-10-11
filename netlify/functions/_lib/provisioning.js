@@ -12,7 +12,7 @@
 // validates, recomputes the snapshot and writes an audit record to
 // businesses/{bid}/auditLog and platformAudit.
 
-import { PLAN_SEED } from "../../../shared/plans.seed.js";
+import { planWorkspace, PLAN_SEED } from "../../../shared/plans.seed.js";
 import { computeEntitlements, validatePlan, validateEntitlementsSnapshot, isValidPlanId, EntitlementError } from "../../../shared/entitlements.js";
 import { resolvePermissions, ROLE_TEMPLATES } from "../../../shared/permissions.js";
 import { SUBSCRIPTION_STATUSES } from "../../../shared/subscription.js";
@@ -97,6 +97,14 @@ export function buildEntitlementsSnapshot(plan, overrides, workspaceTemplateId) 
   }
 }
 
+// Phase 18.6: a plan belongs to one workspace. A Distributor plan can never
+// be given to a Household / Baby / Bridal business (or the reverse).
+export function requirePlanFits(plan, templateId) {
+  if (planWorkspace(plan) !== templateId) {
+    throw new ProvisioningError("plan-wrong-workspace", `${plan.name} is a ${getWorkspaceTemplate(planWorkspace(plan))?.name ?? planWorkspace(plan)} plan. Choose a plan for this workspace.`);
+  }
+}
+
 // A registered workspace template, or a clear error. There is no default.
 function requireTemplate(id) {
   const template = getWorkspaceTemplate(id);
@@ -130,6 +138,7 @@ export async function createBusiness({
 
   const template = requireTemplate(workspaceTemplateId);
   const plan = await loadPlan(db, planId);
+  requirePlanFits(plan, template.id);
   const ref = businessId ? db.collection("businesses").doc(businessId) : db.collection("businesses").doc();
   const now = admin.firestore.FieldValue.serverTimestamp();
 
@@ -147,7 +156,9 @@ export async function createBusiness({
       adminRevision: 0,
       isDemo: Boolean(isDemo),
       workspaceTemplateId: template.id,
-      subscription: { planId: plan.id, status: subscriptionStatus, renewalAt: null, graceUntil: null },
+      // monthlyAmount: the plan price when assigned (Phase 18.6), so MRR and
+      // invoices never re-read today's price for an older subscription.
+      subscription: { planId: plan.id, status: subscriptionStatus, renewalAt: null, graceUntil: null, monthlyAmount: plan.pricing.monthly, paidThrough: null, nextRenewal: null },
       moduleOverrides: {},
       limitOverrides: {},
       featureOverrides: {},
@@ -250,6 +261,8 @@ async function changeEntitlements({ db, admin, businessId, actor, reason, action
     if (next.templateId === null) throw new ProvisioningError("no-template", `Business ${businessId} has no workspace template yet. Assign one first (set-template).`);
     const template = requireTemplate(next.templateId);
     const plan = planFromSnap(await tx.get(db.collection("plans").doc(next.planId)), next.planId);
+    const planChanged = next.planId !== current.planId;
+    if (planChanged) requirePlanFits(plan, template.id);
     // Validates the plan, the overrides and the template ceiling; throws on
     // anything unknown or not allowed.
     const entitlements = buildEntitlementsSnapshot(plan, next.overrides, template.id);
@@ -264,6 +277,7 @@ async function changeEntitlements({ db, admin, businessId, actor, reason, action
     const now = FieldValue.serverTimestamp();
     tx.update(tenant.ref, {
       "subscription.planId": plan.id,
+      ...(planChanged || business.subscription?.monthlyAmount === undefined ? { "subscription.monthlyAmount": plan.pricing.monthly } : {}),
       workspaceTemplateId: template.id,
       moduleOverrides: overrides.modules,
       limitOverrides: overrides.limits,

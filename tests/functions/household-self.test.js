@@ -24,7 +24,7 @@ let clock;
 beforeEach(async () => {
   world = await buildWorld();
   clock = NOW;
-  await createBusiness({ ...world, name: "Santos Household", planId: "growth", workspaceTemplateId: "household-payroll", businessId: H });
+  await createBusiness({ ...world, name: "Santos Household", planId: "household-plus", workspaceTemplateId: "household-payroll", businessId: H });
   u = {};
   for (const [key, role] of [["mom", "owner"], ["dad", "manager"]]) {
     const x = await ensureAuthUser({ auth: world.auth, email: `${key}@home.test`, name: key });

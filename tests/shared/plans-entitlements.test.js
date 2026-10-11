@@ -6,9 +6,10 @@ import { MODULE_IDS } from "../../shared/modules.js";
 describe("plan seed", () => {
   const plans = Object.values(PLAN_SEED);
 
-  it("has starter, growth and pro with growth recommended", () => {
-    expect(Object.keys(PLAN_SEED)).toEqual(["starter", "growth", "pro"]);
-    expect(plans.filter((p) => p.recommended).map((p) => p.id)).toEqual(["growth"]);
+  it("Distributor keeps starter, growth and pro (growth recommended); each personal workspace has Basic + Plus (Plus recommended)", () => {
+    expect(Object.keys(PLAN_SEED)).toEqual(["starter", "growth", "pro", "household-basic", "household-plus", "baby-basic", "baby-plus", "bridal-basic", "bridal-plus"]);
+    expect(plans.filter((p) => p.recommended).map((p) => p.id)).toEqual(["growth", "household-plus", "baby-plus", "bridal-plus"]);
+    expect(plans.filter((p) => p.workspaceTemplateId === "distributor").map((p) => [p.id, p.pricing.monthly])).toEqual([["starter", 99000], ["growth", 199000], ["pro", 299000]]);
   });
 
   it("defines every limit as a non-negative integer", () => {

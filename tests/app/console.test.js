@@ -92,10 +92,17 @@ describe("console views", () => {
     expect(el.querySelector('[data-member="u1"] [data-act="member-status"]')).toBeNull();
   });
 
-  it("plans: read-only table of the stored plans", async () => {
-    plansView(el, ctxWith(vi.fn()));
+  it("plans: grouped by workspace (each plan in its own workspace), with subscriber counts; read-only", async () => {
+    plansView(el, ctxWith(vi.fn(async () => ({ subscribers: { growth: 8, "baby-plus": 3 } }))));
     await flush();
-    expect([...el.querySelectorAll('[data-role="plans"] tbody tr')].map((tr) => tr.cells[0].textContent.trim().split(" ")[0])).toEqual(plans.map((p) => p.name));
+    const group = (w) => [...el.querySelectorAll(`[data-workspace="${w}"] [data-plan]`)].map((tr) => tr.dataset.plan);
+    expect(group("distributor")).toEqual(["starter", "growth", "pro"]);
+    expect(group("household-payroll")).toEqual(["household-basic", "household-plus"]);
+    expect(group("baby-expense")).toEqual(["baby-basic", "baby-plus"]);
+    expect(group("bridal-expense")).toEqual(["bridal-basic", "bridal-plus"]);
+    expect(el.querySelector('[data-plan="growth"] [data-col="subscribers"]').textContent).toBe("8");
+    expect(el.querySelector('[data-plan="baby-plus"]').textContent).toMatch(/₱249/);
+    expect(el.querySelector('[data-plan="baby-plus"]').textContent).not.toMatch(/Orders|Inventory/);
     expect(el.querySelector("button[data-act]")).toBeNull();
   });
 });

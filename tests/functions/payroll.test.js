@@ -26,7 +26,7 @@ let clock;
 beforeEach(async () => {
   world = await buildWorld();
   clock = NOW;
-  await createBusiness({ ...world, name: "Santos Household", planId: "growth", workspaceTemplateId: "household-payroll", businessId: H });
+  await createBusiness({ ...world, name: "Santos Household", planId: "household-plus", workspaceTemplateId: "household-payroll", businessId: H });
   u = {};
   for (const [key, role] of [["mom", "owner"], ["dad", "manager"], ["helper", "staff"]]) {
     const x = await ensureAuthUser({ auth: world.auth, email: `${key}@home.test`, name: key });
@@ -266,7 +266,7 @@ describe("salary release and the one-time receipt link", () => {
   it("a token reaches only its own payment: household B's link never shows or confirms A's", async () => {
     const a = await released();
     const B = "biz-home-b";
-    await createBusiness({ ...world, name: "Reyes Household", planId: "growth", workspaceTemplateId: "household-payroll", businessId: B });
+    await createBusiness({ ...world, name: "Reyes Household", planId: "household-plus", workspaceTemplateId: "household-payroll", businessId: B });
     const owner = await ensureAuthUser({ auth: world.auth, email: "reyes@home.test", name: "reyes" });
     await addMember({ ...world, businessId: B, uid: owner.uid, email: owner.email, name: "reyes", roleTemplate: "owner", isAccountOwner: true });
     const rosa = (await api("staff", owner.uid, { action: "create", staff: { name: "Rosa", dailyWage: 50000, payCycle: "semi_monthly" } }, B)).body.staffId;

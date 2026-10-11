@@ -19,7 +19,7 @@ beforeAll(async () => {
       await db.doc(`businesses/${bid}/reportRollups/2026-10`).set({ period: "month" });
     }
     await seedMember(db, A, "reportStaffA", { role: "staff", overrides: { grant: ["reports.view"] } });
-    await db.doc("businesses/rep-bridal").set(businessDoc("Wedding", "active", { planId: "pro", workspaceTemplateId: "bridal-expense" }));
+    await db.doc("businesses/rep-bridal").set(businessDoc("Wedding", "active", { planId: "bridal-plus", workspaceTemplateId: "bridal-expense" }));
     await seedMember(db, "rep-bridal", "ownerRepBridal", { role: "owner", isAccountOwner: true });
     await ctx.storage().ref("tenants/rep-bridal/exports/seed.txt").putString("x");
   });

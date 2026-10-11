@@ -29,7 +29,7 @@ beforeAll(async () => {
       await db.doc(`businesses/${bid}/expenses/${EID}`).set({ amount: 1 });
     }
     // A household snapshot forged to claim Expenses: the rules re-check the template.
-    const forged = businessDoc("Forged household", "active", { planId: "pro", workspaceTemplateId: "household-payroll" });
+    const forged = businessDoc("Forged household", "active", { planId: "household-plus", workspaceTemplateId: "household-payroll" });
     forged.entitlements.modules.expenses = true;
     await db.doc("businesses/exp-forged").set(forged);
     await seedMember(db, "exp-forged", "owner@exp-forged", { role: "owner", isAccountOwner: true });

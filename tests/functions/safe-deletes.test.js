@@ -28,9 +28,9 @@ let u;
 
 beforeEach(async () => {
   world = await buildWorld();
-  await createBusiness({ ...world, name: "Wedding", planId: "growth", workspaceTemplateId: "bridal-expense", businessId: W });
-  await createBusiness({ ...world, name: "Baby", planId: "growth", workspaceTemplateId: "baby-expense", businessId: B });
-  await createBusiness({ ...world, name: "Home", planId: "growth", workspaceTemplateId: "household-payroll", businessId: H });
+  await createBusiness({ ...world, name: "Wedding", planId: "bridal-plus", workspaceTemplateId: "bridal-expense", businessId: W });
+  await createBusiness({ ...world, name: "Baby", planId: "baby-plus", workspaceTemplateId: "baby-expense", businessId: B });
+  await createBusiness({ ...world, name: "Home", planId: "household-plus", workspaceTemplateId: "household-payroll", businessId: H });
   u = {};
   const add = async (key, businessId, role) => {
     const x = await ensureAuthUser({ auth: world.auth, email: `${key}@del.test`, name: key });
