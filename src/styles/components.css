@@ -2376,6 +2376,9 @@ tr.is-saving {
 }
 
 /* Owner-pilot batch: approval list per employee, its own filter. */
+.request-filter {
+  margin: var(--space-2) 0 var(--space-3);
+}
 .inline-field {
   display: inline-flex;
   align-items: center;

@@ -133,8 +133,9 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     const names = [...new Map(state.requests.map((r) => [r.staffId, r.staffName])).entries()].sort((a, b) => a[1].localeCompare(b[1]));
     const people = requestGroups();
     return html`<section class="card section" data-section="requests">
-      <div class="section-head">
-        <div><h2 class="card-title">Waiting for your approval (${state.requests.length})</h2><p class="stat-hint">What your staff sent. Nothing changes pay until you approve.</p></div>
+      <h2 class="card-title">Waiting for your approval (${state.requests.length})</h2>
+      <p class="stat-hint">What your staff sent. Nothing changes pay until you approve.</p>
+      <div class="request-filter">
         <label class="inline-field">Employee <select class="select select-compact" data-role="request-staff" aria-label="Employee (waiting for approval)">
           <option value="" ${state.requestStaff ? "" : "selected"}>All employees</option>
           ${names.map(([id, name]) => html`<option value="${id}" ${state.requestStaff === id ? "selected" : ""}>${name} (${state.requests.filter((r) => r.staffId === id).length})</option>`)}
