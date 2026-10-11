@@ -91,7 +91,14 @@ Recorded so the calculation method is explicit. Not legal advice: confirm with D
 | 4 Household payroll | done | 373a05f | unit 1227/1227 |
 | 5 Shared | done | a53a43f + (users commit) | unit full suite green |
 | 6 UI polish | done | fdea8e2, 9cc8c0d, 0d1c972 | unit 1242/1242; 22 pages × 390px + 1280px audited (no horizontal overflow, no unnamed buttons/links, no unlabelled inputs) |
-| 7 Release gate | pending | | |
+| 7 Release gate | in progress (feature freeze 2026-10-11) | 709350f, d1d429e | unit 1259; emulator 2934 + re-runs; mutation 34/34 killed |
+
+## Stage 7 log
+- Supplier Paid? check: added an optional idempotency key to expense create (709350f); a retry returns the first expense (alreadyRecorded). Paid pre-fills only the unscheduled remaining balance; the server refuses paying beyond the agreed amount (over-agreed).
+- Mutation (scratchpad mutate186.cjs, targeted tests, sha256 restore check): 34/34 killed. It found a real bug: the delivery-address history line was duplicated in the edit path and missing from the fulfilled-order correction path (fixed in d1d429e).
+- Staging Firestore rules + indexes deployed 2026-10-11 (live rules == source for Firestore and Storage; Storage not redeployed). 8 new guests indexes were building.
+- resync-permissions --all: every owner/manager gained attendance.self / advances.self / payroll.self (owner = ALL by design; manager = ALL minus 4). They're inert without member.staffId.
+- Budget-total dry run: demo-baby-a 150,000 -> 150,000; demo-bridal-a 500,000 -> 390,000; sample-baby none -> 10,000; veah-bridal none -> none. No tenant has a budget on an inactive category, so the sums of all and of active categories are the same. Apply after the code push.
 
 ## Known blockers
 - Low memory on the dev machine (about 280 MB free at the start). Unit tests run with `--maxWorkers=2`, emulator suites in small foreground batches.
