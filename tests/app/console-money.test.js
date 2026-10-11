@@ -40,9 +40,15 @@ describe("Payments", () => {
     expect(review.querySelector('[data-role="submitted"]').textContent).toMatch(/₱1,990\.00/);
     expect(review.querySelector(".proof-img").getAttribute("src")).toMatch(/^data:image\/png;base64,/);
     expect(review.querySelector('[data-role="history"]').textContent).toMatch(/September 2026/);
+    // Cancel on the confirmation: nothing is confirmed.
     review.querySelector('[data-act="confirm"]').click();
     await flush();
     expect(call).not.toHaveBeenCalledWith("confirmPayment", expect.anything()); // waits for the explicit confirmation
+    [...lastBackdrop().querySelectorAll("button")].find((b) => /^Cancel$/.test(b.textContent.trim())).click();
+    await flush();
+    expect(call).not.toHaveBeenCalledWith("confirmPayment", expect.anything());
+    review.querySelector('[data-act="confirm"]').click();
+    await flush();
     const confirmBtn = [...lastBackdrop().querySelectorAll("button")].find((b) => /Confirm payment/.test(b.textContent));
     confirmBtn.click();
     await flush();

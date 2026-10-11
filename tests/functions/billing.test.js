@@ -50,6 +50,10 @@ describe("plans and invoices", () => {
     expect(docAt("subscriptionInvoices/biz-home_2026-10")).toMatchObject({ amountDue: 29900, planName: "Household Plus" });
     expect(docAt("subscriptionInvoices/biz-s_2026-10")).toBeUndefined();
     expect(docAt("subscriptionInvoices/biz-x_2026-10")).toBeUndefined();
+    // Opening the page as a suspended / cancelled business doesn't bill it either.
+    expect(await ensureInvoice({ db: world.db, FieldValue: FV(), businessId: "biz-s", period: "2026-11" })).toBeNull();
+    expect(await ensureInvoice({ db: world.db, FieldValue: FV(), businessId: "biz-x", period: "2026-11" })).toBeNull();
+    expect(docAt("subscriptionInvoices/biz-s_2026-11")).toBeUndefined();
     expect(docAt("platformMetrics/current").outstanding).toBe(199000 + 99000 + 29900);
     // A later price change never rewrites the bill already made.
     world.db.docs.get("businesses/biz-a").subscription.monthlyAmount = 249000;
@@ -128,6 +132,27 @@ describe("Super Luna: confirm / reject", () => {
   });
 
   // (Confirm racing confirm / reject runs on the real emulator: tests/emulator/billing-concurrency.test.js.)
+
+  it("decided payments stay decided; paying an older month never moves paid-through back; a suspension stays the operator's call", async () => {
+    const nov = await submit(world.uids.ownerh, "biz-home", { amount: 29900, period: "2026-10" });
+    await confirmPayment({ db: world.db, FieldValue: FV(), paymentId: nov.body.paymentId, operator: "ops", now: NOW });
+    expect(await rejectPayment({ db: world.db, FieldValue: FV(), paymentId: nov.body.paymentId, operator: "ops", reason: "Too late" })).toMatchObject({ alreadyDecided: true, status: "paid" });
+    expect(docAt(`subscriptionPayments/${nov.body.paymentId}`).status).toBe("paid");
+    // An older month (September) paid afterwards: paid-through stays Oct 31.
+    await ensureInvoice({ db: world.db, FieldValue: FV(), businessId: "biz-home", period: "2026-09" });
+    const sep = await submit(world.uids.ownerh, "biz-home", { amount: 29900, period: "2026-09" });
+    await confirmPayment({ db: world.db, FieldValue: FV(), paymentId: sep.body.paymentId, operator: "ops", now: NOW });
+    expect(docAt("businesses/biz-home").subscription).toMatchObject({ paidThrough: "2026-10-31", nextRenewal: "2026-11-01" });
+    // Suspended: paying doesn't lift the suspension.
+    world.db.docs.get("businesses/biz-b").subscription.status = "suspended";
+    await ensureInvoice({ db: world.db, FieldValue: FV(), businessId: "biz-b", period: "2026-10" }).catch(() => {});
+    world.db.docs.get("businesses/biz-b").subscription.status = "active";
+    await ensureInvoice({ db: world.db, FieldValue: FV(), businessId: "biz-b", period: "2026-10" });
+    world.db.docs.get("businesses/biz-b").subscription.status = "suspended";
+    const b = await submit(world.uids.ownerb, "biz-b", { amount: 99000 });
+    await confirmPayment({ db: world.db, FieldValue: FV(), paymentId: b.body.paymentId, operator: "ops", now: NOW });
+    expect(docAt("businesses/biz-b").subscription).toMatchObject({ status: "suspended", paidThrough: "2026-10-31" });
+  });
 
   it("a partial payment leaves the rest due; a reject needs a reason, the tenant sees it, and can send a new proof", async () => {
     const s1 = await submit(world.uids.ownerh, "biz-home", { amount: 10000 });
