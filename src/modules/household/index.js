@@ -29,14 +29,15 @@ function staffFields(s = {}) {
     { name: "dailyWage", label: "Daily wage (₱)", value: centsText(s.dailyWage), required: true, inputmode: "decimal" },
     { name: "payCycle", label: "Pay cycle", type: "select", value: s.payCycle ?? "semi_monthly", options: cycleOptions },
     { name: "phone", label: "Phone", value: s.phone ?? "", inputmode: "tel" },
-    { name: "startDate", label: "Start date", type: "date", value: s.startDate ?? "" },
+    { name: "startDate", label: "Start date", type: "date", value: s.startDate ?? "", hint: "Payroll includes them from this date." },
+    { name: "endDate", label: "End date (if they've left)", type: "date", value: s.endDate ?? "", hint: "No payroll after this date; their history stays." },
     { name: "notes", label: "Notes", type: "textarea", value: s.notes ?? "" },
   ];
 }
 
 function toInput(v) {
   const out = { ...v, dailyWage: parseCentavos(v.dailyWage) };
-  for (const k of ["position", "phone", "startDate", "notes"]) if (out[k] === "") out[k] = null;
+  for (const k of ["position", "phone", "startDate", "endDate", "notes"]) if (out[k] === "") out[k] = null;
   return out;
 }
 

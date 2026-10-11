@@ -18,7 +18,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import { decodeProof } from "./payments.js";
 import { reserveStorage, prepareStorageFinalize, releaseStorageReservation } from "./storage-usage.js";
-import {
+import { payrollEligibility,
   PAYROLL_SCHEMA_VERSION,
   PayrollError,
   ATTENDANCE_STATUSES,
@@ -52,7 +52,7 @@ import {
   nextDeduction,
   ADVANCE_STATUSES,
 } from "../../../shared/payroll.js";
-import { businessDate } from "../../../shared/metrics.js";
+import { businessDate, isDayId } from "../../../shared/metrics.js";
 import { prepareNotifications } from "./notifications.js";
 import { tenantDb } from "./tenant-db.js";
 import { meterActivity } from "./metering.js";
@@ -128,14 +128,23 @@ export async function updateStaff({ db, tenant, FieldValue, staffId, changes, ac
   }, TX_OPTIONS);
 }
 
-export async function setStaffStatus({ db, tenant, FieldValue, staffId, status, actor }) {
+// Deactivate: employment ends today (unless an end date was already set),
+// so the final pay period can still be prepared but no later one is.
+// History (attendance, leave, advances, payroll, receipts) is kept as is.
+// Reactivate: an end date that deactivation set is cleared again.
+export async function setStaffStatus({ db, tenant, FieldValue, business = null, staffId, status, actor, now = new Date() }) {
   if (!["active", "inactive"].includes(status)) throw new PayrollError("invalid-input", "Status must be active or inactive");
   const ref = staffRef(tenant, staffId);
+  const today = businessDate(business?.timezone || "Asia/Manila", now);
   return db.runTransaction(async (tx) => {
     const current = await loadStaff(tx, tenant, staffId);
     if (current.status === status) return { staffId, unchanged: true };
-    tx.update(ref, { status, history: append(current.history, entry(actor, status === "active" ? "Reactivated" : "Deactivated")), revision: (current.revision || 1) + 1, updatedBy: actor, updatedAt: FieldValue.serverTimestamp() });
-    return { staffId, status };
+    const ending = status === "inactive" && !current.endDate ? { endDate: today, endDateFromDeactivation: true } : {};
+    const resuming = status === "active" && current.endDateFromDeactivation ? { endDate: null, endDateFromDeactivation: false } : {};
+    const label = status === "active" ? "Reactivated" : `Deactivated${ending.endDate ? ` (employment ended ${ending.endDate})` : ""}`;
+    tx.update(ref, { status, ...ending, ...resuming, history: append(current.history, entry(actor, label)), revision: (current.revision || 1) + 1, updatedBy: actor, updatedAt: FieldValue.serverTimestamp() });
+    const endDate = "endDate" in ending ? ending.endDate : "endDate" in resuming ? resuming.endDate : current.endDate ?? null;
+    return { staffId, status, endDate };
   }, TX_OPTIONS);
 }
 
@@ -165,12 +174,16 @@ export async function deleteStaff({ db, tenant, FieldValue, staffId, actor }) {
 // amount uses the person's CURRENT daily wage. If an unpaid (draft) payroll
 // covers the day, its counts and base pay move in the same transaction; a
 // paid payroll's days are locked.
+// A correction of a day the employee sent (approved from their request)
+// needs the Owner's reason; it's kept in the day's history with before /
+// after, who and when. A paid payroll's days stay locked (as before).
 export async function setAttendance({ db, tenant, FieldValue, business, input, actor, now = new Date() }) {
   const today = businessDate(business.timezone, now);
-  const { staffId, date, status, note } = validateAttendanceInput(input, { today });
+  const { staffId, date, status, note, reason } = validateAttendanceInput(input, { today });
   return db.runTransaction(async (tx) => {
     const plan = await prepareAttendanceWrite(tx, { tenant, staffId, date });
-    return plan.commit({ FieldValue, status, note, actor });
+    if (plan.fromStaff && plan.before && plan.before.status !== status && !reason) throw new PayrollError("reason-required", "Say why you're correcting what the employee sent");
+    return plan.commit({ FieldValue, status, note, actor, reason });
   }, TX_OPTIONS);
 }
 
@@ -190,7 +203,10 @@ async function prepareAttendanceWrite(tx, { tenant, staffId, date }) {
   if (payroll && payroll.status !== "draft") throw new PayrollError("payroll-released", `This day is in a payroll that's already paid (${payroll.periodStart} to ${payroll.periodEnd})`);
   return {
     staff,
-    commit({ FieldValue, status, note, actor, via = null }) {
+    before,
+    // The day came from the employee's own request (approved by the Owner).
+    fromStaff: Boolean(before && (before.source === "staff_request" || (before.history || []).some((h) => /request, approved/.test(h.label || "")))),
+    commit({ FieldValue, status, note, actor, via = null, reason = null }) {
     if (before && before.status === status && (before.note ?? null) === note) return { staffId, date, status, unchanged: true };
 
     const payable = ATTENDANCE_STATUSES[status].payable;
@@ -205,7 +221,8 @@ async function prepareAttendanceWrite(tx, { tenant, staffId, date }) {
       payableAmount: payable ? staff.dailyWage : 0,
       note,
       payrollId: payroll ? pRef.id : null,
-      history: append(before?.history, entry(actor, `${before ? `${statusLabel(before.status)} → ${statusLabel(status)}` : `Marked ${statusLabel(status)}`}${via ? ` (${via})` : ""}`, { from: before?.status ?? null, to: status })),
+      history: append(before?.history, entry(actor, `${before ? `${statusLabel(before.status)} → ${statusLabel(status)}` : `Marked ${statusLabel(status)}`}${via ? ` (${via})` : ""}${reason ? ` · Reason: ${reason}` : ""}`, { from: before?.status ?? null, to: status, ...(reason ? { reason } : {}) })),
+      ...(via ? { source: "staff_request" } : before?.source ? {} : { source: "owner" }),
       updatedBy: actor,
       updatedAt: FieldValue.serverTimestamp(),
       ...(before ? {} : { createdAt: FieldValue.serverTimestamp(), createdBy: actor }),
@@ -322,6 +339,9 @@ export async function preparePayroll({ db, tenant, FieldValue, business, staffId
     const period = periodFor(staff.payCycle, periodStart);
     if (period.start !== periodStart) throw new PayrollError("invalid-period", `A ${staff.payCycle.replace("_", "-")} period starts on ${period.start}`);
     if (period.start > today) throw new PayrollError("invalid-period", "That pay period hasn't started yet");
+    // The staff record decides (employment dates, status): no second enrollment.
+    const elig = payrollEligibility(staff, period);
+    if (!elig.eligible) throw new PayrollError("not-eligible", `${staff.name} isn't on payroll for ${period.start} to ${period.end}: ${elig.reason}`);
     const id = payrollIdOf(staffId, period.start);
     const ref = tenant.doc("payrolls", id);
     const existing = await tx.get(ref);
@@ -944,4 +964,28 @@ export async function resolveSalaryDispute({ db, tenant, FieldValue, payrollId, 
     tx.update(ref, { ownerPayment: "paid", dispute: { ...p.dispute, state: "resolved", resolvedAt: new Date(), resolution: why, resolvedBy: { uid: actor.uid, name: actor.name ?? null } }, history: append(p.history, entry(actor, `Not-received report answered: ${why}`)), updatedAt: FieldValue.serverTimestamp() });
     return { payrollId, ownerPayment: "paid" };
   }, TX_OPTIONS);
+}
+
+// Owner-pilot fix: "Prepare payroll for everyone". Every staff member on
+// payroll for the pay period (of their own cycle) that includes `asOf` gets
+// a draft; nobody is enrolled twice and nobody outside their employment
+// dates is included. Each person is prepared in their own transaction.
+export async function prepareEligible({ db, tenant, FieldValue, business, asOf, actor, now = new Date() }) {
+  const today = businessDate(business.timezone, now);
+  const day = asOf || today;
+  if (!isDayId(day)) throw new PayrollError("invalid-date", "Choose a date");
+  if (day > today) throw new PayrollError("invalid-period", "Choose today or an earlier date");
+  const staff = (await tenant.collection("householdStaff").get()).docs.map((d) => ({ id: d.id, ...d.data() }));
+  const out = { prepared: [], existing: [], skipped: [] };
+  for (const s of staff.sort((a, b) => (a.name || "").localeCompare(b.name || ""))) {
+    const period = periodFor(s.payCycle, day);
+    const elig = payrollEligibility(s, period);
+    if (!elig.eligible) {
+      if (s.status === "active") out.skipped.push({ staffId: s.id, name: s.name, reason: elig.reason });
+      continue;
+    }
+    const r = await preparePayroll({ db, tenant, FieldValue, business, staffId: s.id, periodStart: period.start, actor, now });
+    (r.existing ? out.existing : out.prepared).push({ staffId: s.id, name: s.name, payrollId: r.payrollId, periodStart: period.start, periodEnd: period.end });
+  }
+  return out;
 }

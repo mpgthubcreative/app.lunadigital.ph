@@ -18,13 +18,13 @@ import { api as defaultApi } from "../../lib/api.js";
 const STATUS = { active: ["Active", "success"], disabled: ["No access", "neutral"] };
 
 export function mount(container, session, { api = defaultApi, toast = defaultToast, confirm = confirmDialog, share = shareLinkDialog } = {}) {
-  const state = { members: [], roles: [], canManage: false, you: null, loading: true, error: null };
+  const state = { members: [], roles: [], canManage: false, you: null, householdStaffAccess: false, staffWithoutLogin: [], loading: true, error: null };
   let alive = true;
 
   async function load() {
     try {
       const r = await api("members");
-      Object.assign(state, { members: r.members || [], roles: r.roles || [], canManage: r.canManage === true, you: r.you, error: null });
+      Object.assign(state, { members: r.members || [], roles: r.roles || [], canManage: r.canManage === true, you: r.you, householdStaffAccess: r.householdStaffAccess === true, staffWithoutLogin: r.staffWithoutLogin || [], error: null });
     } catch (err) {
       state.error = err.message || "Couldn't load your team.";
     }
@@ -38,6 +38,8 @@ export function mount(container, session, { api = defaultApi, toast = defaultToa
     if (!state.canManage || m.isAccountOwner || m.uid === state.you) return "";
     const items = [];
     if (m.status === "active" && !m.householdStaff && state.roles.length > 1) items.push({ act: "role", label: "Change role" });
+    // Owner-pilot fix: a kasambahay who was added as Manager / Admin.
+    if (state.householdStaffAccess && !m.householdStaff) items.push({ act: "make-staff", label: "Make household staff" });
     if (m.status === "active" && (m.activation === "pending" || m.usesLoginId)) items.push({ act: "link", label: m.activation === "pending" ? "New activation link" : "Reset password (new link)" });
     items.push(m.status === "active" ? { act: "remove", label: "Remove access", danger: true } : { act: "restore", label: "Restore access" });
     return rowMenu(m.uid, items, { label: `Actions for ${m.name}` });
@@ -76,7 +78,40 @@ export function mount(container, session, { api = defaultApi, toast = defaultToa
     );
   }
 
+  // Household: a kasambahay's login is ALWAYS linked to their staff record
+  // (Household Staff access: their own attendance, leave, advances, salary).
+  async function addHouseholdStaff() {
+    if (!state.staffWithoutLogin.length) {
+      toast("Add the kasambahay under Household Staff first, then give them a login here.", "danger");
+      return;
+    }
+    const r = await formDialog({
+      title: "Give a kasambahay a login",
+      intro: "Household Staff access: they mark their own attendance, ask for leave or a cash advance, and see their own salary. Nothing else.",
+      fields: [
+        { name: "staffId", label: "Staff record", type: "select", options: state.staffWithoutLogin.map((s) => ({ value: s.id, label: s.name })), value: state.staffWithoutLogin[0].id },
+        { name: "email", label: "Email (optional)", inputmode: "email", placeholder: "Leave blank if they don't use email", hint: "No email? Luna makes a login ID for them, like ana.4821." },
+      ],
+      submitLabel: "Create login",
+      onSubmit: (v) => api("household-staff", { method: "POST", body: { action: "createLogin", staffId: v.staffId, ...(v.email.trim() ? { email: v.email.trim() } : {}) } }),
+    });
+    if (!r) return;
+    if (r.activationToken) await share({ title: "Send this to them", intro: "They open it and choose their own password. You won't know it.", link: activationUrl(r.activationToken), rows: [[r.login.includes("@") ? "Their login" : "Their login ID", r.login]], message: `You've been added to ${session.business.name} on Luna (login: ${r.login}). Set up your account:`, toast });
+    else toast(`Linked. They sign in with their existing Luna account (${r.login}).`, "success");
+    load();
+  }
+
   async function add() {
+    if (state.householdStaffAccess) {
+      const kind = await formDialog({
+        title: "Add a member",
+        fields: [{ name: "kind", label: "Access type", type: "select", value: "household_staff", options: [{ value: "household_staff", label: "Household Staff (kasambahay): their own attendance, leave, advances and salary" }, { value: "manager", label: "Manager / Admin: helps run the household's payroll" }] }],
+        submitLabel: "Next",
+        onSubmit: (v) => ({ kind: v.kind }),
+      });
+      if (!kind) return;
+      if (kind.kind === "household_staff") return addHouseholdStaff();
+    }
     const r = await formDialog({
       title: "Add a member",
       intro: "Luna makes their account and gives you a link to send them. They choose their own password.",
@@ -101,6 +136,22 @@ export function mount(container, session, { api = defaultApi, toast = defaultToa
     try {
       if (el.dataset.act === "add") return add();
       if (!m) return;
+      if (el.dataset.act === "make-staff") {
+        if (!state.staffWithoutLogin.length) {
+          toast("Add their staff record under Household Staff first.", "danger");
+          return;
+        }
+        const r = await formDialog({
+          title: `Make ${m.name} household staff`,
+          intro: `${m.name} keeps their login but gets Household Staff access only (their own attendance, leave, advances and salary). ${m.role === "manager" ? "Their Manager / Admin access is removed." : ""}`,
+          fields: [{ name: "staffId", label: "Their staff record", type: "select", options: state.staffWithoutLogin.map((s) => ({ value: s.id, label: s.name })), value: state.staffWithoutLogin[0].id }],
+          submitLabel: "Make household staff",
+          onSubmit: (v) => api("members", { method: "POST", body: { action: "linkStaff", uid: m.uid, staffId: v.staffId } }),
+        });
+        if (r) toast(`${m.name} now has Household Staff access.`, "success");
+        if (r) load();
+        return;
+      }
       if (el.dataset.act === "role") {
         const r = await formDialog({ title: `Change ${m.name}'s role`, fields: [{ name: "role", label: "Role", type: "select", options: roleOptions(), value: m.role }], submitLabel: "Save", onSubmit: (v) => api("members", { method: "POST", body: { action: "setRole", uid: m.uid, role: v.role } }) });
         if (r && !r.unchanged) toast("Role changed.", "success");

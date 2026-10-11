@@ -134,7 +134,7 @@ export const ROLE_TEMPLATES = Object.freeze({
   // Phase 18.6: a kasambahay's own account (Household workspace): their own
   // attendance, leave, advances and salary, nothing else.
   household_staff: {
-    label: "Household staff",
+    label: "Household Staff",
     description: "Their own attendance, leave, advances and salary only.",
     workspaces: ["household-payroll"],
     permissions: ["attendance.self", "advances.self", "payroll.self"],

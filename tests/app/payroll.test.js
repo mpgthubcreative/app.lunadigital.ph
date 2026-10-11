@@ -231,7 +231,7 @@ describe("Household Staff", () => {
     form.elements.payCycle.value = "weekly";
     submit(form);
     await flush();
-    expect(data.staffApi).toHaveBeenCalledWith({ action: "create", staff: { name: "Lito", position: null, dailyWage: 65050, payCycle: "weekly", phone: null, startDate: null, notes: null } });
+    expect(data.staffApi).toHaveBeenCalledWith({ action: "create", staff: { name: "Lito", position: null, dailyWage: 65050, payCycle: "weekly", phone: null, startDate: null, endDate: null, notes: null } });
   });
 });
 
@@ -297,5 +297,34 @@ describe("navigation", () => {
     expect(paths(home())).toEqual(expect.arrayContaining(["/attendance", "/payroll", "/advances", "/household-staff"]));
     expect(paths(sessionFixture({ roleTemplate: "owner" }))).not.toEqual(expect.arrayContaining(["/payroll"]));
     expect(paths(home("staff"))).not.toContain("/payroll");
+  });
+});
+
+describe("Payroll: the staff record drives it (Owner-pilot fix)", () => {
+  it("Prepare payroll -> Everyone on payroll sends ONE prepareAll for the chosen date and reports who isn't on payroll", async () => {
+    const toast = vi.fn();
+    const data = fakeData({ payrollApi: vi.fn(async () => ({ prepared: [{ name: "Maria" }], existing: [], skipped: [{ staffId: "s2", name: "Lito", reason: "Starts 2026-10-20" }] })) });
+    mountPayroll(container, home(), { data, now: NOW, toast });
+    await flush();
+    container.querySelector('[data-act="prepare"]').click();
+    const f = lastForm();
+    expect(f.elements.who.value).toBe("all");
+    submit(f);
+    await until(() => data.payrollApi.mock.calls.length > 0);
+    expect(data.payrollApi).toHaveBeenCalledWith({ action: "prepareAll", asOf: f.elements.asOf.value });
+    await until(() => toast.mock.calls.length > 0);
+    expect(toast).toHaveBeenCalledWith(expect.stringMatching(/1 prepared.*Lito \(Starts 2026-10-20\)/), "success");
+  });
+  it("one person: the period follows their own pay cycle", async () => {
+    const data = fakeData();
+    mountPayroll(container, home(), { data, now: NOW, toast: () => {} });
+    await flush();
+    container.querySelector('[data-act="prepare"]').click();
+    const f = lastForm();
+    f.elements.who.value = maria.id;
+    f.elements.asOf.value = "2026-10-05";
+    submit(f);
+    await until(() => data.payrollApi.mock.calls.length > 0);
+    expect(data.payrollApi).toHaveBeenCalledWith({ action: "prepare", staffId: maria.id, periodStart: "2026-10-01" });
   });
 });

@@ -69,3 +69,48 @@ describe("Users page", () => {
     expect(container.querySelector(".menu-item")).toBeNull();
   });
 });
+
+describe("Users page (Household): a kasambahay gets Household Staff access, never Manager / Admin", () => {
+  const HOME = {
+    members: [
+      { uid: "u1", name: "Carlo", login: "carlo@t.test", role: "owner", roleLabel: "Owner", status: "active", isAccountOwner: true, activation: "active" },
+      { uid: "u5", name: "Yanie", login: "yanie@t.test", role: "manager", roleLabel: "Manager / Admin", status: "active", isAccountOwner: false, activation: "active" },
+      { uid: "u6", name: "Riza", login: "riza.1234", role: "household_staff", roleLabel: "Household Staff", status: "active", isAccountOwner: false, activation: "active", householdStaff: true },
+    ],
+    roles: ["manager"],
+    canManage: true,
+    you: "u1",
+    householdStaffAccess: true,
+    staffWithoutLogin: [{ id: "st1", name: "Yanie" }],
+  };
+  it("Add member asks the access type; Household Staff creates the login linked to the staff record", async () => {
+    const api = vi.fn(async (path, opts) => (opts ? { uid: "u7", login: "yanie.4821", activationToken: "t".repeat(40) } : HOME));
+    const share = vi.fn(async () => {});
+    mount(container, sessionFixture(), { api, share });
+    await flush();
+    expect(container.querySelector('[data-member="u6"]').textContent).toMatch(/Household Staff/);
+    container.querySelector('[data-act="add"]').click();
+    let f = lastForm();
+    expect([...f.elements.kind.options].map((o) => o.value)).toEqual(["household_staff", "manager"]);
+    submit(f);
+    await flush();
+    f = lastForm();
+    expect(f.elements.staffId.value).toBe("st1");
+    submit(f);
+    await flush();
+    expect(api).toHaveBeenCalledWith("household-staff", { method: "POST", body: { action: "createLogin", staffId: "st1" } });
+    expect(share).toHaveBeenCalled();
+  });
+  it("Make household staff turns a mistaken Manager / Admin login into that staff record's login", async () => {
+    const api = vi.fn(async (path, opts) => (opts ? { uid: "u5", role: "household_staff", staffId: "st1" } : HOME));
+    mount(container, sessionFixture(), { api, toast: vi.fn() });
+    await flush();
+    const btn = container.querySelector('[data-member="u5"] [data-act="make-staff"]');
+    expect(btn).not.toBeNull();
+    expect(container.querySelector('[data-member="u6"] [data-act="make-staff"]')).toBeNull();
+    btn.click();
+    submit(lastForm());
+    await flush();
+    expect(api).toHaveBeenCalledWith("members", { method: "POST", body: { action: "linkStaff", uid: "u5", staffId: "st1" } });
+  });
+});

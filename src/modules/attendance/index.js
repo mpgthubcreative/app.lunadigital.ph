@@ -17,6 +17,7 @@ import { formatCentavos, formatDayId } from "../../lib/format.js";
 import { exportButton, bindExport, mayExport, exportHint } from "../../lib/export.js";
 import { ATTENDANCE_STATUSES, businessDate, periodFor, daysIn, weekdayLabel, summarizeAttendance, addDays } from "@shared/index.js";
 import * as defaultData from "../household/data.js";
+import { formDialog } from "../../components/form-dialog.js";
 
 const SHORT = { present: "Present", official_leave: "Leave", unpaid_leave: "Unpaid", rest_day: "Rest", absent: "Absent" };
 
@@ -159,7 +160,11 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     try {
       await data.setAttendance(staffId, date, status);
     } catch (err) {
-      toast(err.message || "Couldn't save", "danger");
+      // Correcting a day the employee sent: the Owner says why (kept in its history).
+      if (err.code === "reason-required") {
+        const r = await formDialog({ title: "Correct this day?", intro: "The employee sent this day. Your reason is kept in its history with the before and after.", fields: [{ name: "reason", label: "Reason", required: true, placeholder: "e.g. She was on leave that day" }], submitLabel: "Save correction", onSubmit: (v) => data.setAttendance(staffId, date, status, undefined, v.reason.trim()) }).catch((e) => toast(e.message, "danger"));
+        if (r) toast("Corrected.", "success");
+      } else toast(err.message || "Couldn't save", "danger");
     }
     load();
   };

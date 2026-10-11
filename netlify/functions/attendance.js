@@ -15,7 +15,7 @@ export const createAttendanceHandler = (deps) =>
   payrollActionHandler("attendance", {
     ...deps,
     actions: {
-      set: { permission: "attendance.edit", fields: ["action", "staffId", "date", "status", "note"], run: (c, b) => setAttendance({ ...c, input: { staffId: b.staffId, date: b.date, status: b.status, note: b.note } }) },
+      set: { permission: "attendance.edit", fields: ["action", "staffId", "date", "status", "note", "reason"], run: (c, b) => setAttendance({ ...c, input: { staffId: b.staffId, date: b.date, status: b.status, note: b.note, reason: b.reason } }) },
       decide: { permission: "attendance.edit", fields: ["action", "requestId", "decision"], run: (c, b) => decideAttendanceRequest({ ...c, requestId: b.requestId, decision: b.decision }) },
     },
   });

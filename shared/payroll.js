@@ -210,7 +210,7 @@ const money = (v, { field, max }) => {
   return v;
 };
 
-export const STAFF_FIELDS = Object.freeze(["name", "position", "dailyWage", "payCycle", "phone", "startDate", "notes"]);
+export const STAFF_FIELDS = Object.freeze(["name", "position", "dailyWage", "payCycle", "phone", "startDate", "endDate", "notes"]);
 
 // New staff (all required fields) or an edit (`partial`: only given keys).
 export function validateStaffInput(input, { partial = false } = {}) {
@@ -230,8 +230,26 @@ export function validateStaffInput(input, { partial = false } = {}) {
     if (input.startDate !== null && input.startDate !== undefined && input.startDate !== "" && !isDayId(input.startDate)) throw new PayrollError("invalid-date", "Invalid start date");
     out.startDate = input.startDate || null;
   }
+  if (has("endDate")) {
+    if (input.endDate !== null && input.endDate !== undefined && input.endDate !== "" && !isDayId(input.endDate)) throw new PayrollError("invalid-date", "Invalid end date");
+    out.endDate = input.endDate || null;
+  }
   if (has("notes")) out.notes = text(input.notes, { field: "Notes", max: 500 });
+  if (out.startDate && out.endDate && out.endDate < out.startDate) throw new PayrollError("invalid-date", "The end date can't be before the start date");
   return out;
+}
+
+// Owner-pilot fix (2026-10-11): the Household Staff record is the employee
+// master. Is this person on payroll for this period? Employed at some point
+// in it (start date on or before its end, no end date before its start) and
+// either active or ended within / after it (a final payroll after leaving).
+// Returns { eligible, reason }.
+export function payrollEligibility(staff, period) {
+  if (!staff) return { eligible: false, reason: "No staff record" };
+  if (staff.startDate && staff.startDate > period.end) return { eligible: false, reason: `Starts ${staff.startDate}` };
+  if (staff.endDate && staff.endDate < period.start) return { eligible: false, reason: `Employment ended ${staff.endDate}` };
+  if (staff.status !== "active" && !staff.endDate) return { eligible: false, reason: "Inactive" };
+  return { eligible: true, reason: null };
 }
 
 // A day's status: Present / Absent only up to today; Paid Leave, Unpaid
@@ -245,10 +263,10 @@ function checkDay(date, status, today) {
   }
 }
 
-export function validateAttendanceInput({ staffId, date, status, note } = {}, { today }) {
+export function validateAttendanceInput({ staffId, date, status, note, reason } = {}, { today }) {
   if (!isValidStaffId(staffId)) throw new PayrollError("invalid-staff", "Choose a staff member");
   checkDay(date, status, today);
-  return { staffId, date, status, note: text(note, { field: "Note", max: 200 }) };
+  return { staffId, date, status, note: text(note, { field: "Note", max: 200 }), reason: text(reason, { field: "Reason", max: 200 }) };
 }
 
 // Phase 18.6: a staff member's own request (their staffId comes from their

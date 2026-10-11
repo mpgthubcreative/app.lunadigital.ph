@@ -1,5 +1,6 @@
 // POST /api/payroll   (Phase 14: Payroll module)
 //   { action: "prepare", staffId, periodStart }                                    payroll.manage
+//   { action: "prepareAll", asOf? }  everyone on payroll for the period including asOf (default today)   payroll.manage
 //   { action: "addDeduction", payrollId, deduction: { description, amount } }      payroll.manage
 //   { action: "removeDeduction", payrollId, deductionId }                          payroll.manage
 //   { action: "deferAdvance", payrollId, advanceId }                               payroll.manage
@@ -21,7 +22,7 @@
 
 import { getAdmin } from "./_lib/firebase-admin.js";
 import { payrollActionHandler } from "./_lib/payroll-http.js";
-import { preparePayroll, addDeduction, removeDeduction, deferAdvance, deleteDraftPayroll, releaseSalary, newReceiptLink, addAddition, removeAddition, thirteenthMonthSummary, attachSalaryProof, readSalaryProof, resolveSalaryDispute } from "./_lib/payroll.js";
+import { preparePayroll, prepareEligible, addDeduction, removeDeduction, deferAdvance, deleteDraftPayroll, releaseSalary, newReceiptLink, addAddition, removeAddition, thirteenthMonthSummary, attachSalaryProof, readSalaryProof, resolveSalaryDispute } from "./_lib/payroll.js";
 
 const M = "payroll.manage";
 const R = "payroll.release";
@@ -30,6 +31,8 @@ export const createPayrollHandler = (deps) =>
     ...deps,
     actions: {
       prepare: { permission: M, created: true, fields: ["action", "staffId", "periodStart"], run: (c, b) => preparePayroll({ ...c, staffId: b.staffId, periodStart: b.periodStart }) },
+      // Owner-pilot fix: everyone on payroll for the period that includes asOf.
+      prepareAll: { permission: M, fields: ["action", "asOf"], run: (c, b) => prepareEligible({ ...c, asOf: b.asOf ?? null }) },
       addDeduction: { permission: M, fields: ["action", "payrollId", "deduction"], run: (c, b) => addDeduction({ ...c, payrollId: b.payrollId, deduction: b.deduction }) },
       removeDeduction: { permission: M, fields: ["action", "payrollId", "deductionId"], run: (c, b) => removeDeduction({ ...c, payrollId: b.payrollId, deductionId: b.deductionId }) },
       deferAdvance: { permission: M, fields: ["action", "payrollId", "advanceId"], run: (c, b) => deferAdvance({ ...c, payrollId: b.payrollId, advanceId: b.advanceId }) },

@@ -48,6 +48,13 @@ const view = (m) => ({
   householdStaff: Boolean(m.staffId),
 });
 
+// Household workspace: staff records that don't have a login yet (the
+// Users page offers them for "Household Staff" access).
+export async function staffWithoutLogin({ tenant }) {
+  const snap = await tenant.collection("householdStaff").where("status", "==", "active").get();
+  return snap.docs.filter((d) => !d.data().memberUid).map((d) => ({ id: d.id, name: d.data().name })).sort((a, b) => a.name.localeCompare(b.name));
+}
+
 export async function listMembers({ tenant }) {
   const snap = await tenant.collection("members").get();
   const order = { owner: 0, manager: 1, staff: 2, household_staff: 3 };
@@ -113,6 +120,40 @@ export async function setMemberRole({ db, admin, tenant, businessId, workspace, 
   if (m.roleTemplate === role) return { uid, role, unchanged: true };
   await addMember({ db, admin, businessId, uid, email: m.email, name: m.name, roleTemplate: role, permissionOverrides: m.permissionOverrides || {}, status: m.status, audit: { actor, reason: `Role changed from ${ROLE_TEMPLATES[m.roleTemplate]?.label ?? m.roleTemplate} to ${ROLE_TEMPLATES[role].label}` } });
   return { uid, role };
+}
+
+// Owner-pilot fix (2026-10-11): an existing login that is really a
+// kasambahay (e.g. added as Manager / Admin from Add member) becomes a
+// Household Staff login linked to exactly one staff record, in one
+// transaction: the role is replaced (Manager permissions are gone), the
+// member gets the staffId and the staff record the memberUid. Audited.
+export async function linkMemberToStaff({ db, admin, tenant, businessId, workspace, uid, staffId, actor }) {
+  if (workspace !== "household-payroll") throw new MemberError("invalid-role", "Household Staff is only for Household workspaces");
+  const { m } = await target(tenant, uid, actor);
+  if (m.staffId) throw new MemberError("household-login", "This login is already linked to a staff record");
+  if (typeof staffId !== "string" || !UID.test(staffId)) throw new MemberError("invalid-input", "Choose the staff record");
+  const staffRef = tenant.doc("householdStaff", staffId);
+  const first = await staffRef.get();
+  if (!first.exists) throw new MemberError("not-found", "Staff record not found");
+  if (first.data().status !== "active") throw new MemberError("invalid-input", `${first.data().name} is inactive`);
+  await addMember({
+    db,
+    admin,
+    businessId,
+    uid,
+    email: m.email,
+    name: m.name,
+    roleTemplate: "household_staff",
+    status: m.status,
+    audit: { actor, reason: `Changed from ${ROLE_TEMPLATES[m.roleTemplate]?.label ?? m.roleTemplate} to Household Staff, linked to ${first.data().name}` },
+    extra: { staffId },
+    within: async (tx) => {
+      const snap = await tx.get(staffRef);
+      if (!snap.exists || snap.data().memberUid) throw new MemberError("household-login", `${first.data().name} already has a login`);
+      return () => tx.update(staffRef, { memberUid: uid, login: { login: loginName(m.email || ""), status: m.status !== "active" ? "disabled" : m.activation?.status === "pending" ? "pending" : "active", createdAt: new Date(), createdBy: { uid: actor.uid, name: actor.name ?? null } } });
+    },
+  });
+  return { uid, role: "household_staff", staffId };
 }
 
 // Owner: remove access (they're signed out; their records and history

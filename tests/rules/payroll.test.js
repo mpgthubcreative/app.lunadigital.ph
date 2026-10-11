@@ -150,6 +150,9 @@ describe("Phase 18.6: household staff accounts and attendance requests", () => {
     await assertFails(db.doc(`businesses/${H}/attendanceRequests/s1_2026-10-17`).set({ staffId: "s1", state: "approved" }));
     await assertFails(db.doc(`businesses/${H}/members/maria@home-a`).update({ staffId: "s2" }));
     await assertFails(db.collection(`businesses/${H}/members`).get());
+    // Owner-pilot fix: no self-promotion to Manager / Admin, no re-linking a staff record.
+    await assertFails(db.doc(`businesses/${H}/members/maria@home-a`).update({ roleTemplate: "manager", permissions: { "payroll.manage": true } }));
+    await assertFails(db.doc(`businesses/${H}/householdStaff/s1`).update({ memberUid: "maria@home-a" }));
   });
 
   it("activation links are server-only", async () => {

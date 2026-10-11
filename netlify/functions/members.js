@@ -6,6 +6,9 @@
 //   POST { action: "setAccess", uid, enabled }           users.manage (remove / restore)
 //   POST { action: "newLink", uid }                      users.manage (account not set up yet,
 //                                                        or a login ID that lost its password)
+//   POST { action: "linkStaff", uid, staffId }           users.manage + household.manage
+//        (Household: an existing login becomes that staff record's own
+//        Household Staff login; Manager / Admin permissions are removed)
 // Nobody changes their own access; the account owner is protected; Owner is
 // never granted here; the plan's user limit applies (./_lib/members.js).
 
@@ -13,7 +16,7 @@ import { respond, withErrorHandling, parseJsonBody, RequestError } from "./_lib/
 import { getAdmin } from "./_lib/firebase-admin.js";
 import { requireTenant } from "./_lib/tenant.js";
 import { actorOf, only } from "./_lib/inventory-http.js";
-import { listMembers, inviteMember, setMemberRole, setMemberAccess, newMemberLink, assignableRoles, MemberError, ProvisioningError } from "./_lib/members.js";
+import { listMembers, inviteMember, setMemberRole, setMemberAccess, newMemberLink, linkMemberToStaff, staffWithoutLogin, assignableRoles, MemberError, ProvisioningError } from "./_lib/members.js";
 
 const STATUS = { "not-found": 404, "not-yourself": 403, "owner-protected": 403, "already-member": 409, "user-limit-reached": 403, "household-login": 409, "login-disabled": 409, "has-password": 409, "login-id-busy": 503 };
 const ACTIONS = {
@@ -21,6 +24,7 @@ const ACTIONS = {
   setRole: { fields: ["action", "uid", "role"], run: (c, b) => setMemberRole({ ...c, uid: b.uid, role: b.role }) },
   setAccess: { fields: ["action", "uid", "enabled"], run: (c, b) => setMemberAccess({ ...c, uid: b.uid, enabled: b.enabled }) },
   newLink: { fields: ["action", "uid"], run: (c, b) => newMemberLink({ ...c, uid: b.uid }) },
+  linkStaff: { fields: ["action", "uid", "staffId"], also: "household.manage", run: (c, b) => linkMemberToStaff({ ...c, uid: b.uid, staffId: b.staffId }) },
 };
 
 export function createMembersHandler({ getAdmin: loadAdmin, now = () => new Date() }) {
@@ -29,7 +33,8 @@ export function createMembersHandler({ getAdmin: loadAdmin, now = () => new Date
     try {
       if (event.httpMethod === "GET") {
         const ctx = await requireTenant(event, { db, auth, permission: "users.view" });
-        return respond(200, { success: true, members: await listMembers({ tenant: ctx.tenant }), roles: assignableRoles(ctx.workspace.templateId), canManage: ctx.permissions["users.manage"] === true, you: ctx.uid });
+        const household = ctx.workspace.templateId === "household-payroll" && ctx.permissions["household.manage"] === true;
+        return respond(200, { success: true, members: await listMembers({ tenant: ctx.tenant }), roles: assignableRoles(ctx.workspace.templateId), canManage: ctx.permissions["users.manage"] === true, you: ctx.uid, ...(household ? { householdStaffAccess: true, staffWithoutLogin: await staffWithoutLogin({ tenant: ctx.tenant }) } : {}) });
       }
       if (event.httpMethod !== "POST") throw new RequestError("method-not-allowed", "Method not allowed.", 405);
       const ctx = await requireTenant(event, { db, auth, permission: "users.manage", write: true });
@@ -37,6 +42,7 @@ export function createMembersHandler({ getAdmin: loadAdmin, now = () => new Date
       const action = body && Object.prototype.hasOwnProperty.call(ACTIONS, body.action) ? ACTIONS[body.action] : null;
       if (!action) throw new RequestError("invalid-request", "Unknown action.", 400);
       only(body, action.fields);
+      if (action.also && ctx.permissions[action.also] !== true) throw new RequestError("forbidden", "Not allowed.", 403);
       const common = { db, admin, auth, tenant: ctx.tenant, businessId: ctx.businessId, workspace: ctx.workspace.templateId, actor: actorOf(ctx), now: now() };
       return respond(action.created ? 201 : 200, { success: true, ...(await action.run(common, body)) });
     } catch (err) {

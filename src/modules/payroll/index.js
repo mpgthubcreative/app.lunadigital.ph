@@ -143,25 +143,36 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     );
   }
 
+  // Owner-pilot fix: the staff record is the employee master. "Everyone"
+  // prepares every person on payroll for their pay period that includes
+  // the chosen date (start / end dates and status decide; nobody is
+  // enrolled twice). One person is still possible for a correction.
   async function prepare() {
     if (!state.staff.length) return toast("Add household staff first.", "danger");
-    const first = state.staff[0];
-    const options = (s) => recentPeriods(s.payCycle, today).map((p) => ({ value: p.start, label: `${formatDayId(p.start)} – ${formatDayId(p.end)}${p.start <= today && p.end >= today ? " (current)" : ""}` }));
     const r = await formDialog({
       title: "Prepare payroll",
-      intro: `Pay periods follow each person's pay cycle (${first.name}: ${PAY_CYCLES[first.payCycle]?.label}). Paid advances are deducted automatically.`,
+      intro: "Everyone employed in the pay period is included automatically (their start and end dates decide). Paid advances are deducted automatically.",
       fields: [
-        { name: "staffId", label: "Employee", type: "select", value: first.id, options: state.staff.map((s) => ({ value: s.id, label: `${s.name} · ${PAY_CYCLES[s.payCycle]?.label}` })) },
-        { name: "periodStart", label: "Pay period", type: "select", value: options(first)[1]?.value ?? options(first)[0].value, options: [...new Map(state.staff.flatMap(options).map((o) => [o.value, o])).values()].sort((a, b) => (a.value < b.value ? 1 : -1)), hint: "Only periods that match the employee's cycle are accepted." },
+        { name: "who", label: "For", type: "select", value: "all", options: [{ value: "all", label: "Everyone on payroll" }, ...state.staff.map((s) => ({ value: s.id, label: `${s.name} only` }))] },
+        { name: "asOf", label: "Pay period that includes", type: "date", value: today, max: today, required: true, hint: "Each person's own pay cycle sets the exact dates." },
       ],
       submitLabel: "Prepare",
-      onSubmit: (v) => data.payrollApi({ action: "prepare", staffId: v.staffId, periodStart: v.periodStart }),
+      onSubmit: (v) => {
+        if (v.who === "all") return data.payrollApi({ action: "prepareAll", asOf: v.asOf });
+        const s = state.staff.find((x) => x.id === v.who);
+        return data.payrollApi({ action: "prepare", staffId: v.who, periodStart: periodFor(s.payCycle, v.asOf).start });
+      },
     });
-    if (r) {
-      toast(r.existing ? "That payroll already exists." : "Payroll prepared.", "success");
+    if (!r) return;
+    if (r.prepared || r.existing) {
+      const skipped = (r.skipped || []).map((x) => `${x.name} (${x.reason})`).join(", ");
+      toast(`${r.prepared.length} prepared${r.existing.length ? `, ${r.existing.length} already there` : ""}${skipped ? `. Not on payroll for that period: ${skipped}` : ""}.`, r.prepared.length || r.existing.length ? "success" : "danger");
       await load();
-      openView(r.payrollId);
+      return;
     }
+    toast(r.existing ? "That payroll already exists." : "Payroll prepared.", "success");
+    await load();
+    openView(r.payrollId);
   }
 
   async function openView(payrollId) {

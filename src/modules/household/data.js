@@ -23,7 +23,7 @@ export async function getPayroll(businessId, payrollId) {
 
 const post = (endpoint, body) => api(endpoint, { method: "POST", body });
 export const staffApi = (body) => post("household-staff", body);
-export const setAttendance = (staffId, date, status, note) => post("attendance", { action: "set", staffId, date, status, ...(note ? { note } : {}) });
+export const setAttendance = (staffId, date, status, note, reason) => post("attendance", { action: "set", staffId, date, status, ...(note ? { note } : {}), ...(reason ? { reason } : {}) });
 export const payrollApi = (body) => post("payroll", body);
 export const advancesApi = (body) => post("advances", body);
 // Phase 18.6: staff requests waiting for the Owner (a household has few;
