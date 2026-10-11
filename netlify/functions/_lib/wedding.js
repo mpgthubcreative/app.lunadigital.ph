@@ -23,7 +23,7 @@
 // the wedding sink applies the same cap to the expenses themselves.
 
 import { BUDGET_DOC_ID, isValidRecordId } from "../../../shared/baby.js";
-import { WeddingError, WEDDING_SCHEMA_VERSION, TOTALS_DOC_ID, SUPPLIER_SERVICES, SUPPLIER_STATUSES, TASK_STATUSES, TASK_PRIORITIES, RSVP_STATUSES, GUEST_SIDES, isOpenStatus, keyOf, validateSupplierInput, validateSupplierPaymentInput, validateTaskInput, validateGuestInput, validateRsvp, taskTotalsDelta, guestDelta, supplierBalance } from "../../../shared/wedding.js";
+import { WeddingError, WEDDING_SCHEMA_VERSION, TOTALS_DOC_ID, SUPPLIER_SERVICES, SUPPLIER_STATUSES, TASK_STATUSES, TASK_PRIORITIES, RSVP_STATUSES, GUEST_SIDES, isOpenStatus, keyOf, validateSupplierInput, validateSupplierPaymentInput, validateTaskInput, validateGuestInput, validateRsvp, taskTotalsDelta, guestDelta, guestCategoryDelta, supplierBalance } from "../../../shared/wedding.js";
 import { EXPENSE_METHODS } from "../../../shared/expenses.js";
 import { businessDate, isDayId } from "../../../shared/metrics.js";
 import { prepareExpenseCreate } from "./expenses.js";
@@ -391,6 +391,11 @@ async function markPaidOnce({ db, tenant, FieldValue, business, workspace, payme
 const taskTotalsRef = (tenant) => tenant.doc("taskTotals", TOTALS_DOC_ID);
 const taskRef = (tenant, id) => ref(tenant, "weddingTasks", id, "task");
 const incTotals = (FieldValue, d) => Object.fromEntries(Object.entries(d).filter(([, v]) => v).map(([k, v]) => [k, FieldValue.increment(v)]));
+// guestTotals: the overall counts plus byCategory (Phase 18.6), one write.
+const guestTotalsWrite = (FieldValue, before, after) => {
+  const byCat = Object.fromEntries(Object.entries(guestCategoryDelta(before, after)).map(([c, d]) => [c, incTotals(FieldValue, d)]));
+  return { ...incTotals(FieldValue, guestDelta(before, after)), ...(Object.keys(byCat).length ? { byCategory: byCat } : {}) };
+};
 
 export async function createTask({ db, tenant, FieldValue, input, actor }) {
   const data = validateTaskInput(input);
@@ -464,9 +469,9 @@ export async function createGuest({ db, tenant, FieldValue, business = null, inp
     await tx.get(guestTotalsRef(tenant));
     const r = tenant.collection("guests").doc();
     const stamp = FieldValue.serverTimestamp();
-    const g = { name: data.name, nameLower: lower(data.name), group: data.group ?? null, side: data.side, contact: data.contact ?? null, partySize: data.partySize, invitationSent: data.invitationSent ?? null, invited: Boolean(data.invitationSent), rsvp: "awaiting", confirmed: 0, rsvpDate: null };
+    const g = { name: data.name, nameLower: lower(data.name), group: data.group ?? null, category: data.category ?? null, side: data.side, contact: data.contact ?? null, partySize: data.partySize, invitationSent: data.invitationSent ?? null, invited: Boolean(data.invitationSent), rsvp: "awaiting", confirmed: 0, rsvpDate: null };
     tx.create(r, { schemaVersion: WEDDING_SCHEMA_VERSION, ...g, notes: data.notes ?? null, history: [entry(actor, `Added · party of ${g.partySize}`)], revision: 1, createdBy: who(actor), createdAt: stamp, updatedBy: who(actor), updatedAt: stamp });
-    tx.set(guestTotalsRef(tenant), { schemaVersion: WEDDING_SCHEMA_VERSION, ...incTotals(FieldValue, guestDelta(null, g)), updatedAt: stamp }, { merge: true });
+    tx.set(guestTotalsRef(tenant), { schemaVersion: WEDDING_SCHEMA_VERSION, ...guestTotalsWrite(FieldValue, null, g), updatedAt: stamp }, { merge: true });
     meterActivity(tx, { tenant, FieldValue, timezone: business?.timezone ?? "Asia/Manila", now, counts: { guestsAdded: 1 } });
     return { guestId: r.id };
   }, TX_OPTIONS);
@@ -490,7 +495,7 @@ export async function updateGuest({ db, tenant, FieldValue, guestId, changes, ex
     const labels = Object.keys(diff).map((k) => (k === "notes" ? "Notes updated" : `${names[k]} changed ${show(k, g[k])} → ${show(k, diff[k])}`));
     const stamp = FieldValue.serverTimestamp();
     tx.update(gRef, { ...diff, ...("name" in diff ? { nameLower: lower(diff.name) } : {}), invited: next.invited, history: append(g.history, entry(actor, labels.join(" · "))), revision: g.revision + 1, updatedBy: who(actor), updatedAt: stamp });
-    tx.set(guestTotalsRef(tenant), { schemaVersion: WEDDING_SCHEMA_VERSION, ...incTotals(FieldValue, guestDelta(g, next)), updatedAt: stamp }, { merge: true });
+    tx.set(guestTotalsRef(tenant), { schemaVersion: WEDDING_SCHEMA_VERSION, ...guestTotalsWrite(FieldValue, g, next), updatedAt: stamp }, { merge: true });
     return { guestId, revision: g.revision + 1 };
   }, TX_OPTIONS);
 }
@@ -510,7 +515,7 @@ export async function setRsvp({ db, tenant, FieldValue, business, guestId, rsvp,
     const next = { ...g, rsvp: v.status, confirmed: v.confirmed };
     const stamp = FieldValue.serverTimestamp();
     tx.update(gRef, { rsvp: v.status, confirmed: v.confirmed, rsvpDate: v.status === "awaiting" ? null : businessDate(business.timezone, now), history: append(g.history, entry(actor, text, { from: { rsvp: g.rsvp, confirmed: int(g.confirmed) }, to: v })), revision: g.revision + 1, updatedBy: who(actor), updatedAt: stamp });
-    tx.set(guestTotalsRef(tenant), { schemaVersion: WEDDING_SCHEMA_VERSION, ...incTotals(FieldValue, guestDelta(g, next)), updatedAt: stamp }, { merge: true });
+    tx.set(guestTotalsRef(tenant), { schemaVersion: WEDDING_SCHEMA_VERSION, ...guestTotalsWrite(FieldValue, g, next), updatedAt: stamp }, { merge: true });
     return { guestId, rsvp: v.status, confirmed: v.confirmed };
   }, TX_OPTIONS);
 }
@@ -544,7 +549,7 @@ export async function removeGuest({ db, tenant, FieldValue, guestId, actor }) {
     const g = snap.data();
     const stamp = FieldValue.serverTimestamp();
     tx.delete(gRef);
-    tx.set(guestTotalsRef(tenant), { schemaVersion: WEDDING_SCHEMA_VERSION, ...incTotals(FieldValue, guestDelta(g, null)), updatedAt: stamp }, { merge: true });
+    tx.set(guestTotalsRef(tenant), { schemaVersion: WEDDING_SCHEMA_VERSION, ...guestTotalsWrite(FieldValue, g, null), updatedAt: stamp }, { merge: true });
     tx.set(tenant.collection("auditLog").doc(), { type: "guest.removed", guestId, name: g.name, partySize: g.partySize, rsvp: g.rsvp, confirmed: int(g.confirmed), actor: who(actor), at: stamp });
     return { guestId, removed: true };
   }, TX_OPTIONS);

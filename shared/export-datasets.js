@@ -20,7 +20,7 @@ import { PRODUCT_STATUSES } from "./inventory.js";
 import { CUSTOMER_STATUSES } from "./customers.js";
 import { ATTENDANCE_STATUS_IDS, PAYROLL_STATUSES, RECEIPT_STATUSES, ADVANCE_STATUSES, STAFF_STATUSES } from "./payroll.js";
 import { CATEGORY_STATUSES, PROVIDER_STATUSES, PROVIDER_TYPE_IDS, SCHEDULE_STATUS_IDS } from "./baby.js";
-import { SUPPLIER_SERVICE_IDS, SUPPLIER_STATUSES, SUPPLIER_PAYMENT_STATUS_IDS, TASK_STATUS_IDS, TASK_PRIORITY_IDS, RSVP_STATUS_IDS, GUEST_SIDE_IDS } from "./wedding.js";
+import { SUPPLIER_SERVICE_IDS, SUPPLIER_STATUSES, SUPPLIER_PAYMENT_STATUS_IDS, TASK_STATUS_IDS, TASK_PRIORITY_IDS, RSVP_STATUS_IDS, GUEST_SIDE_IDS, GUEST_CATEGORY_IDS } from "./wedding.js";
 
 const range = { from: filter.day(), to: filter.day() };
 const RANGE_LABELS = { from: "From", to: "To" };
@@ -250,8 +250,8 @@ export const EXPORT_DATASETS = Object.freeze({
     workspaces: ["bridal-expense"],
     view: ["guests.view"],
     exportPermission: EXPORT_PERMISSION,
-    filters: { rsvp: filter.oneOf(RSVP_STATUS_IDS), side: filter.oneOf(GUEST_SIDE_IDS), invited: filter.oneOf(["sent", "not_sent"]), search: filter.text(100) },
-    filterLabels: { rsvp: "RSVP", side: "Side", invited: "Invitation", search: "Search" },
+    filters: { category: filter.oneOf(GUEST_CATEGORY_IDS), rsvp: filter.oneOf(RSVP_STATUS_IDS), side: filter.oneOf(GUEST_SIDE_IDS), invited: filter.oneOf(["sent", "not_sent"]), search: filter.text(100) },
+    filterLabels: { category: "Category", rsvp: "RSVP", side: "Side", invited: "Invitation", search: "Search" },
   },
 });
 

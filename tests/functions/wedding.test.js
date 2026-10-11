@@ -301,6 +301,20 @@ describe("Guests & RSVP", () => {
     expect(rsvpSummary(docAt("guestTotals/current"))).toMatchObject({ attending: 0, attendingSeats: 0, declined: 1, declinedSeats: 4 });
   });
 
+  it("byCategory follows each guest: add -> RSVP -> change category -> remove (Phase 18.6)", async () => {
+    const by = () => docAt("guestTotals/current").byCategory || {};
+    const g = ok(await api("guests", u.camille, { action: "create", guest: { name: "Ninong Ben", category: "sponsors", side: "groom", partySize: 2 } }), 201).guestId;
+    expect(by().sponsors).toMatchObject({ invitations: 1, invitedSeats: 2, awaiting: 1, awaitingSeats: 2 });
+    ok(await api("guests", u.camille, { action: "setRsvp", guestId: g, rsvp: { status: "attending", confirmed: 2 } }));
+    expect(by().sponsors).toMatchObject({ attending: 1, attendingSeats: 2, awaiting: 0, awaitingSeats: 0 });
+    ok(await api("guests", u.camille, { action: "update", guestId: g, changes: { category: "family" } }));
+    expect(by().sponsors).toMatchObject({ invitations: 0, attendingSeats: 0 });
+    expect(by().family).toMatchObject({ invitations: 1, attendingSeats: 2 });
+    expect((await api("guests", u.camille, { action: "update", guestId: g, changes: { category: "cousins" } })).status).toBe(400);
+    ok(await api("guests", u.camille, { action: "remove", guestId: g }));
+    expect(by().family).toMatchObject({ invitations: 0, invitedSeats: 0, attendingSeats: 0 });
+  });
+
   it("validation: confirmed ≤ party size; attending needs ≥1; declined with confirmed > 0 refused; party size can't drop below confirmed", async () => {
     const g = ok(await api("guests", u.camille, { action: "create", guest: { name: "Santos", side: "bride", partySize: 2 } }), 201).guestId;
     for (const rsvp of [{ status: "attending", confirmed: 3 }, { status: "attending", confirmed: 0 }, { status: "declined", confirmed: 1 }, { status: "maybe" }]) expect((await api("guests", u.camille, { action: "setRsvp", guestId: g, rsvp })).status, JSON.stringify(rsvp)).toBe(400);

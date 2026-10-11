@@ -11,7 +11,7 @@
 //   - taskTotals and guestTotals = a recount of the tasks and guests.
 
 import { beforeAll, describe, it, expect, vi } from "vitest";
-import { taskTotalsDelta, guestContribution } from "../../shared/wedding.js";
+import { taskTotalsDelta, guestContribution, guestCategoryDelta } from "../../shared/wedding.js";
 
 process.env.FIREBASE_PROJECT_ID = process.env.FIREBASE_PROJECT_ID || "demo-luna";
 vi.setConfig({ testTimeout: 180000 });
@@ -101,6 +101,11 @@ async function consistent(w) {
   const gCount = {};
   for (const g of guests) for (const [k, v] of Object.entries(guestContribution(g))) gCount[k] = (gCount[k] || 0) + v;
   for (const k of Object.keys(guestContribution(null))) expect(n(gt.data()?.[k]), `guestTotals.${k}`).toBe(gCount[k] || 0);
+  // Phase 18.6: byCategory = a recount per category.
+  const gByCat = {};
+  for (const g of guests) for (const [c, d] of Object.entries(guestCategoryDelta(null, g))) for (const [k, v] of Object.entries(d)) (gByCat[c] ??= {})[k] = (gByCat[c][k] || 0) + v;
+  for (const [c, stored] of Object.entries(gt.data()?.byCategory || {})) for (const [k, v] of Object.entries(stored)) expect(n(v), `guestTotals.byCategory.${c}.${k}`).toBe(gByCat[c]?.[k] || 0);
+  for (const [c, d] of Object.entries(gByCat)) for (const [k, v] of Object.entries(d)) expect(n(gt.data()?.byCategory?.[c]?.[k]), `guestTotals.byCategory.${c}.${k}`).toBe(v);
   return { b, active, payments, suppliers };
 }
 
@@ -184,14 +189,14 @@ describe("budget, expenses, tasks and guests under concurrency", () => {
   it("concurrent RSVP edits on the same and different guests: guestTotals never drift", async () => {
     const w = await world();
     const ids = [];
-    for (let i = 0; i < 4; i++) ids.push((await wed.createGuest({ ...w.c, input: { name: `Family ${i}`, side: "both", partySize: 4 } })).guestId);
+    for (let i = 0; i < 4; i++) ids.push((await wed.createGuest({ ...w.c, input: { name: `Family ${i}`, side: "both", partySize: 4, category: i % 2 ? "friends" : "family" } })).guestId);
     const r = await Promise.allSettled([
       ...ids.flatMap((guestId, i) => [
         wed.setRsvp({ ...w.c, actor: w.actor("A"), guestId, rsvp: { status: "attending", confirmed: 1 + (i % 4) } }),
         wed.setRsvp({ ...w.c, actor: w.actor("B"), guestId, rsvp: i % 2 ? { status: "declined" } : { status: "attending", confirmed: 3 } }),
-        wed.updateGuest({ ...w.c, actor: w.actor("C"), guestId, changes: { partySize: 5, invitationSent: "2026-10-01" } }),
+        wed.updateGuest({ ...w.c, actor: w.actor("C"), guestId, changes: { partySize: 5, invitationSent: "2026-10-01", ...(i === 1 ? { category: "work" } : {}) } }),
       ]),
-      wed.createGuest({ ...w.c, input: { name: "Late addition", side: "bride", partySize: 2 } }),
+      wed.createGuest({ ...w.c, input: { name: "Late addition", side: "bride", partySize: 2, category: "sponsors" } }),
       wed.removeGuest({ ...w.c, guestId: ids[3] }),
     ]);
     expectExplicit(r, ["not-found"]);

@@ -104,7 +104,11 @@ User request (2026-10-11, mid stage 7): order form uses a dropdown of every acti
 
 Stage 7 emulator suite: ALL GREEN, 2934 tests / 38 files in 8 foreground batches (79, 64, 64, 72, 35, 186, 1696, 738). Fixed stale fixtures: Baby concurrency + safe-deletes (manual Baby total now refused), emulator Orders export (one-sheet layout).
 
-User requests queued 2026-10-11 (Wedding): merge Suppliers + Supplier Payments into one page; Wedding total budget = sum of category budgets; Wedding dashboard: remove Needs attention, show total upcoming payments; Guests/RSVP: status dropdown in rows, filter by category, dashboard guest list grouped by category.
+User requests 2026-10-11 (Wedding), DONE:
+- W1 88cf9d0: Wedding total budget = sum of category budgets (server; setTotal refused). Staging: run `adopt-baby-category-totals` (now covers Baby + Wedding) dry run, then `--apply`.
+- W2 b548120: Wedding dashboard: Needs attention removed; Payments coming up leads with the total of all upcoming payments.
+- W3 307abfc: Wedding Suppliers rows carry Paid? (Unpaid / Partly paid / Paid -> records one expense) and Scheduled (open / mark paid / schedule). Supplier Payments left the menu (still reachable as Payment history).
+- W4 (this commit): guest Category (fixed list; old free-text group kept as a note), RSVP dropdown per row (Attending = whole party), category filter (+8 guests indexes, deploy before the code), dashboard guest list by category (guestTotals.byCategory, server-kept). Older guests have no category: they show as "Not set" until edited; no migration.
 
 Stage 6 notes: terms are now Budget left / Still to pay / Coming up (UI + Excel); inventory Adjust uses In stock / left after orders set aside; phone KPI hints wrap to 2 lines instead of an ellipsis. The audit script (CDP device emulation on the preview build) lives in the session scratchpad, not the repo.
 

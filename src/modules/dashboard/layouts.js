@@ -12,7 +12,7 @@
 import { html } from "../../lib/html.js";
 import { kpiStrip, attentionList, section, countTiles, itemList, barRows, emptyState, skeleton, budgetTone, badge, mobileCell } from "../../components/ui.js";
 import { formatCentavos, formatNumber, formatDayId } from "../../lib/format.js";
-import { formatQuantity, UNITS, TASK_STATUSES } from "@shared/index.js";
+import { formatQuantity, UNITS, TASK_STATUSES, rsvpByCategory } from "@shared/index.js";
 import { paymentCell, fulfillmentCell } from "../orders/inline.js";
 import { NO_DATA } from "./view.js";
 
@@ -366,6 +366,17 @@ function rsvpBar(t) {
   return html`<svg class="bar is-thick" viewBox="0 0 100 8" preserveAspectRatio="none" role="img" aria-label="${t.attendingSeats} attending, ${t.declinedSeats} declined, ${t.awaitingSeats} awaiting">${part(t.attendingSeats, "fill-success")}${part(t.declinedSeats, "fill-danger")}${part(t.awaitingSeats, "fill-neutral")}</svg>`;
 }
 
+// Phase 18.6: the guest list by category (people): coming, declined,
+// waiting, with the invited count under each category.
+function rsvpCategoryTable(rsvp) {
+  const rows = rsvpByCategory(rsvp);
+  if (!rows.some((r) => r.id)) return ""; // nobody has a category yet
+  return html`<div class="table-wrap"><table class="table table-compact" data-role="rsvp-categories">
+    <thead><tr><th>Category (people)</th><th class="num">Coming</th><th class="num">Declined</th><th class="num">Waiting</th></tr></thead>
+    <tbody>${rows.map((r) => html`<tr data-category="${r.id ?? "unset"}"><td>${r.label}<div class="cell-sub">${formatNumber(r.invitedSeats)} invited</div></td><td class="num">${formatNumber(r.attendingSeats)}</td><td class="num">${formatNumber(r.declinedSeats)}</td><td class="num">${formatNumber(r.awaitingSeats)}</td></tr>`)}</tbody>
+  </table></div>`;
+}
+
 export function bridalDashboard(ctx) {
   const { view, currency, today, periodLabel } = ctx;
   const a = access(view);
@@ -439,7 +450,7 @@ export function bridalDashboard(ctx) {
                   <div class="hero-value">${formatNumber(rsvp.attendingSeats)} <small>of ${formatNumber(rsvp.invitedSeats)} invited seats confirmed</small></div>
                   ${rsvpBar(rsvp)}
                   <div class="legend legend-tight">${legendKey("fill-success", `${formatNumber(rsvp.attendingSeats)} attending`)}${legendKey("fill-danger", `${formatNumber(rsvp.declinedSeats)} declined`)}${legendKey("fill-neutral", `${formatNumber(rsvp.awaitingSeats)} awaiting (${plural(rsvp.awaiting, "invitation")})`)}</div>
-                </div>`
+                </div>${rsvpCategoryTable(rsvp)}`
               : emptyState({ iconName: "users", title: "No guests yet", body: "Add guests to follow invitations and confirmations." }),
           })
         : ""}

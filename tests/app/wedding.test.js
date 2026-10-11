@@ -10,7 +10,7 @@ import { mount as mountExpenses, parseWeddingExpense } from "../../src/modules/w
 import { mount as mountSuppliers, toSupplierInput, paidState } from "../../src/modules/wedding/suppliers.js";
 import { mount as mountPayments } from "../../src/modules/wedding/payments.js";
 import { mount as mountTasks } from "../../src/modules/wedding/tasks.js";
-import { mount as mountGuests, parseRsvp } from "../../src/modules/wedding/guests.js";
+import { toGuestInput, mount as mountGuests, parseRsvp } from "../../src/modules/wedding/guests.js";
 import { mount as mountDashboard } from "../../src/modules/dashboard/index.js";
 import { MODULE_LOADERS } from "../../src/modules/loaders.js";
 import { buildRoutes } from "../../src/app/routes.js";
@@ -216,21 +216,39 @@ describe("Wedding Tasks", () => {
 });
 
 describe("Guests & RSVP", () => {
-  it("summary separates people from invitations; RSVP Attending 3 for a party of 4", async () => {
+  it("summary separates people from invitations; RSVP dropdown: Attending confirms the whole party", async () => {
     const data = fakeData();
     mountGuests(container, wedding(), { data, toast: () => {} });
     await flush();
     const v = (id) => container.querySelector(`[data-widget="${id}"] .stat-value`).textContent;
     expect([v("invited"), v("confirmed"), v("declined"), v("awaiting")]).toEqual(["9", "3", "1", "1"]);
     expect(container.querySelector('[data-widget="confirmed"] .stat-label').textContent).toMatch(/people/);
-    expect(cells("guests")[0].slice(0, 6)).toEqual(["Prado Family", "Groom's relatives", "Groom's side", "4", "Awaiting RSVP", "—"]);
-    container.querySelector('[data-act="rsvp"]').click();
-    const form = lastForm();
-    form.elements.status.value = "attending";
-    form.elements.confirmed.value = "3";
-    submit(form);
+    // An older guest has no category yet (its free-text group stays as a note).
+    expect(cells("guests")[0].slice(0, 4)).toEqual(["Prado Family", "—", "Groom's side", "4"]);
+    const sel = container.querySelector('[data-role="rsvp"]');
+    expect(sel.value).toBe("awaiting");
+    sel.value = "attending";
+    sel.dispatchEvent(new Event("change", { bubbles: true }));
     await flush();
-    expect(data.guestsApi).toHaveBeenCalledWith({ action: "setRsvp", guestId: GUEST.id, rsvp: { status: "attending", confirmed: 3 } });
+    expect(data.guestsApi).toHaveBeenCalledWith({ action: "setRsvp", guestId: GUEST.id, rsvp: { status: "attending", confirmed: 4 } });
+    const again = container.querySelector('[data-role="rsvp"]');
+    again.value = "declined";
+    again.dispatchEvent(new Event("change", { bubbles: true }));
+    await flush();
+    expect(data.guestsApi).toHaveBeenLastCalledWith({ action: "setRsvp", guestId: GUEST.id, rsvp: { status: "declined" } });
+  });
+
+  it("filters by category; a new guest needs a category", async () => {
+    const data = fakeData();
+    mountGuests(container, wedding(), { data, toast: () => {} });
+    await flush();
+    const f = container.querySelector('[data-role="filters"]');
+    f.elements.category.value = "sponsors";
+    f.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    await flush();
+    expect(data.listGuests).toHaveBeenLastCalledWith(expect.anything(), { category: "sponsors" }, expect.anything());
+    expect(() => toGuestInput({ name: "A", category: "", side: "both", partySize: "2", contact: "", invitationSent: "", notes: "" })).toThrow(/category/);
+    expect(toGuestInput({ name: "A", category: "family", side: "both", partySize: "2", contact: "", invitationSent: "", notes: "" })).toMatchObject({ category: "family" });
   });
   it("parseRsvp: confirmed only for Attending, never above the party size", () => {
     expect(parseRsvp({ status: "declined", confirmed: "3" }, 4)).toEqual({ status: "declined" });

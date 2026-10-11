@@ -221,6 +221,7 @@ export function weddingTasksQuery(f = {}, { today = null } = {}) {
 // filters: { rsvp?, side?, invited? ("sent" | "not_sent"), search? (name prefix) }
 export function guestsQuery(f = {}) {
   const where = [];
+  if (f.category) where.push(["category", "==", f.category]);
   if (f.rsvp) where.push(["rsvp", "==", f.rsvp]);
   if (f.side) where.push(["side", "==", f.side]);
   if (f.invited) where.push(["invited", "==", f.invited === "sent"]);

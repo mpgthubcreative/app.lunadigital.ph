@@ -238,14 +238,31 @@ export const RSVP_STATUSES = Object.freeze({ awaiting: { label: "Awaiting RSVP" 
 export const RSVP_STATUS_IDS = Object.freeze(Object.keys(RSVP_STATUSES));
 export const GUEST_SIDES = Object.freeze({ bride: { label: "Bride's side" }, groom: { label: "Groom's side" }, both: { label: "Both / Mutual" } });
 export const GUEST_SIDE_IDS = Object.freeze(Object.keys(GUEST_SIDES));
+// Phase 18.6: a fixed guest category (filter + dashboard breakdown). The
+// older free-text `group` is kept on existing guests as a note.
+export const GUEST_CATEGORIES = Object.freeze({
+  family: { label: "Family" },
+  relatives: { label: "Relatives" },
+  friends: { label: "Friends" },
+  work: { label: "Work / Office" },
+  entourage: { label: "Entourage" },
+  sponsors: { label: "Sponsors (Ninong / Ninang)" },
+  other: { label: "Other" },
+});
+export const GUEST_CATEGORY_IDS = Object.freeze(Object.keys(GUEST_CATEGORIES));
 
-const GUEST_FIELDS = ["name", "group", "side", "contact", "partySize", "invitationSent", "notes"];
+const GUEST_FIELDS = ["name", "group", "category", "side", "contact", "partySize", "invitationSent", "notes"];
 export function validateGuestInput(input, { partial = false } = {}) {
   only(input, GUEST_FIELDS, "guest");
   const has = (k) => !partial || Object.hasOwn(input, k);
   const out = {};
   if (has("name")) out.name = text(input.name, { field: "Guest or household", max: 100, required: true });
   if (has("group")) out.group = text(input.group, { field: "Group", max: 60 });
+  if (has("category")) {
+    const c = input.category === "" || input.category === undefined ? null : input.category;
+    if (c !== null && !GUEST_CATEGORY_IDS.includes(c)) throw new WeddingError("invalid-input", "Choose a guest category");
+    out.category = c;
+  }
   if (has("side")) {
     if (!GUEST_SIDE_IDS.includes(input.side)) throw new WeddingError("invalid-input", "Choose a side");
     out.side = input.side;
@@ -309,6 +326,43 @@ const int = (v) => (Number.isSafeInteger(v) ? v : 0);
 export function rsvpSummary(doc) {
   const d = doc && typeof doc === "object" ? doc : {};
   return Object.fromEntries(Object.keys(guestContribution(null)).map((k) => [k, int(d[k])]));
+}
+
+// guestTotals/current.byCategory: the same counts per guest category, kept
+// by the server in the same transaction as the totals. A guest with no
+// category (added before Phase 18.6) counts in the totals only.
+const CATEGORY_KEYS = ["invitations", "invitedSeats", "attending", "attendingSeats", "declined", "declinedSeats", "awaiting", "awaitingSeats"];
+export function guestCategoryDelta(before, after) {
+  const out = {};
+  const add = (g, sign) => {
+    if (!g || !GUEST_CATEGORY_IDS.includes(g.category)) return;
+    const c = guestContribution(g);
+    const row = (out[g.category] ??= Object.fromEntries(CATEGORY_KEYS.map((k) => [k, 0])));
+    for (const k of CATEGORY_KEYS) row[k] += sign * c[k];
+  };
+  add(before, -1);
+  add(after, 1);
+  for (const [cat, row] of Object.entries(out)) {
+    for (const k of CATEGORY_KEYS) if (!row[k]) delete row[k];
+    if (!Object.keys(row).length) delete out[cat];
+  }
+  return out;
+}
+
+// Rows for the dashboard, in category order; "Not set" = totals − categories.
+export function rsvpByCategory(doc) {
+  const d = doc && typeof doc === "object" ? doc : {};
+  const total = rsvpSummary(d);
+  const by = d.byCategory && typeof d.byCategory === "object" ? d.byCategory : {};
+  const rows = [];
+  const rest = Object.fromEntries(CATEGORY_KEYS.map((k) => [k, total[k]]));
+  for (const id of GUEST_CATEGORY_IDS) {
+    const r = Object.fromEntries(CATEGORY_KEYS.map((k) => [k, int(by[id]?.[k])]));
+    for (const k of CATEGORY_KEYS) rest[k] -= r[k];
+    if (r.invitations > 0) rows.push({ id, label: GUEST_CATEGORIES[id].label, ...r });
+  }
+  if (rest.invitations > 0) rows.push({ id: null, label: "Not set", ...rest });
+  return rows;
 }
 
 // ---------- Dashboard figures ----------

@@ -51,7 +51,9 @@ const LIST_FETCHERS = {
   tasksDueSoon: async (businessId, { today }) => (await listTasks(businessId, { state: "open" }, { today, pageSize: 25 })).rows.filter((t) => t.dueDate).slice(0, 10),
   recentWeddingExpenses: (businessId) => listWeddingExpenses(businessId, { status: "active" }, { pageSize: 5 }).then(first),
   rsvpSummary: async (businessId) => {
-    const t = rsvpSummary(await getGuestTotals(businessId));
+    const doc = await getGuestTotals(businessId);
+    // byCategory (Phase 18.6) rides along for the guest list by category.
+    const t = { ...rsvpSummary(doc), byCategory: doc?.byCategory ?? {} };
     return t.invitations ? [{ id: "attending", ...t, row: "attending" }, { id: "declined", ...t, row: "declined" }, { id: "awaiting", ...t, row: "awaiting" }] : [];
   },
 };

@@ -13,7 +13,7 @@
 import { expensesQuery, categoriesQuery, weddingSuppliersQuery, supplierPaymentsQuery, weddingTasksQuery, guestsQuery } from "../../../../shared/list-queries.js";
 import { EXPENSE_METHODS } from "../../../../shared/expenses.js";
 import { BUDGET_DOC_ID, CATEGORY_STATUSES, budgetLines, sortCategories } from "../../../../shared/baby.js";
-import { SUPPLIER_SERVICES, SUPPLIER_STATUSES, SUPPLIER_PAYMENT_STATUSES, TASK_STATUSES, TASK_PRIORITIES, RSVP_STATUSES, GUEST_SIDES, supplierBalance, taskTiming, weddingSummary } from "../../../../shared/wedding.js";
+import { SUPPLIER_SERVICES, SUPPLIER_STATUSES, SUPPLIER_PAYMENT_STATUSES, TASK_STATUSES, TASK_PRIORITIES, RSVP_STATUSES, GUEST_CATEGORIES, GUEST_SIDES, supplierBalance, taskTiming, weddingSummary } from "../../../../shared/wedding.js";
 
 const label = (map, key) => map[key]?.label ?? key ?? "";
 const TIMING = { overdue: "Overdue", due_soon: "Due soon" };
@@ -90,6 +90,7 @@ export const taskColumns = (today) => [
 
 export const GUEST_COLUMNS = [
   { header: "Guest", format: "text", width: 26, value: (g) => g.name },
+  { header: "Category", format: "text", width: 18, value: (g) => GUEST_CATEGORIES[g.category]?.label ?? null },
   { header: "Group", format: "text", width: 18, value: (g) => g.group },
   { header: "Side", format: "text", width: 14, value: (g) => label(GUEST_SIDES, g.side) },
   { header: "Party size", format: "integer", width: 10, total: true, value: (g) => g.partySize },

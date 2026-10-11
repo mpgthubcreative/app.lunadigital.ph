@@ -342,7 +342,7 @@ describe("Bridal: are we on track?", () => {
     await show(W(), { "budgets/current": { total: 50000000, spent: 18450000, upcoming: 12500000 }, "guestTotals/current": { invitations: 12, invitedSeats: 30, attending: 7, attendingSeats: 16, declined: 2, declinedSeats: 5, awaiting: 3, awaitingSeats: 9 } }, {
       upcomingSupplierPayments: [{ id: "p1", supplierName: "Grand Table Catering", description: "Second payment", amount: 4000000, dueDate: "2026-10-14" }],
       tasksDueSoon: [{ id: "t1", title: "Final guest count", dueDate: "2026-10-05", status: "in_progress" }, { id: "t2", title: "Food tasting", dueDate: "2026-10-15", status: "not_started" }],
-      rsvpSummary: [{ id: "attending", row: "attending", invitations: 12, invitedSeats: 30, attending: 7, attendingSeats: 16, declined: 2, declinedSeats: 5, awaiting: 3, awaitingSeats: 9 }],
+      rsvpSummary: [{ id: "attending", row: "attending", invitations: 12, invitedSeats: 30, attending: 7, attendingSeats: 16, declined: 2, declinedSeats: 5, awaiting: 3, awaitingSeats: 9, byCategory: { sponsors: { invitations: 2, invitedSeats: 4, attending: 2, attendingSeats: 4 }, family: { invitations: 3, invitedSeats: 8, awaiting: 3, awaitingSeats: 8 } } }],
       supplierSummary: [{ id: "s1", name: "Grand Table Catering", agreedAmount: 15000000, paid: 5000000, balance: 10000000 }],
     }, {}, { "count:weddingOverdueTasks": 1 });
     expect(value("weddingRemaining")).toBe("₱315,500.00");
@@ -351,6 +351,9 @@ describe("Bridal: are we on track?", () => {
     expect(up.querySelector('[data-role="upcoming-total"]').textContent).toMatch(/Total upcoming payments.*₱125,000\.00/s);
     expect(up.textContent).toMatch(/Grand Table Catering/);
     expect(sectionOf("rsvp").textContent).toMatch(/16 of 30 invited seats confirmed/);
+    // Guest list by category (people), then Not set for guests without one.
+    const cat = [...sectionOf("rsvp").querySelectorAll('[data-role="rsvp-categories"] tbody tr')].map((tr) => [tr.dataset.category, ...[...tr.cells].slice(1).map((c) => c.textContent)]);
+    expect(cat).toEqual([["family", "0", "0", "8"], ["sponsors", "4", "0", "0"], ["unset", "12", "5", "1"]]);
     expect(sectionOf("suppliers").querySelector('[data-supplier="s1"]').textContent).toMatch(/₱100,000.00/);
     expect(sectionOf("tasks").querySelector('[data-count="overdue"] b').textContent).toBe("1");
   });
