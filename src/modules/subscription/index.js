@@ -82,7 +82,7 @@ export function mount(container, session, { api = defaultApi, toast = defaultToa
             ? card({ body: skeleton(4) })
             : html`
               <section class="card hero-card" data-role="plan">
-                <div class="kpi-strip">
+                <div class="kpis" data-cols="3">
                   <div class="kpi"><div class="kpi-label">Plan</div><div class="kpi-value">${s.plan.name}</div><div class="kpi-hint">${s.monthlyAmount ? `${money(s.monthlyAmount)} a month` : ""}</div></div>
                   <div class="kpi"><div class="kpi-label">Status</div><div class="kpi-value">${badge(SUBSCRIPTION_LABELS[s.status] ?? s.status, STATUS_TONE[s.status] ?? "neutral")}</div><div class="kpi-hint">${s.paidThrough ? `Paid through ${formatDayId(s.paidThrough)}` : "Not paid yet"}</div></div>
                   <div class="kpi" data-role="amount-due"><div class="kpi-label">Amount due</div><div class="kpi-value">${money(totalDue)}</div><div class="kpi-hint">${s.nextRenewal ? `Next renewal ${formatDayId(s.nextRenewal)}` : s.current ? `${monthName(s.current.period)} · due ${formatDayId(s.current.dueDate)}` : ""}</div></div>
