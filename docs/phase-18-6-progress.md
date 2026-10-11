@@ -65,6 +65,41 @@ Terminology pass, desktop/390px checks and accessibility.
 ### Stage 7: Release gate
 Unit, emulator (in batches), mutation, build, staging deploy, live probes, CI.
 
+## Stage 8 (added 2026-10-11): Luna subscriptions, tenant payments, Super Luna revenue and platform costs
+
+The user added this to Phase 18.6 after the Stage 7 staging release (fb21e2a / 20b427a, verified live). Decisions, chosen as the simplest safe option where the brief leaves room:
+
+- **Workspace-scoped plans.** Each plan has `workspaceTemplateId`.
+  - Distributor keeps starter / growth / pro with the same prices and limits; their non-Distributor module flags become false (no effective change, since the template already excludes them).
+  - New plans:
+    - Household: household-basic ₱149 / household-plus ₱299
+    - Baby: baby-basic ₱149 / baby-plus ₱249
+    - Bridal: bridal-basic ₱199 / bridal-plus ₱399
+    - All are pricing hypotheses with no setup fee.
+  - Limits use the existing keys only (users, storage; orders and imports are 0 because those modules don't exist in personal workspaces).
+  - assignPlan / createBusiness refuse a plan from another workspace.
+  - Migration (`scripts/adopt-workspace-plans.js`, dry run first) moves personal tenants off Distributor plans: starter -> Basic, growth/pro -> Plus.
+  - Order: seed the new plans -> migrate -> overwrite the Distributor plans.
+- **Subscription money on the business.** `subscription.monthlyAmount` (centavos snapshot of the plan price), `paidThrough`, `nextRenewal`. MRR uses Firestore aggregate sum() over active/past_due businesses (no scan).
+- **Invoices.** `subscriptionInvoices/{businessId}_{YYYY-MM}` (top level, server-only):
+  - Fields: plan + price snapshot, amountDue, amountPaid, status due | for_verification | paid.
+  - A monthly billing run creates the period's invoices once (`platformMetrics/{YYYY-MM}.invoicesGenerated`). A business added later gets its invoice when its owner or an operator opens it.
+- **Payments.** `subscriptionPayments/{id}` (top level, server-only), status for_verification | paid | rejected.
+  - The tenant Owner submits through `/api/subscription`. The proof is sent to the server, which checks type and size and stores it at Storage `platformBilling/{businessId}/{paymentId}`.
+  - That path is denied to browsers and NOT metered: it is Luna's billing file, not tenant storage.
+  - Operators see the proof through `/api/operator` (returned inline, no public URL).
+- **Confirm / reject (operator).** One transaction each: payment, invoice, business subscription (paid-through / next renewal; past_due -> active on full payment; suspended is left to the operator), `platformMetrics/{verified month}` and a platformAudit record. Idempotent: an already-decided payment returns alreadyDecided and changes nothing.
+- **Collected this month** = Σ verified payments by verification month (cash basis). **Still to collect** = Σ (amountDue − amountPaid) of open invoices. **For verification** is reported separately.
+- **Payment settings.** One `platform/billingSettings` document (bank name, account name and number, instructions), edited by operators and read by every workspace.
+- **Platform costs (Luna's own, never tenant Expenses).**
+  - `platformExpenses/{id}`: month, category (firebase_gcp, netlify, resend, domain_dns, other_saas, other), description, amount, recurring | one_time, notes, reference. Firebase/GCP and Netlify items count as the actual infrastructure bill.
+  - "Copy recurring items from last month" is idempotent per month.
+- **Cost rate card.** `platformCostRates/{id}` is append-only and versioned by effectiveFrom: provider, resource, unit, ratePerUnit (centavos, decimals allowed), currency, freeAllowance (platform-wide, never given to one tenant). A month uses the rates in effect on its first day.
+- **Measured infrastructure.** Storage retained (usage storageBytes) and export downloads (new `exportBytes` counter, from now on). Firestore reads/writes/deletes and function execution aren't metered per tenant, so they show as **Unavailable** and are never guessed from orders.
+- **Profit.** Estimated Platform Gross Profit = verified revenue − platform expenses entered for the month. Estimated gross margin = GP ÷ revenue. Per workspace / plan / tenant uses DIRECT estimated usage cost only (shared costs are not allocated), labelled so.
+- **Super Luna tabs:** Overview (money story), Businesses, Subscriptions, Payments, Plans (grouped by workspace, subscriber counts), Usage (usage + cost; platform costs and rate card in sub-sections), Audit.
+- **Tenant:** a Subscription page (Owner, billing.view), outside the module registry like Notifications, so no entitlement snapshot changes. Notifications: tenant Owner gets submitted / confirmed / rejected; operators see the For verification count in the console (Notification Core is per tenant).
+
 ## Payroll legal notes (Kasambahay Law, RA 10361 and IRR)
 
 Recorded so the calculation method is explicit. Not legal advice: confirm with DOLE or an adviser before real payroll.
