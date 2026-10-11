@@ -42,7 +42,12 @@ Owner pilot: the user is now testing Luna as a tenant across the four workspaces
 - **Staging smoke test** on a temporary household `p186h-home-tmp` (deleted afterwards):
   - 31/31 API checks: real activation → own password → sign-in; attendance, leave and advance requests; Owner-only approve / release (staff 403); a correction needs a reason; the advance is deducted; Prepare-all includes Yanie and skips a Dec 1 starter; own salary only; Owner release → staff "received"; Super Luna and other tenants 403; Make household staff; deactivate / reactivate.
   - Headless browser, 8/8: the staff login ID opens only the staff portal (typed `/payroll` and `/users` URLs stay on the portal). The Owner's Users page shows "Household Staff".
-- **Not changed:** Yanie's live member on `rwp-d419` is still Manager. The Owner converts her with Users → ⋯ → Make household staff after adding her staff record.
+- **Yanie converted (2026-10-11, approved by the user):**
+  - Her staff record was created on `rwp-d419` from the user's details: All around helper, ₱411.00 a day, semi-monthly, started 2026-06-07. Riza is a different person and was left untouched.
+  - Make household staff was run as the Owner (audit `member.updated`, actor Carlo): "Changed from Manager / Admin to Household Staff, linked to Yanie".
+  - Same uid, email and password; no duplicate account, member or staff record.
+  - The Users page shows Yanie — Household Staff — Active. She is eligible from Jun 1–15 onward, including the current Oct 1–15 period, and not before.
+  - With her own account: the session is Household Staff, `/api/me` loads only her records, and Owner / Manager endpoints return 403.
 - **Polish candidate (18.7, not done):** when an advance is larger than the pay earned so far, the staff portal shows a negative "Estimated take-home". Release is already blocked with "move an advance to the next payroll".
 
 
