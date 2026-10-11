@@ -156,6 +156,21 @@ describe("automatic payroll: periods appear by themselves", () => {
     expect(v.rows[0]).toMatchObject({ present: 2, officialLeave: 1, basePay: 3 * 41100, deductionsTotal: 50000, netPay: 3 * 41100 - 50000, automatic: true });
   });
 
+  it("different cutoffs (1–15 and 14 / 29): by default everyone shows in their OWN current period; each period opens on its own", async () => {
+    const y = await staff("Yanie");
+    const r = await staff("Riza", { cutoffs: [14, 29] });
+    await mark(y, OCT(1), "present");
+    await mark(r, "2026-09-30", "present");
+    const v = await view();
+    expect(v.period).toMatchObject({ mixed: true, state: "in_progress", start: "2026-09-30", end: OCT(15) });
+    expect(v.rows.map((x) => [x.staffName, x.periodStart, x.periodEnd, x.present])).toEqual([["Riza", "2026-09-30", OCT(14), 1], ["Yanie", OCT(1), OCT(15), 1]]);
+    expect((await view({ current: true })).period.mixed).toBe(true);
+    const one = await view({ start: OCT(1), end: OCT(15) });
+    expect(one.period.mixed).toBeUndefined();
+    expect(one.rows.map((x) => x.staffName)).toEqual(["Yanie"]);
+    expect(docsUnder("payrolls")).toEqual([]);
+  });
+
   it("paying an automatic period stores it once (no duplicates); retrying is refused; the stored row replaces the worked-out one", async () => {
     const y = await staff("Yanie");
     clock = new Date("2026-10-16T04:00:00Z");

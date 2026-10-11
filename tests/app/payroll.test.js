@@ -371,6 +371,26 @@ describe("Payroll: automatic pay periods (Owner-pilot batch)", () => {
     expect(data.payrollApi).toHaveBeenCalledWith({ action: "release", staffId: maria.id, periodStart: "2026-10-16", payment: { method: "cash", paidDate: "2026-10-16" }, expectedNetPay: 60000 });
     expect(data.payrollApi.mock.calls.some((c) => c[0].action === "prepare" || c[0].action === "prepareAll")).toBe(false);
   });
+  it("different cutoffs: 'Now: everyone's current period' shows each person with their own dates", async () => {
+    const periods = [{ start: "2026-10-01", end: "2026-10-15", current: true }, { start: "2026-09-30", end: "2026-10-14", current: true }, { start: "2026-09-16", end: "2026-09-30", current: false }];
+    const rows = [auto({ id: "staffRiza00001_2026-09-30", staffId: "staffRiza00001", staffName: "Riza", periodStart: "2026-09-30", periodEnd: "2026-10-14" }), auto({ periodStart: "2026-10-01", periodEnd: "2026-10-15" })];
+    const data = fakeData({ payrollApi: vi.fn(async (b) => (b.action === "period" ? { view: { today: "2026-10-11", periods, period: { start: "2026-09-30", end: "2026-10-15", state: "in_progress", mixed: true }, rows } } : {})) });
+    mountPayroll(container, home(), { data, now: () => new Date("2026-10-11T04:00:00Z"), toast: () => {} });
+    await flush();
+    const sel = container.querySelector('[data-role="period-select"]');
+    expect(sel.value).toBe("current");
+    expect(sel.options[0].textContent).toBe("Now: everyone's current period");
+    expect([...container.querySelectorAll("tr[data-payroll] td.cell-strong")].map((td) => td.textContent)).toEqual(["RizaSep 30 – Oct 14", "MariaOct 1–15"]);
+    sel.value = "2026-10-01_2026-10-15";
+    sel.dispatchEvent(new Event("change", { bubbles: true }));
+    await flush();
+    expect(data.payrollApi).toHaveBeenLastCalledWith({ action: "period", period: { start: "2026-10-01", end: "2026-10-15" } });
+    container.querySelector('[data-role="period-select"]').value = "current";
+    container.querySelector('[data-role="period-select"]').dispatchEvent(new Event("change", { bubbles: true }));
+    await flush();
+    expect(data.payrollApi).toHaveBeenLastCalledWith({ action: "period", period: { current: true } });
+  });
+
   it("an automatic row: adding a bonus stores the payroll first (prepare), then adds to it", async () => {
     const data = fakeData({ getPayroll: vi.fn(async () => null), payrollApi: vi.fn(async (b) => (b.action === "period" ? periodView([auto()]) : b.action === "prepare" ? { payrollId: "staffMaria0001_2026-10-16" } : {})) });
     mountPayroll(container, home(), { data, now: NOW, toast: () => {} });

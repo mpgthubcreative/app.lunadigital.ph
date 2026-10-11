@@ -98,7 +98,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     draw();
     try {
       if (state.view === "period") {
-        const { view } = await data.payrollApi({ action: "period", ...(state.period ? { period: { start: state.period.start, end: state.period.end } } : {}) });
+        const { view } = await data.payrollApi({ action: "period", ...(state.period ? { period: state.period.mixed || state.period.current ? { current: true } : { start: state.period.start, end: state.period.end } } : {}) });
         state.periods = view.periods;
         state.period = view.period;
         state.periodRows = view.rows;
@@ -126,17 +126,20 @@ export function mount(container, session, { data = defaultData, toast = defaultT
   // Owner-pilot batch: one pay period, everyone on payroll for it.
   function periodView() {
     if (!state.period) return emptyState({ iconName: "payroll", title: "No pay periods yet", body: "Add household staff with a start date and pay cycle. Their pay periods appear here by themselves." });
-    const i = state.periods.findIndex((x) => x.start === state.period.start && x.end === state.period.end);
+    // Several pay cycles at once: "Now" = everyone's own current period.
+    const mixed = state.period.mixed === true;
+    const i = mixed ? state.periods.filter((x) => x.current).length - 1 : state.periods.findIndex((x) => x.start === state.period.start && x.end === state.period.end);
     const older = state.periods[i + 1];
-    const newer = i > 0 ? state.periods[i - 1] : null;
+    const newer = mixed ? null : i > 0 ? state.periods[i - 1] : null;
+    const hasMixed = state.periods.filter((x) => x.current).length > 1;
     const rows = state.periodRows;
     const toPay = rows.filter((p) => p.status !== "released").reduce((t, p) => t + Math.max(0, p.netPay), 0);
     return html`<div class="period-bar" data-role="period-bar">
         <button type="button" class="btn btn-icon" data-act="period" data-key="${older ? `${older.start}_${older.end}` : ""}" aria-label="Older period" ${older ? "" : "disabled"}>‹</button>
-        <select class="select" data-role="period-select" aria-label="Pay period">${state.periods.map((x) => html`<option value="${x.start}_${x.end}" ${x.start === state.period.start && x.end === state.period.end ? "selected" : ""}>${periodName(x)}${x.current ? " (now)" : ""}</option>`)}</select>
-        <button type="button" class="btn btn-icon" data-act="period" data-key="${newer ? `${newer.start}_${newer.end}` : ""}" aria-label="Newer period" ${newer ? "" : "disabled"}>›</button>
+        <select class="select" data-role="period-select" aria-label="Pay period">${hasMixed ? html`<option value="current" ${mixed ? "selected" : ""}>Now: everyone's current period</option>` : ""}${state.periods.map((x) => html`<option value="${x.start}_${x.end}" ${!mixed && x.start === state.period.start && x.end === state.period.end ? "selected" : ""}>${periodName(x)}${x.current ? " (now)" : ""}</option>`)}</select>
+        <button type="button" class="btn btn-icon" data-act="period" data-key="${newer ? (newer.current && hasMixed ? "current" : `${newer.start}_${newer.end}`) : ""}" aria-label="Newer period" ${newer ? "" : "disabled"}>›</button>
       </div>
-      <p class="chart-note" data-role="period-state">${state.period.state === "in_progress" ? html`${badge("In progress", "info")} Ends ${short(state.period.end)}. Updates as you approve attendance, leave and advances.` : html`${badge("Ended", "neutral")} ${short(state.period.start)} to ${short(state.period.end)}.`}${toPay ? html` · <strong>${formatCentavos(toPay)}</strong> still to pay` : ""}</p>
+      <p class="chart-note" data-role="period-state">${mixed ? html`${badge("In progress", "info")} Each person's own pay period (their cutoffs differ). Updates as you approve attendance, leave and advances.` : state.period.state === "in_progress" ? html`${badge("In progress", "info")} Ends ${short(state.period.end)}. Updates as you approve attendance, leave and advances.` : html`${badge("Ended", "neutral")} ${short(state.period.start)} to ${short(state.period.end)}.`}${toPay ? html` · <strong>${formatCentavos(toPay)}</strong> still to pay` : ""}</p>
       ${!rows.length
         ? emptyState({ iconName: "staff", title: "Nobody on payroll for this period", body: "Payroll follows each person's start date, end date and pay cycle on Household Staff." })
         : html`<div class="table-wrap"><table class="table table-compact rows" data-role="period-payrolls">
@@ -144,8 +147,8 @@ export function mount(container, session, { data = defaultData, toast = defaultT
           <tbody>${rows.map((p) => {
             const gap = earlyGap(p);
             return html`<tr data-payroll="${p.id}" data-open>
-              ${mobileCell({ title: p.staffName, sub: `${daysText(p)}${p.status === "released" ? ` · ${p.paymentTiming === "early" ? "Paid early" : "Paid"} · ${receivedState(p)[0]}` : " · Not paid"}`, end: formatCentavos(p.netPay), endSub: gap && gap.diff ? `paid ${formatCentavos(gap.paid)}` : p.status === "released" ? "paid" : "to pay" })}
-              <td class="cell-strong">${p.staffName}</td>
+              ${mobileCell({ title: p.staffName, sub: `${mixed ? `${periodName({ start: p.periodStart, end: p.periodEnd })} · ` : ""}${daysText(p)}${p.status === "released" ? ` · ${p.paymentTiming === "early" ? "Paid early" : "Paid"} · ${receivedState(p)[0]}` : " · Not paid"}`, end: formatCentavos(p.netPay), endSub: gap && gap.diff ? `paid ${formatCentavos(gap.paid)}` : p.status === "released" ? "paid" : "to pay" })}
+              <td class="cell-strong">${p.staffName}${mixed ? html`<span class="cell-sub">${periodName({ start: p.periodStart, end: p.periodEnd })}</span>` : ""}</td>
               <td class="col-secondary">${daysText(p)}${p.notMarked ? html` <span class="stat-hint">(${p.notMarked} not marked)</span>` : ""}</td>
               <td class="num col-secondary">${formatCentavos(p.basePay)}</td><td class="num col-secondary">${p.additionsTotal ? formatCentavos(p.additionsTotal) : "—"}</td><td class="num col-secondary">${formatCentavos(p.deductionsTotal)}</td>
               <td class="num"><strong>${formatCentavos(p.netPay)}</strong>${gap && gap.diff ? html`<span class="cell-sub">paid ${formatCentavos(gap.paid)}</span>` : ""}</td>
@@ -169,7 +172,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     const header = pageHeader({ title: "Payroll", subtitle: "Every pay period appears by itself from Household Staff. Take-home = basic pay from approved attendance, plus bonus or 13th month, minus advances and deductions." });
     const tabs = html`<div class="toolbar">${segmented("view", VIEWS, state.view, { label: "Show" })}</div>`;
     if (state.view === "period") {
-      render(container, html`${header}${tabs}<section class="card" data-section="period">${state.error ? emptyState({ title: "Couldn't load", body: state.error }) : state.loading && !state.period ? skeleton(5) : periodView()}</section>`);
+      render(container, html`${header}${tabs}<section class="card" data-section="period">${state.error ? emptyState({ title: "Couldn't load", body: state.error }) : state.loading && !state.period?.start ? skeleton(5) : periodView()}</section>`);
       return;
     }
     render(
@@ -424,8 +427,11 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     load();
   };
   function choosePeriod(key) {
-    const [start, end] = key.split("_");
-    state.period = { start, end };
+    if (key === "current") state.period = { current: true };
+    else {
+      const [start, end] = key.split("_");
+      state.period = { start, end };
+    }
     load();
   }
   const onChange = (event) => {

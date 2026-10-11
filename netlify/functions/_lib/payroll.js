@@ -1185,11 +1185,15 @@ export async function prepareEligible({ db, tenant, FieldValue, business, asOf, 
 // Reading stores nothing, so opening the page any number of times never
 // creates a record; the first real action (pay, add a bonus...) stores the
 // payroll, once (preparePayroll is keyed by person + period start).
+// When people are on different cycles (e.g. 1–15 and 14 / 29), the default
+// ({ current: true }) shows everyone in THEIR OWN current period, so nobody
+// is hidden behind another person's dates.
 const VIEW_MAX_PERIODS = 24;
 
 export async function payrollPeriodView({ db, tenant, business, period: wanted = null, now = new Date() }) {
   const today = businessDate(business.timezone, now);
-  if (wanted !== null && (typeof wanted !== "object" || !isDayId(wanted.start) || !isDayId(wanted.end))) throw new PayrollError("invalid-period", "Invalid pay period");
+  const wantsCurrent = wanted !== null && typeof wanted === "object" && wanted.current === true;
+  if (wanted !== null && !wantsCurrent && (typeof wanted !== "object" || !isDayId(wanted.start) || !isDayId(wanted.end))) throw new PayrollError("invalid-period", "Invalid pay period");
   const staff = (await tenant.collection("householdStaff").get()).docs.map((d) => ({ id: d.id, ...d.data() }));
   const floor = addDays(today, -366);
   const options = new Map();
@@ -1210,7 +1214,29 @@ export async function payrollPeriodView({ db, tenant, business, period: wanted =
     }
   }
   const periods = [...options.values()].sort((a, b) => (a.end !== b.end ? (a.end < b.end ? 1 : -1) : a.start < b.start ? 1 : -1)).slice(0, VIEW_MAX_PERIODS);
-  const pick = (wanted && periods.find((p) => p.start === wanted.start && p.end === wanted.end)) || [...periods.filter((p) => p.current)].sort((a, b) => b.people - a.people || (a.start < b.start ? -1 : 1))[0] || periods[0] || null;
+  const currents = periods.filter((p) => p.current);
+  const listed = periods.map((p) => ({ start: p.start, end: p.end, current: p.current }));
+  const exact = wanted && !wantsCurrent ? periods.find((p) => p.start === wanted.start && p.end === wanted.end) : null;
+  // Everyone's own current period (several cycles at once).
+  if (!exact && currents.length > 1) {
+    const people = staff.flatMap((s) => {
+      const p = currents.find((c) => {
+        try {
+          const own = staffPeriod(s, c.start);
+          return own.start === c.start && own.end === c.end && payrollEligibility(s, own).eligible;
+        } catch {
+          return false;
+        }
+      });
+      return p ? [{ s, period: { start: p.start, end: p.end } }] : [];
+    });
+    const rows = await Promise.all(people.map(({ s, period }) => periodRow({ db, tenant, s, period })));
+    rows.sort((a, b) => (a.staffName || "").localeCompare(b.staffName || ""));
+    const start = currents.map((c) => c.start).sort()[0];
+    const end = currents.map((c) => c.end).sort().at(-1);
+    return { today, periods: listed, period: { start, end, state: "in_progress", mixed: true }, rows };
+  }
+  const pick = exact || currents[0] || periods[0] || null;
   if (!pick) return { today, periods: [], period: null, rows: [] };
   const period = { start: pick.start, end: pick.end };
   const people = staff.filter((s) => {
@@ -1221,18 +1247,19 @@ export async function payrollPeriodView({ db, tenant, business, period: wanted =
       return false;
     }
   });
-  const days = daysIn(period);
-  const rows = await Promise.all(
-    people.map(async (s) => {
-      const id = payrollIdOf(s.id, period.start);
-      const snap = await tenant.doc("payrolls", id).get();
-      if (snap.exists) return { id, ...snap.data(), automatic: false };
-      const [lineSnaps, advSnap] = await Promise.all([db.getAll(...days.map((d) => tenant.doc("attendance", attendanceId(s.id, d)))), tenant.collection("advances").where("staffId", "==", s.id).where("status", "==", "paid").get()]);
-      const fig = draftFigures({ id, period, lines: lineSnaps.filter((x) => x.exists).map((x) => x.data()), advances: advSnap.docs.map((d) => ({ id: d.id, ...d.data() })) });
-      const total = deductionsTotal(fig.deductions);
-      return { id, staffId: s.id, staffName: s.name, payCycle: s.payCycle, periodStart: period.start, periodEnd: period.end, days: days.length, dailyWage: s.dailyWage, ...fig.sum, deductions: fig.deductions, deductionsTotal: total, additions: [], ...payTotals({ basePay: fig.sum.basePay, additionsTotal: 0, deductionsTotal: total }), status: "draft", ownerPayment: "not_paid", salary: null, receiptStatus: "none", history: [], automatic: true };
-    })
-  );
+  const rows = await Promise.all(people.map((s) => periodRow({ db, tenant, s, period })));
   rows.sort((a, b) => (a.staffName || "").localeCompare(b.staffName || ""));
-  return { today, periods: periods.map((p) => ({ start: p.start, end: p.end, current: p.current })), period: { ...period, state: today <= period.end ? "in_progress" : "ended" }, rows };
+  return { today, periods: listed, period: { ...period, state: today <= period.end ? "in_progress" : "ended" }, rows };
+}
+
+// One person's payroll for one period: stored, or worked out now.
+async function periodRow({ db, tenant, s, period }) {
+  const days = daysIn(period);
+  const id = payrollIdOf(s.id, period.start);
+  const snap = await tenant.doc("payrolls", id).get();
+  if (snap.exists) return { id, ...snap.data(), automatic: false };
+  const [lineSnaps, advSnap] = await Promise.all([db.getAll(...days.map((d) => tenant.doc("attendance", attendanceId(s.id, d)))), tenant.collection("advances").where("staffId", "==", s.id).where("status", "==", "paid").get()]);
+  const fig = draftFigures({ id, period, lines: lineSnaps.filter((x) => x.exists).map((x) => x.data()), advances: advSnap.docs.map((d) => ({ id: d.id, ...d.data() })) });
+  const total = deductionsTotal(fig.deductions);
+  return { id, staffId: s.id, staffName: s.name, payCycle: s.payCycle, periodStart: period.start, periodEnd: period.end, days: days.length, dailyWage: s.dailyWage, ...fig.sum, deductions: fig.deductions, deductionsTotal: total, additions: [], ...payTotals({ basePay: fig.sum.basePay, additionsTotal: 0, deductionsTotal: total }), status: "draft", ownerPayment: "not_paid", salary: null, receiptStatus: "none", history: [], automatic: true };
 }
