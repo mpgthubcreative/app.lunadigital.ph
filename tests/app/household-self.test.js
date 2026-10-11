@@ -325,6 +325,24 @@ describe("the Owner's side", () => {
     }
   });
 
+  it("Advances ?advance=<id> (a notification): the requests are filtered to that person", async () => {
+    const reqs = [
+      { id: "advMaria00001", staffId: maria.id, staffName: "Maria Santos", date: "2026-10-16", amount: 100000, requestedAmount: 100000, status: "requested" },
+      { id: "advRiza000001", staffId: "staffRiza00001", staffName: "Riza", date: "2026-10-16", amount: 50000, requestedAmount: 50000, status: "requested" },
+    ];
+    const data = { activeStaff: vi.fn(async () => [maria]), listAdvances: vi.fn(async (_b, f) => ({ rows: f.staffId ? reqs.filter((r) => r.staffId === f.staffId) : reqs, hasMore: false })), advancesApi: vi.fn(async () => ({})) };
+    window.history.replaceState(null, "", "/advances?advance=advRiza000001");
+    try {
+      mountAdvances(container, home(), { data, now: NOW, toast: () => {} });
+      await flush();
+      await flush();
+      expect([...container.querySelectorAll('[data-role="advance-requests"] [data-advance]')].map((li) => li.dataset.advance)).toEqual(["advRiza000001"]);
+      expect(data.listAdvances.mock.calls.some((c) => c[1].staffId === "staffRiza00001")).toBe(true);
+    } finally {
+      window.history.replaceState(null, "", "/");
+    }
+  });
+
   it("Advances: a request is approved with an amount per payroll", async () => {
     const req = { id: "adv0000000002", staffId: maria.id, staffName: "Maria Santos", date: "2026-10-16", amount: 300000, requestedAmount: 300000, status: "requested", description: "School fees" };
     const data = { activeStaff: vi.fn(async () => [maria]), listAdvances: vi.fn(async () => ({ rows: [req], hasMore: false })), advancesApi: vi.fn(async () => ({})) };

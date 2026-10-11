@@ -717,7 +717,7 @@ tr.is-read {
     max-width: none;
     max-height: calc(100dvh - var(--topbar-height) - 16px);
   }
-  .bell-close {
+  .bell-drawer .bell-close {
     min-width: 44px;
     min-height: 44px;
   }

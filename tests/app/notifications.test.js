@@ -221,6 +221,8 @@ describe("Owner-pilot batch: household requests in the bell", () => {
     const s = sessionFixture({ workspaceTemplateId: "household-payroll" });
     expect(notificationRow(req(), s, NOW).action).toEqual({ label: "Review requests", route: "/attendance?staff=staffYanie0001" });
     expect(notificationRow(req({ recordId: "../../x?y=1" }), s, NOW).action.route).toBe("/attendance");
+    const adv = n("h2", { type: "household.advance_request", category: "requests", recordType: "advance", recordId: "advAbc0000001" });
+    expect(notificationRow(adv, s, NOW).action).toEqual({ label: "Review advances", route: "/advances?advance=advAbc0000001" });
   });
   it("the drawer reads in plain words, has a Close button, and following the link closes it", async () => {
     const data = fakeData([req()]);

@@ -20,7 +20,10 @@ export function mount(container, session, { data = defaultData, toast = defaultT
   const businessId = session.business.id;
   const today = businessDate(session.business.timezone, now());
   // Owner-pilot batch: ?staff=<id> (dashboard) opens filtered to that person.
-  const fromUrl = new URLSearchParams(typeof location === "undefined" ? "" : location.search).get("staff") || "";
+  const params = new URLSearchParams(typeof location === "undefined" ? "" : location.search);
+  const fromUrl = params.get("staff") || "";
+  // ?advance=<id> (a notification): filtered to that request's person.
+  let fromAdvance = /^[A-Za-z0-9]{8,40}$/.test(params.get("advance") || "") ? params.get("advance") : null;
   const state = { staffId: /^[A-Za-z0-9]{8,40}$/.test(fromUrl) ? fromUrl : "", status: "", from: "", to: "", cursors: [], rows: [], requests: [], hasMore: false, staff: [], loading: true, error: null };
   const optionalPesos = (v) => (v && String(v).trim() ? parseCentavos(v) : null);
   let alive = true;
@@ -32,6 +35,14 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     try {
       if (!state.staff.length) state.staff = await data.activeStaff(businessId);
       const [page, requests] = await Promise.all([data.listAdvances(businessId, filters(), { cursor: state.cursors.at(-1) || null }), canManage ? data.listAdvances(businessId, { status: "requested" }, { pageSize: 50 }).then((p) => p.rows).catch(() => []) : []]);
+      if (fromAdvance) {
+        const hit = requests.find((r) => r.id === fromAdvance);
+        fromAdvance = null;
+        if (hit && hit.staffId !== state.staffId) {
+          state.staffId = hit.staffId;
+          return load();
+        }
+      }
       state.requests = state.staffId ? requests.filter((r) => r.staffId === state.staffId) : requests;
       state.rows = page.rows;
       state.hasMore = page.hasMore;
