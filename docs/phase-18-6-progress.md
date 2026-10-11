@@ -126,7 +126,7 @@ Recorded so the calculation method is explicit. Not legal advice: confirm with D
 | 4 Household payroll | done | 373a05f | unit 1227/1227 |
 | 5 Shared | done | a53a43f + (users commit) | unit full suite green |
 | 6 UI polish | done | fdea8e2, 9cc8c0d, 0d1c972 | unit 1242/1242; 22 pages × 390px + 1280px audited (no horizontal overflow, no unnamed buttons/links, no unlabelled inputs) |
-| 7 Release gate | in progress (feature freeze 2026-10-11) | 709350f, d1d429e | unit 1259; emulator 2934 + re-runs; mutation 34/34 killed |
+| 7 Release gate | done | 709350f, d1d429e | unit 1259; emulator 2934 + re-runs; mutation 34/34 killed |
 
 ## Stage 7 log
 - Supplier Paid? check: added an optional idempotency key to expense create (709350f); a retry returns the first expense (alreadyRecorded). Paid pre-fills only the unscheduled remaining balance; the server refuses paying beyond the agreed amount (over-agreed).
@@ -140,6 +140,13 @@ Recorded so the calculation method is explicit. Not legal advice: confirm with D
 - Mutation (scratchpad mutate186b.cjs): 28/28 killed after adding tests for decided-stays-decided, paid-through-never-back, suspension-kept, no-bill-for-suspended and Cancel-confirms-nothing.
 - Emulator suite (re-run sequentially after a parallel-run mistake): 2944 tests / 40 files green, including billing races and billing rules.
 - Staging 2026-10-11: indexes deployed (rules unchanged); seed-plans --overwrite (6 workspace plans created, Distributor plans tagged with the same prices and limits); adopt-workspace-plans: demo-baby-a / sample-baby -> baby-plus, demo-bridal-a / veah-bridal -> bridal-plus, demo-household-a / rwp-d419 -> household-plus, demo-household-b -> household-basic; Distributor tenants kept their plan and got monthlyAmount recorded. No usage alerts were sent. Fixed: operator warnings listed orders/imports limits for workspaces without those modules.
+
+- Staging deploy 2026-10-11: code 60fca7a -> b09c2d7 (MRR aggregation indexes, found live) -> 9c76ccf (Subscription layout). 125 indexes READY; rules unchanged (live == source).
+- Live: billing probe 23/23 (scratchpad probe-p186-billing.mjs, self-cleaning: reverses metrics and restores bank settings); release probe 48/48; live UI 82/82 at 1280 / 820 / 390 (incl. Subscription in all four workspaces). After a UI run as temp owners, run scratchpad clean-temp-bills.mjs (probe bills); counters then equal a recount (11 staging bills, outstanding = MRR ₱8,003).
+- Staging now has October 2026 bills for the 11 billable staging businesses (made by the first billing run). Luna's bank settings are still EMPTY on staging: the Owner enters them in Super Luna -> Payments -> Payment settings.
+
+## Phase 18.6 status
+Complete on staging, pending the user's review. Do NOT start Phase 19.
 
 ## Known blockers
 - Low memory on the dev machine (about 280 MB free at the start). Unit tests run with `--maxWorkers=2`, emulator suites in small foreground batches.
