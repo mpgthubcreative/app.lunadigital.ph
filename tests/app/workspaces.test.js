@@ -40,12 +40,12 @@ describe("navigation", () => {
   it("Distributor: unchanged", () => {
     renderShell(document.getElementById("app"), sessionFixture());
     // Customers is back (built in Phase 9); Reports / Imports return as each is built.
-    expect(navOf()).toEqual(["/ Dashboard", "/orders Orders", "/payments Payments", "/inventory Inventory", "/customers Customers", "/expenses Operating Expenses", "/reports Reports", "/imports Imports", "/users Users", "/settings Settings"]);
+    expect(navOf()).toEqual(["/ Dashboard", "/orders Orders", "/payments Payments", "/inventory Inventory", "/customers Customers", "/expenses Operating Expenses", "/reports Reports", "/imports Imports", "/users Users", "/subscription Subscription", "/settings Settings"]);
   });
 
   it("Bridal: its own dashboard name, no Orders / Inventory / Payments", () => {
     renderShell(document.getElementById("app"), bridal());
-    expect(navOf()).toEqual(["/ Wedding Dashboard", "/wedding-tasks Wedding Tasks", "/guests Guests & RSVP", "/wedding-suppliers Wedding Suppliers", "/budget Wedding Budget", "/expenses Wedding Expenses", "/users Users", "/settings Settings"]);
+    expect(navOf()).toEqual(["/ Wedding Dashboard", "/wedding-tasks Wedding Tasks", "/guests Guests & RSVP", "/wedding-suppliers Wedding Suppliers", "/budget Wedding Budget", "/expenses Wedding Expenses", "/users Users", "/subscription Subscription", "/settings Settings"]);
   });
 
   it("Bridal staff: roles still apply", () => {

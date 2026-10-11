@@ -16,17 +16,23 @@ const accessOf = (session) => ({ entitlements: session.entitlements, permissions
 // Phase 13: Notifications is a core capability, not a navigation module;
 // its page is reached from the bell.
 const NOTIFICATIONS_ROUTE = Object.freeze({ path: "/notifications", label: "Notifications", moduleId: "notifications" });
+// Phase 18.6: the Owner's Luna subscription (billing.view), also outside the
+// module registry: every workspace has it, whatever its template.
+export const SUBSCRIPTION_ROUTE = Object.freeze({ path: "/subscription", label: "Subscription", moduleId: "subscription" });
+export const canSeeSubscription = (session) => session?.member?.permissions?.["billing.view"] === true;
 
 export function buildRoutes(session) {
   // Tenant terminology (Phase 17) relabels a module (e.g. Customers -> Dealers); ids and paths never change.
   const labels = terminologyLabels(session.config);
   const routes = resolveNavigation(accessOf(session)).map((mod) => ({ path: mod.path, label: labels[mod.id] ?? mod.label, moduleId: mod.id }));
   if (canUseNotifications(accessOf(session))) routes.push({ ...NOTIFICATIONS_ROUTE });
+  if (canSeeSubscription(session)) routes.push({ ...SUBSCRIPTION_ROUTE });
   return routes;
 }
 
 export function routeAllowed(session, route) {
   if (route && route.moduleId === NOTIFICATIONS_ROUTE.moduleId) return canUseNotifications(accessOf(session));
+  if (route && route.moduleId === SUBSCRIPTION_ROUTE.moduleId) return canSeeSubscription(session);
   return Boolean(route && route.moduleId) && canUseModule(accessOf(session), route.moduleId);
 }
 

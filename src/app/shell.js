@@ -28,7 +28,7 @@ const SUBSCRIPTION_MESSAGES = {
 };
 
 // The purpose of each page decides its group (and nothing else).
-const MANAGE = new Set(["users", "settings", "imports"]);
+const MANAGE = new Set(["users", "settings", "imports", "subscription"]);
 export const navGroup = (id) => (id === "dashboard" ? "overview" : id === "reports" ? "analyze" : MANAGE.has(id) ? "manage" : "work");
 const GROUP_LABELS = { overview: "Overview", work: "Work", analyze: "Analyze", manage: "Manage" };
 // One-word labels for the phone tab bar (display only; ids never change).
@@ -70,6 +70,11 @@ export function renderShell(root, session, handlers = {}) {
   const nav = resolveNavigation({ entitlements: session.entitlements, permissions: session.member.permissions })
     .filter((m) => !NAV_HIDDEN.has(m.id))
     .map((m) => (labels[m.id] ? { ...m, label: labels[m.id] } : m));
+  // Phase 18.6: the Owner's Luna subscription, under Manage (before Settings).
+  if (session.member.permissions?.["billing.view"] === true) {
+    const at = nav.findIndex((m) => m.id === "settings");
+    nav.splice(at < 0 ? nav.length : at, 0, { id: "subscription", path: "/subscription", label: "Subscription", icon: "payments" });
+  }
   const notifications = canUseNotifications({ entitlements: session.entitlements, permissions: session.member.permissions });
   if (bell) bell.stop();
   bell = null;

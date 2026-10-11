@@ -39,4 +39,5 @@ export const MODULE_LOADERS = {
   guests: () => import("./wedding/guests.js"),
   // Not a module in shared/modules.js: the core Notifications page (Phase 13).
   notifications: () => import("./notifications/index.js"),
+  subscription: () => import("./subscription/index.js"),
 };

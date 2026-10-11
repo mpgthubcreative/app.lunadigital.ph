@@ -16,7 +16,7 @@ describe("app shell", () => {
     const root = document.getElementById("app");
     const shell = renderShell(root, sessionFixture());
     expect([...root.querySelectorAll(".nav-link")].map((a) => a.getAttribute("href"))).toEqual([
-      "/", "/orders", "/payments", "/inventory", "/customers", "/expenses", "/reports", "/imports", "/users", "/settings",
+      "/", "/orders", "/payments", "/inventory", "/customers", "/expenses", "/reports", "/imports", "/users", "/subscription", "/settings",
     ]);
     expect(root.querySelector(".banner-info").textContent).toMatch(/Staging/);
 
