@@ -98,6 +98,32 @@ Owner pilot: the user is now testing Luna as a tenant across the four workspaces
   - Headless browser at 390px and 1280px, 29/29: dashboard, Attendance approvals, the notification sheet, Advances, Payroll (Now / single period, early detail, early modal), the staff form, and the staff advance view.
   - The browser check found and I fixed: Payroll opening on one helper's period when cutoffs differed (`daa7531`), a 30px Close button on the phone sheet and unfiltered advance links (`f9c9c9e`), the squeezed approval heading / cut-off "Now" label at 390px (`9adcc5b`), and the dashboard listing a not-yet-employed helper plus the unpadded Pending requests card (`35e73f3`).
 
+### 2026-10-12: Owner can delete payrolls and advances (polish, `cc43000`)
+- **Request:** an easy ⋯ → Delete for payrolls and cash advances (to clean up wrong pilot entries without a database script), financially safe by state. Built as a general Owner capability; no names or business ids in code.
+- **Payroll ⋯ (row and payslip), destructive item last after a separator:**
+  - **Saved, unpaid → Delete payroll** (`deleteDraft`, payroll.manage). Plain confirmation. Removes the saved record and its manual lines (bonus, deductions, 13th month). Attendance, staff, advances and their repayment plans stay, so the period shows as worked out automatically again, and viewing never re-stores it. Light audit (`payroll.deleted`, with the manual lines).
+  - **Paid → Void payroll** (`void`, payroll.release). Requires a reason, then an explicit confirmation. Reversals:
+    - advance deductions it took go back to what's owed (planned again for that period);
+    - its attendance days unlock;
+    - the receipt link stops working.
+  - The record moves to `voidedPayrolls`, keeping the payment, the proof (the Storage file stays with it, still metered, not orphaned), the helper's confirmation and the reason. The period shows as unpaid again. Full audit (`payroll.voided`, with reversals).
+  - An unsaved automatic period has nothing to delete (only View details).
+- **Advance ⋯, destructive item last:**
+  - **Never given → Delete advance** (requested, approved or rejected): removed; light audit.
+  - **Given → Delete / Void advance**, reason required: owed is cancelled, its planned deductions leave any unpaid payroll, and separate repayments are reversed and recorded. The record moves to `voidedAdvances` with proof and confirmation; full audit with reversals.
+  - If a PAID salary already took a deduction from it, voiding is refused and names that payroll ("Void that payroll first"). The paid salary is never silently changed.
+- **Voided records:** a small link on Payroll and Advances lists them (who, period / amount, reason, when). Not readable by browsers directly (no client rule); served by the API to payroll.view / advances.view.
+- **Safety:**
+  - Every delete or void is one transaction; retries are harmless (`alreadyGone` / `alreadyVoided`).
+  - Staff get 403 for all of it, the voided lists included.
+  - Limit room recalculates on its own (based on what's actually owed).
+- **Tests:**
+  - Unit: 1359 pass, including the new `tests/functions/household-void.test.js` (7) and 3 UI tests (menus, confirmations, reason before void).
+  - Emulator: 31/31, including a void racing a repayment and a plan change.
+- **Staging** (temporary household, deleted):
+  - Live API 14/14, including the proof file still in Storage after a void.
+  - 390px menu check 10/10: menus inside the screen with 44px items, no sideways scroll.
+
 ### 2026-10-12: Household simplification batch (polish, `99acd9b`)
 - **Report:** the helper found self-service confusing. New principle: **Owner records and manages; helper reviews and confirms.** Every Household tab keeps only the controls it really needs.
 - **Attendance:** one helper + one pay period (Employee ▾, Period ▾), one row per date with a status dropdown; tick days and mark them together (`attendance setMany`). The "By day / By employee" toggle is gone. A compact "Needs review" appears only when the helper reported a correction (or an older request waits), with Open / Done. The helper's confirmation shows per period ("confirmed on …", or "changed since"). Correcting a day the helper sent still asks for a reason (kept in history). `?staff=&period=` opens that helper / period.
