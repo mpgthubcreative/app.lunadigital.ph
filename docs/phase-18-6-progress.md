@@ -98,6 +98,42 @@ Owner pilot: the user is now testing Luna as a tenant across the four workspaces
   - Headless browser at 390px and 1280px, 29/29: dashboard, Attendance approvals, the notification sheet, Advances, Payroll (Now / single period, early detail, early modal), the staff form, and the staff advance view.
   - The browser check found and I fixed: Payroll opening on one helper's period when cutoffs differed (`daa7531`), a 30px Close button on the phone sheet and unfiltered advance links (`f9c9c9e`), the squeezed approval heading / cut-off "Now" label at 390px (`9adcc5b`), and the dashboard listing a not-yet-employed helper plus the unpadded Pending requests card (`35e73f3`).
 
+### 2026-10-12: Household simplification batch (polish, `99acd9b`)
+- **Report:** the helper found self-service confusing. New principle: **Owner records and manages; helper reviews and confirms.** Every Household tab keeps only the controls it really needs.
+- **Attendance:** one helper + one pay period (Employee ▾, Period ▾), one row per date with a status dropdown; tick days and mark them together (`attendance setMany`). The "By day / By employee" toggle is gone. A compact "Needs review" appears only when the helper reported a correction (or an older request waits), with Open / Done. The helper's confirmation shows per period ("confirmed on …", or "changed since"). Correcting a day the helper sent still asks for a reason (kept in history). `?staff=&period=` opens that helper / period.
+- **Helper screen:** Home / Attendance / Salary / Advances.
+  - Home lists what to confirm.
+  - Attendance shows totals (Present 11 days…), View details, **Confirm attendance**, and **Report a correction** (optional day + one sentence).
+  - Salary shows paid salaries with **View proof** and I received / I didn't receive it, plus this period so far.
+  - Advances shows amount received, date, remaining balance, planned deduction (read-only), **View proof** and **I received this advance**.
+  - The helper can no longer edit attendance, send day requests or ask for advances here (the server actions still exist, and older requests still show for the Owner).
+- **Advances (Owner-led):** "Give an advance" records and releases in one step (limit checked; method, reference, proof as screenshot or PDF). The page shows, per helper: Outstanding balance · Next planned deduction · Balance after planned (and Limit · available). Each advance row has ⋯ Details / Edit repayment plan / Record a repayment / View or add proof.
+- **Repayment model:** advance → outstanding balance → repayment plan → actual repayment (`advance.schedule`: planned / applied / not_taken / repaid).
+  - One advance can be spread over several payrolls, and one payroll can deduct several advances, one traceable line each.
+  - A new advance is planned for the first payroll not yet paid, from its release date, so a salary paid early never takes it.
+  - Owed (and the limit room) drops only on a paid payroll's deduction or a separate repayment (`repaidAmount`, `repayments`). A plan never changes it, and planned + not taken never exceed what's owed.
+  - Planning into a paid payroll is refused.
+  - When a salary is paid without a planned deduction (taken off with "Remove from this payroll"), that amount becomes **"Scheduled deduction not taken"**: still owed, with Move to next payroll / Mark repaid separately / Edit repayment plan. The salary paid is never rewritten.
+  - Stored unpaid payrolls are kept in step with the plans in the same transaction. Every plan, repayment and payment writes the staff document, so they serialize.
+- **Payroll:** Employee (Everyone / one helper) + Period only; the "Not confirmed / All records" tabs are gone. A payroll reads like a payslip, and each line has its own action:
+  - Basic pay: View calculation (days × wage) and View attendance.
+  - Bonus and other deductions: ⋯ Edit / Delete until paid (`payroll editLine`, history keeps before / after).
+  - 13th month: ⋯ Remove.
+  - Advance lines: ⋯ View advance / Edit amount / Move to another payroll / Remove from this payroll.
+  - A paid salary is never edited in place: **Correct payment** (`correctPayment`) needs a reason and keeps the original (before / after, who, when).
+  - Luna has no "absence deduction" line: basic pay is paid days × daily wage, so absence simply isn't paid. "View calculation" shows that.
+- **Dashboard:** "Needs your attention" per helper, only helpers with something: attendance correction, salary / advance not confirmed yet (last 31 days), salary not received, deduction not taken, older requests. A tap opens the right page focused on that helper.
+- **Notifications** name the helper: "Loriza confirmed receiving the ₱1,100.00 advance (Oct 2).", "… confirmed the attendance for Oct 1–15.", "… reported an attendance correction for Oct 8: "…"". The wording is neutral, with no assumed pronouns. Links open filtered.
+- **Security:** the new helper actions take the staff id from the account only. Proofs are served through the API to the Owner, or to the helper they belong to, and never by URL. Staff are refused (403) for setMany, plans, repayments, give, editLine, correctPayment, deferAdvance and limits. The new collections (`attendanceCorrections`, `attendanceConfirmations`) have no client rule, so browsers can't read them directly. Rules unchanged.
+- **Staging data migration (one time, through the same server code, history entry "Repayment plan: …"):** every released advance still owed got the plan the old rule implied. In rwp-d419: Yanie ₱2,000 → Oct 1–15 (her unpaid payroll unchanged), and Loriza Ibanez ₱1,100 → Oct 1–15, which the Owner can now split / move. Seven demo advances (₱2,000, Ana) → Oct 5–11. Nothing else was changed.
+- **Tests:**
+  - Unit: 1349 pass, including the new `tests/functions/household-simplify.test.js` (12) with the exact pilot scenario (₱1,100 → 600 / 500, early payment without the 600, not taken, moved forward, a new advance Oct 13 → Oct 16–31, two traceable lines, cash repayment, limit room only after real repayment). It also covers payroll lines, attendance confirmation / corrections, own proofs, staff 403s and the dashboard. Rewritten UI tests cover Attendance, Payroll lines, Advances, the helper screen and the dashboard.
+  - Emulator (targeted): 30/30, including plan changes racing the payment and repayments racing each other.
+- **Staging** (temporary household, deleted):
+  - Live API 32/32.
+  - Headless browser at 390px and 1280px, 24/24, no sideways scroll. Line ⋯ menus stay inside the screen with 44px items, and the helper's PDF proof opens.
+- **For a possible 18.7 (not built):** the old helper self-service code paths (day requests, advance requests) could be retired once the pilot confirms they're no longer wanted.
+
 
 Resume file for Phase 18.6 (usability, Baby payers, household self-service and payroll, one-sheet exports, Users page, usage meter). Started 2026-10-11 from `0769cff`. Checkpoint tag: `phase-18-6-start`.
 
