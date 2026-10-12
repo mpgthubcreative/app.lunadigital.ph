@@ -52,6 +52,8 @@ export const PAYROLL_STATUS = {
   "over-advance-limit": 409,
   "amount-changed": 409,
   "payroll-unpaid": 409,
+  "nothing-owed": 409,
+  "nothing-due": 409,
   "advance-not-released": 409,
   "paid-payroll-deduction": 409,
 };

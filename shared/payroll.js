@@ -333,15 +333,14 @@ export function payrollEligibility(staff, period) {
   return { eligible: true, reason: null };
 }
 
-// A day's status: Present / Absent only up to today; Paid Leave, Unpaid
-// Leave and Rest Day may be planned up to MAX_DAYS_AHEAD days ahead.
+// A day's status, only once the day has come (Owner-pilot refinement,
+// 2026-10-12: attendance records what actually happened, so an upcoming day
+// can't be marked at all, not even as leave or a rest day, and a salary
+// paid early never creates attendance).
 function checkDay(date, status, today) {
   if (!isDayId(date)) throw new PayrollError("invalid-date", "Invalid date");
   if (!ATTENDANCE_STATUSES[status]) throw new PayrollError("invalid-status", "Choose Present, Absent, Paid Leave, Unpaid Leave or Rest Day");
-  if (today && date > today) {
-    if (!ATTENDANCE_STATUSES[status].ahead) throw new PayrollError("invalid-date", "Present or Absent can't be marked for a future date");
-    if (date > addDays(today, MAX_DAYS_AHEAD)) throw new PayrollError("invalid-date", `Leave can be planned up to ${MAX_DAYS_AHEAD} days ahead`);
-  }
+  if (today && date > today) throw new PayrollError("invalid-date", "That day hasn't come yet: mark it on or after the day");
 }
 
 export function validateAttendanceInput({ staffId, date, status, note, reason } = {}, { today }) {
@@ -370,7 +369,7 @@ export function selfDayLock({ staff, date, today, recorded = false, paid = false
   if (paid) return "In a paid salary";
   if (recorded) return "Approved by your employer";
   if (today && date < addDays(today, -SELF_DAYS_BACK)) return `More than ${SELF_DAYS_BACK} days ago`;
-  if (today && date > addDays(today, MAX_DAYS_AHEAD)) return "Too far ahead";
+  if (today && date > today) return "Upcoming";
   return null;
 }
 
@@ -530,10 +529,47 @@ export function validateManualDeduction(input) {
 // Releasing (paying) a salary.
 export function validateSalaryRelease(input = {}, { today } = {}) {
   if (!input || typeof input !== "object" || Array.isArray(input)) throw new PayrollError("invalid-input", "Invalid payment");
-  for (const k of Object.keys(input)) if (!["method", "reference", "paidDate"].includes(k)) throw new PayrollError("invalid-input", `Unknown field ${k}`);
+  for (const k of Object.keys(input)) if (!["method", "reference", "paidDate", "prepaidDays"].includes(k)) throw new PayrollError("invalid-input", `Unknown field ${k}`);
   if (!SALARY_METHODS[input.method]) throw new PayrollError("invalid-input", "Choose how the salary was paid");
   const paidDate = input.paidDate ?? today;
   if (!isDayId(paidDate)) throw new PayrollError("invalid-date", "Invalid paid date");
   if (today && paidDate > today) throw new PayrollError("invalid-date", "The paid date can't be in the future");
-  return { method: input.method, reference: text(input.reference, { field: "Reference", max: 40 }), paidDate };
+  // Owner-pilot refinement: upcoming days paid in advance (prepaid salary).
+  const prepaidDays = input.prepaidDays ?? 0;
+  if (!Number.isSafeInteger(prepaidDays) || prepaidDays < 0 || prepaidDays > 31) throw new PayrollError("invalid-input", "Choose how many upcoming days to pay");
+  return { method: input.method, reference: text(input.reference, { field: "Reference", max: 40 }), paidDate, prepaidDays };
+}
+
+// ---------- Owner-pilot refinement: early salary, prepaid days, overpayment ----------
+//
+// Attendance records reality. A salary payment records money actually given
+// (never rewritten). Prepaid salary = the part of an early payment for days
+// that hadn't happened yet. Once the period has ended, final salary (what
+// attendance earned) vs everything paid gives either:
+//   salary overpayment   paid more than earned: owed back, carried to the
+//                        next unpaid payroll (its own line, never a cash
+//                        advance, never against the advance limit); it drops
+//                        only when a paid payroll deducts it, a repayment is
+//                        recorded, or the Owner waives it (reason kept)
+//   additional salary due  earned more than paid: the Owner records it
+// The ledger sits on the paid payroll it came from (p.overpayment:
+// { plan, applied, repayments, waivers }).
+const sumOf = (list) => (Array.isArray(list) ? list : []).reduce((t, x) => t + (Number.isSafeInteger(x?.amount) ? x.amount : 0), 0);
+export const paidTotal = (p) => (p?.salary?.amount ?? 0) + sumOf(p?.salary?.additional);
+export function reconcileOf(p, today) {
+  if (p?.status !== "released" || !p.salary) return null;
+  const ended = Boolean(today) && today > p.periodEnd;
+  const paid = paidTotal(p);
+  const final = Number.isSafeInteger(p.netPay) ? p.netPay : 0;
+  const diff = final - paid;
+  const op = p.overpayment || {};
+  // Days still not recorded after the period: wait (a forgotten day isn't
+  // treated as "not earned"); the Owner records them, then it settles.
+  const unrecorded = Number.isSafeInteger(p.notMarked) ? p.notMarked : 0;
+  const waiting = ended && unrecorded > 0;
+  const overpaid = ended && !waiting && diff < 0 ? -diff : 0;
+  const applied = sumOf(op.applied);
+  const repaid = sumOf(op.repayments);
+  const waived = sumOf(op.waivers);
+  return { ended, waiting, unrecorded: waiting ? unrecorded : 0, paid, final, diff, overpaid, applied, repaid, waived, outstanding: Math.max(0, overpaid - applied - repaid - waived), additionalDue: ended && !waiting && diff > 0 ? diff : 0, settled: ended && !waiting && diff === 0 };
 }

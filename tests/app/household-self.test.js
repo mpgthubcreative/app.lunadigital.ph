@@ -42,7 +42,8 @@ const ME = {
   period: { start: "2026-10-16", end: "2026-10-31", days: [], counts: { present: 0, officialLeave: 0 }, estimate: { basicPay: 0, additions: 0, deductions: 50000, netPay: -50000, prepared: false } },
   corrections: [],
   requests: [],
-  salaries: [{ id: "staffMaria0001_2026-10-01", period: { start: "2026-10-01", end: "2026-10-15" }, state: "paid", basicPay: 720000, additions: [], deductions: [{ description: "Advance", amount: 50000 }], netPay: 670000, payment: { method: "GCash", paidDate: "2026-10-12", hasProof: true, early: true }, receipt: "not_confirmed" }],
+  salaries: [{ id: "staffMaria0001_2026-10-01", period: { start: "2026-10-01", end: "2026-10-15" }, state: "paid", basicPay: 720000, additions: [], deductions: [{ description: "Advance", amount: 50000 }], netPay: 670000, payment: { method: "GCash", paidDate: "2026-10-12", hasProof: true, early: true }, receipt: "not_confirmed", received: { earned: 493200, prepaid: { days: 3, from: "2026-10-13", to: "2026-10-15", amount: 123300 }, additional: [], total: 616500 } }],
+  adjustments: [{ amount: 41100, from: { start: "2026-10-01", end: "2026-10-15" }, plannedFor: { start: "2026-10-16", end: "2026-10-31" } }],
   advances: [{ id: "advA00000001", date: "2026-10-12", releasedOn: "2026-10-12", amount: 200000, status: "paid", remaining: 200000, planned: [{ periodStart: "2026-10-16", periodEnd: "2026-10-31", amount: 200000 }], hasProof: true, received: "awaiting" }],
 };
 
@@ -99,6 +100,9 @@ describe("household staff screen", () => {
     await mountStaffPortal(container, staffSession(), { api });
     container.querySelector('[data-act="tab"][data-tab="salary"]').click();
     expect(container.querySelector('[data-salary]').textContent).toMatch(/₱6,700\.00[\s\S]*paid Oct 12 by GCash \(early\)[\s\S]*Please confirm/);
+    // Owner-pilot refinement: what was received, in plain parts.
+    expect([...container.querySelectorAll('[data-role="received"] dt')].map((dt) => `${dt.textContent.replace(/\s+/g, " ").trim()}: ${dt.nextElementSibling.textContent}`)).toEqual(["Earned through Oct 12: ₱4,932.00", "Prepaid for Oct 13–15: ₱1,233.00", "Total received: ₱6,165.00"]);
+    expect(container.querySelector('[data-role="adjustment"]').textContent.replace(/\s+/g, " ")).toMatch(/Previous salary adjustment\s*₱411\.00 Your Oct 1–15 salary was paid early, before all the days were done, and this part wasn't earned\. Planned to come off your Oct 16–31 salary\./);
     container.querySelector('[data-act="proof"][data-kind="salary"]').click();
     await flush();
     expect(api).toHaveBeenCalledWith("me", { method: "POST", body: { action: "proof", kind: "salary", recordId: "staffMaria0001_2026-10-01" } });

@@ -349,6 +349,7 @@ describe("notifications and the dashboard", () => {
     await me(uid, { action: "attendanceDays", days: list.map(([d, status]) => ({ date: OCT(d), status })) });
     const notes = [...world.db.docs.entries()].filter(([k]) => k.startsWith(`businesses/${H}/members/${u.mom}/inbox/`)).map(([, v]) => v);
     expect(notes.at(-1)).toMatchObject({ title: "Attendance request", message: "Yanie submitted 6 days for Oct 1–6. 4 Present, 1 Absent, 1 Paid Leave.", recordId: `${y}_${OCT(1)}` });
+    clock = new Date("2026-11-03T04:00:00Z"); // upcoming days can't be sent: both have come
     await me(uid, { action: "attendanceDays", days: [{ date: OCT(20), status: "official_leave" }, { date: "2026-11-02", status: "unpaid_leave" }] });
     const last = [...world.db.docs.entries()].filter(([k]) => k.startsWith(`businesses/${H}/members/${u.mom}/inbox/`)).map(([, v]) => v).at(-1);
     expect(last).toMatchObject({ title: "Leave request", message: "Yanie submitted 2 days for Oct 20 – Nov 2. 1 Paid Leave, 1 Unpaid Leave." });
@@ -362,7 +363,7 @@ describe("notifications and the dashboard", () => {
     const ru = await withLogin(r);
     await me(yu, { action: "attendanceDays", days: [{ date: OCT(9), status: "present" }] });
     await me(yu, { action: "advance", amount: 100000 });
-    await me(ru, { action: "attendanceDays", days: [{ date: OCT(20), status: "official_leave" }] });
+    await me(ru, { action: "attendanceDays", days: [{ date: OCT(10), status: "official_leave" }] });
     const s = await householdSummary({ db: world.db, tenant: tenantDb(world.db, H), business: { timezone: "Asia/Manila" }, now: clock });
     expect(s.pending.byStaff).toEqual([
       { staffId: y, name: "Yanie", items: { attendanceRequest: 1, advanceRequest: 1 }, total: 2 },

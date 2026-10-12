@@ -23,7 +23,7 @@
 // advance not confirmed by them yet, a salary reported not received,
 // deductions not taken, and any staff request still waiting.
 
-import { staffPeriod, payrollEligibility, daysIn, attendanceId, summarizeAttendance, advanceRemaining, plannedFor, scheduleOf } from "../../../shared/payroll.js";
+import { staffPeriod, payrollEligibility, daysIn, attendanceId, summarizeAttendance, advanceRemaining, plannedFor, scheduleOf, reconcileOf } from "../../../shared/payroll.js";
 import { businessDate, addDays } from "../../../shared/metrics.js";
 
 const int = (v) => (Number.isSafeInteger(v) ? v : 0);
@@ -71,6 +71,8 @@ export async function householdSummary({ db, tenant, business, now = new Date() 
       bump(d.id, s.name, "salaryIssue", payrolls.filter((p) => p.dispute?.state === "open").length);
       bump(d.id, s.name, "advanceConfirmation", advances.filter((a) => a.status === "paid" && a.receipt?.state === "awaiting" && recent(a.paidDate)).length);
       bump(d.id, s.name, "notTaken", released.filter((a) => scheduleOf(a).some((e) => e.state === "not_taken")).length);
+      bump(d.id, s.name, "additionalDue", payrolls.filter((p) => reconcileOf(p, today)?.additionalDue > 0).length);
+      bump(d.id, s.name, "unrecordedDays", payrolls.filter((p) => reconcileOf(p, today)?.waiting).length);
       const sum = summarizeAttendance(lineSnaps.filter((x) => x.exists).map((x) => x.data()), { start: period.start, end: days.at(-1) ?? period.start });
       const estimatedNet = current ? int(current.netPay) : sum.basePay - advance;
       if (!onPayroll.has(d.id)) return null;

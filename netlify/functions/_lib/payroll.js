@@ -64,6 +64,8 @@ import { payrollEligibility,
   validateScheduleInput,
   validateRepayment,
   MAX_SCHEDULE_ENTRIES,
+  reconcileOf,
+  paidTotal,
 } from "../../../shared/payroll.js";
 import { businessDate, isDayId, addDays } from "../../../shared/metrics.js";
 import { prepareNotifications } from "./notifications.js";
@@ -200,7 +202,7 @@ export async function setAttendance({ db, tenant, FieldValue, business, input, a
   const today = businessDate(business.timezone, now);
   const { staffId, date, status, note, reason } = validateAttendanceInput(input, { today });
   return db.runTransaction(async (tx) => {
-    const plan = await prepareAttendanceWrite(tx, { tenant, staffId, date });
+    const plan = await prepareAttendanceWrite(tx, { tenant, staffId, date, today });
     if (plan.fromStaff && plan.before && plan.before.status !== status && !reason) throw new PayrollError("reason-required", "Say why you're correcting what the employee sent");
     return plan.commit({ FieldValue, status, note, actor, reason });
   }, TX_OPTIONS);
@@ -209,7 +211,7 @@ export async function setAttendance({ db, tenant, FieldValue, business, input, a
 // Phase 18.6: reads for one attendance line (staff, the line, its payroll);
 // commit() writes it, moving an unpaid payroll's counts with it. Shared by
 // the owner's direct marking and the approval of a staff request.
-async function prepareAttendanceWrite(tx, { tenant, staffId, date }) {
+async function prepareAttendanceWrite(tx, { tenant, staffId, date, today = null }) {
   const lineRef = tenant.doc("attendance", attendanceId(staffId, date));
   const staff = await loadStaff(tx, tenant, staffId);
   if (staff.status !== "active") throw new PayrollError("inactive-staff", `${staff.name} is inactive`);
@@ -227,6 +229,9 @@ async function prepareAttendanceWrite(tx, { tenant, staffId, date }) {
     const other = await tx.get(tenant.doc("payrolls", before.payrollId));
     if (other.exists && paidPayrollLocks(other.data(), date)) throw new PayrollError("payroll-released", `This day is in a payroll that's already paid (${other.data().periodStart} to ${other.data().periodEnd})`);
   }
+  // A day of an early-paid salary moves its final pay: the overpayment it
+  // may leave is carried by the next unpaid payroll (kept in step below).
+  const others = payroll && payroll.status !== "draft" ? await staffPayrolls(tx, tenant, staffId) : null;
   return {
     staff,
     before,
@@ -257,7 +262,9 @@ async function prepareAttendanceWrite(tx, { tenant, staffId, date }) {
 
     if (payroll) {
       const next = applyLineChange(payroll, before, line);
-      tx.update(pRef, { ...next, ...payTotals(payroll, { basePay: next.basePay }), revision: (payroll.revision || 1) + 1, updatedAt: FieldValue.serverTimestamp() });
+      const changes = { ...next, ...payTotals(payroll, { basePay: next.basePay }) };
+      tx.update(pRef, { ...changes, revision: (payroll.revision || 1) + 1, updatedAt: FieldValue.serverTimestamp() });
+      if (others) refreshOverpaymentLines(tx, tenant, staff, others.map((x) => (x.id === pRef.id ? { ...x, ...changes } : x)), today, FieldValue);
     }
     return { staffId, date, status, payable };
     },
@@ -360,6 +367,52 @@ export function advanceLinesFor(periodStart, advances) {
     .filter(([, amount]) => amount > 0)
     .slice(0, MAX_DEDUCTIONS_PER_PAYROLL)
     .map(([a, amount]) => advanceLine(a, amount));
+}
+
+// ---------- Salary overpayment carried to later payrolls (Owner-pilot refinement) ----------
+// Where each paid payroll's outstanding overpayment is deducted: the Owner's
+// plan (move) or, by default, the first unpaid payroll after its period. A
+// planned payroll that got paid without it rolls on to the next unpaid one.
+function overpaymentTargets(src, staff, payrolls, today) {
+  const r = reconcileOf(src, today);
+  if (!r || r.outstanding <= 0) return [];
+  const after = addDays(src.periodEnd, 1);
+  const plan = Array.isArray(src.overpayment?.plan) && src.overpayment.plan.length ? src.overpayment.plan : [{ periodStart: nextUnpaidPeriod(staff, payrolls, after).start, amount: r.outstanding }];
+  const appliedBy = new Set((src.overpayment?.applied || []).map((x) => x.payrollId));
+  let left = r.outstanding;
+  const out = [];
+  for (const e of plan) {
+    if (left <= 0) break;
+    const target = payrolls.find((x) => x.periodStart === e.periodStart);
+    if (target && target.status !== "draft" && appliedBy.has(target.id)) continue; // already taken there
+    const period = target && target.status !== "draft" ? nextUnpaidPeriod(staff, payrolls, addDays(target.periodEnd, 1)) : staffPeriod(staff, e.periodStart);
+    const amount = Math.min(left, e.amount);
+    left -= amount;
+    out.push({ periodStart: period.start, periodEnd: period.end, amount });
+  }
+  return out;
+}
+// The overpayment lines of one pay period (one per source payroll).
+export function overpaymentLinesFor(periodStart, staff, payrolls, today) {
+  const lines = [];
+  for (const src of payrolls) {
+    if (src.status === "draft" || src.periodStart === periodStart) continue;
+    const amount = overpaymentTargets(src, staff, payrolls, today).filter((t) => t.periodStart === periodStart).reduce((t, x) => t + x.amount, 0);
+    if (amount > 0) lines.push({ id: `ovp-${src.id}`, type: "overpayment", sourcePayrollId: src.id, sourcePeriod: { start: src.periodStart, end: src.periodEnd }, description: `Previous salary overpayment · from ${src.periodStart} to ${src.periodEnd}`, amount });
+  }
+  return lines;
+}
+// Keeps the person's stored unpaid payrolls in step with overpayments.
+function refreshOverpaymentLines(tx, tenant, staff, payrolls, today, FieldValue) {
+  if (!today) return;
+  for (const d of payrolls) {
+    if (d.status !== "draft") continue;
+    const keep = (d.deductions || []).filter((x) => x.type !== "overpayment");
+    const deductions = [...keep, ...overpaymentLinesFor(d.periodStart, staff, payrolls, today)];
+    if (JSON.stringify(deductions) === JSON.stringify(d.deductions || [])) continue;
+    const total = deductionsTotal(deductions);
+    tx.update(tenant.doc("payrolls", d.id), { deductions, deductionsTotal: total, ...payTotals(d, { deductionsTotal: total }), revision: (d.revision || 1) + 1, updatedAt: FieldValue.serverTimestamp() });
+  }
 }
 
 // Owner-pilot simplification batch: the first pay period from `fromDay` on
@@ -556,9 +609,9 @@ async function markPaidOnce({ db, tenant, FieldValue, advanceId, data, stored, a
 // stored). A day already counted in another payroll (pay cycle changed
 // since) isn't counted twice. Released advances: what their repayment
 // plans give this period, one line per advance.
-export function draftFigures({ id, period, lines, advances }) {
+export function draftFigures({ id, period, lines, advances, extra = [] }) {
   const own = lines.filter((l) => !l.payrollId || l.payrollId === id);
-  return { lines: own, sum: summarizeAttendance(own, period), deductions: advanceLinesFor(period.start, advances) };
+  return { lines: own, sum: summarizeAttendance(own, period), deductions: [...advanceLinesFor(period.start, advances), ...extra] };
 }
 
 // Prepares (or returns) the person's payroll for the period starting on
@@ -583,7 +636,8 @@ export async function preparePayroll({ db, tenant, FieldValue, business, staffId
     const days = daysIn(period);
     const lineSnaps = await tx.getAll(...days.map((d) => tenant.doc("attendance", attendanceId(staffId, d))));
     const adv = await tx.get(tenant.collection("advances").where("staffId", "==", staffId).where("status", "==", "paid"));
-    const fig = draftFigures({ id, period, lines: lineSnaps.filter((s) => s.exists).map((s) => ({ ref: s.ref, ...s.data() })), advances: adv.docs.map((d) => ({ id: d.id, ...d.data() })) });
+    const others = await staffPayrolls(tx, tenant, staffId);
+    const fig = draftFigures({ id, period, lines: lineSnaps.filter((s) => s.exists).map((s) => ({ ref: s.ref, ...s.data() })), advances: adv.docs.map((d) => ({ id: d.id, ...d.data() })), extra: overpaymentLinesFor(period.start, staff, others, today) });
     const { lines, sum, deductions } = fig;
     const total = deductionsTotal(deductions);
     const stamp = FieldValue.serverTimestamp();
@@ -743,7 +797,12 @@ export async function releaseSalary({ db, bucket = null, tenant, FieldValue, bus
 async function releaseOnce({ db, tenant, FieldValue, business, today, data, payrollId, stored, expectedNetPay, actor, now }) {
   return db.runTransaction(async (tx) => {
     const draft = await loadDraft(tx, tenant, payrollId);
-    const p = draft.p;
+    const staffDoc = await loadStaff(tx, tenant, draft.p.staffId);
+    const everything = await staffPayrolls(tx, tenant, draft.p.staffId);
+    // Overpayment lines as of today (one per earlier paid payroll).
+    const fresh = [...(draft.p.deductions || []).filter((x) => x.type !== "overpayment"), ...overpaymentLinesFor(draft.p.periodStart, staffDoc, everything, today)];
+    const freshTotal = deductionsTotal(fresh);
+    const p = { ...draft.p, deductions: fresh, deductionsTotal: freshTotal, ...payTotals(draft.p, { deductionsTotal: freshTotal }) };
     // Owner-pilot batch: a salary may be paid before the period ends (an
     // early payment). The payment date is when the money was given: never
     // in the future (validateSalaryRelease), but it may be before the end.
@@ -751,13 +810,19 @@ async function releaseOnce({ db, tenant, FieldValue, business, today, data, payr
     if (data.paidDate < p.periodStart) throw new PayrollError("invalid-date", `The payment date can't be before the pay period (${p.periodStart})`);
     if (Number.isSafeInteger(expectedNetPay) && expectedNetPay !== p.netPay) throw new PayrollError("amount-changed", `The take-home is now ${peso(p.netPay)} (attendance or advances changed). Check it and pay again.`);
     const timing = data.paidDate < p.periodEnd ? "early" : "on_time";
-    if (p.netPay < 0) throw new PayrollError("negative-net-pay", "Deductions are more than this period's pay. Move an advance to the next payroll first.");
+    // Owner-pilot refinement: paying early may include upcoming days
+    // (prepaid salary: days × daily wage, from the day after the payment).
+    // It's money given, not attendance and not a cash advance.
+    const upcoming = timing === "early" ? daysIn({ start: addDays(data.paidDate, 1), end: p.periodEnd }).length : 0;
+    if (data.prepaidDays > upcoming) throw new PayrollError("invalid-input", `Only ${upcoming} upcoming day${upcoming === 1 ? "" : "s"} in this period after the payment date`);
+    const prepaid = data.prepaidDays > 0 ? { days: data.prepaidDays, from: addDays(data.paidDate, 1), to: addDays(data.paidDate, data.prepaidDays), dailyWage: staffDoc.dailyWage, amount: data.prepaidDays * staffDoc.dailyWage } : null;
+    const total = p.netPay + (prepaid?.amount ?? 0);
+    if (total < 0) throw new PayrollError("negative-net-pay", "Deductions are more than this period's pay. Move an advance to the next payroll first.");
     const sRef = staffRef(tenant, p.staffId);
-    await loadStaff(tx, tenant, p.staffId);
     const advSnaps = (await tx.get(tenant.collection("advances").where("staffId", "==", p.staffId).where("status", "==", "paid"))).docs;
     const thm = (p.additions || []).filter((a) => a.type === "thirteenth");
     if (thm.length) {
-      const all = await staffPayrolls(tx, tenant, p.staffId);
+      const all = everything;
       for (const year of new Set(thm.map((a) => a.year))) {
         const t = thirteenthMonthFor(all, year, { including: draft.ref.id });
         if (t.onPayrolls > t.entitlement) throw new PayrollError("thirteenth-over", `The 13th month pay for ${year} is more than what's earned (${peso(t.entitlement)} = 1/12 of ${peso(t.basicPay)}). Attendance changed: lower or remove it first.`);
@@ -772,11 +837,15 @@ async function releaseOnce({ db, tenant, FieldValue, business, today, data, payr
       status: "released",
       ownerPayment: "paid",
       paymentTiming: timing,
-      salary: { amount: p.netPay, method: data.method, reference: data.reference, paidDate: data.paidDate, timing, releasedBy: actor, releasedAt: stamp, ...(stored ? { proof: stored } : {}) },
+      deductions: p.deductions,
+      deductionsTotal: p.deductionsTotal,
+      netPay: p.netPay,
+      grossPay: p.grossPay,
+      salary: { amount: total, earned: p.netPay, prepaid, method: data.method, reference: data.reference, paidDate: data.paidDate, timing, releasedBy: actor, releasedAt: stamp, ...(stored ? { proof: stored } : {}) },
       receiptStatus: "awaiting",
       receiptLinkHash: link.hash,
       receiptLinkExpiresAt: link.expiresAt,
-      history: append(p.history, entry(actor, `${timing === "early" ? "Early salary payment" : "Salary paid"} ${peso(p.netPay)} on ${data.paidDate} via ${SALARY_METHODS[data.method].label}${data.reference ? ` · Ref ${data.reference}` : ""}${timing === "early" ? ` (period ends ${p.periodEnd})` : ""}`)),
+      history: append(p.history, entry(actor, `${timing === "early" ? "Early salary payment" : "Salary paid"} ${peso(total)}${prepaid ? ` (earned ${peso(p.netPay)} + prepaid ${prepaid.days} upcoming day${prepaid.days === 1 ? "" : "s"} ${peso(prepaid.amount)})` : ""} on ${data.paidDate} via ${SALARY_METHODS[data.method].label}${data.reference ? ` · Ref ${data.reference}` : ""}${timing === "early" ? ` (period ends ${p.periodEnd})` : ""}`)),
       revision: (p.revision || 1) + 1,
       updatedBy: actor,
       updatedAt: stamp,
@@ -811,8 +880,14 @@ async function releaseOnce({ db, tenant, FieldValue, business, today, data, payr
         history: append(a.history, entry(actor, [amount ? `Deducted ${peso(amount)} (${p.periodStart} to ${p.periodEnd}) · ${done ? "fully repaid" : `${peso(owedAfter)} left`}` : null, missed ? `${peso(missed)} planned for ${p.periodStart} to ${p.periodEnd} not taken (salary paid without it)` : null].filter(Boolean).join(" · "))),
       });
     });
+    // Overpayments this payroll deducted: really repaid now (on their source).
+    for (const line of p.deductions.filter((d) => d.type === "overpayment")) {
+      const src = everything.find((x) => x.id === line.sourcePayrollId);
+      if (!src) continue;
+      tx.update(tenant.doc("payrolls", src.id), { "overpayment.applied": [...(src.overpayment?.applied || []), { payrollId, amount: line.amount, at: new Date() }], history: append(src.history, entry(actor, `Salary overpayment ${peso(line.amount)} deducted by the ${p.periodStart} to ${p.periodEnd} payroll`)), updatedAt: stamp });
+    }
     meterActivity(tx, { tenant, FieldValue, timezone: business.timezone, now, counts: { payrollsReleased: 1 } });
-    return { payrollId, status: "released", netPay: p.netPay, paymentTiming: timing, receiptToken: link.token, receiptLinkExpiresAt: link.expiresAt.toISOString(), hasProof: Boolean(stored) };
+    return { payrollId, status: "released", netPay: p.netPay, amountPaid: total, prepaid, paymentTiming: timing, receiptToken: link.token, receiptLinkExpiresAt: link.expiresAt.toISOString(), hasProof: Boolean(stored) };
   }, TX_OPTIONS);
 }
 
@@ -1042,14 +1117,14 @@ export async function submitAttendanceDays({ db, tenant, FieldValue, business, s
 // Each day is decided in its own transaction, exactly like a single
 // decision (per-day history and payroll update); the result lists any day
 // that couldn't be decided.
-export async function decideAttendanceRequests({ db, tenant, FieldValue, requestIds, decision, actor }) {
+export async function decideAttendanceRequests({ db, tenant, FieldValue, business = null, requestIds, decision, actor, now = new Date() }) {
   if (!Array.isArray(requestIds) || !requestIds.length || requestIds.length > 62 || new Set(requestIds).size !== requestIds.length) throw new PayrollError("invalid-input", "Choose the requests");
   validateDecision(decision);
   const decided = [];
   const failed = [];
   for (const requestId of requestIds) {
     try {
-      decided.push((await decideAttendanceRequest({ db, tenant, FieldValue, requestId, decision, actor })).requestId);
+      decided.push((await decideAttendanceRequest({ db, tenant, FieldValue, business, requestId, decision, actor, now })).requestId);
     } catch (err) {
       if (!(err instanceof PayrollError)) throw err;
       failed.push({ requestId, error: err.message });
@@ -1060,7 +1135,8 @@ export async function decideAttendanceRequests({ db, tenant, FieldValue, request
 
 // Owner: approve (the day is marked exactly as asked, in the same
 // transaction) or reject (nothing changes). Only a pending request.
-export async function decideAttendanceRequest({ db, tenant, FieldValue, requestId, decision, actor }) {
+export async function decideAttendanceRequest({ db, tenant, FieldValue, business = null, requestId, decision, actor, now = new Date() }) {
+  const today = businessDate(business?.timezone || "Asia/Manila", now);
   const d = validateDecision(decision);
   const m = /^([A-Za-z0-9]{8,40})_(\d{4}-\d{2}-\d{2})$/.exec(typeof requestId === "string" ? requestId : "");
   if (!m) throw new PayrollError("invalid-request", "Invalid request");
@@ -1072,7 +1148,8 @@ export async function decideAttendanceRequest({ db, tenant, FieldValue, requestI
     if (r.state !== "pending") throw new PayrollError("request-decided", `This request was already ${r.state}`);
     let result = null;
     if (d.decision === "approve") {
-      const plan = await prepareAttendanceWrite(tx, { tenant, staffId: r.staffId, date: r.date });
+      if (r.date > today) throw new PayrollError("invalid-date", "That day hasn't come yet: approve it on or after the day");
+      const plan = await prepareAttendanceWrite(tx, { tenant, staffId: r.staffId, date: r.date, today });
       result = plan.commit({ FieldValue, status: r.status, note: r.note ?? null, actor, via: `${r.staffName}'s request, approved` });
     }
     const stamp = FieldValue.serverTimestamp();
@@ -1451,7 +1528,7 @@ export async function payrollPeriodView({ db, tenant, business, period: wanted =
       });
       return p ? [{ s, period: { start: p.start, end: p.end } }] : [];
     });
-    const rows = await Promise.all(people.map(({ s, period }) => periodRow({ db, tenant, s, period })));
+    const rows = await Promise.all(people.map(({ s, period }) => periodRow({ db, tenant, s, period, today })));
     rows.sort((a, b) => (a.staffName || "").localeCompare(b.staffName || ""));
     const start = currents.map((c) => c.start).sort()[0];
     const end = currents.map((c) => c.end).sort().at(-1);
@@ -1468,7 +1545,7 @@ export async function payrollPeriodView({ db, tenant, business, period: wanted =
       return false;
     }
   });
-  const rows = await Promise.all(people.map((s) => periodRow({ db, tenant, s, period })));
+  const rows = await Promise.all(people.map((s) => periodRow({ db, tenant, s, period, today })));
   rows.sort((a, b) => (a.staffName || "").localeCompare(b.staffName || ""));
   return { today, periods: listed, period: { ...period, state: today <= period.end ? "in_progress" : "ended" }, rows };
 }
@@ -1476,15 +1553,21 @@ export async function payrollPeriodView({ db, tenant, business, period: wanted =
 // One person's payroll for one period: stored, or worked out now.
 // Owner-pilot simplification batch: plus any deduction planned for this
 // period that the paid salary didn't take ("not taken": still owed).
-async function periodRow({ db, tenant, s, period }) {
+async function periodRow({ db, tenant, s, period, today }) {
   const days = daysIn(period);
   const id = payrollIdOf(s.id, period.start);
-  const [snap, advSnap] = await Promise.all([tenant.doc("payrolls", id).get(), tenant.collection("advances").where("staffId", "==", s.id).where("status", "==", "paid").get()]);
+  const [snap, advSnap, paySnap] = await Promise.all([tenant.doc("payrolls", id).get(), tenant.collection("advances").where("staffId", "==", s.id).where("status", "==", "paid").get(), tenant.collection("payrolls").where("staffId", "==", s.id).get()]);
+  const payrolls = paySnap.docs.map((d) => ({ id: d.id, ...d.data() }));
   const advances = advSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
   const notTaken = advances.flatMap((a) => scheduleOf(a).filter((e) => e.state === "not_taken" && e.periodStart === period.start && advanceRemaining(a) > 0).map((e) => ({ advanceId: a.id, amount: Math.min(e.amount, advanceRemaining(a)), description: `Advance ${a.paidDate || a.date}${a.description ? ` (${a.description})` : ""}` })));
-  if (snap.exists) return { id, ...snap.data(), notTaken, automatic: false };
+  if (snap.exists) {
+    const p = { id, ...snap.data() };
+    // Paid: final salary vs paid, and where its overpayment is carried.
+    const reconcile = reconcileOf(p, today);
+    return { ...p, notTaken, automatic: false, ...(reconcile ? { reconcile: { ...reconcile, carriedTo: overpaymentTargets(p, s, payrolls, today) } } : {}) };
+  }
   const lineSnaps = await db.getAll(...days.map((d) => tenant.doc("attendance", attendanceId(s.id, d))));
-  const fig = draftFigures({ id, period, lines: lineSnaps.filter((x) => x.exists).map((x) => x.data()), advances });
+  const fig = draftFigures({ id, period, lines: lineSnaps.filter((x) => x.exists).map((x) => x.data()), advances, extra: overpaymentLinesFor(period.start, s, payrolls, today) });
   const total = deductionsTotal(fig.deductions);
   return { id, staffId: s.id, staffName: s.name, payCycle: s.payCycle, periodStart: period.start, periodEnd: period.end, days: days.length, dailyWage: s.dailyWage, ...fig.sum, deductions: fig.deductions, deductionsTotal: total, additions: [], ...payTotals({ basePay: fig.sum.basePay, additionsTotal: 0, deductionsTotal: total }), status: "draft", ownerPayment: "not_paid", salary: null, receiptStatus: "none", history: [], notTaken, automatic: true };
 }
@@ -1606,6 +1689,8 @@ export async function correctPayment({ db, tenant, FieldValue, business, payroll
     if (!snap.exists) throw new PayrollError("not-found", "Payroll not found");
     const p = snap.data();
     if (p.status !== "released" || !p.salary) throw new PayrollError("payment-not-paid", "Only a paid salary can be corrected");
+    const staffDoc = await loadStaff(tx, tenant, p.staffId);
+    const everything = await staffPayrolls(tx, tenant, p.staffId);
     const before = { paidDate: p.salary.paidDate, method: p.salary.method, reference: p.salary.reference ?? null, amount: p.salary.amount };
     const after = { ...before, ...Object.fromEntries(Object.entries(correction).map(([k, v]) => [k, k === "reference" ? (typeof v === "string" && v.trim() ? v.trim().slice(0, 40) : null) : v])) };
     const changed = Object.keys(after).filter((k) => after[k] !== before[k]);
@@ -1614,6 +1699,7 @@ export async function correctPayment({ db, tenant, FieldValue, business, payroll
     const corrections = [...(Array.isArray(p.corrections) ? p.corrections : []), { at: new Date(), actor: actor ? { uid: actor.uid, name: actor.name } : null, reason: why, before, after }].slice(-50);
     const show = (k, v) => (k === "amount" ? peso(v) : k === "method" ? SALARY_METHODS[v]?.label ?? v : v ?? "—");
     tx.update(ref, { "salary.paidDate": after.paidDate, "salary.method": after.method, "salary.reference": after.reference, "salary.amount": after.amount, "salary.timing": timing, paymentTiming: timing, corrections, history: append(p.history, entry(actor, `Payment corrected: ${changed.map((k) => `${k} ${show(k, before[k])} → ${show(k, after[k])}`).join(", ")} · Reason: ${why}`, { before, after, reason: why })), updatedBy: actor, updatedAt: FieldValue.serverTimestamp() });
+    if (changed.includes("amount")) refreshOverpaymentLines(tx, tenant, staffDoc, everything.map((x) => (x.id === payrollId ? { ...x, salary: { ...x.salary, amount: after.amount } } : x)), today, FieldValue);
     return { payrollId, corrected: changed };
   }, TX_OPTIONS);
 }
@@ -1747,7 +1833,7 @@ const voidReason = (reason) => {
 // its receipt link stops working; the helper's confirmation and the proof
 // stay in the voided record. The period then shows as unpaid again
 // (worked out automatically). An UNPAID payroll is simply deleted instead.
-export async function voidPayroll({ db, tenant, FieldValue, payrollId, reason, actor, now = new Date() }) {
+export async function voidPayroll({ db, tenant, FieldValue, business = null, payrollId, reason, actor, now = new Date() }) {
   const why = voidReason(reason);
   const ref = payrollRef(tenant, payrollId);
   return db.runTransaction(async (tx) => {
@@ -1759,7 +1845,9 @@ export async function voidPayroll({ db, tenant, FieldValue, payrollId, reason, a
     }
     const p = snap.data();
     if (p.status !== "released") throw new PayrollError("payroll-unpaid", "This payroll isn't paid: delete it instead");
-    await loadStaff(tx, tenant, p.staffId);
+    if ((p.overpayment?.applied || []).length) throw new PayrollError("paid-payroll-deduction", "A later paid salary already took this payroll's overpayment. Void that payroll first.");
+    const staffDoc = await loadStaff(tx, tenant, p.staffId);
+    const everything = await staffPayrolls(tx, tenant, p.staffId);
     const advSnaps = (await tx.get(tenant.collection("advances").where("staffId", "==", p.staffId))).docs;
     const lineSnaps = (await tx.get(tenant.collection("attendance").where("payrollId", "==", payrollId))).docs;
     const linkRef = p.receiptLinkHash ? db.collection("receiptLinks").doc(p.receiptLinkHash) : null;
@@ -1779,6 +1867,17 @@ export async function voidPayroll({ db, tenant, FieldValue, payrollId, reason, a
     }
     for (const l of lineSnaps) tx.update(l.ref, { payrollId: null });
     if (lineSnaps.length) reversals.push({ type: "attendance-unlocked", days: lineSnaps.length });
+    // Salary overpayments this payroll took go back to their source payroll.
+    let after = everything.filter((x) => x.id !== payrollId);
+    for (const line of (p.deductions || []).filter((d) => d.type === "overpayment")) {
+      const src = after.find((x) => x.id === line.sourcePayrollId);
+      if (!src) continue;
+      const applied = (src.overpayment?.applied || []).filter((x) => x.payrollId !== payrollId);
+      tx.update(tenant.doc("payrolls", src.id), { "overpayment.applied": applied, history: append(src.history, entry(actor, `Salary overpayment ${peso(line.amount)} owed again: the ${p.periodStart} to ${p.periodEnd} payroll was voided`)), updatedAt: stamp });
+      after = after.map((x) => (x.id === src.id ? { ...x, overpayment: { ...(x.overpayment || {}), applied } } : x));
+      reversals.push({ type: "overpayment-deduction", sourcePayrollId: src.id, amount: line.amount });
+    }
+    refreshOverpaymentLines(tx, tenant, staffDoc, after, businessDate(business?.timezone || "Asia/Manila", now), FieldValue);
     if (linkSnap?.exists) tx.delete(linkRef);
     const voidRef = tenant.collection("voidedPayrolls").doc(`${payrollId}-${now.getTime()}`);
     tx.create(voidRef, { ...p, originalId: payrollId, void: { reason: why, by: actor ? { uid: actor.uid, name: actor.name } : null, at: now, reversals, receiptWas: p.receiptStatus ?? null }, history: append(p.history, entry(actor, `Voided · Reason: ${why}`)) });
@@ -1839,4 +1938,79 @@ export async function listVoided({ tenant, kind, staffId = null }) {
     .map((d) => d.data())
     .map((x) => ({ staffName: x.staffName, ...(kind === "advance" ? { amount: x.amount, date: x.paidDate || x.date } : { period: { start: x.periodStart, end: x.periodEnd }, amountPaid: x.salary?.amount ?? null }), reason: x.void?.reason ?? null, by: x.void?.by?.name ?? null, at: iso(x.void?.at), reversals: x.void?.reversals ?? [] }))
     .sort((a, b) => ((a.at || "") < (b.at || "") ? 1 : -1));
+}
+
+// ---------- Owner-pilot refinement: the Owner's salary-overpayment actions ----------
+//   keep      back to the default: the next unpaid payroll
+//   move      to another (unpaid) payroll
+//   repay     money given back outside payroll (amount, date, how)
+//   waive     the Owner lets it go (reason kept)
+// Nothing here changes the salary that was paid; the ledger lives on that
+// payroll and later unpaid payrolls are kept in step.
+export async function changeOverpayment({ db, tenant, FieldValue, business, payrollId, change, actor, now = new Date() }) {
+  const today = businessDate(business.timezone, now);
+  if (!change || typeof change !== "object" || !["keep", "move", "repay", "waive"].includes(change.op)) throw new PayrollError("invalid-input", "Choose what to do with the overpayment");
+  const ref = payrollRef(tenant, payrollId);
+  return db.runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    if (!snap.exists) throw new PayrollError("not-found", "Payroll not found");
+    const p = { id: snap.id, ...snap.data() };
+    const r = reconcileOf(p, today);
+    if (!r || r.outstanding <= 0) throw new PayrollError("nothing-owed", "Nothing is owed back on this salary");
+    const staffDoc = await loadStaff(tx, tenant, p.staffId);
+    const everything = await staffPayrolls(tx, tenant, p.staffId);
+    const op = { plan: p.overpayment?.plan ?? null, applied: p.overpayment?.applied ?? [], repayments: p.overpayment?.repayments ?? [], waivers: p.overpayment?.waivers ?? [] };
+    const who = actor ? { uid: actor.uid, name: actor.name } : null;
+    let label;
+    if (change.op === "keep") {
+      op.plan = null;
+      label = "Salary overpayment: on the next unpaid payroll";
+    } else if (change.op === "move") {
+      if (!isDayId(change.periodStart)) throw new PayrollError("invalid-date", "Choose a pay period");
+      const period = staffPeriod(staffDoc, change.periodStart);
+      if (period.start !== change.periodStart || period.start <= p.periodEnd) throw new PayrollError("invalid-period", "Choose a later pay period");
+      const target = everything.find((x) => x.periodStart === period.start);
+      if (target && target.status !== "draft") throw new PayrollError("payroll-released", "That salary is already paid. Choose a later payroll.");
+      op.plan = [{ periodStart: period.start, amount: r.outstanding }];
+      label = `Salary overpayment ${peso(r.outstanding)} moved to the ${period.start} to ${period.end} payroll`;
+    } else if (change.op === "repay") {
+      const rr = validateRepayment({ amount: change.amount, date: change.date, method: change.method, reference: change.reference, note: change.note }, { today });
+      if (rr.amount > r.outstanding) throw new PayrollError("over-owed", `Only ${peso(r.outstanding)} is owed back`);
+      op.repayments = [...op.repayments, { amount: rr.amount, date: rr.date, method: rr.method, reference: rr.reference, note: rr.note, by: who, at: new Date() }];
+      label = `Salary overpayment repaid separately ${peso(rr.amount)} on ${rr.date} via ${SALARY_METHODS[rr.method].label}`;
+    } else {
+      const why = typeof change.reason === "string" ? change.reason.trim().replace(/\s+/g, " ").slice(0, 200) : "";
+      if (why.length < 3) throw new PayrollError("reason-required", "Say why you're waiving it");
+      const amount = change.amount ?? r.outstanding;
+      if (!Number.isSafeInteger(amount) || amount <= 0 || amount > r.outstanding) throw new PayrollError("invalid-amount", `Waive up to ${peso(r.outstanding)}`);
+      op.waivers = [...op.waivers, { amount, reason: why, by: who, at: new Date() }];
+      label = `Salary overpayment waived ${peso(amount)} · Reason: ${why}`;
+    }
+    tx.update(ref, { overpayment: op, history: append(p.history, entry(actor, label)), updatedBy: actor, updatedAt: FieldValue.serverTimestamp() });
+    refreshOverpaymentLines(tx, tenant, staffDoc, everything.map((x) => (x.id === p.id ? { ...x, overpayment: op } : x)), today, FieldValue);
+    return { payrollId, outstanding: reconcileOf({ ...p, overpayment: op }, today).outstanding };
+  }, TX_OPTIONS);
+}
+
+// Final salary turned out higher than what was paid early: the Owner records
+// the additional payment (the original payment stays as it was).
+export async function payAdditional({ db, tenant, FieldValue, business, payrollId, payment, actor, now = new Date() }) {
+  const today = businessDate(business.timezone, now);
+  const data = validateSalaryRelease({ method: payment?.method, ...(payment?.reference !== undefined ? { reference: payment.reference } : {}), ...(payment?.paidDate !== undefined ? { paidDate: payment.paidDate } : {}) }, { today });
+  const ref = payrollRef(tenant, payrollId);
+  return db.runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    if (!snap.exists) throw new PayrollError("not-found", "Payroll not found");
+    const p = { id: snap.id, ...snap.data() };
+    const r = reconcileOf(p, today);
+    if (!r || r.additionalDue <= 0) throw new PayrollError("nothing-due", "No additional salary is due on this payroll");
+    const amount = payment?.amount ?? r.additionalDue;
+    if (!Number.isSafeInteger(amount) || amount <= 0 || amount > r.additionalDue) throw new PayrollError("invalid-amount", `Up to ${peso(r.additionalDue)} is due`);
+    const staffDoc = await loadStaff(tx, tenant, p.staffId);
+    const everything = await staffPayrolls(tx, tenant, p.staffId);
+    const additional = [...(p.salary.additional || []), { amount, paidDate: data.paidDate, method: data.method, reference: data.reference, by: actor ? { uid: actor.uid, name: actor.name } : null, at: new Date() }];
+    tx.update(ref, { "salary.additional": additional, ...(p.receiptStatus === "confirmed" ? { receiptStatus: "awaiting" } : {}), history: append(p.history, entry(actor, `Additional salary paid ${peso(amount)} on ${data.paidDate} via ${SALARY_METHODS[data.method].label}`)), updatedBy: actor, updatedAt: FieldValue.serverTimestamp() });
+    refreshOverpaymentLines(tx, tenant, staffDoc, everything.map((x) => (x.id === p.id ? { ...x, salary: { ...x.salary, additional } } : x)), today, FieldValue);
+    return { payrollId, paid: amount, remainingDue: r.additionalDue - amount };
+  }, TX_OPTIONS);
 }

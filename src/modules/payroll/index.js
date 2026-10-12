@@ -28,7 +28,7 @@ import { formDialog } from "../../components/form-dialog.js";
 import { confirmDialog, toast as defaultToast } from "../../components/feedback.js";
 import { formatCentavos, formatDayId } from "../../lib/format.js";
 import { exportButton, bindExport, mayExport, exportHint } from "../../lib/export.js";
-import { SALARY_METHODS, businessDate, periodFor, addDays, parseCentavos } from "@shared/index.js";
+import { SALARY_METHODS, businessDate, periodFor, addDays, parseCentavos, daysIn, paidTotal, staffPeriod } from "@shared/index.js";
 import * as defaultData from "../household/data.js";
 import { prepareProof } from "../../lib/image.js";
 import { viewProof } from "../../components/proof-viewer.js";
@@ -47,8 +47,9 @@ const ID = /^[A-Za-z0-9]{8,40}$/;
 // After an early payment: what was paid vs the final take-home now.
 export function earlyGap(p) {
   if (p.status !== "released" || p.paymentTiming !== "early" || !p.salary) return null;
-  return { paid: p.salary.amount, final: p.netPay, diff: p.netPay - p.salary.amount };
+  return { paid: paidTotal(p), final: p.netPay, diff: p.netPay - paidTotal(p) };
 }
+const range = (a, b) => (a === b ? short(a) : periodName({ start: a, end: b }));
 
 // The last few periods of a cycle, newest first.
 export function recentPeriods(cycle, today, count = 4) {
@@ -258,6 +259,25 @@ export function mount(container, session, { data = defaultData, toast = defaultT
         return null;
       }
     };
+    // Paid early: earned + prepaid = paid; final salary; the difference.
+    const reconcileBlock = (q) => {
+      const s = q.salary;
+      const r = q.reconcile;
+      const parts = html`<dl class="owe-figures" data-role="early">
+          <dt>Earned through ${short(s.paidDate)}</dt><dd>${formatCentavos(s.earned ?? s.amount)}</dd>
+          ${s.prepaid ? html`<dt>Prepaid salary ${range(s.prepaid.from, s.prepaid.to)}</dt><dd>${formatCentavos(s.prepaid.amount)}</dd>` : ""}
+          <dt><strong>Total salary paid</strong> <small>${short(s.paidDate)}</small></dt><dd><strong>${formatCentavos(s.amount)}</strong></dd>
+          ${(s.additional || []).map((a) => html`<dt>Additional payment <small>${short(a.paidDate)}</small></dt><dd>${formatCentavos(a.amount)}</dd>`)}
+          <dt>Final salary${r && r.ended ? "" : " so far"}</dt><dd>${formatCentavos(q.netPay)}</dd>
+        </dl>`;
+      let status = "";
+      if (!r || !r.ended) status = html`<p class="stat-hint" data-role="reconcile">${badge("Paid early", "info")} The period ends ${short(q.periodEnd)}. Record the remaining days as they happen; Luna settles the difference after that.</p>`;
+      else if (r.waiting) status = html`<p class="stat-hint" data-role="reconcile">${badge("Waiting for attendance", "warning")} Record the remaining ${r.unrecorded} day${r.unrecorded === 1 ? "" : "s"} on Attendance to settle the difference.</p>`;
+      else if (r.settled || (r.overpaid && !r.outstanding)) status = html`<p class="stat-hint" data-role="reconcile">${badge("Settled", "success")} ${r.overpaid ? `The ${formatCentavos(r.overpaid)} paid early but not earned is settled.` : "Everything paid early was earned."}</p>`;
+      else if (r.outstanding) status = html`<div class="reconcile-row" data-role="reconcile"><p class="stat-hint">${badge("Salary overpayment", "warning")} <strong>${formatCentavos(r.outstanding)}</strong> paid early was not earned.${r.carriedTo?.length ? ` It comes off ${r.carriedTo.map((t) => range(t.periodStart, t.periodEnd)).join(", ")}.` : ""} It isn't a cash advance.</p>${canRelease ? lineMenu("Salary overpayment actions", [{ x: "ovp-keep", label: "Keep on next payroll", data: { id: q.id } }, { x: "ovp-move", label: "Move to another payroll", data: { id: q.id } }, { x: "ovp-repay", label: "Mark repaid separately", data: { id: q.id, amount: r.outstanding } }, { x: "ovp-waive", label: "Waive", data: { id: q.id, amount: r.outstanding }, sep: true }]) : ""}</div>`;
+      else if (r.additionalDue) status = html`<div class="reconcile-row" data-role="reconcile"><p class="stat-hint">${badge("Additional salary due", "warning")} <strong>${formatCentavos(r.additionalDue)}</strong> more was earned than paid.</p>${canRelease ? html`<button type="button" class="btn btn-compact btn-primary" data-x="pay-additional">Record additional payment</button>` : ""}</div>`;
+      return html`${parts}${status}`;
+    };
     const advanceOf = async (advanceId) => (await data.listAdvances(businessId, { staffId: p.staffId }, { pageSize: 100 })).rows.find((a) => a.id === advanceId);
 
     const paint = () => {
@@ -271,7 +291,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
           <div class="modal-header"><h2 class="card-title">${p.staffName} · ${rowPeriod(p)}</h2></div>
           <div class="modal-body">
             ${p.automatic ? html`<p class="chart-note" data-role="automatic">Worked out automatically from attendance and advances.${today <= p.periodEnd ? ` The period is still ongoing (ends ${short(p.periodEnd)}).` : ""}</p>` : ""}
-            ${gap ? html`<p class="chart-note" data-role="early">${badge("Early salary payment", "info")} Paid ${formatCentavos(gap.paid)} on ${short(p.salary.paidDate)}, before the period ended (${short(p.periodEnd)}). ${!gap.diff ? "The final take-home matches what was paid." : gap.diff > 0 ? html`Final take-home is now <strong>${formatCentavos(gap.final)}</strong>: <strong>${formatCentavos(gap.diff)} more</strong> than paid${today > p.periodEnd ? "" : " so far"}.` : html`Final take-home is now <strong>${formatCentavos(gap.final)}</strong>: <strong>${formatCentavos(-gap.diff)} less</strong> than paid${today > p.periodEnd ? "" : " so far"}.`}</p>` : ""}
+            ${gap ? reconcileBlock(p) : ""}
             <h3 class="slip-head">Earnings</h3>
             <ul class="slip" data-role="earnings">
               <li data-line="basic"><span class="slip-what">Basic pay<small>${p.payableDays} paid days × ${formatCentavos(p.dailyWage)}</small></span><span class="slip-amt">${formatCentavos(p.basePay)}</span><span class="slip-act"><button type="button" class="btn btn-compact btn-ghost" data-x="calc">${calc ? "Hide" : "View calculation"}</button></span></li>
@@ -282,7 +302,9 @@ export function mount(container, session, { data = defaultData, toast = defaultT
             <ul class="slip" data-role="deductions">
               ${!(p.deductions || []).length && !(p.notTaken || []).length ? html`<li class="slip-none"><span class="stat-hint">None.</span></li>` : ""}
               ${(p.deductions || []).map((d) =>
-                d.type === "advance"
+                d.type === "overpayment"
+                  ? html`<li data-deduction="${d.id}" data-overpayment="${d.sourcePayrollId}"><span class="slip-what">Previous salary overpayment<small>From ${range(d.sourcePeriod.start, d.sourcePeriod.end)} · salary paid early, not all earned</small></span><span class="slip-amt">− ${formatCentavos(d.amount)}</span><span class="slip-act">${canRelease ? lineMenu("Actions for the previous salary overpayment", [{ x: "ovp-source", label: "View source", data: { id: d.sourcePayrollId } }, { x: "ovp-move", label: "Move to another payroll", data: { id: d.sourcePayrollId } }, { x: "ovp-repay", label: "Mark repaid separately", data: { id: d.sourcePayrollId, amount: d.amount } }, { x: "ovp-waive", label: "Waive", data: { id: d.sourcePayrollId, amount: d.amount }, sep: true }]) : ""}</span></li>`
+                  : d.type === "advance"
                   ? html`<li data-deduction="${d.id}" data-advance="${d.advanceId}"><span class="slip-what">${d.description}<small>Cash advance · repayment plan</small></span><span class="slip-amt">− ${formatCentavos(d.amount)}</span><span class="slip-act">${draft && canAdvances ? lineMenu(`Actions for ${d.description}`, [{ x: "adv-view", label: "View advance", data: { id: d.advanceId } }, { x: "adv-amount", label: "Edit amount", data: { id: d.advanceId } }, { x: "adv-move", label: "Move to another payroll", data: { id: d.advanceId } }, { x: "adv-off", label: "Remove from this payroll", danger: true, data: { id: d.advanceId } }]) : html`<button type="button" class="btn btn-compact btn-ghost" data-x="adv-view" data-id="${d.advanceId}">View advance</button>`}</span></li>`
                   : html`<li data-deduction="${d.id}"><span class="slip-what">${d.description}<small>Deduction you added</small></span><span class="slip-amt">− ${formatCentavos(d.amount)}</span><span class="slip-act">${draft && canManage ? lineMenu(`Actions for ${d.description}`, [{ x: "edit-line", label: "Edit", data: { id: d.id, kind: "deduction" } }, { x: "remove", label: "Delete", danger: true, data: { id: d.id } }]) : ""}</span></li>`
               )}
@@ -425,21 +447,26 @@ export function mount(container, session, { data = defaultData, toast = defaultT
         }
       } else if (x === "release") {
         const ongoing = today < p.periodEnd;
+        // Upcoming days of the period (after today) that can be paid now.
+        const upcoming = ongoing ? daysIn({ start: addDays(today, 1), end: p.periodEnd }) : [];
+        const wage = p.dailyWage || 0;
+        const prepaidOptions = [{ value: "0", label: "No, only what's earned so far" }, ...upcoming.map((d, i) => ({ value: String(i + 1), label: `${i + 1} upcoming day${i ? "s" : ""} (${range(upcoming[0], d)}): +${formatCentavos((i + 1) * wage)}` }))];
         const r = await formDialog({
           title: `${ongoing ? "Early salary payment: " : ""}Pay ${formatCentavos(p.netPay)} to ${p.staffName}`,
           intro: ongoing
-            ? `This pay period is still ongoing (ends ${short(p.periodEnd)}). Attendance after the payment date may still change the final salary; Luna shows any difference once the period ends. The helper confirms receiving it separately.`
+            ? `This pay period is still ongoing (ends ${short(p.periodEnd)}). Earned through ${short(today)}: ${formatCentavos(p.netPay)}. You can also pay the upcoming days now (prepaid salary, not a cash advance). Upcoming days stay unmarked; Luna settles any difference after the period ends. The helper confirms receiving it separately.`
             : "This locks the period's attendance. The helper then confirms receiving it from their Luna login (or a one-time link).",
           fields: [
             { name: "method", label: "Paid by", type: "select", value: "cash", options: methodOptions() },
             { name: "paidDate", label: "Date paid", type: "date", value: today, max: today },
+            ...(ongoing ? [{ name: "prepaidDays", label: "Also pay upcoming days (prepaid salary)?", type: "select", value: String(upcoming.length), options: prepaidOptions }] : []),
             { name: "proof", label: "Proof (screenshot or PDF, optional)", type: "file", accept: "image/jpeg,image/png,image/webp,application/pdf" },
             { name: "reference", label: "Reference no. (optional)", more: true },
           ],
           submitLabel: "Mark paid",
           onSubmit: async (v) => {
             const proof = v.proof ? await prepareProof(v.proof, { pdf: true }) : null;
-            const payment = { method: v.method, ...(v.reference ? { reference: v.reference } : {}), paidDate: v.paidDate || today };
+            const payment = { method: v.method, ...(v.reference ? { reference: v.reference } : {}), paidDate: v.paidDate || today, ...(ongoing && Number(v.prepaidDays) > 0 ? { prepaidDays: Number(v.prepaidDays) } : {}) };
             const target = p.automatic ? { staffId: p.staffId, periodStart: p.periodStart } : { payrollId };
             return data.payrollApi({ action: "release", ...target, payment, expectedNetPay: p.netPay, ...(proof ? { proof } : {}) });
           },
@@ -447,8 +474,47 @@ export function mount(container, session, { data = defaultData, toast = defaultT
         if (r) {
           payrollId = r.payrollId || payrollId;
           link = r.receiptToken ? receiptUrl(r.receiptToken) : null;
-          toast(r.paymentTiming === "early" ? "Early salary payment recorded. Days after the payment date stay open." : "Salary marked paid.", "success");
+          toast(r.paymentTiming === "early" ? `Early salary payment recorded${r.prepaid ? `, including ${r.prepaid.days} prepaid day${r.prepaid.days === 1 ? "" : "s"}` : ""}. Upcoming days stay open.` : "Salary marked paid.", "success");
           refresh();
+        }
+      } else if (x.startsWith("ovp-") || x === "pay-additional") {
+        const sourceId = el.dataset.id || payrollId;
+        const src = sourceId === p.id ? p : null;
+        let r = null;
+        try {
+          if (x === "ovp-source") {
+            const m = /_(\d{4}-\d{2}-\d{2})$/.exec(sourceId);
+            backdrop.remove();
+            const s0 = staffRec();
+            state.staffId = p.staffId;
+            state.period = { start: m[1], end: staffPeriod(s0, m[1]).end };
+            await load();
+            return openView(sourceId);
+          }
+          if (x === "ovp-keep") r = await data.payrollApi({ action: "overpayment", payrollId: sourceId, change: { op: "keep" } });
+          else if (x === "ovp-move") {
+            const s0 = staffRec();
+            const opts = [];
+            let q = staffPeriod(s0, addDays(today, 0));
+            for (let i = 0; i < 6; i++) {
+              opts.push(q);
+              q = staffPeriod(s0, addDays(q.end, 1));
+            }
+            r = await formDialog({ title: "Move the salary overpayment", intro: "It stays owed; only the payroll it comes off changes.", fields: [{ name: "to", label: "Take it from", type: "select", value: opts[1]?.start, options: opts.map((o) => ({ value: o.start, label: range(o.start, o.end) })) }], submitLabel: "Move", onSubmit: (v) => data.payrollApi({ action: "overpayment", payrollId: sourceId, change: { op: "move", periodStart: v.to } }) });
+          } else if (x === "ovp-repay") {
+            r = await formDialog({ title: "Salary overpayment repaid separately", intro: "Money given back outside payroll. It lowers what's owed right away.", fields: [{ name: "amount", label: "Amount (₱)", value: String(Number(el.dataset.amount) / 100), required: true, inputmode: "decimal" }, { name: "date", label: "Date", type: "date", value: today, max: today }, { name: "method", label: "How", type: "select", value: "cash", options: methodOptions() }, { name: "note", label: "Note (optional)", more: true }], submitLabel: "Record repayment", onSubmit: (v) => data.payrollApi({ action: "overpayment", payrollId: sourceId, change: { op: "repay", amount: parseCentavos(v.amount), date: v.date || today, method: v.method, ...(v.note.trim() ? { note: v.note.trim() } : {}) } }) });
+          } else if (x === "ovp-waive") {
+            r = await formDialog({ title: "Waive the salary overpayment?", intro: `${formatCentavos(Number(el.dataset.amount))} won't be taken back. The reason is kept in the history.`, fields: [{ name: "reason", label: "Reason", required: true, placeholder: "e.g. Holiday bonus instead" }], submitLabel: "Waive", onSubmit: (v) => data.payrollApi({ action: "overpayment", payrollId: sourceId, change: { op: "waive", reason: v.reason.trim() } }) });
+          } else if (x === "pay-additional") {
+            const due = src?.reconcile?.additionalDue ?? 0;
+            r = await formDialog({ title: `Additional salary for ${p.staffName}`, intro: `${formatCentavos(due)} more was earned than paid early. The early payment stays as it was.`, fields: [{ name: "amount", label: "Amount paid now (₱)", value: String(due / 100), required: true, inputmode: "decimal" }, { name: "method", label: "Paid by", type: "select", value: "cash", options: methodOptions() }, { name: "paidDate", label: "Date paid", type: "date", value: today, max: today }], submitLabel: "Record payment", onSubmit: (v) => data.payrollApi({ action: "payAdditional", payrollId: sourceId, payment: { amount: parseCentavos(v.amount), method: v.method, paidDate: v.paidDate || today } }) });
+          }
+          if (r) {
+            toast("Saved.", "success");
+            refresh();
+          }
+        } catch (err) {
+          toast(err.message || "Something went wrong", "danger");
         }
       } else if (x === "newlink") run(() => data.payrollApi({ action: "newReceiptLink", payrollId }), "New link ready; the old one no longer works.");
       return undefined;

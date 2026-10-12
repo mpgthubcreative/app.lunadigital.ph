@@ -8,10 +8,10 @@
 // their requests, their salaries and their advances. Never another
 // person's record, never the Owner's private notes.
 
-import { PayrollError, staffPeriod, paidPayrollLocks, advanceCapacity, cycleLabel, plannedEntries, scheduleOf, daysIn, attendanceId, summarizeAttendance, isValidStaffId, advanceRemaining, nextDeduction, selfDayLock, MAX_DAYS_AHEAD, ATTENDANCE_STATUSES, ADVANCE_STATUSES, SALARY_METHODS, payrollId as payrollIdOf } from "../../../shared/payroll.js";
+import { PayrollError, staffPeriod, paidPayrollLocks, advanceCapacity, cycleLabel, plannedEntries, scheduleOf, reconcileOf, paidTotal, daysIn, attendanceId, summarizeAttendance, isValidStaffId, advanceRemaining, nextDeduction, selfDayLock, MAX_DAYS_AHEAD, ATTENDANCE_STATUSES, ADVANCE_STATUSES, SALARY_METHODS, payrollId as payrollIdOf } from "../../../shared/payroll.js";
 import { businessDate, addDays, isDayId } from "../../../shared/metrics.js";
 import { prepareNotifications } from "./notifications.js";
-import { readProofFile, dayRange } from "./payroll.js";
+import { readProofFile, dayRange, overpaymentLinesFor } from "./payroll.js";
 
 const TX_OPTIONS = { maxAttempts: 10 };
 const MAX_HISTORY = 200;
@@ -44,6 +44,9 @@ const salaryView = (p) => ({
   grossPay: Number.isSafeInteger(p.grossPay) ? p.grossPay : int(p.basePay) + int(p.additionsTotal),
   netPay: int(p.salary?.amount ?? p.netPay),
   payment: p.status === "released" ? { method: SALARY_METHODS[p.salary?.method]?.label ?? null, paidDate: p.salary?.paidDate ?? null, hasProof: Boolean(p.salary?.proof), early: p.paymentTiming === "early" } : null,
+  // Owner-pilot refinement: what was given, in plain parts (earned so far +
+  // prepaid upcoming days), and any later additional payment.
+  received: p.status === "released" && p.salary ? { earned: int(p.salary.earned ?? p.salary.amount), prepaid: p.salary.prepaid ? { days: p.salary.prepaid.days, from: p.salary.prepaid.from, to: p.salary.prepaid.to, amount: p.salary.prepaid.amount } : null, additional: (p.salary.additional || []).map((a) => ({ amount: a.amount, paidDate: a.paidDate })), total: paidTotal(p) } : null,
   receipt: p.receiptStatus === "confirmed" ? "received" : p.dispute?.state === "open" ? "not_received" : p.status === "released" ? "not_confirmed" : null,
 });
 
@@ -161,6 +164,16 @@ export async function myHousehold({ db, tenant, business, staffId, now = new Dat
     corrections: corrSnap.docs.map((d) => ({ id: d.id, ...d.data() })).sort((a, b) => (iso(a.createdAt) || "") < (iso(b.createdAt) || "") ? 1 : -1).slice(0, 10).map((c) => ({ id: c.id, date: c.date ?? null, message: c.message, state: c.state, answer: c.resolution ?? null })),
     requests: requests.slice(0, 20).map((r) => ({ id: r.id, date: r.date, status: r.status, statusLabel: ATTENDANCE_STATUSES[r.status]?.label ?? r.status, note: r.note ?? null, state: r.state, answer: r.decisionNote ?? null })),
     salaries: payrolls.slice(0, 8).map(salaryView),
+    // Owner-pilot refinement: salary paid early that turned out more than
+    // earned, and the payroll it's planned to come off (set by the employer).
+    adjustments: payrolls
+      .filter((p) => p.status === "released")
+      .map((p) => ({ p, r: reconcileOf(p, today) }))
+      .filter(({ r }) => r && r.outstanding > 0)
+      .map(({ p, r }) => {
+        const target = payrolls.find((x) => x.status === "draft" && overpaymentLinesFor(x.periodStart, staff, payrolls, today).some((l) => l.sourcePayrollId === p.id));
+        return { amount: r.outstanding, from: { start: p.periodStart, end: p.periodEnd }, plannedFor: target ? { start: target.periodStart, end: target.periodEnd } : null };
+      }),
     advances: advances.slice(0, 12).map(advanceView),
   };
 }

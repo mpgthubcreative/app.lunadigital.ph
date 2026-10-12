@@ -69,7 +69,13 @@ describe("Attendance (Owner-pilot simplification): one helper, one pay period", 
     expect(container.querySelectorAll('[data-role="owner-sheet"] .sheet-row')).toHaveLength(16);
     const period = container.querySelector('[data-role="pick-period"]');
     expect(period.selectedOptions[0].textContent).toBe("Oct 16–31 (now)");
-    expect(period.options[0].textContent).toBe("Nov 1–15"); // the next one too: leave and rest days can be planned
+    expect(period.options[0].textContent).toBe("Oct 16–31 (now)"); // nothing ahead: upcoming days can't be marked
+    // Upcoming days are shown, not markable.
+    const up = container.querySelector('[data-day="2026-10-17"]');
+    expect(up.classList.contains("is-upcoming")).toBe(true);
+    expect(up.querySelector("select").disabled).toBe(true);
+    expect(up.querySelector("select").textContent).toBe("Upcoming");
+    expect(up.querySelector("[data-sel]")).toBeNull();
     period.value = "2026-10-01";
     period.dispatchEvent(new Event("change", { bubbles: true }));
     await flush();
@@ -86,14 +92,18 @@ describe("Attendance (Owner-pilot simplification): one helper, one pay period", 
     sel.dispatchEvent(new Event("change", { bubbles: true }));
     await flush();
     expect(data.setAttendanceMany).toHaveBeenCalledWith(maria.id, [{ date: "2026-10-16", status: "absent" }]);
-    for (const d of ["2026-10-17", "2026-10-18"]) {
+    const period = container.querySelector('[data-role="pick-period"]');
+    period.value = "2026-10-01";
+    period.dispatchEvent(new Event("change", { bubbles: true }));
+    await flush();
+    for (const d of ["2026-10-04", "2026-10-05"]) {
       const box = container.querySelector(`[data-sel="${d}"]`);
       box.checked = true;
       box.dispatchEvent(new Event("change", { bubbles: true }));
     }
     container.querySelector('[data-act="bulk"][data-status="rest_day"]').click();
     await flush();
-    expect(data.setAttendanceMany).toHaveBeenLastCalledWith(maria.id, [{ date: "2026-10-17", status: "rest_day" }, { date: "2026-10-18", status: "rest_day" }]);
+    expect(data.setAttendanceMany).toHaveBeenLastCalledWith(maria.id, [{ date: "2026-10-04", status: "rest_day" }, { date: "2026-10-05", status: "rest_day" }]);
   });
 
   it("correcting a day the helper sent asks for a reason, then saves it with the reason", async () => {
@@ -443,10 +453,16 @@ describe("Payroll: automatic pay periods (Owner-pilot batch)", () => {
     await flush();
     const form = lastForm();
     expect(document.querySelector(".modal-backdrop:last-child .card-title").textContent).toMatch(/^Early salary payment: Pay ₱600\.00 to Maria/);
-    expect(form.textContent).toMatch(/This pay period is still ongoing \(ends Oct 31\)\. Attendance after the payment date may still change the final salary/);
+    expect(form.textContent).toMatch(/This pay period is still ongoing \(ends Oct 31\)\. Earned through Oct 16: ₱600\.00\. You can also pay the upcoming days now \(prepaid salary, not a cash advance\)/);
+    // Prepaid days: by default all upcoming days (Oct 17-31); the Owner can pay fewer, or none.
+    const opts = [...form.elements.prepaidDays.options].map((o) => o.textContent);
+    expect(form.elements.prepaidDays.value).toBe("15");
+    expect(opts[0]).toBe("No, only what's earned so far");
+    expect(opts[3]).toBe("3 upcoming days (Oct 17–19): +₱1,800.00");
+    form.elements.prepaidDays.value = "3";
     submit(form);
     await until(() => data.payrollApi.mock.calls.some((c) => c[0].action === "release"));
-    expect(data.payrollApi).toHaveBeenCalledWith({ action: "release", staffId: maria.id, periodStart: "2026-10-16", payment: { method: "cash", paidDate: "2026-10-16" }, expectedNetPay: 60000 });
+    expect(data.payrollApi).toHaveBeenCalledWith({ action: "release", staffId: maria.id, periodStart: "2026-10-16", payment: { method: "cash", paidDate: "2026-10-16", prepaidDays: 3 }, expectedNetPay: 60000 });
     expect(data.payrollApi.mock.calls.some((c) => c[0].action === "prepare" || c[0].action === "prepareAll")).toBe(false);
   });
   it("different cutoffs: 'Now (everyone)' shows each person in their own current period", async () => {
@@ -484,8 +500,8 @@ describe("Payroll: automatic pay periods (Owner-pilot batch)", () => {
     expect(actions).toEqual(["prepare", "addAddition"]);
     expect(data.payrollApi).toHaveBeenCalledWith({ action: "addAddition", payrollId: "staffMaria0001_2026-10-16", addition: { type: "bonus", amount: 20000 } });
   });
-  it("a salary paid early shows what was paid against the final take-home", async () => {
-    const paid = payroll({ status: "released", paymentTiming: "early", ownerPayment: "paid", receiptStatus: "awaiting", netPay: 730000, salary: { amount: 670000, paidDate: "2026-10-11", method: "cash", timing: "early" } });
+  it("a salary paid early shows earned + prepaid = paid, the final salary, and the difference (additional salary due)", async () => {
+    const paid = payroll({ status: "released", paymentTiming: "early", ownerPayment: "paid", receiptStatus: "awaiting", netPay: 730000, salary: { amount: 670000, earned: 610000, prepaid: { days: 1, from: "2026-10-12", to: "2026-10-12", amount: 60000 }, paidDate: "2026-10-11", method: "cash", timing: "early" }, reconcile: { ended: true, waiting: false, paid: 670000, final: 730000, diff: 60000, overpaid: 0, outstanding: 0, additionalDue: 60000, settled: false, carriedTo: [] } });
     const data = fakeData({ getPayroll: vi.fn(async () => paid), payrollApi: vi.fn(async (b) => (b.action === "period" ? periodView([paid]) : {})) });
     mountPayroll(container, home(), { data, now: NOW, toast: () => {} });
     await flush();
@@ -494,9 +510,38 @@ describe("Payroll: automatic pay periods (Owner-pilot batch)", () => {
     expect(row.textContent).toMatch(/paid ₱6,700\.00/);
     container.querySelector('[data-act="view"]').click();
     await flush();
-    expect(document.querySelector('[data-role="early"]').textContent).toMatch(/Paid ₱6,700\.00 on Oct 11, before the period ended \(Oct 15\)\. Final take-home is now ₱7,300\.00: ₱600\.00 more than paid\./);
+    const fig = [...document.querySelectorAll('[data-role="early"] dt')].map((dt) => `${dt.textContent.replace(/\s+/g, " ").trim()}: ${dt.nextElementSibling.textContent}`);
+    expect(fig).toEqual(["Earned through Oct 11: ₱6,100.00", "Prepaid salary Oct 12: ₱600.00", "Total salary paid Oct 11: ₱6,700.00", "Final salary: ₱7,300.00"]);
+    expect(document.querySelector('[data-role="reconcile"]').textContent).toMatch(/Additional salary due\s*₱600\.00 more was earned than paid/);
+    document.querySelector('[data-x="pay-additional"]').click();
+    const f = lastForm();
+    submit(f);
+    await until(() => data.payrollApi.mock.calls.some((c) => c[0].action === "payAdditional"));
+    expect(data.payrollApi).toHaveBeenCalledWith({ action: "payAdditional", payrollId: paid.id, payment: { amount: 60000, method: "cash", paidDate: "2026-10-16" } });
     // The employee's receipt is still their own step.
     expect(document.querySelector('[data-role="receipt"]').textContent).toMatch(/Not confirmed/);
+  });
+});
+
+describe("Owner-pilot refinement: salary overpayment on the next payroll", () => {
+  it("its own traceable line ('Previous salary overpayment · From Oct 1–15') with View source / Move / Mark repaid / Waive (no Delete)", async () => {
+    const next = payroll({ id: "staffMaria0001_2026-10-16", periodStart: "2026-10-16", periodEnd: "2026-10-31", deductions: [{ id: "adv-adv0000000001", type: "advance", advanceId: "adv0000000001", description: "Advance 2026-10-13", amount: 50000 }, { id: "ovp-staffMaria0001_2026-10-01", type: "overpayment", sourcePayrollId: "staffMaria0001_2026-10-01", sourcePeriod: { start: "2026-10-01", end: "2026-10-15" }, description: "Previous salary overpayment", amount: 41100 }], deductionsTotal: 91100 });
+    const data = fakeData({ payrollApi: vi.fn(async (b) => (b.action === "period" ? periodView([next], { start: "2026-10-16", end: "2026-10-31", state: "in_progress" }) : {})) });
+    mountPayroll(container, home(), { data, now: NOW, toast: () => {} });
+    await flush();
+    container.querySelector('[data-act="view"]').click();
+    await flush();
+    const line = document.querySelector('[data-overpayment="staffMaria0001_2026-10-01"]');
+    expect(line.textContent).toMatch(/Previous salary overpayment[\s\S]*From Oct 1–15[\s\S]*− ₱411\.00/);
+    expect([...line.querySelectorAll(".line-menu-list > *")].map((x) => (x.classList.contains("menu-sep") ? "—" : x.textContent))).toEqual(["View source", "Move to another payroll", "Mark repaid separately", "—", "Waive"]);
+    // The advance stays its own line.
+    expect(document.querySelector('[data-advance="adv0000000001"]')).not.toBeNull();
+    line.querySelector('[data-x="ovp-waive"]').click();
+    const f = lastForm();
+    f.elements.reason.value = "Goodwill";
+    submit(f);
+    await until(() => data.payrollApi.mock.calls.some((c) => c[0].action === "overpayment"));
+    expect(data.payrollApi).toHaveBeenCalledWith({ action: "overpayment", payrollId: "staffMaria0001_2026-10-01", change: { op: "waive", reason: "Goodwill" } });
   });
 });
 

@@ -20,7 +20,7 @@ import { viewProof } from "../components/proof-viewer.js";
 
 const label = (s) => ATTENDANCE_STATUSES[s]?.label ?? s;
 const shortDay = (d) => formatDayId(d).replace(/, \d{4}$/, "");
-const span = (a, b) => (a.slice(0, 7) === b.slice(0, 7) ? `${shortDay(a)}–${Number(b.slice(8))}` : `${shortDay(a)} – ${shortDay(b)}`);
+const span = (a, b) => (a === b ? shortDay(a) : a.slice(0, 7) === b.slice(0, 7) ? `${shortDay(a)}–${Number(b.slice(8))}` : `${shortDay(a)} – ${shortDay(b)}`);
 const days = (n) => `${n} day${n === 1 ? "" : "s"}`;
 const TABS = [["home", "Home"], ["attendance", "Attendance"], ["salary", "Salary"], ["advances", "Advances"]];
 
@@ -106,11 +106,21 @@ export function mountStaffPortal(root, session, { api = defaultApi, onSignOut = 
     const paid = (m.salaries || []).filter((s) => s.state === "paid");
     return html`<section class="card staff-card" data-section="salary">
       <h2 class="staff-h">My salary</h2>
+      ${(m.adjustments || []).map((a) => html`<div class="staff-period" data-role="adjustment">
+        <div class="staff-period-head"><span>Previous salary adjustment</span><strong>${money(a.amount)}</strong></div>
+        <p class="staff-note">Your ${span(a.from.start, a.from.end)} salary was paid early, before all the days were done, and this part wasn't earned.${a.plannedFor ? ` Planned to come off your ${span(a.plannedFor.start, a.plannedFor.end)} salary.` : " Your employer will plan when it comes off."}</p>
+      </div>`)}
       ${paid.length
         ? html`<ul class="staff-list" data-role="salaries">${paid.map(
             (s) => html`<li data-salary="${s.id}">
               <div class="staff-row"><span><strong>${money(s.netPay)}</strong><br /><small>${span(s.period.start, s.period.end)} · paid ${s.payment?.paidDate ? shortDay(s.payment.paidDate) : ""}${s.payment?.method ? ` by ${s.payment.method}` : ""}${s.payment?.early ? " (early)" : ""}</small></span>
               ${s.receipt === "received" ? pill("Received", "success") : s.receipt === "not_received" ? pill("Reported not received", "danger") : pill("Please confirm", "warning")}</div>
+              ${s.received ? html`<dl class="staff-totals" data-role="received">
+                <dt>Earned through ${shortDay(s.payment?.paidDate || s.period.end)}</dt><dd>${money(s.received.earned)}</dd>
+                ${s.received.prepaid ? html`<dt>Prepaid for ${span(s.received.prepaid.from, s.received.prepaid.to)}</dt><dd>${money(s.received.prepaid.amount)}</dd>` : ""}
+                ${s.received.additional.map((a) => html`<dt>Additional payment ${shortDay(a.paidDate)}</dt><dd>${money(a.amount)}</dd>`)}
+                <dt><strong>Total received</strong></dt><dd><strong>${money(s.received.total)}</strong></dd>
+              </dl>` : ""}
               <div class="staff-actions">${s.payment?.hasProof ? html`<button type="button" class="btn" data-act="proof" data-kind="salary" data-id="${s.id}">View proof</button>` : ""}${s.receipt === "not_confirmed" || s.receipt === "not_received" ? html`<button type="button" class="btn btn-primary" data-act="received" data-id="${s.id}">I received my salary</button>${s.receipt === "not_confirmed" ? html`<button type="button" class="btn" data-act="notReceived" data-id="${s.id}">I didn't receive it</button>` : ""}` : ""}</div>
               <details class="staff-details"><summary>See the breakdown</summary><dl class="dl dl-compact">
                 <dt>Basic pay</dt><dd>${money(s.basicPay)}</dd>

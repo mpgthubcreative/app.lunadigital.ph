@@ -279,3 +279,32 @@ describe("void racing repayments and plans", () => {
     expect((a.schedule || []).some((e) => e.state === "applied")).toBe(false);
   });
 });
+
+// Owner-pilot refinement: a salary overpayment is taken once, whatever races.
+describe("salary overpayment racing the next payment", () => {
+  it("paying the next payroll while the overpayment is waived / moved / repaid: never taken twice, never below zero", async () => {
+    const w = await world();
+    const early = { ...w.c, now: new Date("2026-10-12T04:00:00Z") };
+    for (const d of daysIn({ start: "2026-10-01", end: "2026-10-12" })) await pay.setAttendance({ ...early, input: { staffId: w.staffId, date: d, status: "present" } });
+    const { payrollId } = await pay.preparePayroll({ ...early, staffId: w.staffId, periodStart: "2026-10-01" });
+    await pay.releaseSalary({ ...early, payrollId, release: { method: "cash", prepaidDays: 3 } });
+    const later = { ...w.c, now: new Date("2026-11-01T04:00:00Z") };
+    for (const [d, s] of [["2026-10-13", "present"], ["2026-10-14", "present"], ["2026-10-15", "absent"]]) await pay.setAttendance({ ...later, input: { staffId: w.staffId, date: d, status: s } });
+    for (const d of daysIn({ start: "2026-10-16", end: "2026-10-25" })) await pay.setAttendance({ ...later, input: { staffId: w.staffId, date: d, status: "present" } });
+    const next = await pay.preparePayroll({ ...later, staffId: w.staffId, periodStart: "2026-10-16" });
+    const r = await Promise.allSettled([
+      pay.releaseSalary({ ...later, payrollId: next.payrollId, release: { method: "cash" } }),
+      pay.changeOverpayment({ ...later, payrollId, change: { op: "waive", reason: "goodwill" } }),
+      pay.changeOverpayment({ ...later, payrollId, change: { op: "repay", amount: 10000, method: "cash" } }),
+      pay.changeOverpayment({ ...later, payrollId, change: { op: "move", periodStart: "2026-11-01" } }),
+    ]);
+    expectExplicit(r, ["nothing-owed", "over-owed", "payroll-released"]);
+    const src = (await w.tenant.doc("payrolls", payrollId).get()).data();
+    const sum = (l) => (l || []).reduce((t, x) => t + x.amount, 0);
+    const settledBy = sum(src.overpayment?.applied) + sum(src.overpayment?.repayments) + sum(src.overpayment?.waivers);
+    expect(settledBy).toBeLessThanOrEqual(60000); // ₱600 a day: one day not earned
+    const taken = (await w.tenant.doc("payrolls", next.payrollId).get()).data().deductions.filter((d) => d.type === "overpayment").reduce((t, d) => t + d.amount, 0);
+    expect(sum(src.overpayment?.applied)).toBe(taken);
+    expect(src.salary.amount).toBe(15 * 60000); // the early payment is never rewritten
+  });
+});

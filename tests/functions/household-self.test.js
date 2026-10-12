@@ -129,21 +129,22 @@ describe("self-service: their own record only; requests change nothing until app
     expect(docAt(`attendance/${id}_2026-10-16`)).toBeUndefined();
     // The Owner was told.
     expect(docAt(`members/${u.mom}/inbox/${notificationId("household.attendance_request", `${id}_2026-10-16-1`)}`)).toMatchObject({ title: "Attendance request", message: "Maria Santos asked for Present on Oct 16." });
-    // Planned leave ahead is fine; Present ahead isn't.
-    expect((await me(uid, { action: "attendance", date: "2026-10-24", status: "official_leave", note: "Fiesta sa probinsya" })).status).toBe(200);
+    // Owner-pilot refinement: an upcoming day can't be sent at all (not even leave).
+    expect((await me(uid, { action: "attendance", date: "2026-10-24", status: "official_leave", note: "Fiesta sa probinsya" })).body.error).toBe("invalid-date");
     expect((await me(uid, { action: "attendance", date: "2026-10-20", status: "present" })).body.error).toBe("invalid-date");
+    expect((await me(uid, { action: "attendance", date: "2026-10-15", status: "official_leave", note: "Fiesta sa probinsya" })).status).toBe(200);
 
     expect((await api("attendance", u.mom, { action: "decide", requestId: `${id}_2026-10-16`, decision: { decision: "approve" } })).status).toBe(200);
     expect(docAt(`attendance/${id}_2026-10-16`)).toMatchObject({ status: "present", payable: true });
     expect(docAt(`attendanceRequests/${id}_2026-10-16`)).toMatchObject({ state: "approved", decidedBy: { uid: u.mom } });
     expect((await api("attendance", u.mom, { action: "decide", requestId: `${id}_2026-10-16`, decision: { decision: "approve" } })).body.error).toBe("request-decided");
-    expect((await api("attendance", u.mom, { action: "decide", requestId: `${id}_2026-10-24`, decision: { decision: "reject", note: "Busy week" } })).status).toBe(200);
-    expect(docAt(`attendance/${id}_2026-10-24`)).toBeUndefined();
+    expect((await api("attendance", u.mom, { action: "decide", requestId: `${id}_2026-10-15`, decision: { decision: "reject", note: "Busy week" } })).status).toBe(200);
+    expect(docAt(`attendance/${id}_2026-10-15`)).toBeUndefined();
 
     const view = (await me(uid)).body.me;
     expect(view.staff.name).toBe("Maria Santos");
     expect(view.todayStatus).toBe("present");
-    expect(view.requests.find((r) => r.date === "2026-10-24")).toMatchObject({ state: "rejected", answer: "Busy week", statusLabel: "Paid Leave" });
+    expect(view.requests.find((r) => r.date === "2026-10-15")).toMatchObject({ state: "rejected", answer: "Busy week", statusLabel: "Paid Leave" });
   });
 
   it("a staff account can't reach the Owner's tools or anyone else's records", async () => {

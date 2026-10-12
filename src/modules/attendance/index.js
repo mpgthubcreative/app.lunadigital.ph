@@ -27,12 +27,12 @@ const range = (p) => (p.start.slice(0, 7) === p.end.slice(0, 7) ? `${short(p.sta
 const ID = /^[A-Za-z0-9]{8,40}$/;
 
 // A helper's pay periods: about a year back (not before their start date)
-// up to the next one (to plan leave and rest days), newest first.
+// up to the current one, newest first. Upcoming days can't be marked
+// (attendance records what actually happened).
 export function periodsOf(staff, today) {
   const current = staffPeriod(staff, today);
-  const next = staffPeriod(staff, addDays(current.end, 1));
   const from = [staff.startDate, addDays(today, -366)].filter(Boolean).sort().pop();
-  const to = staff.endDate && staff.endDate < next.end ? staff.endDate : next.end;
+  const to = staff.endDate && staff.endDate < current.end ? staff.endDate : current.end;
   return staffPeriods(staff, from, to, 26);
 }
 
@@ -120,7 +120,8 @@ export function mount(container, session, { data = defaultData, toast = defaultT
       <ul class="sheet-list" data-role="owner-sheet">${days.map((d) => {
         const l = byDate.get(d);
         const future = d > today;
-        const types = future ? ORDER.filter((k) => ATTENDANCE_STATUSES[k].ahead) : ORDER;
+        const types = ORDER;
+        if (future) return html`<li class="sheet-row is-upcoming" data-day="${d}"><span class="sheet-check" aria-hidden="true"></span><span class="sheet-date"><strong>${short(d)}</strong> <small>${weekdayLabel(d)}</small></span><span class="sheet-value"><select class="input sheet-select" data-date="${d}" aria-label="Status on ${short(d)} (upcoming)" disabled><option selected>Upcoming</option></select></span></li>`;
         return html`<li class="sheet-row${state.selected.has(d) ? " is-selected" : ""}" data-day="${d}">
           ${canEdit ? html`<label class="sheet-check"><input type="checkbox" data-sel="${d}" ${state.selected.has(d) ? "checked" : ""} aria-label="Select ${short(d)}" /></label>` : html`<span class="sheet-check" aria-hidden="true"></span>`}
           <span class="sheet-date"><strong>${short(d)}</strong> <small>${weekdayLabel(d)}${l?.source === "staff_request" ? " · sent by helper" : ""}</small></span>
@@ -211,9 +212,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     if (!el || !container.contains(el)) return;
     const a = el.dataset.act;
     if (a === "bulk") {
-      const allowed = (d) => d <= today || ATTENDANCE_STATUSES[el.dataset.status].ahead;
-      const days = [...state.selected].sort().filter(allowed).map((date) => ({ date, status: el.dataset.status }));
-      if (days.length < state.selected.size) toast("Present and Absent can't be set for future days; those were skipped.", "neutral");
+      const days = [...state.selected].sort().filter((d) => d <= today).map((date) => ({ date, status: el.dataset.status }));
       if (days.length) save(days);
     } else if (a === "clear") {
       state.selected.clear();

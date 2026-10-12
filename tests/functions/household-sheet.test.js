@@ -98,8 +98,8 @@ describe("staff attendance sheet: several days in one submission", () => {
     expect(r.body.message).toMatch(/2026-10-08: Before your start date/);
     expect(docAt(`attendanceRequests/${id}_${OCT(12)}`)).toBeUndefined();
     // After the last day.
-    expect((await api("staff", u.mom, { action: "update", staffId: id, changes: { endDate: OCT(20) } })).status).toBe(200);
-    expect((await me(uid, days([[OCT(24), "rest_day"]]))).body.message).toMatch(/After your last day/);
+    expect((await api("staff", u.mom, { action: "update", staffId: id, changes: { endDate: OCT(14) } })).status).toBe(200);
+    expect((await me(uid, days([[OCT(15), "rest_day"]]))).body.message).toMatch(/After your last day/);
     // Present can't be sent for a future day; too old days are refused.
     expect((await me(uid, days([[OCT(17), "present"]]))).body.error).toBe("invalid-date");
   });

@@ -69,7 +69,9 @@ describe("validation", () => {
     }
   });
   it("attendance: three statuses, no future", () => {
-    expect(() => validateAttendanceInput({ staffId: "abcdefgh1234", date: "2026-10-10", status: "present" }, { today: "2026-10-09" })).toThrow(/future/);
+    expect(() => validateAttendanceInput({ staffId: "abcdefgh1234", date: "2026-10-10", status: "present" }, { today: "2026-10-09" })).toThrow(/hasn't come yet/);
+    // Owner-pilot refinement: not even leave or a rest day ahead.
+    expect(() => validateAttendanceInput({ staffId: "abcdefgh1234", date: "2026-10-10", status: "rest_day" }, { today: "2026-10-09" })).toThrow(/hasn't come yet/);
     expect(() => validateAttendanceInput({ staffId: "abcdefgh1234", date: "2026-10-09", status: "day_off" }, { today: "2026-10-09" })).toThrow();
     expect(validateAttendanceInput({ staffId: "abcdefgh1234", date: "2026-10-09", status: "official_leave", note: " sick " }, { today: "2026-10-09" }).note).toBe("sick");
   });

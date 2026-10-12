@@ -102,7 +102,7 @@ describe("Household Staff can't do Owner actions (403 from the server)", () => {
     // Her own requests (allowed).
     const att = await me(sUid, { action: "attendance", date: "2026-10-15", status: "present" });
     expect(att.status, JSON.stringify(att.body)).toBe(200);
-    const leave = await me(sUid, { action: "attendance", date: "2026-10-20", status: "official_leave" });
+    const leave = await me(sUid, { action: "attendance", date: "2026-10-14", status: "official_leave" });
     expect(leave.status).toBe(200);
     const adv = await me(sUid, { action: "advance", amount: 200000, reason: "Tuition" });
     expect(adv.status).toBe(200);

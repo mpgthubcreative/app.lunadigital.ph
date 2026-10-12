@@ -200,6 +200,8 @@ const KINDS = [
   ["attendanceRequest", "Attendance request", "attendance"],
   ["salaryIssue", "Salary not received", "payroll"],
   ["salaryConfirmation", "Salary not confirmed yet", "payroll"],
+  ["additionalDue", "Additional salary due", "payroll"],
+  ["unrecordedDays", "Days to record (paid early)", "attendance"],
   ["notTaken", "Deduction not taken", "advances"],
   ["advanceRequest", "Advance request", "advances"],
   ["advanceConfirmation", "Advance not confirmed yet", "advances"],
