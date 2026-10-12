@@ -365,8 +365,8 @@ describe("notifications and the dashboard", () => {
     await me(ru, { action: "attendanceDays", days: [{ date: OCT(20), status: "official_leave" }] });
     const s = await householdSummary({ db: world.db, tenant: tenantDb(world.db, H), business: { timezone: "Asia/Manila" }, now: clock });
     expect(s.pending.byStaff).toEqual([
-      { staffId: y, name: "Yanie", attendance: 1, leave: 0, advances: 1, total: 2 },
-      { staffId: r, name: "Riza", attendance: 0, leave: 1, advances: 0, total: 1 },
+      { staffId: y, name: "Yanie", items: { attendanceRequest: 1, advanceRequest: 1 }, total: 2 },
+      { staffId: r, name: "Riza", items: { attendanceRequest: 1 }, total: 1 },
     ]);
     expect(s.staff.map((x) => x.name)).toEqual(["Riza", "Yanie"]);
   });

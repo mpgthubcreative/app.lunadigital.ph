@@ -92,48 +92,72 @@ describe("attendance edits racing each other and the payroll", () => {
 });
 
 describe("advances: deducted exactly once", () => {
+  // Owner-pilot simplification batch: an advance is deducted by the payroll
+  // its repayment plan names; released while that payroll is being stored,
+  // it still lands in it exactly once.
   it("marking advances paid while the payroll is being prepared: each lands in exactly one payroll", async () => {
     const w = await world();
     const ids = [];
     for (let i = 0; i < 5; i++) ids.push((await pay.createAdvance({ ...w.c, input: { staffId: w.staffId, date: "2026-10-02", amount: 10000 + i } })).advanceId);
-    const r = await Promise.allSettled([...ids.map((advanceId) => pay.markAdvancePaid({ ...w.c, advanceId, release: {} })), pay.preparePayroll({ ...w.c, staffId: w.staffId, periodStart: "2026-10-01" })]);
+    const r = await Promise.allSettled([...ids.map((advanceId) => pay.markAdvancePaid({ ...w.c, advanceId, release: { paidDate: "2026-10-02" } })), pay.preparePayroll({ ...w.c, staffId: w.staffId, periodStart: "2026-10-01" })]);
     expectExplicit(r, ["advance-paid"]);
     const p = await consistent(w, `${w.staffId}_2026-10-01`);
-    const inDraft = p.deductions.map((d) => d.advanceId);
-    expect(new Set(inDraft).size).toBe(inDraft.length);
-    // any advance not in this draft is waiting for the next payroll, linked nowhere
-    // Whichever committed first, every advance paid during the race lands in
-    // THIS draft (the per-person lock makes the later transaction see it).
-    expect([...inDraft].sort()).toEqual([...ids].sort());
-    for (const id of ids) expect((await w.tenant.doc("advances", id).get()).data().deductionPayrollId, id).toBe(`${w.staffId}_2026-10-01`);
-    // the next payroll picks up the rest, and nothing twice
+    expect(p.deductions.map((d) => d.advanceId).sort()).toEqual([...ids].sort());
+    // The next payroll doesn't deduct them again.
     const next = await pay.preparePayroll({ ...w.c, staffId: w.staffId, periodStart: "2026-10-16", now: new Date("2026-11-01T04:00:00Z") });
-    const p2 = (await w.tenant.doc("payrolls", next.payrollId).get()).data();
-    const all = [...inDraft, ...p2.deductions.map((d) => d.advanceId)];
-    expect(new Set(all).size).toBe(all.length);
-    const paid = [];
-    for (const id of ids) if ((await w.tenant.doc("advances", id).get()).data().status === "paid") paid.push(id);
-    expect(all.sort()).toEqual(paid.sort());
+    expect((await w.tenant.doc("payrolls", next.payrollId).get()).data().deductions).toEqual([]);
   });
 
-  it("two DIFFERENT periods prepared at once never both deduct the same paid advance", async () => {
+  it("two DIFFERENT periods prepared at once never both deduct the same advance (its plan names one)", async () => {
     for (let round = 0; round < 3; round++) {
       const w = await world();
       const { advanceId } = await pay.createAdvance({ ...w.c, input: { staffId: w.staffId, date: "2026-09-02", amount: 30000 } });
-      await pay.markAdvancePaid({ ...w.c, advanceId, release: {} });
+      await pay.markAdvancePaid({ ...w.c, advanceId, release: { paidDate: "2026-10-02" } });
       const later = new Date("2026-11-01T04:00:00Z");
-      const r = await Promise.allSettled([
-        pay.preparePayroll({ ...w.c, staffId: w.staffId, periodStart: "2026-10-01", now: later }),
-        pay.preparePayroll({ ...w.c, staffId: w.staffId, periodStart: "2026-10-16", now: later }),
-        pay.preparePayroll({ ...w.c, staffId: w.staffId, periodStart: "2026-09-16", now: later }),
-      ]);
+      const r = await Promise.allSettled(["2026-10-01", "2026-10-16", "2026-09-16"].map((periodStart) => pay.preparePayroll({ ...w.c, staffId: w.staffId, periodStart, now: later })));
       expectExplicit(r);
       const drafts = (await w.tenant.collection("payrolls").get()).docs.map((d) => d.data());
-      const count = drafts.flatMap((p) => p.deductions).filter((d) => d.advanceId === advanceId).length;
-      expect(count, `round ${round}`).toBe(1);
-      const linked = drafts.find((p) => p.deductions.some((d) => d.advanceId === advanceId));
-      expect((await w.tenant.doc("advances", advanceId).get()).data().deductionPayrollId).toBe(`${w.staffId}_${linked.periodStart}`);
+      expect(drafts.flatMap((p) => p.deductions).filter((d) => d.advanceId === advanceId).length, `round ${round}`).toBe(1);
     }
+  });
+
+  it("plan changes racing the payment: the payroll's lines always match the plans, and nothing is deducted twice", async () => {
+    const w = await world();
+    for (const d of daysIn({ start: "2026-10-01", end: "2026-10-10" })) await pay.setAttendance({ ...w.c, input: { staffId: w.staffId, date: d, status: "present" } });
+    const { advanceId } = await pay.createAdvance({ ...w.c, input: { staffId: w.staffId, date: "2026-10-02", amount: 110000 } });
+    await pay.markAdvancePaid({ ...w.c, advanceId, release: { paidDate: "2026-10-02" } });
+    const { payrollId } = await pay.preparePayroll({ ...w.c, staffId: w.staffId, periodStart: "2026-10-01" });
+    const r = await Promise.allSettled([
+      pay.setAdvanceSchedule({ ...w.c, advanceId, schedule: [{ periodStart: "2026-10-01", amount: 60000 }, { periodStart: "2026-10-16", amount: 50000 }] }),
+      pay.setAdvanceSchedule({ ...w.c, advanceId, schedule: [{ periodStart: "2026-10-01", amount: 30000 }, { periodStart: "2026-10-16", amount: 80000 }] }),
+      pay.releaseSalary({ ...w.c, payrollId, release: { method: "cash" } }),
+      pay.recordAdvanceRepayment({ ...w.c, advanceId, repayment: { amount: 10000, method: "cash" } }),
+    ]);
+    expectExplicit(r, ["payroll-released", "over-owed"]);
+    const p = (await w.tenant.doc("payrolls", payrollId).get()).data();
+    const a = (await w.tenant.doc("advances", advanceId).get()).data();
+    const line = (p.deductions || []).find((d) => d.advanceId === advanceId)?.amount ?? 0;
+    expect(p.status).toBe("released");
+    expect(p.salary.amount).toBe(p.basePay - p.deductionsTotal);
+    // What the paid payroll took is exactly what the advance records as deducted.
+    expect(a.deductedAmount).toBe(line);
+    expect(a.amount - a.deductedAmount - (a.repaidAmount || 0)).toBeGreaterThanOrEqual(0);
+    const applied = (a.schedule || []).filter((e) => e.state === "applied").reduce((t, e) => t + e.amount, 0);
+    expect(applied).toBe(line);
+    const open = (a.schedule || []).filter((e) => e.state === "planned" || e.state === "not_taken").reduce((t, e) => t + e.amount, 0);
+    expect(open).toBeLessThanOrEqual(a.amount - a.deductedAmount - (a.repaidAmount || 0));
+  });
+
+  it("repayments racing each other never go below zero owed", async () => {
+    const w = await world();
+    const { advanceId } = await pay.createAdvance({ ...w.c, input: { staffId: w.staffId, date: "2026-10-02", amount: 50000 } });
+    await pay.markAdvancePaid({ ...w.c, advanceId, release: { paidDate: "2026-10-02" } });
+    const r = await Promise.allSettled(Array.from({ length: 6 }, () => pay.recordAdvanceRepayment({ ...w.c, advanceId, repayment: { amount: 20000, method: "cash" } })));
+    expectExplicit(r, ["over-owed"]);
+    const a = (await w.tenant.doc("advances", advanceId).get()).data();
+    expect(ok(r).length).toBe(2);
+    expect(a.repaidAmount).toBe(40000);
+    expect(a.repayments).toHaveLength(2);
   });
 
   it("the same period prepared 6 times at once: one payroll", async () => {

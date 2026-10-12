@@ -16,6 +16,8 @@ export function ago(at, now = new Date(), timezone = "Asia/Manila") {
   return new Intl.DateTimeFormat("en-PH", { month: "short", day: "numeric", timeZone: timezone }).format(d);
 }
 
+// Household notifications whose record id starts with the helper's staff id.
+const STAFF_RECORD_TYPES = new Set(["household.attendance_request", "household.attendance_correction", "household.attendance_confirmed"]);
 // A route a notification may link to: an internal path of a known rule only.
 // Owner-pilot batch: a staff request opens the approval list filtered to
 // that person (attendance: the staff id is the first part of the request's
@@ -23,9 +25,9 @@ export function ago(at, now = new Date(), timezone = "Asia/Manila") {
 const safeRoute = (n) => {
   const route = NOTIFICATION_TYPES[n.type]?.action.route;
   if (typeof route !== "string" || !/^\/[a-z-]*$/.test(route)) return null;
-  const staff = n.type === "household.attendance_request" ? /^([A-Za-z0-9]{8,40})_\d{4}-\d{2}-\d{2}$/.exec(typeof n.recordId === "string" ? n.recordId : "")?.[1] : null;
+  const staff = STAFF_RECORD_TYPES.has(n.type) ? /^([A-Za-z0-9]{8,40})_\d{4}-\d{2}-\d{2}$/.exec(typeof n.recordId === "string" ? n.recordId : "")?.[1] : null;
   if (staff) return `${route}?staff=${staff}`;
-  const advance = n.type === "household.advance_request" && typeof n.recordId === "string" && /^[A-Za-z0-9]{8,40}$/.test(n.recordId) ? n.recordId : null;
+  const advance = (n.type === "household.advance_request" || n.type === "household.advance_received") && typeof n.recordId === "string" && /^[A-Za-z0-9]{8,40}$/.test(n.recordId) ? n.recordId : null;
   return advance ? `${route}?advance=${advance}` : route;
 };
 

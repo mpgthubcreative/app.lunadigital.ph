@@ -24,9 +24,16 @@ function loadImage(src) {
 }
 
 // File -> { contentType, dataBase64 } ready for /api/payments.
-export async function prepareProof(file) {
+export async function prepareProof(file, { pdf = false } = {}) {
   if (!file) return null;
-  if (!/^image\/(jpeg|png|webp)$/.test(file.type)) throw new Error("Choose a JPEG, PNG or WebP screenshot");
+  // Owner-pilot simplification batch: payroll / advance proofs may be a PDF
+  // (sent as is; the server checks it really is one).
+  if (pdf && file.type === "application/pdf") {
+    if (file.size > 2_400_000) throw new Error("That PDF is too large (max 2.4 MB)");
+    const url = await readAsDataUrl(file);
+    return { contentType: "application/pdf", dataBase64: url.slice(url.indexOf(",") + 1) };
+  }
+  if (!/^image\/(jpeg|png|webp)$/.test(file.type)) throw new Error(pdf ? "Choose a screenshot (JPEG, PNG, WebP) or a PDF" : "Choose a JPEG, PNG or WebP screenshot");
   const dataUrl = await readAsDataUrl(file);
   try {
     const img = await loadImage(dataUrl);

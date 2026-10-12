@@ -40,12 +40,12 @@ export const NOTIFICATION_CATEGORIES = Object.freeze({
   payments: { label: "Payments awaiting verification", mandatory: true },
   inventory: { label: "Low stock", mandatory: false },
   orders: { label: "Orders ready", mandatory: false },
-  payroll: { label: "Salary receipt confirmations", mandatory: false },
+  payroll: { label: "Staff confirmations (attendance, salary, advances)", mandatory: false },
   budget: { label: "Budget alerts (75%, 90%, 100% used)", mandatory: false },
   wedding: { label: "Supplier payments recorded", mandatory: false },
   usage: { label: "Plan limits (80% and 100% used)", mandatory: false },
   // Phase 18.6: a household staff member is waiting for an answer.
-  requests: { label: "Staff requests (attendance, leave, advances)", mandatory: true },
+  requests: { label: "Staff reports and requests (attendance corrections, salary issues)", mandatory: true },
   // Phase 18.6: the Owner's Luna subscription payment was sent / confirmed / not accepted.
   billing: { label: "Luna subscription payments", mandatory: true },
 });
@@ -92,6 +92,28 @@ export const NOTIFICATION_TYPES = Object.freeze({
     permissions: ["advances.view", "advances.manage"],
     excludeActor: true,
     action: { label: "Review advances", route: "/advances" },
+  },
+  // Owner-pilot simplification batch: the helper reviews and confirms.
+  "household.attendance_correction": {
+    category: "requests",
+    module: "attendance",
+    permissions: ["attendance.view", "attendance.edit"],
+    excludeActor: true,
+    action: { label: "Review attendance", route: "/attendance" },
+  },
+  "household.attendance_confirmed": {
+    category: "payroll",
+    module: "attendance",
+    permissions: ["attendance.view"],
+    excludeActor: true,
+    action: { label: "View attendance", route: "/attendance" },
+  },
+  "household.advance_received": {
+    category: "payroll",
+    module: "advances",
+    permissions: ["advances.view"],
+    excludeActor: true,
+    action: { label: "View advance", route: "/advances" },
   },
   // The employee says a salary marked paid didn't reach them.
   "payroll.salary_disputed": {

@@ -35,3 +35,9 @@ export async function pendingAttendanceRequests(businessId) {
 }
 export const decideAttendance = (requestId, decision, note) => post("attendance", { action: "decide", requestId, decision: { decision, ...(note ? { note } : {}) } });
 export const decideAttendanceMany = (requestIds, decision) => post("attendance", { action: "decideMany", requestIds, decision: { decision } });
+// Owner-pilot simplification batch: the Owner records attendance for one
+// helper (several days at once), reviews what the helper reported, and runs
+// advances with a repayment plan.
+export const setAttendanceMany = (staffId, days, reason) => post("attendance", { action: "setMany", staffId, days, ...(reason ? { reason } : {}) });
+export const attendanceReview = async (staffId, periodStart) => (await post("attendance", { action: "review", ...(staffId ? { staffId } : {}), ...(periodStart ? { periodStart } : {}) })).review;
+export const resolveCorrection = (correctionId, note) => post("attendance", { action: "resolveCorrection", correctionId, ...(note ? { note } : {}) });

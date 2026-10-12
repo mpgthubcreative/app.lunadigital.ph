@@ -191,7 +191,7 @@ describe("cash advances: requested -> approved -> released -> deducted by instal
     clock = new Date("2026-11-01T04:00:00Z");
     const p2 = (await api("payroll", u.mom, { action: "prepare", staffId: id, periodStart: "2026-10-16" })).body.payrollId;
     expect(docAt(`payrolls/${p2}`).deductions.map((d) => d.amount)).toEqual([50000]);
-    expect(docAt(`payrolls/${p2}`).deductions[0].description).toMatch(/₱500.00 of ₱1,500.00 left/);
+    expect(docAt(`payrolls/${p2}`).deductions[0].description).toMatch(/₱500.00 of ₱1,500.00 owed/);
   });
 
   it("a rejected request is never released or deducted", async () => {

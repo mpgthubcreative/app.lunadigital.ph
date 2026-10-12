@@ -58,6 +58,12 @@ import { payrollEligibility,
   advanceRemaining,
   nextDeduction,
   ADVANCE_STATUSES,
+  plannedEntries,
+  plannedFor,
+  scheduleOf,
+  validateScheduleInput,
+  validateRepayment,
+  MAX_SCHEDULE_ENTRIES,
 } from "../../../shared/payroll.js";
 import { businessDate, isDayId, addDays } from "../../../shared/metrics.js";
 import { prepareNotifications } from "./notifications.js";
@@ -313,12 +319,6 @@ export async function deleteAdvance({ db, tenant, advanceId }) {
   }, TX_OPTIONS);
 }
 
-// The earliest unpaid payroll of a person (the "next payroll").
-async function openDraft(tx, tenant, staffId) {
-  const snap = await tx.get(tenant.collection("payrolls").where("staffId", "==", staffId).where("status", "==", "draft"));
-  return snap.docs.map((d) => ({ ref: d.ref, data: d.data() })).sort((x, y) => (x.data.periodStart < y.data.periodStart ? -1 : 1))[0] || null;
-}
-
 // Owner-pilot batch: the person's cash advance limit, checked inside the
 // caller's transaction (which also writes the staff document, so two
 // approvals / releases can't both use the same room). `stage`:
@@ -340,17 +340,180 @@ export async function checkAdvanceLimit(tx, tenant, staff, staffId, amount, { st
   throw new PayrollError("over-advance-limit", `${staff.name}'s advance limit is ${peso(cap.limit)}: ${peso(cap.outstanding)} still to repay${stage !== "release" && cap.approved ? `, ${peso(cap.approved)} approved, not released` : ""}. At most ${peso(room)} more${stage === "release" ? " can be released" : ""}. Raise the limit on Household Staff to allow more.`);
 }
 
-// The advance's next deduction: its installment (or everything left).
-const advanceDeduction = (advanceId, a) => {
-  const amount = nextDeduction(a);
+// One payroll line per advance: what its repayment plan takes from this
+// pay period (each advance stays traceable; several can share a payroll).
+const advanceLine = (a, amount) => {
   const partial = amount < advanceRemaining(a) || advanceRemaining(a) < a.amount;
-  return { id: `adv-${advanceId}`, type: "advance", advanceId, description: `Advance ${a.date}${a.description ? ` (${a.description})` : ""}${partial ? ` · ${peso(amount)} of ${peso(advanceRemaining(a))} left` : ""}`, amount };
+  return { id: `adv-${a.id}`, type: "advance", advanceId: a.id, description: `Advance ${a.paidDate || a.date}${a.description ? ` (${a.description})` : ""}${partial ? ` · ${peso(amount)} of ${peso(advanceRemaining(a))} owed` : ""}`, amount };
 };
+// The advance lines of one pay period, from the plans of the person's
+// released advances.
+export function advanceLinesFor(periodStart, advances) {
+  return (advances || [])
+    .filter((a) => a.status === "paid" && advanceRemaining(a) > 0)
+    .map((a) => [a, plannedFor(a, periodStart)])
+    .filter(([, amount]) => amount > 0)
+    .slice(0, MAX_DEDUCTIONS_PER_PAYROLL)
+    .map(([a, amount]) => advanceLine(a, amount));
+}
 
-// Released to the employee (Paid). From then on it's deducted in full from
-// the person's next payroll: an open draft gets the deduction now.
-export async function markAdvancePaid({ db, tenant, FieldValue, business, advanceId, release, actor, now = new Date() }) {
+// Owner-pilot simplification batch: the first pay period from `fromDay` on
+// whose payroll isn't paid yet (a salary paid early never takes a new advance).
+export function nextUnpaidPeriod(staff, payrolls, fromDay) {
+  let p = staffPeriod(staff, fromDay);
+  for (let i = 0; i < 48; i++) {
+    const pay = payrolls.find((x) => x.periodStart === p.start);
+    if (!pay || pay.status === "draft") return p;
+    p = staffPeriod(staff, addDays(p.end, 1));
+  }
+  return p;
+}
+const newEntry = (period, amount, state = "planned", extra = {}) => ({ id: randomBytes(4).toString("hex"), periodStart: period.start, periodEnd: period.end, amount, state, ...extra });
+// A new advance's default plan: all of it (or its amount per payroll) from
+// the next unpaid payroll on. The Owner can change it any time.
+export function defaultSchedule(staff, payrolls, a, fromDay) {
+  const out = [];
+  let left = advanceRemaining(a);
+  const step = Number.isSafeInteger(a.installment) && a.installment > 0 ? a.installment : left;
+  let period = nextUnpaidPeriod(staff, payrolls, fromDay);
+  while (left > 0) {
+    const amount = out.length === MAX_SCHEDULE_ENTRIES - 1 ? left : Math.min(step, left);
+    out.push(newEntry(period, amount));
+    left -= amount;
+    period = nextUnpaidPeriod(staff, payrolls, addDays(period.end, 1));
+  }
+  return out;
+}
+
+// Keeps the person's STORED unpaid payrolls in step with their advances'
+// plans (a period nobody touched is always worked out fresh). Manual lines
+// stay; advance lines are replaced.
+function syncDraftLines(tx, tenant, payroll, advancesAfter, FieldValue) {
+  const manual = (payroll.deductions || []).filter((d) => d.type !== "advance");
+  const deductions = [...manual, ...advanceLinesFor(payroll.periodStart, advancesAfter)];
+  if (JSON.stringify(deductions) === JSON.stringify(payroll.deductions || [])) return;
+  const total = deductionsTotal(deductions);
+  tx.update(tenant.doc("payrolls", payroll.id), { deductions, deductionsTotal: total, ...payTotals(payroll, { deductionsTotal: total }), revision: (payroll.revision || 1) + 1, updatedAt: FieldValue.serverTimestamp() });
+}
+const plannedPeriods = (a) => new Set(plannedEntries(a).map((e) => e.periodStart));
+
+// One change to one released advance's plan or balance, in ONE transaction
+// that also brings the affected unpaid payrolls up to date. `change` gets
+// { a, staff, payrolls, all, today } and returns { updates, label, result }.
+async function changeAdvance({ db, tenant, FieldValue, advanceId, actor, today, change }) {
+  const aRef = advanceRef(tenant, advanceId);
+  return db.runTransaction(async (tx) => {
+    const snap = await tx.get(aRef);
+    if (!snap.exists) throw new PayrollError("not-found", "Advance not found");
+    const a = { id: snap.id, ...snap.data() };
+    if (a.status !== "paid") throw new PayrollError("advance-not-approved", "Release the advance first");
+    const staff = await loadStaff(tx, tenant, a.staffId);
+    const payrolls = await staffPayrolls(tx, tenant, a.staffId);
+    const all = (await tx.get(tenant.collection("advances").where("staffId", "==", a.staffId))).docs.map((d) => ({ id: d.id, ...d.data() }));
+    const { updates, label, result } = change({ a, staff, payrolls, all, today });
+    const after = { ...a, ...updates };
+    const touched = new Set([...plannedPeriods(a), ...plannedPeriods(after)]);
+    const stamp = FieldValue.serverTimestamp();
+    tx.update(aRef, { ...updates, history: append(a.history, entry(actor, label)), revision: (a.revision || 1) + 1, updatedBy: actor, updatedAt: stamp });
+    const advancesAfter = all.map((x) => (x.id === a.id ? after : x));
+    for (const p of payrolls) if (p.status === "draft" && touched.has(p.periodStart)) syncDraftLines(tx, tenant, p, advancesAfter, FieldValue);
+    tx.update(staffRef(tenant, a.staffId), { payrollTouchedAt: stamp });
+    return { advanceId, ...result };
+  }, TX_OPTIONS);
+}
+
+const periodName = (e) => `${e.periodStart} to ${e.periodEnd}`;
+
+// The Owner's repayment plan for an advance. Planned deductions only go to
+// payrolls not paid yet; planned + not taken never exceed what's owed.
+// Deducted / repaid entries are history and stay as they are. A plan never
+// changes the debt: only payroll deductions and repayments do.
+export async function setAdvanceSchedule({ db, tenant, FieldValue, business, advanceId, schedule, actor, now = new Date() }) {
+  const wanted = validateScheduleInput(schedule);
+  return changeAdvance({
+    db, tenant, FieldValue, advanceId, actor, today: businessDate(business.timezone, now),
+    change: ({ a, staff, payrolls }) => {
+      const owed = advanceRemaining(a);
+      const entries = wanted.map((w) => {
+        const period = staffPeriod(staff, w.periodStart);
+        if (period.start !== w.periodStart) throw new PayrollError("invalid-period", `${w.periodStart} isn't the start of one of ${staff.name}'s pay periods`);
+        const pay = payrolls.find((x) => x.periodStart === period.start);
+        if (w.state === "planned" && pay && pay.status !== "draft") throw new PayrollError("payroll-released", `The ${periodName({ periodStart: period.start, periodEnd: period.end })} salary is already paid. Choose a later payroll, or record a separate repayment.`);
+        const kept = scheduleOf(a).find((e) => e.state === w.state && e.periodStart === w.periodStart);
+        return { ...(kept || newEntry(period, w.amount, w.state)), amount: w.amount, periodEnd: period.end };
+      });
+      const total = entries.reduce((t, e) => t + e.amount, 0);
+      if (total > owed) throw new PayrollError("over-owed", `That plan is ${peso(total)}, but only ${peso(owed)} is still owed`);
+      const history = scheduleOf(a).filter((e) => e.state === "applied" || e.state === "repaid");
+      const plan = entries.filter((e) => e.state === "planned").map((e) => `${peso(e.amount)} ${periodName(e)}`).join(", ") || "nothing planned";
+      return { updates: { schedule: [...history, ...entries] }, label: `Repayment plan: ${plan}`, result: { schedule: [...history, ...entries] } };
+    },
+  });
+}
+
+// Money given back outside payroll (cash, GCash...). Reduces what's owed
+// right away. From a "not taken" deduction it settles that entry.
+export async function recordAdvanceRepayment({ db, tenant, FieldValue, business, advanceId, repayment, actor, now = new Date() }) {
+  const today = businessDate(business.timezone, now);
+  const r = validateRepayment(repayment, { today });
+  return changeAdvance({
+    db, tenant, FieldValue, advanceId, actor, today,
+    change: ({ a }) => {
+      const owed = advanceRemaining(a);
+      if (r.amount > owed) throw new PayrollError("over-owed", `Only ${peso(owed)} is still owed`);
+      let schedule = scheduleOf(a).map((e) => ({ ...e }));
+      // Settle the not-taken entry it came from (if any).
+      if (r.notTakenPeriod) {
+        let left = r.amount;
+        schedule = schedule.flatMap((e) => {
+          if (e.state !== "not_taken" || e.periodStart !== r.notTakenPeriod || left <= 0) return [e];
+          const used = Math.min(left, e.amount);
+          left -= used;
+          return [{ ...e, amount: used, state: "repaid", repaidOn: r.date }, ...(e.amount > used ? [{ ...e, id: `${e.id}r`, amount: e.amount - used }] : [])];
+        });
+      }
+      // What's still planned or not taken can't exceed the new balance:
+      // trim from the latest planned deductions first.
+      const newOwed = owed - r.amount;
+      let excess = schedule.filter((e) => e.state === "planned" || e.state === "not_taken").reduce((t, e) => t + e.amount, 0) - newOwed;
+      if (excess > 0) {
+        const order = [...schedule.keys()].filter((i) => schedule[i].state === "planned" || schedule[i].state === "not_taken").sort((x, y) => (schedule[x].periodStart < schedule[y].periodStart ? 1 : -1));
+        for (const i of order) {
+          if (excess <= 0) break;
+          const cut = Math.min(excess, schedule[i].amount);
+          schedule[i] = { ...schedule[i], amount: schedule[i].amount - cut };
+          excess -= cut;
+        }
+        schedule = schedule.filter((e) => e.amount > 0);
+      }
+      const repaidAmount = (Number.isSafeInteger(a.repaidAmount) ? a.repaidAmount : 0) + r.amount;
+      const repayments = [...(Array.isArray(a.repayments) ? a.repayments : []), { amount: r.amount, date: r.date, method: r.method, reference: r.reference, note: r.note, by: actor ? { uid: actor.uid, name: actor.name } : null, at: new Date() }].slice(-100);
+      const done = newOwed === 0;
+      return {
+        updates: { repaidAmount, repayments, schedule, deducted: done, ...(done ? { repaidAt: new Date() } : {}) },
+        label: `Repaid separately ${peso(r.amount)} on ${r.date} via ${SALARY_METHODS[r.method].label}${r.reference ? ` · Ref ${r.reference}` : ""}${r.note ? ` · ${r.note}` : ""} · ${done ? "fully repaid" : `${peso(newOwed)} left`}`,
+        result: { remaining: newOwed },
+      };
+    },
+  });
+}
+
+// Released to the employee (Paid). From then on its repayment plan decides
+// which payrolls deduct it (default: all of it from the next unpaid one).
+// Optional proof (GCash / bank screenshot or PDF), stored privately.
+export async function markAdvancePaid({ db, bucket = null, tenant, FieldValue, business, advanceId, release, proof = null, actor, now = new Date() }) {
   const data = validateAdvanceRelease(release, { today: businessDate(business.timezone, now) });
+  if (proof && !bucket) throw new PayrollError("invalid-input", "Proof uploads aren't available");
+  const stored = proof ? await storeProofFile({ db, bucket, tenant, FieldValue, businessId: tenant.businessId, recordType: "advance", recordId: advanceId, proof, actor, now }) : null;
+  try {
+    return await markPaidOnce({ db, tenant, FieldValue, advanceId, data, stored, actor });
+  } catch (err) {
+    if (stored) await undoSalaryProof({ db, bucket, tenant, FieldValue, stored });
+    throw err;
+  }
+}
+
+async function markPaidOnce({ db, tenant, FieldValue, advanceId, data, stored, actor }) {
   const ref = advanceRef(tenant, advanceId);
   return db.runTransaction(async (tx) => {
     const snap = await tx.get(ref);
@@ -361,17 +524,22 @@ export async function markAdvancePaid({ db, tenant, FieldValue, business, advanc
     const sRef = staffRef(tenant, a.staffId);
     const staff = await loadStaff(tx, tenant, a.staffId);
     await checkAdvanceLimit(tx, tenant, staff, a.staffId, a.amount, { stage: "release", exclude: advanceId });
-    const draft = await openDraft(tx, tenant, a.staffId);
+    const payrolls = await staffPayrolls(tx, tenant, a.staffId);
+    const all = (await tx.get(tenant.collection("advances").where("staffId", "==", a.staffId))).docs.map((d) => ({ id: d.id, ...d.data() }));
+    const file = stored ? await prepareStorageFinalize(tx, { tenant, objectId: stored.objectId }) : null;
+    // Owner-pilot simplification batch: released -> a repayment plan, from
+    // the next payroll that isn't paid yet (the Owner can change it).
+    const released = { ...a, id: advanceId, status: "paid", paidDate: data.paidDate };
+    const schedule = defaultSchedule(staff, payrolls, released, data.paidDate);
+    const after = { ...released, schedule };
     const stamp = FieldValue.serverTimestamp();
-    if (draft) {
-      if ((draft.data.deductions || []).length >= MAX_DEDUCTIONS_PER_PAYROLL) throw new PayrollError("too-many-deductions", "That payroll has too many deductions");
-      const deductions = [...(draft.data.deductions || []), advanceDeduction(advanceId, a)];
-      const total = deductionsTotal(deductions);
-      tx.update(draft.ref, { deductions, deductionsTotal: total, ...payTotals(draft.data, { deductionsTotal: total }), revision: (draft.data.revision || 1) + 1, updatedAt: stamp });
-    }
-    tx.update(ref, { status: "paid", ...data, paidBy: actor, deductionPayrollId: draft ? draft.ref.id : null, history: append(a.history, entry(actor, `Marked paid ${data.paidDate} via ${SALARY_METHODS[data.method].label}${data.reference ? ` · Ref ${data.reference}` : ""}`)), revision: (a.revision || 1) + 1, updatedBy: actor, updatedAt: stamp });
+    file?.commit({ FieldValue });
+    tx.update(ref, { status: "paid", ...data, paidBy: actor, schedule, deductionPayrollId: null, receipt: { state: "awaiting" }, ...(stored ? { proof: stored } : {}), history: append(a.history, entry(actor, `Released ${data.paidDate} via ${SALARY_METHODS[data.method].label}${data.reference ? ` · Ref ${data.reference}` : ""} · deduct ${schedule.map((e) => `${peso(e.amount)} ${periodName(e)}`).join(", ")}`)), revision: (a.revision || 1) + 1, updatedBy: actor, updatedAt: stamp });
+    const periods = new Set(schedule.map((e) => e.periodStart));
+    const advancesAfter = all.map((x) => (x.id === advanceId ? after : x));
+    for (const p of payrolls) if (p.status === "draft" && periods.has(p.periodStart)) syncDraftLines(tx, tenant, p, advancesAfter, FieldValue);
     tx.update(sRef, { payrollTouchedAt: stamp });
-    return { advanceId, status: "paid", deductionPayrollId: draft ? draft.ref.id : null };
+    return { advanceId, status: "paid", schedule };
   }, TX_OPTIONS);
 }
 
@@ -381,14 +549,11 @@ export async function markAdvancePaid({ db, tenant, FieldValue, business, advanc
 // released advances. Shared by preparing a payroll and by the automatic
 // payroll view (a period nobody touched yet is shown from these, nothing
 // stored). A day already counted in another payroll (pay cycle changed
-// since) isn't counted twice. Released advances: as before, the next
-// payroll deducts them.
+// since) isn't counted twice. Released advances: what their repayment
+// plans give this period, one line per advance.
 export function draftFigures({ id, period, lines, advances }) {
   const own = lines.filter((l) => !l.payrollId || l.payrollId === id);
-  const toDeduct = advances
-    .filter((a) => a.status === "paid" && (a.deductionPayrollId ?? null) === null && a.deducted !== true && advanceRemaining(a) > 0 && !(a.skipPayrollIds || []).includes(id))
-    .slice(0, MAX_DEDUCTIONS_PER_PAYROLL);
-  return { lines: own, toDeduct, sum: summarizeAttendance(own, period), deductions: toDeduct.map((a) => advanceDeduction(a.id, a)) };
+  return { lines: own, sum: summarizeAttendance(own, period), deductions: advanceLinesFor(period.start, advances) };
 }
 
 // Prepares (or returns) the person's payroll for the period starting on
@@ -412,9 +577,9 @@ export async function preparePayroll({ db, tenant, FieldValue, business, staffId
 
     const days = daysIn(period);
     const lineSnaps = await tx.getAll(...days.map((d) => tenant.doc("attendance", attendanceId(staffId, d))));
-    const adv = await tx.get(tenant.collection("advances").where("staffId", "==", staffId).where("status", "==", "paid").where("deductionPayrollId", "==", null));
-    const fig = draftFigures({ id, period, lines: lineSnaps.filter((s) => s.exists).map((s) => ({ ref: s.ref, ...s.data() })), advances: adv.docs.map((d) => ({ id: d.id, ref: d.ref, ...d.data() })) });
-    const { lines, toDeduct, sum, deductions } = fig;
+    const adv = await tx.get(tenant.collection("advances").where("staffId", "==", staffId).where("status", "==", "paid"));
+    const fig = draftFigures({ id, period, lines: lineSnaps.filter((s) => s.exists).map((s) => ({ ref: s.ref, ...s.data() })), advances: adv.docs.map((d) => ({ id: d.id, ...d.data() })) });
+    const { lines, sum, deductions } = fig;
     const total = deductionsTotal(deductions);
     const stamp = FieldValue.serverTimestamp();
     tx.create(ref, {
@@ -447,7 +612,6 @@ export async function preparePayroll({ db, tenant, FieldValue, business, staffId
       updatedAt: stamp,
     });
     for (const l of lines) tx.update(l.ref, { payrollId: id });
-    for (const d of toDeduct) tx.update(d.ref, { deductionPayrollId: id });
     tx.update(sRef, { payrollTouchedAt: stamp });
     return { payrollId: id };
   }, TX_OPTIONS);
@@ -485,7 +649,7 @@ export async function removeDeduction({ db, tenant, FieldValue, payrollId, deduc
     const list = draft.p.deductions || [];
     const d = list.find((x) => x.id === deductionId);
     if (!d) throw new PayrollError("not-found", "Deduction not found");
-    if (d.type !== "manual") throw new PayrollError("advance-deduction", "Advances are deducted automatically; use \"Deduct next payroll\" to move one");
+    if (d.type !== "manual") throw new PayrollError("advance-deduction", "An advance deduction follows its repayment plan: move it or take it off this payroll instead");
     withDeductions(tx, draft, list.filter((x) => x.id !== deductionId), actor, `Deduction removed ${peso(d.amount)} (${d.description})`, FieldValue);
     return { payrollId };
   }, TX_OPTIONS);
@@ -493,20 +657,26 @@ export async function removeDeduction({ db, tenant, FieldValue, payrollId, deduc
 
 // Moves a paid advance's deduction to the person's NEXT payroll (e.g. when
 // this period's pay can't cover it). It's still deducted in full, later.
-export async function deferAdvance({ db, tenant, FieldValue, payrollId, advanceId, actor }) {
-  return db.runTransaction(async (tx) => {
-    const draft = await loadDraft(tx, tenant, payrollId);
-    const aRef = advanceRef(tenant, advanceId);
-    const aSnap = await tx.get(aRef);
-    if (!aSnap.exists || aSnap.data().deductionPayrollId !== payrollId) throw new PayrollError("not-found", "That advance isn't deducted in this payroll");
-    const sRef = staffRef(tenant, draft.p.staffId);
-    await loadStaff(tx, tenant, draft.p.staffId);
-    const a = aSnap.data();
-    withDeductions(tx, draft, (draft.p.deductions || []).filter((x) => x.advanceId !== advanceId), actor, `Advance ${peso(a.amount)} moved to the next payroll`, FieldValue);
-    tx.update(aRef, { deductionPayrollId: null, skipPayrollIds: [...(a.skipPayrollIds || []), payrollId], history: append(a.history, entry(actor, "Deduction moved to the next payroll")), updatedAt: FieldValue.serverTimestamp() });
-    tx.update(sRef, { payrollTouchedAt: FieldValue.serverTimestamp() });
-    return { payrollId, advanceId };
-  }, TX_OPTIONS);
+// Owner-pilot simplification batch: "Move to next payroll" = this period's
+// planned (or not taken) part of the advance goes to the next unpaid payroll.
+export async function deferAdvance({ db, tenant, FieldValue, business = null, payrollId, advanceId, actor, now = new Date() }) {
+  const m = /^([A-Za-z0-9]{8,40})_(\d{4}-\d{2}-\d{2})$/.exec(typeof payrollId === "string" ? payrollId : "");
+  if (!m) throw new PayrollError("invalid-payroll", "Invalid payroll");
+  const from = m[2];
+  const r = await changeAdvance({
+    db, tenant, FieldValue, advanceId, actor, today: businessDate(business?.timezone || "Asia/Manila", now),
+    change: ({ a, staff, payrolls }) => {
+      const moving = scheduleOf(a).filter((e) => (e.state === "planned" || e.state === "not_taken") && e.periodStart === from);
+      if (!moving.length) throw new PayrollError("not-found", "That advance isn't planned for this payroll");
+      const amount = Math.min(advanceRemaining(a), moving.reduce((t, e) => t + e.amount, 0));
+      const target = nextUnpaidPeriod(staff, payrolls, addDays(staffPeriod(staff, from).end, 1));
+      const rest = scheduleOf(a).filter((e) => !moving.includes(e));
+      const existing = rest.find((e) => e.state === "planned" && e.periodStart === target.start);
+      const schedule = existing ? rest.map((e) => (e === existing ? { ...e, amount: e.amount + amount } : e)) : [...rest, newEntry(target, amount)];
+      return { updates: { schedule }, label: `${peso(amount)} moved from ${from} to the ${target.start} to ${target.end} payroll`, result: { payrollId, to: target } };
+    },
+  });
+  return r;
 }
 
 export async function deleteDraftPayroll({ db, tenant, FieldValue, payrollId, actor }) {
@@ -514,12 +684,8 @@ export async function deleteDraftPayroll({ db, tenant, FieldValue, payrollId, ac
     const draft = await loadDraft(tx, tenant, payrollId);
     const sRef = staffRef(tenant, draft.p.staffId);
     await loadStaff(tx, tenant, draft.p.staffId);
-    const adv = await tx.get(tenant.collection("advances").where("deductionPayrollId", "==", payrollId));
     const lines = await tx.get(tenant.collection("attendance").where("payrollId", "==", payrollId));
-    const skipped = await tx.get(tenant.collection("advances").where("skipPayrollIds", "array-contains", payrollId));
     tx.delete(draft.ref);
-    for (const d of adv.docs) tx.update(d.ref, { deductionPayrollId: null });
-    for (const d of skipped.docs) tx.update(d.ref, { skipPayrollIds: (d.data().skipPayrollIds || []).filter((x) => x !== payrollId) });
     for (const l of lines.docs) tx.update(l.ref, { payrollId: null });
     tx.update(sRef, { payrollTouchedAt: FieldValue.serverTimestamp() });
     return { payrollId, deleted: true, by: actor?.uid ?? null };
@@ -573,10 +739,9 @@ async function releaseOnce({ db, tenant, FieldValue, business, today, data, payr
     if (Number.isSafeInteger(expectedNetPay) && expectedNetPay !== p.netPay) throw new PayrollError("amount-changed", `The take-home is now ${peso(p.netPay)} (attendance or advances changed). Check it and pay again.`);
     const timing = data.paidDate < p.periodEnd ? "early" : "on_time";
     if (p.netPay < 0) throw new PayrollError("negative-net-pay", "Deductions are more than this period's pay. Move an advance to the next payroll first.");
-    const advRefs = (p.deductions || []).filter((d) => d.type === "advance").map((d) => tenant.doc("advances", d.advanceId));
-    const advSnaps = advRefs.length ? await tx.getAll(...advRefs) : [];
     const sRef = staffRef(tenant, p.staffId);
     await loadStaff(tx, tenant, p.staffId);
+    const advSnaps = (await tx.get(tenant.collection("advances").where("staffId", "==", p.staffId).where("status", "==", "paid"))).docs;
     const thm = (p.additions || []).filter((a) => a.type === "thirteenth");
     if (thm.length) {
       const all = await staffPayrolls(tx, tenant, p.staffId);
@@ -603,21 +768,34 @@ async function releaseOnce({ db, tenant, FieldValue, business, today, data, payr
       updatedBy: actor,
       updatedAt: stamp,
     });
-    // Each advance deducted here: add this payroll's installment; fully
-    // repaid -> deducted; otherwise it waits for the next payroll.
+    // Owner-pilot simplification batch: each advance line here is a REAL
+    // repayment now (its plan entry becomes "deducted"). A deduction planned
+    // for this period that isn't on the payroll becomes "not taken": still
+    // owed, shown to the Owner (move it or record a repayment). The salary
+    // paid is never rewritten later.
     const lineFor = new Map((p.deductions || []).filter((d) => d.type === "advance").map((d) => [d.advanceId, d.amount]));
     advSnaps.forEach((s) => {
-      if (!s.exists) return;
-      const a = s.data();
-      const amount = lineFor.get(s.id) ?? 0;
+      const a = { id: s.id, ...s.data() };
+      const amount = Math.min(lineFor.get(s.id) ?? 0, advanceRemaining(a));
+      const here = scheduleOf(a).filter((e) => e.state === "planned" && e.periodStart === p.periodStart);
+      if (!amount && !here.length) return;
       const deductedAmount = (Number.isSafeInteger(a.deductedAmount) ? a.deductedAmount : 0) + amount;
-      const done = deductedAmount >= a.amount;
+      const owedAfter = advanceRemaining({ ...a, deductedAmount });
+      const plannedHere = here.reduce((t, e) => t + e.amount, 0);
+      const missed = Math.min(Math.max(0, plannedHere - amount), owedAfter);
+      const schedule = [
+        ...scheduleOf(a).filter((e) => !here.includes(e)),
+        ...(amount ? [newEntry({ start: p.periodStart, end: p.periodEnd }, amount, "applied", { payrollId })] : []),
+        ...(missed ? [newEntry({ start: p.periodStart, end: p.periodEnd }, missed, "not_taken", { payrollId })] : []),
+      ];
+      const done = owedAfter === 0;
       tx.update(s.ref, {
         deductedAmount,
         deducted: done,
-        ...(done ? { deductedAt: stamp } : { deductionPayrollId: null }),
-        deductionLog: [...(Array.isArray(a.deductionLog) ? a.deductionLog : []), { payrollId, amount, periodEnd: p.periodEnd }].slice(-100),
-        history: append(a.history, entry(actor, done ? `Deducted ${peso(amount)} (${p.periodStart} to ${p.periodEnd}) · fully repaid` : `Deducted ${peso(amount)} (${p.periodStart} to ${p.periodEnd}) · ${peso(a.amount - deductedAmount)} left`)),
+        schedule,
+        ...(done ? { deductedAt: stamp } : {}),
+        deductionLog: amount ? [...(Array.isArray(a.deductionLog) ? a.deductionLog : []), { payrollId, amount, periodEnd: p.periodEnd }].slice(-100) : a.deductionLog ?? [],
+        history: append(a.history, entry(actor, [amount ? `Deducted ${peso(amount)} (${p.periodStart} to ${p.periodEnd}) · ${done ? "fully repaid" : `${peso(owedAfter)} left`}` : null, missed ? `${peso(missed)} planned for ${p.periodStart} to ${p.periodEnd} not taken (salary paid without it)` : null].filter(Boolean).join(" · "))),
       });
     });
     meterActivity(tx, { tenant, FieldValue, timezone: business.timezone, now, counts: { payrollsReleased: 1 } });
@@ -1076,20 +1254,44 @@ export async function thirteenthMonthSummary({ db, tenant, staffId, year }) {
 
 const SALARY_PROOF_PREFIX = (businessId) => `tenants/${businessId}/payroll/proofs/`;
 
+// Owner-pilot simplification batch: a proof may also be a PDF (bank
+// transfer receipt). Images go through the payments decoder (type sniffed);
+// a PDF is recognised by its own header, same size limit.
+const PROOF_PDF_MAX = 2_500_000;
+export function decodePayrollProof(proof) {
+  if (proof && typeof proof === "object" && proof.contentType === "application/pdf") {
+    for (const key of Object.keys(proof)) if (!["contentType", "dataBase64"].includes(key)) throw new PayrollError("invalid-input", "Invalid proof");
+    if (typeof proof.dataBase64 !== "string" || !/^[A-Za-z0-9+/]+={0,2}$/.test(proof.dataBase64)) throw new PayrollError("invalid-input", "Invalid proof data");
+    const data = Buffer.from(proof.dataBase64, "base64");
+    if (!data.length || data.length > PROOF_PDF_MAX) throw new PayrollError("proof-too-large", "Proofs must be under 2.5 MB");
+    if (data.subarray(0, 5).toString("latin1") !== "%PDF-") throw new PayrollError("invalid-input", "That file isn't a PDF");
+    return { data, contentType: "application/pdf" };
+  }
+  return decodeProof(proof);
+}
+const PROOF_EXT = { "image/png": "png", "image/jpeg": "jpg", "image/webp": "webp", "application/pdf": "pdf" };
+
 // Reserve -> upload -> (finalized inside the caller's transaction). Same
-// pipeline and storage metering as payment screenshots.
-async function storeSalaryProof({ db, bucket, tenant, FieldValue, businessId, payrollId, proof, actor, now }) {
-  const decoded = decodeProof(proof);
-  const ext = { "image/png": "png", "image/jpeg": "jpg", "image/webp": "webp" }[decoded.contentType];
-  const path = `${SALARY_PROOF_PREFIX(businessId)}${payrollId}-${randomBytes(4).toString("hex")}.${ext}`;
-  const reservation = await reserveStorage({ db, tenant, FieldValue, path, bytes: decoded.data.length, area: "payroll", recordType: "payroll", recordId: payrollId, now });
+// pipeline and storage metering as payment screenshots. Never reachable by
+// URL: served only through the API to the Owner or the helper it belongs to.
+async function storeProofFile({ db, bucket, tenant, FieldValue, businessId, recordType, recordId, proof, actor, now }) {
+  const decoded = decodePayrollProof(proof);
+  const path = `${SALARY_PROOF_PREFIX(businessId)}${recordType === "advance" ? "adv-" : ""}${recordId}-${randomBytes(4).toString("hex")}.${PROOF_EXT[decoded.contentType]}`;
+  const reservation = await reserveStorage({ db, tenant, FieldValue, path, bytes: decoded.data.length, area: "payroll", recordType, recordId, now });
   try {
-    await (await bucket()).file(path).save(decoded.data, { resumable: false, contentType: decoded.contentType, metadata: { metadata: { uploadedBy: actor.uid, payrollId } } });
+    await (await bucket()).file(path).save(decoded.data, { resumable: false, contentType: decoded.contentType, metadata: { metadata: { uploadedBy: actor.uid, [recordType === "advance" ? "advanceId" : "payrollId"]: recordId } } });
   } catch (err) {
     await releaseStorageReservation({ db, tenant, FieldValue, objectId: reservation.objectId }).catch(() => {});
     throw err;
   }
   return { path, contentType: decoded.contentType, size: decoded.data.length, objectId: reservation.objectId, uploadedBy: actor, uploadedAt: now };
+}
+const storeSalaryProof = ({ payrollId, ...rest }) => storeProofFile({ ...rest, recordType: "payroll", recordId: payrollId });
+// A stored proof's bytes (callers check who may see it).
+export async function readProofFile({ bucket, businessId, proof }) {
+  if (!proof || typeof proof.path !== "string" || !proof.path.startsWith(SALARY_PROOF_PREFIX(businessId))) throw new PayrollError("not-found", "No proof here");
+  const [data] = await (await bucket()).file(proof.path).download();
+  return { contentType: proof.contentType, dataBase64: data.toString("base64") };
 }
 async function undoSalaryProof({ db, bucket, tenant, FieldValue, stored }) {
   try {
@@ -1128,9 +1330,14 @@ export async function attachSalaryProof({ db, bucket, tenant, FieldValue, busine
 export async function readSalaryProof({ tenant, bucket, businessId, payrollId }) {
   const snap = await payrollRef(tenant, payrollId).get();
   const proof = snap.exists ? snap.data().salary?.proof : null;
-  if (!proof || typeof proof.path !== "string" || !proof.path.startsWith(SALARY_PROOF_PREFIX(businessId))) throw new PayrollError("not-found", "No proof on this salary");
-  const [data] = await (await bucket()).file(proof.path).download();
-  return { contentType: proof.contentType, dataBase64: data.toString("base64") };
+  if (!proof) throw new PayrollError("not-found", "No proof on this salary");
+  return readProofFile({ bucket, businessId, proof });
+}
+export async function readAdvanceProof({ tenant, bucket, businessId, advanceId }) {
+  const snap = await advanceRef(tenant, advanceId).get();
+  const proof = snap.exists ? snap.data().proof : null;
+  if (!proof) throw new PayrollError("not-found", "No proof on this advance");
+  return readProofFile({ bucket, businessId, proof });
 }
 
 // The Owner sorts out a "not received" report: paid again / found it, with
@@ -1190,11 +1397,12 @@ export async function prepareEligible({ db, tenant, FieldValue, business, asOf, 
 // is hidden behind another person's dates.
 const VIEW_MAX_PERIODS = 24;
 
-export async function payrollPeriodView({ db, tenant, business, period: wanted = null, now = new Date() }) {
+export async function payrollPeriodView({ db, tenant, business, period: wanted = null, staffId = null, now = new Date() }) {
   const today = businessDate(business.timezone, now);
   const wantsCurrent = wanted !== null && typeof wanted === "object" && wanted.current === true;
   if (wanted !== null && !wantsCurrent && (typeof wanted !== "object" || !isDayId(wanted.start) || !isDayId(wanted.end))) throw new PayrollError("invalid-period", "Invalid pay period");
-  const staff = (await tenant.collection("householdStaff").get()).docs.map((d) => ({ id: d.id, ...d.data() }));
+  // Owner-pilot simplification batch: Employee filter = one helper's periods.
+  const staff = (await tenant.collection("householdStaff").get()).docs.map((d) => ({ id: d.id, ...d.data() })).filter((s) => !staffId || s.id === staffId);
   const floor = addDays(today, -366);
   const options = new Map();
   for (const s of staff) {
@@ -1253,13 +1461,257 @@ export async function payrollPeriodView({ db, tenant, business, period: wanted =
 }
 
 // One person's payroll for one period: stored, or worked out now.
+// Owner-pilot simplification batch: plus any deduction planned for this
+// period that the paid salary didn't take ("not taken": still owed).
 async function periodRow({ db, tenant, s, period }) {
   const days = daysIn(period);
   const id = payrollIdOf(s.id, period.start);
-  const snap = await tenant.doc("payrolls", id).get();
-  if (snap.exists) return { id, ...snap.data(), automatic: false };
-  const [lineSnaps, advSnap] = await Promise.all([db.getAll(...days.map((d) => tenant.doc("attendance", attendanceId(s.id, d)))), tenant.collection("advances").where("staffId", "==", s.id).where("status", "==", "paid").get()]);
-  const fig = draftFigures({ id, period, lines: lineSnaps.filter((x) => x.exists).map((x) => x.data()), advances: advSnap.docs.map((d) => ({ id: d.id, ...d.data() })) });
+  const [snap, advSnap] = await Promise.all([tenant.doc("payrolls", id).get(), tenant.collection("advances").where("staffId", "==", s.id).where("status", "==", "paid").get()]);
+  const advances = advSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  const notTaken = advances.flatMap((a) => scheduleOf(a).filter((e) => e.state === "not_taken" && e.periodStart === period.start && advanceRemaining(a) > 0).map((e) => ({ advanceId: a.id, amount: Math.min(e.amount, advanceRemaining(a)), description: `Advance ${a.paidDate || a.date}${a.description ? ` (${a.description})` : ""}` })));
+  if (snap.exists) return { id, ...snap.data(), notTaken, automatic: false };
+  const lineSnaps = await db.getAll(...days.map((d) => tenant.doc("attendance", attendanceId(s.id, d))));
+  const fig = draftFigures({ id, period, lines: lineSnaps.filter((x) => x.exists).map((x) => x.data()), advances });
   const total = deductionsTotal(fig.deductions);
-  return { id, staffId: s.id, staffName: s.name, payCycle: s.payCycle, periodStart: period.start, periodEnd: period.end, days: days.length, dailyWage: s.dailyWage, ...fig.sum, deductions: fig.deductions, deductionsTotal: total, additions: [], ...payTotals({ basePay: fig.sum.basePay, additionsTotal: 0, deductionsTotal: total }), status: "draft", ownerPayment: "not_paid", salary: null, receiptStatus: "none", history: [], automatic: true };
+  return { id, staffId: s.id, staffName: s.name, payCycle: s.payCycle, periodStart: period.start, periodEnd: period.end, days: days.length, dailyWage: s.dailyWage, ...fig.sum, deductions: fig.deductions, deductionsTotal: total, additions: [], ...payTotals({ basePay: fig.sum.basePay, additionsTotal: 0, deductionsTotal: total }), status: "draft", ownerPayment: "not_paid", salary: null, receiptStatus: "none", history: [], notTaken, automatic: true };
+}
+
+// ---------- Owner-pilot simplification batch ----------
+//
+// Owner records and manages; the helper reviews and confirms.
+
+// The Owner gives an advance directly: one step (recorded + released), the
+// limit checked, an optional proof, and a repayment plan from the next
+// unpaid payroll. The helper later confirms receiving it.
+export async function giveAdvance({ db, bucket = null, tenant, FieldValue, business, input, proof = null, actor, now = new Date() }) {
+  if (!input || typeof input !== "object" || Array.isArray(input)) throw new PayrollError("invalid-input", "Invalid advance");
+  const { method, reference, ...rest } = input;
+  const today = businessDate(business.timezone, now);
+  const data = validateAdvanceInput(rest, { today });
+  const release = validateAdvanceRelease({ paidDate: data.date, ...(method !== undefined ? { method } : {}), ...(reference !== undefined ? { reference } : {}) }, { today });
+  const ref = tenant.collection("advances").doc();
+  if (proof && !bucket) throw new PayrollError("invalid-input", "Proof uploads aren't available");
+  const stored = proof ? await storeProofFile({ db, bucket, tenant, FieldValue, businessId: tenant.businessId, recordType: "advance", recordId: ref.id, proof, actor, now }) : null;
+  try {
+    return await db.runTransaction(async (tx) => {
+      const staff = await loadStaff(tx, tenant, data.staffId);
+      if (staff.status !== "active") throw new PayrollError("inactive-staff", `${staff.name} is inactive`);
+      await checkAdvanceLimit(tx, tenant, staff, data.staffId, data.amount, { stage: "release" });
+      const payrolls = await staffPayrolls(tx, tenant, data.staffId);
+      const all = (await tx.get(tenant.collection("advances").where("staffId", "==", data.staffId))).docs.map((d) => ({ id: d.id, ...d.data() }));
+      const file = stored ? await prepareStorageFinalize(tx, { tenant, objectId: stored.objectId }) : null;
+      const base = { id: ref.id, ...data, status: "paid", paidDate: release.paidDate, deductedAmount: 0 };
+      const schedule = defaultSchedule(staff, payrolls, base, release.paidDate);
+      const stamp = FieldValue.serverTimestamp();
+      file?.commit({ FieldValue });
+      tx.create(ref, { schemaVersion: PAYROLL_SCHEMA_VERSION, ...data, staffName: staff.name, status: "paid", requestedAmount: null, ...release, paidBy: actor, schedule, receipt: { state: "awaiting" }, ...(stored ? { proof: stored } : {}), deductionPayrollId: null, deducted: false, deductedAmount: 0, repaidAmount: 0, repayments: [], deductionLog: [], skipPayrollIds: [], history: [entry(actor, `Given ${peso(data.amount)} on ${release.paidDate} via ${SALARY_METHODS[release.method].label}${release.reference ? ` · Ref ${release.reference}` : ""} · deduct ${schedule.map((e) => `${peso(e.amount)} ${periodName(e)}`).join(", ")}`)], revision: 1, createdBy: actor, createdAt: stamp, updatedBy: actor, updatedAt: stamp });
+      const periods = new Set(schedule.map((e) => e.periodStart));
+      const advancesAfter = [...all, { ...base, schedule }];
+      for (const p of payrolls) if (p.status === "draft" && periods.has(p.periodStart)) syncDraftLines(tx, tenant, p, advancesAfter, FieldValue);
+      tx.update(staffRef(tenant, data.staffId), { payrollTouchedAt: stamp, advanceTouchedAt: stamp });
+      return { advanceId: ref.id, status: "paid", schedule };
+    }, TX_OPTIONS);
+  } catch (err) {
+    if (stored) await undoSalaryProof({ db, bucket, tenant, FieldValue, stored });
+    throw err;
+  }
+}
+
+// Proof added to an advance already given.
+export async function attachAdvanceProof({ db, bucket, tenant, FieldValue, advanceId, proof, actor, now = new Date() }) {
+  const ref = advanceRef(tenant, advanceId);
+  const first = await ref.get();
+  if (!first.exists) throw new PayrollError("not-found", "Advance not found");
+  if (first.data().status !== "paid") throw new PayrollError("advance-not-approved", "Release the advance first");
+  if (first.data().proof) throw new PayrollError("has-proof", "This advance already has a proof");
+  const stored = await storeProofFile({ db, bucket, tenant, FieldValue, businessId: tenant.businessId, recordType: "advance", recordId: advanceId, proof, actor, now });
+  try {
+    return await db.runTransaction(async (tx) => {
+      const a = (await tx.get(ref)).data();
+      if (a.proof) throw new PayrollError("has-proof", "This advance already has a proof");
+      const file = await prepareStorageFinalize(tx, { tenant, objectId: stored.objectId });
+      tx.update(ref, { proof: stored, history: append(a.history, entry(actor, "Proof added")), updatedAt: FieldValue.serverTimestamp() });
+      file.commit({ FieldValue });
+      return { advanceId, hasProof: true };
+    }, TX_OPTIONS);
+  } catch (err) {
+    await undoSalaryProof({ db, bucket, tenant, FieldValue, stored });
+    throw err;
+  }
+}
+
+// Unpaid payroll lines the Owner added: a bonus or a manual deduction can be
+// edited (amount, description) until the salary is paid. Generated lines
+// (basic pay, advance deductions, 13th month) are changed at their source.
+export async function editPayrollLine({ db, tenant, FieldValue, payrollId, lineId, changes, actor }) {
+  if (!changes || typeof changes !== "object" || Array.isArray(changes) || Object.keys(changes).some((k) => !["amount", "description"].includes(k))) throw new PayrollError("invalid-input", "Invalid change");
+  if (changes.amount !== undefined && (!Number.isSafeInteger(changes.amount) || changes.amount <= 0 || changes.amount > MAX_ADVANCE_GUARD)) throw new PayrollError("invalid-amount", "The amount must be more than ₱0");
+  const description = changes.description === undefined ? undefined : typeof changes.description === "string" ? changes.description.trim().replace(/\s+/g, " ").slice(0, 120) : null;
+  if (description === null || description === "") throw new PayrollError("invalid-input", "Description is required");
+  return db.runTransaction(async (tx) => {
+    const draft = await loadDraft(tx, tenant, payrollId);
+    const p = draft.p;
+    const addIdx = (p.additions || []).findIndex((x) => x.id === lineId);
+    const dedIdx = (p.deductions || []).findIndex((x) => x.id === lineId);
+    const stamp = FieldValue.serverTimestamp();
+    if (addIdx >= 0) {
+      const before = p.additions[addIdx];
+      if (before.type !== "bonus") throw new PayrollError("generated-line", "13th month pay is worked out by Luna: remove it and add it again");
+      const after = { ...before, ...(changes.amount !== undefined ? { amount: changes.amount } : {}), ...(description !== undefined ? { description } : {}) };
+      const additions = p.additions.map((x, i) => (i === addIdx ? after : x));
+      const total = additions.reduce((t, x) => t + x.amount, 0);
+      tx.update(draft.ref, { additions, ...payTotals(p, { additionsTotal: total }), history: append(p.history, entry(actor, `Bonus changed ${peso(before.amount)} → ${peso(after.amount)}${after.description !== before.description ? ` (${after.description})` : ""}`, { before: { amount: before.amount, description: before.description }, after: { amount: after.amount, description: after.description } })), revision: (p.revision || 1) + 1, updatedBy: actor, updatedAt: stamp });
+      return { payrollId, lineId };
+    }
+    if (dedIdx >= 0) {
+      const before = p.deductions[dedIdx];
+      if (before.type !== "manual") throw new PayrollError("generated-line", "An advance deduction follows its repayment plan: edit the plan instead");
+      const after = { ...before, ...(changes.amount !== undefined ? { amount: changes.amount } : {}), ...(description !== undefined ? { description } : {}) };
+      const deductions = p.deductions.map((x, i) => (i === dedIdx ? after : x));
+      const total = deductionsTotal(deductions);
+      tx.update(draft.ref, { deductions, deductionsTotal: total, ...payTotals(p, { deductionsTotal: total }), history: append(p.history, entry(actor, `Deduction changed ${peso(before.amount)} → ${peso(after.amount)} (${after.description})`, { before: { amount: before.amount, description: before.description }, after: { amount: after.amount, description: after.description } })), revision: (p.revision || 1) + 1, updatedBy: actor, updatedAt: stamp });
+      return { payrollId, lineId };
+    }
+    throw new PayrollError("not-found", "Line not found");
+  }, TX_OPTIONS);
+}
+const MAX_ADVANCE_GUARD = 100_000_000;
+
+// A PAID salary is never edited in place: a correction keeps the original
+// payment and records what changed, why, who and when (before / after).
+export async function correctPayment({ db, tenant, FieldValue, business, payrollId, correction, reason, actor, now = new Date() }) {
+  const why = typeof reason === "string" ? reason.trim().replace(/\s+/g, " ").slice(0, 200) : "";
+  if (why.length < 3) throw new PayrollError("reason-required", "Say why you're correcting this payment");
+  if (!correction || typeof correction !== "object" || Array.isArray(correction) || !Object.keys(correction).length || Object.keys(correction).some((k) => !["paidDate", "method", "reference", "amount"].includes(k))) throw new PayrollError("invalid-input", "Choose what to correct");
+  const today = businessDate(business.timezone, now);
+  if (correction.paidDate !== undefined && (!isDayId(correction.paidDate) || correction.paidDate > today)) throw new PayrollError("invalid-date", "The paid date can't be in the future");
+  if (correction.method !== undefined && !SALARY_METHODS[correction.method]) throw new PayrollError("invalid-input", "Choose how the salary was paid");
+  if (correction.amount !== undefined && (!Number.isSafeInteger(correction.amount) || correction.amount <= 0)) throw new PayrollError("invalid-amount", "The amount must be more than ₱0");
+  const ref = payrollRef(tenant, payrollId);
+  return db.runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    if (!snap.exists) throw new PayrollError("not-found", "Payroll not found");
+    const p = snap.data();
+    if (p.status !== "released" || !p.salary) throw new PayrollError("payment-not-paid", "Only a paid salary can be corrected");
+    const before = { paidDate: p.salary.paidDate, method: p.salary.method, reference: p.salary.reference ?? null, amount: p.salary.amount };
+    const after = { ...before, ...Object.fromEntries(Object.entries(correction).map(([k, v]) => [k, k === "reference" ? (typeof v === "string" && v.trim() ? v.trim().slice(0, 40) : null) : v])) };
+    const changed = Object.keys(after).filter((k) => after[k] !== before[k]);
+    if (!changed.length) return { payrollId, unchanged: true };
+    const timing = after.paidDate < p.periodEnd ? "early" : "on_time";
+    const corrections = [...(Array.isArray(p.corrections) ? p.corrections : []), { at: new Date(), actor: actor ? { uid: actor.uid, name: actor.name } : null, reason: why, before, after }].slice(-50);
+    const show = (k, v) => (k === "amount" ? peso(v) : k === "method" ? SALARY_METHODS[v]?.label ?? v : v ?? "—");
+    tx.update(ref, { "salary.paidDate": after.paidDate, "salary.method": after.method, "salary.reference": after.reference, "salary.amount": after.amount, "salary.timing": timing, paymentTiming: timing, corrections, history: append(p.history, entry(actor, `Payment corrected: ${changed.map((k) => `${k} ${show(k, before[k])} → ${show(k, after[k])}`).join(", ")} · Reason: ${why}`, { before, after, reason: why })), updatedBy: actor, updatedAt: FieldValue.serverTimestamp() });
+    return { payrollId, corrected: changed };
+  }, TX_OPTIONS);
+}
+
+// The Owner marks several days for one helper at once (the attendance
+// sheet). Each day is its own write with its own history, exactly like one
+// day; the answer lists any day that couldn't be saved.
+export async function setAttendanceMany({ db, tenant, FieldValue, business, staffId, days, reason = null, actor, now = new Date() }) {
+  if (!isValidStaffId(staffId)) throw new PayrollError("invalid-staff", "Choose a staff member");
+  if (!Array.isArray(days) || !days.length || days.length > 31) throw new PayrollError("invalid-input", "Choose up to 31 days");
+  const seen = new Set();
+  for (const d of days) {
+    if (!d || typeof d !== "object" || Array.isArray(d) || Object.keys(d).some((k) => !["date", "status"].includes(k)) || seen.has(d.date)) throw new PayrollError("invalid-input", "Invalid day");
+    seen.add(d.date);
+  }
+  const saved = [];
+  const failed = [];
+  for (const d of days) {
+    try {
+      const r = await setAttendance({ db, tenant, FieldValue, business, input: { staffId, date: d.date, status: d.status, ...(reason ? { reason } : {}) }, actor, now });
+      saved.push({ date: d.date, unchanged: Boolean(r.unchanged) });
+    } catch (err) {
+      if (!(err instanceof PayrollError)) throw err;
+      failed.push({ date: d.date, code: err.code, error: err.message });
+    }
+  }
+  return { saved, failed };
+}
+
+// ---- What the helper confirms or reports (attendance) ----
+const correctionsOf = (tenant) => tenant.collection("attendanceCorrections");
+const confirmationRef = (tenant, staffId, periodStart) => tenant.doc("attendanceConfirmations", `${staffId}_${periodStart}`);
+const MAX_OPEN_CORRECTIONS = 5;
+
+// "I reviewed the attendance recorded for me" for one pay period (a snapshot
+// of the counts, so the Owner sees when days changed since).
+export async function confirmAttendance({ db, tenant, FieldValue, business, staffId, periodStart, actor, now = new Date() }) {
+  if (!isValidStaffId(staffId)) throw new PayrollError("not-linked", "Your account isn't linked to a staff record. Ask your employer.");
+  const today = businessDate(business.timezone, now);
+  return db.runTransaction(async (tx) => {
+    const staff = await loadStaff(tx, tenant, staffId);
+    if (!isDayId(periodStart)) throw new PayrollError("invalid-date", "Invalid pay period");
+    const period = staffPeriod(staff, periodStart);
+    if (period.start !== periodStart) throw new PayrollError("invalid-date", "Invalid pay period");
+    if (period.start > today) throw new PayrollError("invalid-date", "That pay period hasn't started yet");
+    const lines = (await tx.getAll(...daysIn(period).map((d) => tenant.doc("attendance", attendanceId(staffId, d))))).filter((x) => x.exists).map((x) => x.data());
+    const counts = summarizeAttendance(lines, period);
+    const ref = confirmationRef(tenant, staffId, period.start);
+    const prev = await tx.get(ref);
+    const snapshot = { present: counts.present, absent: counts.absent, officialLeave: counts.officialLeave, unpaidLeave: counts.unpaidLeave, restDay: counts.restDay, notMarked: counts.notMarked };
+    if (prev.exists && JSON.stringify(prev.data().counts) === JSON.stringify(snapshot)) return { periodStart: period.start, unchanged: true };
+    const notes = await prepareNotifications(tx, {
+      tenant,
+      actor,
+      events: [{ type: "household.attendance_confirmed", key: `${ref.id}-${(prev.data()?.revision || 0) + 1}`, title: "Attendance confirmed", message: `${staff.name} confirmed the attendance for ${dayRange(period.start, period.end)}.`, recordType: "attendanceConfirmation", recordId: ref.id }],
+    });
+    tx.set(ref, { staffId, staffName: staff.name, periodStart: period.start, periodEnd: period.end, counts: snapshot, confirmedAt: FieldValue.serverTimestamp(), confirmedBy: { uid: actor.uid, name: actor.name ?? null }, revision: (prev.data()?.revision || 0) + 1 });
+    notes.commit({ FieldValue, actor });
+    return { periodStart: period.start, confirmed: true };
+  }, TX_OPTIONS);
+}
+
+// "Something is wrong": one sentence (and the day, if it's about one day).
+// The Owner fixes the attendance and marks the report done.
+export async function reportCorrection({ db, tenant, FieldValue, business, staffId, input, actor, now = new Date() }) {
+  if (!isValidStaffId(staffId)) throw new PayrollError("not-linked", "Your account isn't linked to a staff record. Ask your employer.");
+  if (!input || typeof input !== "object" || Array.isArray(input) || Object.keys(input).some((k) => !["date", "message"].includes(k))) throw new PayrollError("invalid-input", "Invalid report");
+  const message = typeof input.message === "string" ? input.message.trim().replace(/\s+/g, " ") : "";
+  if (message.length < 3 || message.length > 300) throw new PayrollError("invalid-input", "Say what's wrong (3 to 300 characters)");
+  const today = businessDate(business.timezone, now);
+  const date = input.date ?? null;
+  if (date !== null && (!isDayId(date) || date > addDays(today, 90))) throw new PayrollError("invalid-date", "Invalid date");
+  const ref = correctionsOf(tenant).doc();
+  return db.runTransaction(async (tx) => {
+    const staff = await loadStaff(tx, tenant, staffId);
+    const open = await tx.get(correctionsOf(tenant).where("staffId", "==", staffId).where("state", "==", "open").limit(MAX_OPEN_CORRECTIONS));
+    if (open.size >= MAX_OPEN_CORRECTIONS) throw new PayrollError("too-many-requests", "You already have 5 reports waiting. Wait for your employer to look at them.");
+    const notes = await prepareNotifications(tx, {
+      tenant,
+      actor,
+      events: [{ type: "household.attendance_correction", key: ref.id, title: "Attendance correction", message: `${staff.name} reported an attendance correction${date ? ` for ${dayRange(date, date)}` : ""}: "${message.slice(0, 120)}"`, recordType: "attendanceCorrection", recordId: `${staffId}_${date || today}` }],
+    });
+    tx.create(ref, { staffId, staffName: staff.name, date, message, state: "open", createdAt: FieldValue.serverTimestamp(), createdBy: { uid: actor.uid, name: actor.name ?? null }, resolution: null });
+    notes.commit({ FieldValue, actor });
+    return { correctionId: ref.id, state: "open" };
+  }, TX_OPTIONS);
+}
+
+export async function resolveCorrection({ db, tenant, FieldValue, correctionId, note = null, actor }) {
+  if (typeof correctionId !== "string" || !/^[A-Za-z0-9]{8,40}$/.test(correctionId)) throw new PayrollError("invalid-input", "Invalid report");
+  const why = typeof note === "string" ? note.trim().replace(/\s+/g, " ").slice(0, 200) : "";
+  const ref = correctionsOf(tenant).doc(correctionId);
+  return db.runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    if (!snap.exists) throw new PayrollError("not-found", "Report not found");
+    if (snap.data().state !== "open") return { correctionId, unchanged: true };
+    tx.update(ref, { state: "resolved", resolution: why || null, resolvedAt: FieldValue.serverTimestamp(), resolvedBy: { uid: actor.uid, name: actor.name ?? null } });
+    return { correctionId, state: "resolved" };
+  }, TX_OPTIONS);
+}
+
+// For the Owner's Attendance page: open reports and legacy staff requests
+// (compact "Needs review"), and one helper's confirmation for one period.
+export async function attendanceReview({ tenant, staffId = null, periodStart = null }) {
+  const [corr, reqs] = await Promise.all([correctionsOf(tenant).where("state", "==", "open").limit(100).get(), tenant.collection("attendanceRequests").where("state", "==", "pending").limit(100).get()]);
+  const corrections = corr.docs.map((d) => ({ id: d.id, ...d.data(), createdAt: d.data().createdAt?.toDate?.()?.toISOString?.() ?? null })).sort((a, b) => (a.createdAt || "").localeCompare(b.createdAt || ""));
+  const requests = reqs.docs.map((d) => ({ id: d.id, ...d.data() })).map((r) => ({ id: r.id, staffId: r.staffId, staffName: r.staffName, date: r.date, status: r.status, note: r.note ?? null }));
+  let confirmation = null;
+  if (isValidStaffId(staffId) && isDayId(periodStart)) {
+    const c = await confirmationRef(tenant, staffId, periodStart).get();
+    if (c.exists) confirmation = { periodStart, counts: c.data().counts, confirmedAt: c.data().confirmedAt?.toDate?.()?.toISOString?.() ?? null };
+  }
+  return { corrections: corrections.map(({ id, staffId: s, staffName, date, message, createdAt }) => ({ id, staffId: s, staffName, date, message, createdAt })), requests, confirmation };
 }

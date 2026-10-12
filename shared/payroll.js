@@ -421,8 +421,77 @@ export function validateInstallment(value, amount) {
 
 // The next deduction of a released advance: its installment (or all of
 // it), never more than what's left.
-export const advanceRemaining = (a) => Math.max(0, (a?.amount ?? 0) - (Number.isSafeInteger(a?.deductedAmount) ? a.deductedAmount : a?.deducted === true ? a.amount : 0));
+// Owner-pilot simplification batch: what's ACTUALLY still owed. Only real
+// repayments count: deductions on a paid payroll (deductedAmount) and
+// separate repayments the Owner recorded (repaidAmount). Planned
+// deductions never do.
+export const advanceRemaining = (a) => Math.max(0, (a?.amount ?? 0) - (Number.isSafeInteger(a?.deductedAmount) ? a.deductedAmount : a?.deducted === true ? a.amount : 0) - (Number.isSafeInteger(a?.repaidAmount) ? a.repaidAmount : 0));
 export const nextDeduction = (a) => Math.min(advanceRemaining(a), Number.isSafeInteger(a?.installment) && a.installment > 0 ? a.installment : advanceRemaining(a));
+
+// ---------- Repayment schedule (Owner-pilot simplification batch) ----------
+//
+// Advance -> outstanding balance -> repayment schedule -> actual repayment.
+// advance.schedule: [{ id, periodStart, periodEnd, amount, state, ... }]
+//   planned    to be deducted by the payroll of that pay period
+//   applied    deducted by that payroll when it was paid (real repayment)
+//   not_taken  planned, but that payroll was paid without it (or the Owner
+//              took it off): still owed; move it, or record a repayment
+//   repaid     settled by a separate repayment instead
+// One advance can be spread over several periods; one payroll can deduct
+// several advances (one traceable line each).
+export const SCHEDULE_STATES = Object.freeze({ planned: { label: "Planned" }, applied: { label: "Deducted" }, not_taken: { label: "Not taken" }, repaid: { label: "Repaid separately" } });
+export const MAX_SCHEDULE_ENTRIES = 24;
+export const scheduleOf = (a) => (Array.isArray(a?.schedule) ? a.schedule : []);
+export const plannedEntries = (a) => scheduleOf(a).filter((e) => e.state === "planned");
+export const plannedTotal = (a) => plannedEntries(a).reduce((t, e) => t + e.amount, 0);
+export const notTakenEntries = (a) => scheduleOf(a).filter((e) => e.state === "not_taken");
+// What one advance plans for one pay period (never more than what's owed).
+export const plannedFor = (a, periodStart) => Math.min(advanceRemaining(a), plannedEntries(a).filter((e) => e.periodStart === periodStart).reduce((t, e) => t + e.amount, 0));
+
+// A helper's advances at a glance: owed now, the next planned deduction
+// (earliest planned period, all advances), and what's left after the plan.
+export function advanceSummary(advances) {
+  const open = (advances || []).filter((a) => a.status === "paid" && advanceRemaining(a) > 0);
+  const outstanding = open.reduce((t, a) => t + advanceRemaining(a), 0);
+  const planned = open.flatMap((a) => plannedEntries(a).map((e) => ({ ...e, advanceId: a.id })));
+  const first = planned.map((e) => e.periodStart).sort()[0] || null;
+  const next = first ? { periodStart: first, periodEnd: planned.find((e) => e.periodStart === first).periodEnd, amount: planned.filter((e) => e.periodStart === first).reduce((t, e) => t + e.amount, 0) } : null;
+  const plannedSum = Math.min(outstanding, planned.reduce((t, e) => t + e.amount, 0));
+  const notTaken = open.flatMap((a) => notTakenEntries(a)).reduce((t, e) => t + e.amount, 0);
+  return { outstanding, next, plannedTotal: plannedSum, balanceAfterPlanned: outstanding - plannedSum, notTaken };
+}
+
+// The Owner's new plan for an advance: [{ periodStart, amount, state? }].
+// Applied / repaid entries are history and are kept by the server as they
+// are. Planned + not taken never exceed what's still owed.
+export function validateScheduleInput(input) {
+  if (!Array.isArray(input) || input.length > MAX_SCHEDULE_ENTRIES) throw new PayrollError("invalid-input", `A plan has up to ${MAX_SCHEDULE_ENTRIES} deductions`);
+  const merged = new Map();
+  for (const e of input) {
+    if (!e || typeof e !== "object" || Array.isArray(e) || Object.keys(e).some((k) => !["periodStart", "amount", "state"].includes(k))) throw new PayrollError("invalid-input", "Invalid repayment plan");
+    if (!isDayId(e.periodStart)) throw new PayrollError("invalid-date", "Choose a pay period");
+    const state = e.state ?? "planned";
+    if (!["planned", "not_taken"].includes(state)) throw new PayrollError("invalid-input", "Invalid repayment plan");
+    if (!isCentavos(e.amount) || e.amount <= 0) throw new PayrollError("invalid-amount", "Each deduction must be more than ₱0");
+    const key = `${state}|${e.periodStart}`;
+    merged.set(key, { periodStart: e.periodStart, state, amount: (merged.get(key)?.amount ?? 0) + e.amount });
+  }
+  return [...merged.values()].sort((a, b) => (a.periodStart < b.periodStart ? -1 : a.periodStart > b.periodStart ? 1 : 0));
+}
+
+// A separate repayment (cash back to the Owner, not through payroll).
+export function validateRepayment(input = {}, { today } = {}) {
+  if (!input || typeof input !== "object" || Array.isArray(input)) throw new PayrollError("invalid-input", "Invalid repayment");
+  for (const k of Object.keys(input)) if (!["amount", "date", "method", "reference", "note", "notTakenPeriod"].includes(k)) throw new PayrollError("invalid-input", `Unknown field ${k}`);
+  const amount = money(input.amount, { field: "Amount", max: MAX_ADVANCE });
+  const date = input.date ?? today;
+  if (!isDayId(date)) throw new PayrollError("invalid-date", "Invalid date");
+  if (today && date > today) throw new PayrollError("invalid-date", "The repayment date can't be in the future");
+  const method = input.method ?? "cash";
+  if (!SALARY_METHODS[method]) throw new PayrollError("invalid-input", "Choose how it was repaid");
+  if (input.notTakenPeriod !== undefined && input.notTakenPeriod !== null && !isDayId(input.notTakenPeriod)) throw new PayrollError("invalid-date", "Invalid pay period");
+  return { amount, date, method, reference: text(input.reference, { field: "Reference", max: 40 }), note: text(input.note, { field: "Note", max: 200 }), notTakenPeriod: input.notTakenPeriod ?? null };
+}
 
 // A staff member's own request: the amount and why.
 export function validateAdvanceRequest(input) {

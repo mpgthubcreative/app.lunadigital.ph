@@ -1,307 +1,239 @@
-// Attendance = Work (Phase 18.5): "Who worked, and which days are payable?"
-//   Requests     Phase 18.6: what staff sent from their own accounts, with
-//                Approve / Reject (approval marks the day; nothing before)
-//   By day       one row per person with one-tap Present / Leave / Unpaid / Rest / Absent
-//                (44px targets on phones); ‹ date › steps through days.
-//   By employee  Date | Day | Status ▾ | Daily Wage | Payable Amount | Notes
-//                + Present / Official Leave / Absent / Not marked, payable days, base pay
-// The server records previous -> new, who and when, and recalculates any
-// unpaid payroll. Present and Paid Leave are payable; Absent, Unpaid Leave,
-// Rest Day and unmarked days aren't (a daily-paid rest day is a day not
-// worked, never a deduction). Released periods are locked by the server.
-// Owner-pilot batch: the two parts have distinct jobs. "Waiting for your
-// approval" (top) = what needs the Owner's action now, with its OWN
-// Employee filter (All employees: grouped per person, then pay period);
-// Approve all / Reject all act only on what's visible. "Attendance history"
-// (below) = review and correct recorded days. ?staff=<id> opens the
-// approval list filtered to that person (dashboard, notifications).
+// Attendance (Owner-pilot simplification batch): "What is this helper's
+// attendance for this period?" The Owner records it.
+//   Employee ▾  Period ▾        one helper, one pay period (their own cycle)
+//   one compact row per date with a status dropdown; tick days and mark
+//   them together (Present / Absent / Rest Day / Paid Leave / Unpaid Leave)
+//   the helper's confirmation of the period ("Yanie confirmed this on…")
+//   Needs review (compact, only when there is something): attendance
+//   corrections the helper reported, and any older staff request.
+// The server records previous -> new, who and when, and moves the period's
+// payroll. Present and Paid Leave are payable; Absent, Unpaid Leave, Rest
+// Day and unmarked days aren't. Correcting a day the helper sent asks for a
+// reason (kept in its history). Paid days are locked by the server.
+// ?staff=<id>&period=<start> opens on that helper / period.
 
 import { html, render } from "../../lib/html.js";
-import { pageHeader, emptyState, segmented, skeleton, mobileCell } from "../../components/ui.js";
+import { pageHeader, emptyState, skeleton, badge } from "../../components/ui.js";
 import { toast as defaultToast } from "../../components/feedback.js";
 import { formatCentavos, formatDayId } from "../../lib/format.js";
 import { exportButton, bindExport, mayExport, exportHint } from "../../lib/export.js";
-import { ATTENDANCE_STATUSES, businessDate, staffPeriod, daysIn, weekdayLabel, summarizeAttendance, addDays } from "@shared/index.js";
+import { ATTENDANCE_STATUSES, businessDate, staffPeriod, staffPeriods, daysIn, weekdayLabel, summarizeAttendance, addDays } from "@shared/index.js";
 import * as defaultData from "../household/data.js";
 import { formDialog } from "../../components/form-dialog.js";
 
-const SHORT = { present: "Present", official_leave: "Leave", unpaid_leave: "Unpaid", rest_day: "Rest", absent: "Absent" };
+const ORDER = ["present", "absent", "rest_day", "official_leave", "unpaid_leave"];
+const short = (d) => formatDayId(d).replace(/, \d{4}$/, "");
+const range = (p) => (p.start.slice(0, 7) === p.end.slice(0, 7) ? `${short(p.start)}–${Number(p.end.slice(8))}` : `${short(p.start)} – ${short(p.end)}`);
+const ID = /^[A-Za-z0-9]{8,40}$/;
 
-const statusSelect = (staffId, date, status, disabled) =>
-  html`<select class="select select-compact select-chip" data-act="mark" data-staff="${staffId}" data-date="${date}" data-tone="${status === "present" ? "success" : status === "absent" ? "danger" : status ? "info" : ""}" aria-label="Status on ${formatDayId(date)}" ${disabled ? "disabled" : ""}>
-    ${!status ? html`<option value="" selected>— Not marked</option>` : ""}
-    ${Object.entries(ATTENDANCE_STATUSES).map(([k, s]) => html`<option value="${k}" ${status === k ? "selected" : ""}>${s.label}</option>`)}
-  </select>`;
-
-// One tap per person: Present / Leave / Absent (aria-pressed = current).
-const statusButtons = (staff, date, status, disabled) =>
-  html`<div class="pla" role="group" aria-label="Attendance of ${staff.name} on ${formatDayId(date)}">
-    ${Object.keys(ATTENDANCE_STATUSES).map(
-      (k) => html`<button type="button" class="pla-btn pla-${k}" data-act="mark-btn" data-staff="${staff.id}" data-date="${date}" data-status="${k}" aria-pressed="${status === k ? "true" : "false"}" title="${ATTENDANCE_STATUSES[k].label}${ATTENDANCE_STATUSES[k].payable ? " (paid)" : " (not paid)"}" ${disabled ? "disabled" : ""}>${SHORT[k]}</button>`
-    )}
-  </div>`;
+// A helper's pay periods: about a year back (not before their start date)
+// up to the next one (to plan leave and rest days), newest first.
+export function periodsOf(staff, today) {
+  const current = staffPeriod(staff, today);
+  const next = staffPeriod(staff, addDays(current.end, 1));
+  const from = [staff.startDate, addDays(today, -366)].filter(Boolean).sort().pop();
+  const to = staff.endDate && staff.endDate < next.end ? staff.endDate : next.end;
+  return staffPeriods(staff, from, to, 26);
+}
 
 export function mount(container, session, { data = defaultData, toast = defaultToast, now = () => new Date(), exportDeps = {} } = {}) {
   const businessId = session.business.id;
   const canEdit = session.member.permissions["attendance.edit"] === true;
   const today = businessDate(session.business.timezone, now());
-  const fromUrl = new URLSearchParams(typeof location === "undefined" ? "" : location.search).get("staff") || "";
-  const state = { view: "day", date: today, staffId: "", from: "", to: "", staff: [], lines: [], requests: [], requestStaff: /^[A-Za-z0-9]{8,40}$/.test(fromUrl) ? fromUrl : "", loading: true, error: null, saving: null, deciding: null };
-  const cycleOf = (staffId) => state.staff.find((s) => s.id === staffId) || { payCycle: "semi_monthly" };
+  const params = new URLSearchParams(typeof location === "undefined" ? "" : location.search);
+  const state = { staffId: ID.test(params.get("staff") || "") ? params.get("staff") : "", periodStart: /^\d{4}-\d{2}-\d{2}$/.test(params.get("period") || "") ? params.get("period") : "", staff: [], lines: [], review: { corrections: [], requests: [], confirmation: null }, selected: new Set(), loading: true, error: null, saving: false };
   let alive = true;
 
+  const person = () => state.staff.find((s) => s.id === state.staffId) || null;
+  const periods = () => (person() ? periodsOf(person(), today) : []);
+  const period = () => periods().find((p) => p.start === state.periodStart) || null;
+
   async function load() {
-    state.loading = !state.lines.length || state.loading;
+    state.loading = true;
     draw();
     try {
-      [state.staff, state.requests] = await Promise.all([data.activeStaff(businessId), canEdit && data.pendingAttendanceRequests ? data.pendingAttendanceRequests(businessId).catch(() => []) : []]);
-      if (state.view === "employee" && !state.staffId && state.staff.length) state.staffId = state.staff[0].id;
-      if (state.view === "employee" && state.staffId && !state.from) {
-        const s = state.staff.find((x) => x.id === state.staffId);
-        const p = staffPeriod(s || { payCycle: "semi_monthly" }, today);
-        state.from = p.start;
-        state.to = p.end;
-      }
-      const filters = state.view === "day" ? { from: state.date, to: state.date } : { staffId: state.staffId, from: state.from, to: state.to };
-      state.lines = state.view === "day" || state.staffId ? (await data.listAttendance(businessId, filters, { pageSize: 100 })).rows : [];
+      if (!state.staff.length) state.staff = await data.activeStaff(businessId);
+      if (!person()) state.staffId = state.staff[0]?.id || "";
+      if (person() && !period()) state.periodStart = staffPeriod(person(), today).start;
+      const p = period();
+      const [lines, review] = await Promise.all([p ? data.listAttendance(businessId, { staffId: state.staffId, from: p.start, to: p.end }, { pageSize: 100 }).then((r) => r.rows) : [], data.attendanceReview ? data.attendanceReview(state.staffId || null, p?.start || null).catch(() => null) : null]);
+      state.lines = lines;
+      state.review = review || { corrections: [], requests: [], confirmation: null };
       state.error = null;
     } catch (err) {
       console.error("attendance: load failed:", err && (err.code || err.message));
       state.error = "Couldn't load attendance.";
     }
     state.loading = false;
-    state.saving = null;
+    state.saving = false;
     draw();
   }
 
-  function dayView() {
-    const byStaff = new Map(state.lines.map((l) => [l.staffId, l]));
-    if (!state.staff.length) return emptyState({ iconName: "staff", title: "No household staff yet", body: "Add the people you pay on the Household Staff page first.", action: html`<a class="btn btn-primary" href="/household-staff" data-link>Add staff</a>` });
-    const marked = state.staff.filter((s) => byStaff.has(s.id)).length;
-    return html`<p class="chart-note" data-role="day-summary">${marked} of ${state.staff.length} marked for ${formatDayId(state.date)}${marked < state.staff.length && canEdit ? " · tap a status to mark the rest" : ""}</p>
-      <div class="table-wrap"><table class="table table-compact rows" data-role="attendance-day">
-      <thead><tr><th class="m-only"></th><th>Employee</th><th>Status</th><th class="num">Daily wage</th><th class="num">Payable</th><th class="col-secondary">Note</th></tr></thead>
-      <tbody>${state.staff.map((s) => {
-        const l = byStaff.get(s.id);
-        return html`<tr data-staff="${s.id}" class="${state.saving === s.id ? "is-saving" : ""}">
-          ${mobileCell({ title: s.name, sub: `${s.position || "Staff"} · ${formatCentavos(l?.dailyWage ?? s.dailyWage)}/day`, end: l ? formatCentavos(l.payableAmount) : "—", endSub: l ? "payable" : "not marked" })}
-          <td><span class="cell-strong">${s.name}</span>${s.position ? html`<span class="cell-sub">${s.position}</span>` : ""}</td>
-          <td data-m="ctl">${statusButtons(s, state.date, l?.status, !canEdit || state.saving === s.id)}</td>
-          <td class="num">${formatCentavos(l?.dailyWage ?? s.dailyWage)}</td><td class="num">${l ? formatCentavos(l.payableAmount) : "—"}</td><td class="col-secondary">${l?.note || ""}</td></tr>`;
-      })}</tbody></table></div>`;
-  }
-
-  function employeeView() {
-    if (!state.staffId) return emptyState({ iconName: "staff", title: "Choose an employee" });
-    const byDate = new Map(state.lines.map((l) => [l.date, l]));
-    const days = state.from && state.to && state.from <= state.to ? daysIn({ start: state.from, end: state.to > today ? today : state.to }) : [];
-    const sum = summarizeAttendance(state.lines, { start: state.from, end: state.to > today ? today : state.to });
-    return html`<p class="chart-note" data-role="totals">Present ${sum.present} · Paid Leave ${sum.officialLeave} · Unpaid Leave ${sum.unpaidLeave} · Rest Day ${sum.restDay} · Absent ${sum.absent} · Not marked ${sum.notMarked} → <strong>${sum.payableDays} paid days · ${formatCentavos(sum.basePay)} basic pay</strong></p>
-      <div class="table-wrap"><table class="table table-compact rows" data-role="attendance-employee">
-      <thead><tr><th class="m-only"></th><th>Date</th><th>Day</th><th>Status</th><th class="num">Daily Wage</th><th class="num">Payable Amount</th><th class="col-secondary">Notes</th></tr></thead>
-      <tbody>${days.map((d) => {
-        const l = byDate.get(d);
-        return html`<tr data-date="${d}">${mobileCell({ title: formatDayId(d), sub: weekdayLabel(d), end: l ? formatCentavos(l.payableAmount) : "—" })}<td>${formatDayId(d)}</td><td>${weekdayLabel(d)}</td><td data-m="ctl">${statusSelect(state.staffId, d, l?.status, !canEdit)}</td>
-          <td class="num">${l ? formatCentavos(l.dailyWage) : "—"}</td><td class="num">${l ? formatCentavos(l.payableAmount) : "—"}</td><td class="col-secondary">${l?.note || ""}</td></tr>`;
-      })}</tbody></table></div>`;
-  }
-
-  // Requests staff sent from their own accounts (Phase 18.6), grouped per
-  // person and pay period (Owner-pilot polish): "Approve all" decides the
-  // whole period at once; each day is still its own decision and history.
-  // Only the employee chosen in the approval list's own filter.
-  const visibleRequests = () => (state.requestStaff ? state.requests.filter((r) => r.staffId === state.requestStaff) : state.requests);
-  // Per employee, then per pay period (each person's own cycle / cutoffs).
-  function requestGroups() {
-    const people = new Map();
-    for (const r of visibleRequests()) {
-      const p = staffPeriod(cycleOf(r.staffId), r.date);
-      if (!people.has(r.staffId)) people.set(r.staffId, { staffId: r.staffId, staffName: r.staffName, count: 0, groups: new Map() });
-      const person = people.get(r.staffId);
-      person.count += 1;
-      const key = `${r.staffId}|${p.start}`;
-      if (!person.groups.has(key)) person.groups.set(key, { key, staffName: r.staffName, period: p, items: [] });
-      person.groups.get(key).items.push(r);
+  // Compact: only when the helper reported something (or an older request waits).
+  function needsReview() {
+    const { corrections, requests } = state.review;
+    if (!corrections.length && !requests.length) return "";
+    const reqBy = new Map();
+    for (const r of requests) {
+      if (!reqBy.has(r.staffId)) reqBy.set(r.staffId, []);
+      reqBy.get(r.staffId).push(r);
     }
-    return [...people.values()].sort((a, b) => a.staffName.localeCompare(b.staffName)).map((x) => ({ ...x, groups: [...x.groups.values()] }));
-  }
-
-  function requestsSection() {
-    if (!canEdit || !state.requests.length) return "";
-    const short = (d) => formatDayId(d).replace(/, \d{4}$/, "");
-    const range = (p) => (p.start.slice(0, 7) === p.end.slice(0, 7) ? `${short(p.start)}–${Number(p.end.slice(8))}` : `${short(p.start)} – ${short(p.end)}`);
-    const names = [...new Map(state.requests.map((r) => [r.staffId, r.staffName])).entries()].sort((a, b) => a[1].localeCompare(b[1]));
-    const people = requestGroups();
-    return html`<section class="card section" data-section="requests">
-      <h2 class="card-title">Waiting for your approval (${state.requests.length})</h2>
-      <p class="stat-hint">What your staff sent. Nothing changes pay until you approve.</p>
-      <div class="request-filter">
-        <label class="inline-field">Employee <select class="select select-compact" data-role="request-staff" aria-label="Employee (waiting for approval)">
-          <option value="" ${state.requestStaff ? "" : "selected"}>All employees</option>
-          ${names.map(([id, name]) => html`<option value="${id}" ${state.requestStaff === id ? "selected" : ""}>${name} (${state.requests.filter((r) => r.staffId === id).length})</option>`)}
-        </select></label>
-      </div>
-      ${!people.length ? html`<p class="stat-hint" data-role="no-requests">Nothing waiting from this employee.</p>` : ""}
-      ${people.map((person) => html`<div class="request-person" data-person="${person.staffId}">
-        <h3 class="request-person-head"><strong>${person.staffName}</strong> <span class="badge badge-warning">${person.count} pending</span></h3>
-      ${person.groups.map((g) => {
-        const counts = {};
-        for (const r of g.items) counts[r.status] = (counts[r.status] || 0) + 1;
-        const ids = g.items.map((r) => r.id).join(",");
-        const busy = state.deciding === g.key;
-        return html`<div class="request-group" data-group="${g.key}">
-          <div class="request-group-head">
-            <div class="request-main"><strong>${range(g.period)}</strong> · ${g.items.length} pending<small>${Object.entries(counts).map(([s, n]) => `${n} ${ATTENDANCE_STATUSES[s]?.label ?? s}`).join(", ")}</small></div>
-            ${g.items.length > 1 ? html`<div class="request-actions"><button type="button" class="btn btn-compact" data-act="reject-all" data-group="${g.key}" data-ids="${ids}" ${busy ? "disabled" : ""}>Reject all</button><button type="button" class="btn btn-compact btn-primary" data-act="approve-all" data-group="${g.key}" data-ids="${ids}" ${busy ? "disabled" : ""}>Approve all ${g.items.length}</button></div>` : ""}
-          </div>
-      <ul class="request-list" data-role="requests">${g.items.map(
-        (r) => html`<li data-request="${r.id}">
-          <div class="request-main">${ATTENDANCE_STATUSES[r.status]?.label ?? r.status} · ${formatDayId(r.date)}<small>${r.note ? `"${r.note}"` : r.current ? `Now marked ${ATTENDANCE_STATUSES[r.current]?.label ?? r.current}` : "Not marked yet"} · ${ATTENDANCE_STATUSES[r.status]?.payable ? "paid day" : "not paid"}</small></div>
-          <div class="request-actions"><button type="button" class="btn btn-compact" data-act="reject" data-id="${r.id}" ${state.deciding === r.id ? "disabled" : ""}>Reject</button><button type="button" class="btn btn-compact btn-primary" data-act="approve" data-id="${r.id}" ${state.deciding === r.id ? "disabled" : ""}>Approve</button></div>
-        </li>`
-      )}</ul>
-        </div>`;
-      })}
-      </div>`)}
+    return html`<section class="card section needs-review" data-section="needs-review">
+      <h2 class="card-title">Needs review</h2>
+      <ul class="review-list">
+        ${corrections.map(
+          (c) => html`<li data-correction="${c.id}"><div class="request-main"><strong>${c.staffName}</strong> · Attendance correction${c.date ? ` · ${short(c.date)}` : ""}<small>"${c.message}"</small></div>
+            <div class="request-actions">${c.staffId !== state.staffId || (c.date && period() && (c.date < period().start || c.date > period().end)) ? html`<button type="button" class="btn btn-compact" data-act="open-correction" data-staff="${c.staffId}" data-date="${c.date || ""}">Open</button>` : ""}${canEdit ? html`<button type="button" class="btn btn-compact btn-primary" data-act="resolve" data-id="${c.id}">Done</button>` : ""}</div></li>`
+        )}
+        ${[...reqBy.values()].map((list) => html`<li data-requests="${list[0].staffId}"><div class="request-main"><strong>${list[0].staffName}</strong> · ${list.length} day${list.length === 1 ? "" : "s"} sent<small>${list.map((r) => `${ATTENDANCE_STATUSES[r.status]?.label ?? r.status} ${short(r.date)}`).join(", ")}</small></div>
+          ${canEdit ? html`<div class="request-actions"><button type="button" class="btn btn-compact" data-act="reject-all" data-ids="${list.map((r) => r.id).join(",")}">Reject</button><button type="button" class="btn btn-compact btn-primary" data-act="approve-all" data-ids="${list.map((r) => r.id).join(",")}">Approve${list.length > 1 ? ` all ${list.length}` : ""}</button></div>` : ""}</li>`)}
+      </ul>
     </section>`;
   }
 
-  async function decideAll(key, rawIds, decision) {
-    // Only requests that are visible right now (the filtered employee).
-    const visible = new Set(visibleRequests().map((r) => r.id));
-    const ids = rawIds.filter((id) => visible.has(id));
-    if (!ids.length) return;
-    state.deciding = key;
-    draw();
-    try {
-      const r = await data.decideAttendanceMany(ids, decision);
-      const n = r.decided.length;
-      if (r.failed.length) toast(`${n} ${decision === "approve" ? "approved" : "rejected"}. ${r.failed.length} couldn't be: ${r.failed[0].error}`, "danger");
-      else toast(decision === "approve" ? `${n} days approved and marked.` : `${n} days rejected. Nothing was changed.`, "success");
-    } catch (err) {
-      toast(err.message || "Couldn't save", "danger");
-    }
-    state.deciding = null;
-    load();
+  function confirmationLine(sum) {
+    const c = state.review.confirmation;
+    const s = person();
+    if (!s || !s.memberUid) return "";
+    if (!c) return html`<p class="stat-hint" data-role="confirmation">${badge("Not confirmed", "neutral")} ${s.name} hasn't confirmed this period yet.</p>`;
+    const same = ["present", "absent", "officialLeave", "unpaidLeave", "restDay", "notMarked"].every((k) => (c.counts?.[k] ?? 0) === sum[k]);
+    return html`<p class="stat-hint" data-role="confirmation">${same ? badge("Confirmed", "success") : badge("Changed since", "warning")} ${s.name} confirmed this attendance${c.confirmedAt ? ` on ${short(c.confirmedAt.slice(0, 10))}` : ""}${same ? "." : "; days changed after that."}</p>`;
   }
 
-  async function decide(id, decision) {
-    state.deciding = id;
-    draw();
-    try {
-      await data.decideAttendance(id, decision);
-      toast(decision === "approve" ? "Approved and marked." : "Rejected. Nothing was changed.", "success");
-    } catch (err) {
-      toast(err.message || "Couldn't save", "danger");
-    }
-    state.deciding = null;
-    load();
+  function sheet() {
+    const s = person();
+    if (!s) return emptyState({ iconName: "staff", title: "No household staff yet", body: "Add the people you pay on the Household Staff page first.", action: html`<a class="btn btn-primary" href="/household-staff" data-link>Add staff</a>` });
+    const p = period();
+    if (!p) return emptyState({ iconName: "calendar", title: "No pay period", body: `${s.name}'s start date is after today.` });
+    const byDate = new Map(state.lines.map((l) => [l.date, l]));
+    const sum = summarizeAttendance(state.lines, { start: p.start, end: p.end > today ? today : p.end });
+    const days = daysIn(p).filter((d) => (!s.startDate || d >= s.startDate) && (!s.endDate || d <= s.endDate));
+    const n = state.selected.size;
+    return html`
+      <p class="chart-note" data-role="totals">Present ${sum.present} · Absent ${sum.absent} · Rest Day ${sum.restDay} · Paid Leave ${sum.officialLeave} · Unpaid Leave ${sum.unpaidLeave}${sum.notMarked ? ` · Not marked ${sum.notMarked}` : ""} → <strong>${sum.payableDays} paid days · ${formatCentavos(sum.basePay)}</strong></p>
+      ${confirmationLine(sum)}
+      ${canEdit && n
+        ? html`<div class="sheet-bulk" data-role="bulk"><span>${n} selected:</span>${ORDER.map((k) => html`<button type="button" class="btn btn-compact" data-act="bulk" data-status="${k}" ${state.saving ? "disabled" : ""}>${ATTENDANCE_STATUSES[k].label}</button>`)}<button type="button" class="btn btn-compact btn-ghost" data-act="clear">Clear</button></div>`
+        : canEdit
+          ? html`<p class="stat-hint">Tick days to mark several at once.</p>`
+          : ""}
+      <ul class="sheet-list" data-role="owner-sheet">${days.map((d) => {
+        const l = byDate.get(d);
+        const future = d > today;
+        const types = future ? ORDER.filter((k) => ATTENDANCE_STATUSES[k].ahead) : ORDER;
+        return html`<li class="sheet-row${state.selected.has(d) ? " is-selected" : ""}" data-day="${d}">
+          ${canEdit ? html`<label class="sheet-check"><input type="checkbox" data-sel="${d}" ${state.selected.has(d) ? "checked" : ""} aria-label="Select ${short(d)}" /></label>` : html`<span class="sheet-check" aria-hidden="true"></span>`}
+          <span class="sheet-date"><strong>${short(d)}</strong> <small>${weekdayLabel(d)}${l?.source === "staff_request" ? " · sent by helper" : ""}</small></span>
+          <span class="sheet-value"><select class="input sheet-select" data-act="mark" data-date="${d}" aria-label="Status on ${short(d)}" ${!canEdit || state.saving ? "disabled" : ""}>
+            ${!l ? html`<option value="" selected>Not marked</option>` : ""}
+            ${types.map((k) => html`<option value="${k}" ${l?.status === k ? "selected" : ""}>${ATTENDANCE_STATUSES[k].label}</option>`)}
+            ${l && !types.includes(l.status) ? html`<option value="${l.status}" selected>${ATTENDANCE_STATUSES[l.status]?.label ?? l.status}</option>` : ""}
+          </select></span>
+        </li>`;
+      })}</ul>`;
   }
 
   function draw() {
     if (!alive) return;
+    const s = person();
     render(
       container,
       html`
-        ${pageHeader({ title: "Attendance", subtitle: "Who worked each day. Present and Paid Leave are paid; Absent, Unpaid Leave and Rest Day aren't." })}
-        ${requestsSection()}
-        <div class="section-head history-head"><div><h2 class="card-title">Attendance history</h2><p class="stat-hint">Review and correct recorded days. Corrections keep their history.</p></div></div>
-        <div class="toolbar">
-          ${segmented("view", [["day", "By day"], ["employee", "By employee"]], state.view, { label: "View" })}
-        </div>
-        <form class="filter-form" data-role="filters">
-          <div class="toolbar">
-            ${state.view === "day"
-              ? html`<button type="button" class="btn btn-icon" data-act="step" data-step="-1" aria-label="Previous day">‹</button>
-                  <input class="input" type="date" name="date" value="${state.date}" max="${today}" aria-label="Date" />
-                  <button type="button" class="btn btn-icon" data-act="step" data-step="1" aria-label="Next day" ${state.date >= today ? "disabled" : ""}>›</button>
-                  ${state.date !== today ? html`<button type="button" class="btn btn-ghost" data-act="step" data-step="today">Today</button>` : ""}`
-              : html`<select class="select" name="staffId" aria-label="Employee">${state.staff.map((s) => html`<option value="${s.id}" ${state.staffId === s.id ? "selected" : ""}>${s.name}</option>`)}</select>
-                  <input class="input" type="date" name="from" value="${state.from}" aria-label="From" />
-                  <input class="input" type="date" name="to" value="${state.to}" aria-label="To" />`}
-            <button type="submit" class="btn">Show</button>
-            <div class="toolbar-end">${mayExport(session, "attendance") ? html`<span class="visually-hidden">${exportHint}</span>${exportButton("attendance")}` : ""}</div>
+        ${pageHeader({ title: "Attendance", subtitle: "Choose a helper and a pay period. Present and Paid Leave are paid; Absent, Unpaid Leave and Rest Day aren't." })}
+        ${needsReview()}
+        <section class="card section">
+          <div class="pick-row" data-role="pickers">
+            <label class="pick">Employee <select class="select" data-role="pick-staff" aria-label="Employee">${state.staff.map((x) => html`<option value="${x.id}" ${x.id === state.staffId ? "selected" : ""}>${x.name}</option>`)}</select></label>
+            <label class="pick">Period <select class="select" data-role="pick-period" aria-label="Pay period" ${s ? "" : "disabled"}>${periods().map((p) => html`<option value="${p.start}" ${p.start === state.periodStart ? "selected" : ""}>${range(p)}${p.start <= today && today <= p.end ? " (now)" : ""}</option>`)}</select></label>
+            ${mayExport(session, "attendance") ? html`<span class="visually-hidden">${exportHint}</span>${exportButton("attendance")}` : ""}
           </div>
-        </form>
-        <section class="card">${state.error ? emptyState({ title: "Couldn't load", body: state.error }) : state.loading ? skeleton(4) : state.view === "day" ? dayView() : employeeView()}</section>`
+          ${state.error ? emptyState({ title: "Couldn't load", body: state.error }) : state.loading && !state.lines.length ? skeleton(6) : sheet()}
+        </section>`
     );
     for (const btn of container.querySelectorAll('[data-act="export"]')) btn.classList.add("btn-ghost");
   }
 
-  const mark = async (staffId, date, status) => {
-    state.saving = staffId;
+  // One day or several; a day the helper sent needs the Owner's reason.
+  async function save(days) {
+    state.saving = true;
     draw();
     try {
-      await data.setAttendance(staffId, date, status);
+      let r = await data.setAttendanceMany(state.staffId, days);
+      const needReason = r.failed.filter((f) => f.code === "reason-required");
+      if (needReason.length) {
+        const reason = await formDialog({ title: "Correct what the helper sent?", intro: `${needReason.map((f) => short(f.date)).join(", ")} ${needReason.length === 1 ? "was" : "were"} sent by the helper. Your reason is kept in the history with the before and after.`, fields: [{ name: "reason", label: "Reason", required: true, placeholder: "e.g. She was on leave that day" }], submitLabel: "Save correction", onSubmit: (v) => v.reason.trim() });
+        if (reason) {
+          const again = await data.setAttendanceMany(state.staffId, days.filter((d) => needReason.some((f) => f.date === d.date)), reason);
+          r = { saved: [...r.saved, ...again.saved], failed: [...r.failed.filter((f) => f.code !== "reason-required"), ...again.failed] };
+        } else r = { ...r, failed: r.failed.filter((f) => f.code !== "reason-required") };
+      }
+      if (r.failed.length) toast(`${r.failed.length} day${r.failed.length === 1 ? "" : "s"} not saved: ${r.failed[0].error}`, "danger");
+      else if (days.length > 1) toast(`${r.saved.length} days saved.`, "success");
+      state.selected.clear();
     } catch (err) {
-      // Correcting a day the employee sent: the Owner says why (kept in its history).
-      if (err.code === "reason-required") {
-        const r = await formDialog({ title: "Correct this day?", intro: "The employee sent this day. Your reason is kept in its history with the before and after.", fields: [{ name: "reason", label: "Reason", required: true, placeholder: "e.g. She was on leave that day" }], submitLabel: "Save correction", onSubmit: (v) => data.setAttendance(staffId, date, status, undefined, v.reason.trim()) }).catch((e) => toast(e.message, "danger"));
-        if (r) toast("Corrected.", "success");
-      } else toast(err.message || "Couldn't save", "danger");
+      toast(err.message || "Couldn't save", "danger");
     }
     load();
+  }
+
+  async function decideAll(ids, decision) {
+    try {
+      const r = await data.decideAttendanceMany(ids, decision);
+      toast(r.failed.length ? `${r.decided.length} done. ${r.failed.length} couldn't be: ${r.failed[0].error}` : decision === "approve" ? "Approved and marked." : "Rejected. Nothing was changed.", r.failed.length ? "danger" : "success");
+    } catch (err) {
+      toast(err.message || "Couldn't save", "danger");
+    }
+    load();
+  }
+
+  const choose = (staffId, periodStart) => {
+    state.staffId = staffId;
+    state.periodStart = periodStart || "";
+    state.selected.clear();
+    state.lines = [];
+    load();
   };
-  const onChange = async (event) => {
+
+  const onChange = (event) => {
     const el = event.target;
-    if (el.dataset.role === "request-staff") {
-      state.requestStaff = el.value;
+    if (el.dataset.role === "pick-staff") return choose(el.value, "");
+    if (el.dataset.role === "pick-period") return choose(state.staffId, el.value);
+    if (el.dataset.sel) {
+      if (el.checked) state.selected.add(el.dataset.sel);
+      else state.selected.delete(el.dataset.sel);
       return draw();
     }
-    if (el.dataset.act !== "mark" || !el.value) return;
-    el.disabled = true;
-    await mark(el.dataset.staff, el.dataset.date, el.value);
+    if (el.dataset.act === "mark" && el.value) return save([{ date: el.dataset.date, status: el.value }]);
+    return undefined;
   };
-  const onClick = (event) => {
+  const onClick = async (event) => {
     const el = event.target.closest("[data-act]");
     if (!el || !container.contains(el)) return;
-    if (el.dataset.act === "seg" && el.dataset.seg === "view") {
-      state.view = el.dataset.value;
-      state.loading = true;
-      load();
-    }
-    if (el.dataset.act === "mark-btn" && el.getAttribute("aria-pressed") !== "true") mark(el.dataset.staff, el.dataset.date, el.dataset.status);
-    if (el.dataset.act === "approve" || el.dataset.act === "reject") decide(el.dataset.id, el.dataset.act);
-    if (el.dataset.act === "approve-all" || el.dataset.act === "reject-all") decideAll(el.dataset.group, el.dataset.ids.split(","), el.dataset.act === "approve-all" ? "approve" : "reject");
-    if (el.dataset.act === "step") {
-      const next = el.dataset.step === "today" ? today : addDays(state.date, Number(el.dataset.step));
-      if (next > today) return;
-      state.date = next;
-      state.loading = true;
-      load();
-    }
-  };
-  const onSubmit = (event) => {
-    if (event.target.dataset.role !== "filters") return;
-    event.preventDefault();
-    const f = event.target.elements;
-    if (state.view === "day") state.date = f.date.value && f.date.value <= today ? f.date.value : today;
-    else {
-      if (f.staffId.value !== state.staffId) state.from = "";
-      state.staffId = f.staffId.value;
-      if (state.from) {
-        state.from = f.from.value;
-        state.to = f.to.value;
-      }
-      if (state.from && state.to && state.from > state.to) {
-        toast("The start date is after the end date.", "danger");
-        return;
-      }
-    }
-    state.loading = true;
-    load();
+    const a = el.dataset.act;
+    if (a === "bulk") {
+      const allowed = (d) => d <= today || ATTENDANCE_STATUSES[el.dataset.status].ahead;
+      const days = [...state.selected].sort().filter(allowed).map((date) => ({ date, status: el.dataset.status }));
+      if (days.length < state.selected.size) toast("Present and Absent can't be set for future days; those were skipped.", "neutral");
+      if (days.length) save(days);
+    } else if (a === "clear") {
+      state.selected.clear();
+      draw();
+    } else if (a === "resolve") {
+      const r = await formDialog({ title: "Mark this report done?", intro: "Fix the attendance first if needed. Your note is kept with the report.", fields: [{ name: "note", label: "Note (optional)", placeholder: "e.g. Changed Oct 8 to Present" }], submitLabel: "Done", onSubmit: (v) => data.resolveCorrection(el.dataset.id, v.note.trim() || null) });
+      if (r) load();
+    } else if (a === "open-correction") {
+      const s = state.staff.find((x) => x.id === el.dataset.staff);
+      choose(el.dataset.staff, s && el.dataset.date ? staffPeriod(s, el.dataset.date).start : "");
+    } else if (a === "approve-all" || a === "reject-all") decideAll(el.dataset.ids.split(","), a === "approve-all" ? "approve" : "reject");
   };
   container.addEventListener("change", onChange);
   container.addEventListener("click", onClick);
-  container.addEventListener("submit", onSubmit);
-  // The download is what's on screen: the day, or the employee + range.
-  const unbindExport = bindExport(container, () => (state.view === "day" ? { from: state.date, to: state.date } : { staffId: state.staffId, from: state.from, to: state.to }), { toast, deps: exportDeps });
+  const unbindExport = bindExport(container, () => ({ staffId: state.staffId, from: period()?.start ?? "", to: period()?.end ?? "" }), { toast, deps: exportDeps });
   load();
   return () => {
     alive = false;
     container.removeEventListener("change", onChange);
     container.removeEventListener("click", onClick);
-    container.removeEventListener("submit", onSubmit);
     unbindExport();
   };
 }

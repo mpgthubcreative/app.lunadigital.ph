@@ -2376,6 +2376,53 @@ tr.is-saving {
   align-items: center;
 }
 
+/* Owner-pilot simplification: one selector row (Employee, Period). */
+.pick-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--space-2) var(--space-3);
+  margin-bottom: var(--space-3);
+}
+.pick {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+  flex: 1 1 140px;
+  min-width: 0;
+  max-width: 260px;
+}
+.pick .select {
+  width: 100%;
+  min-height: 44px;
+}
+.review-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.review-list li {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) 0;
+  border-top: 1px solid var(--border);
+}
+.review-list li:first-child {
+  border-top: 0;
+}
+.card.needs-review {
+  padding: var(--space-4);
+}
+.card[data-section="period"],
+.card.section:has(> .pick-row) {
+  padding: var(--space-4);
+}
+
 /* Owner-pilot batch: approval list per employee, its own filter. */
 .request-filter {
   margin: var(--space-2) 0 var(--space-3);
@@ -2708,3 +2755,256 @@ tr.is-saving {
 /* Subscription page: breathing room between its sections. */
 [data-role="plan"] { margin-bottom: var(--space-5); }
 [data-role="bills"], [data-role="how-to-pay"], [data-role="history"] { margin-bottom: var(--space-5); }
+
+/* Owner-pilot simplification: a payroll reads like a payslip; every line
+   has its own action (⋯ menu = native <details>, touch and keyboard). */
+.slip-head {
+  margin: var(--space-3) 0 var(--space-1);
+  font-size: var(--text-sm);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+.slip {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.slip > li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 6px 0;
+  border-top: 1px solid var(--border);
+  min-height: 44px;
+}
+.slip > li:first-child {
+  border-top: 0;
+}
+.slip-what {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.slip-what small {
+  color: var(--text-muted);
+}
+.slip-amt {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  text-align: right;
+}
+.slip-act {
+  display: flex;
+  justify-content: flex-end;
+  min-width: 44px;
+}
+.slip > li.slip-calc {
+  display: block;
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+  background: var(--surface-muted);
+  padding: var(--space-2);
+  border-radius: var(--radius);
+}
+.slip > li.slip-none {
+  display: block;
+}
+.slip-missed .slip-what {
+  color: var(--warning);
+}
+.slip-total {
+  border-top: 2px solid var(--border-strong);
+  margin-top: var(--space-1);
+}
+.line-menu {
+  position: relative;
+}
+.line-menu > summary {
+  list-style: none;
+  cursor: pointer;
+  min-width: 44px;
+  min-height: 44px;
+  justify-content: center;
+}
+.line-menu > summary::-webkit-details-marker {
+  display: none;
+}
+.line-menu-list {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 4px);
+  z-index: 30;
+  min-width: 220px;
+  max-width: calc(100vw - 32px);
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-1);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-lg);
+}
+.line-menu-up .line-menu-list {
+  top: auto;
+  bottom: calc(100% + 4px);
+  left: 0;
+  right: auto;
+}
+.line-menu-list .menu-item {
+  min-height: 44px;
+  text-align: left;
+}
+
+/* Advances: what each helper owes, and each advance on one compact row. */
+.owe-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+}
+.owe-card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--space-3);
+}
+.owe-figures {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 2px var(--space-3);
+  margin: var(--space-2) 0 0;
+  font-size: var(--text-sm);
+}
+.owe-figures dt {
+  color: var(--text-muted);
+}
+.owe-figures dd {
+  margin: 0;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.adv-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.adv-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) 0;
+  border-top: 1px solid var(--border);
+}
+.adv-row:first-child {
+  border-top: 0;
+}
+.adv-main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.adv-main small {
+  color: var(--text-muted);
+}
+.adv-end {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex: none;
+}
+
+/* Helper screen (Owner-pilot simplification): four tabs, view and confirm. */
+.staff-tabs {
+  display: flex;
+  gap: 2px;
+  padding: 0 var(--space-3);
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+}
+.staff-tab {
+  flex: 1 0 auto;
+  min-height: 48px;
+  padding: 0 var(--space-3);
+  border: 0;
+  border-bottom: 3px solid transparent;
+  background: none;
+  font: inherit;
+  font-weight: 600;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.staff-tab.is-on {
+  color: var(--luna-primary);
+  border-bottom-color: var(--luna-primary);
+}
+.staff-todo {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.staff-todo li {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 52px;
+  border-top: 1px solid var(--border);
+}
+.staff-todo li:first-child {
+  border-top: 0;
+}
+.staff-todo .btn {
+  min-height: 44px;
+}
+.staff-glance {
+  display: flex;
+  flex-direction: column;
+}
+.staff-glance-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 56px;
+  border: 0;
+  border-top: 1px solid var(--border);
+  background: none;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.staff-glance-row:first-child {
+  border-top: 0;
+}
+.staff-totals {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 6px var(--space-3);
+  margin: var(--space-3) 0;
+}
+.staff-totals dd {
+  margin: 0;
+  text-align: right;
+  font-weight: 600;
+}
+.staff-days-list {
+  list-style: none;
+  margin: var(--space-2) 0;
+  padding: 0;
+}
+.staff-days-list li {
+  display: flex;
+  justify-content: space-between;
+  padding: 6px 0;
+  border-top: 1px solid var(--border);
+}
+.staff-h2 {
+  margin: var(--space-4) 0 var(--space-2);
+  font-size: var(--text-base);
+}

@@ -8,9 +8,10 @@
 // their requests, their salaries and their advances. Never another
 // person's record, never the Owner's private notes.
 
-import { PayrollError, staffPeriod, paidPayrollLocks, advanceCapacity, cycleLabel, daysIn, attendanceId, summarizeAttendance, isValidStaffId, advanceRemaining, nextDeduction, selfDayLock, MAX_DAYS_AHEAD, ATTENDANCE_STATUSES, ADVANCE_STATUSES, SALARY_METHODS, payrollId as payrollIdOf } from "../../../shared/payroll.js";
+import { PayrollError, staffPeriod, paidPayrollLocks, advanceCapacity, cycleLabel, plannedEntries, scheduleOf, daysIn, attendanceId, summarizeAttendance, isValidStaffId, advanceRemaining, nextDeduction, selfDayLock, MAX_DAYS_AHEAD, ATTENDANCE_STATUSES, ADVANCE_STATUSES, SALARY_METHODS, payrollId as payrollIdOf } from "../../../shared/payroll.js";
 import { businessDate, addDays, isDayId } from "../../../shared/metrics.js";
 import { prepareNotifications } from "./notifications.js";
+import { readProofFile, dayRange } from "./payroll.js";
 
 const TX_OPTIONS = { maxAttempts: 10 };
 const MAX_HISTORY = 200;
@@ -42,7 +43,7 @@ const salaryView = (p) => ({
   deductions: (p.deductions || []).map((d) => ({ type: d.type, description: d.description, amount: d.amount })),
   grossPay: Number.isSafeInteger(p.grossPay) ? p.grossPay : int(p.basePay) + int(p.additionsTotal),
   netPay: int(p.salary?.amount ?? p.netPay),
-  payment: p.status === "released" ? { method: SALARY_METHODS[p.salary?.method]?.label ?? null, paidDate: p.salary?.paidDate ?? null, hasProof: Boolean(p.salary?.proof) } : null,
+  payment: p.status === "released" ? { method: SALARY_METHODS[p.salary?.method]?.label ?? null, paidDate: p.salary?.paidDate ?? null, hasProof: Boolean(p.salary?.proof), early: p.paymentTiming === "early" } : null,
   receipt: p.receiptStatus === "confirmed" ? "received" : p.dispute?.state === "open" ? "not_received" : p.status === "released" ? "not_confirmed" : null,
 });
 
@@ -59,6 +60,11 @@ const advanceView = (a) => ({
   remaining: a.status === "paid" ? advanceRemaining(a) : null,
   releasedOn: a.paidDate ?? null,
   answer: a.decision?.note ?? null,
+  // Owner-pilot simplification batch: the plan the Owner set (read-only
+  // here), the proof, and whether they confirmed receiving it.
+  planned: a.status === "paid" && advanceRemaining(a) > 0 ? plannedEntries(a).map((e) => ({ periodStart: e.periodStart, periodEnd: e.periodEnd, amount: e.amount })) : [],
+  hasProof: Boolean(a.proof),
+  received: a.status === "paid" ? (a.receipt?.state === "confirmed" ? "confirmed" : "awaiting") : null,
 });
 
 // Owner-pilot polish: which pay periods the staff member can open on their
@@ -90,11 +96,13 @@ export async function myHousehold({ db, tenant, business, staffId, now = new Dat
   }
   const sheetDays = daysIn(sheetPeriod);
   // Single-field equality queries only (no composite index), sorted here.
-  const [lineSnaps, reqSnap, paySnap, advSnap] = await Promise.all([
+  const [lineSnaps, reqSnap, paySnap, advSnap, confSnap, corrSnap] = await Promise.all([
     db.getAll(...[...new Set([...days, ...sheetDays])].map((d) => tenant.doc("attendance", attendanceId(id, d)))),
     tenant.collection("attendanceRequests").where("staffId", "==", id).get(),
     tenant.collection("payrolls").where("staffId", "==", id).get(),
     tenant.collection("advances").where("staffId", "==", id).get(),
+    tenant.doc("attendanceConfirmations", `${id}_${sheetPeriod.start}`).get(),
+    tenant.collection("attendanceCorrections").where("staffId", "==", id).get(),
   ]);
   const lines = lineSnaps.filter((s) => s.exists).map((s) => s.data());
   const payrolls = paySnap.docs.map((d) => ({ id: d.id, ...d.data() })).sort((a, b) => (a.periodStart < b.periodStart ? 1 : -1));
@@ -123,6 +131,11 @@ export async function myHousehold({ db, tenant, business, staffId, now = new Dat
     prev: prevPeriod.end >= bounds.lo ? prevPeriod.start : null,
     next: nextPeriod.start <= bounds.hi ? nextPeriod.start : null,
     paid: sheetPaid,
+    // Owner-pilot simplification batch: what's recorded, in totals, and
+    // whether they confirmed it (changed since = confirm again).
+    counts: summarizeAttendance(lines.filter((l) => l.date >= sheetPeriod.start && l.date <= sheetPeriod.end), sheetPeriod),
+    confirmation: confSnap.exists ? { at: iso(confSnap.data().confirmedAt), current: JSON.stringify(confSnap.data().counts) === JSON.stringify((({ present, absent, officialLeave, unpaidLeave, restDay, notMarked }) => ({ present, absent, officialLeave, unpaidLeave, restDay, notMarked }))(summarizeAttendance(lines.filter((l) => l.date >= sheetPeriod.start && l.date <= sheetPeriod.end), sheetPeriod))) } : null,
+    canConfirm: sheetPeriod.start <= today,
     days: sheetDays.map((d) => {
       const line = lines.find((l) => l.date === d);
       const latest = requests.find((r) => r.date === d);
@@ -145,6 +158,7 @@ export async function myHousehold({ db, tenant, business, staffId, now = new Dat
     today,
     todayStatus: lines.find((l) => l.date === today)?.status ?? null,
     period: { start: period.start, end: period.end, days: days.map((d) => ({ date: d, status: lines.find((l) => l.date === d)?.status ?? null, pending: requests.find((r) => r.date === d && r.state === "pending")?.status ?? null })), counts: sum, estimate },
+    corrections: corrSnap.docs.map((d) => ({ id: d.id, ...d.data() })).sort((a, b) => (iso(a.createdAt) || "") < (iso(b.createdAt) || "") ? 1 : -1).slice(0, 10).map((c) => ({ id: c.id, date: c.date ?? null, message: c.message, state: c.state, answer: c.resolution ?? null })),
     requests: requests.slice(0, 20).map((r) => ({ id: r.id, date: r.date, status: r.status, statusLabel: ATTENDANCE_STATUSES[r.status]?.label ?? r.status, note: r.note ?? null, state: r.state, answer: r.decisionNote ?? null })),
     salaries: payrolls.slice(0, 8).map(salaryView),
     advances: advances.slice(0, 12).map(advanceView),
@@ -221,4 +235,48 @@ export async function reportSalaryNotReceived({ db, tenant, FieldValue, staffId,
     notes.commit({ FieldValue, actor });
     return { payrollId, receipt: "not_received" };
   }, TX_OPTIONS);
+}
+
+// "I received this advance". Separate from the Owner releasing it; only
+// their own released advance.
+export async function confirmAdvanceReceived({ db, tenant, FieldValue, staffId, advanceId, actor }) {
+  const id = linked(staffId);
+  if (typeof advanceId !== "string" || !/^[A-Za-z0-9]{8,40}$/.test(advanceId)) throw new PayrollError("not-found", "Advance not found");
+  const ref = tenant.doc("advances", advanceId);
+  return db.runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    if (!snap.exists || snap.data().staffId !== id) throw new PayrollError("not-found", "Advance not found");
+    const a = snap.data();
+    if (a.status !== "paid") throw new PayrollError("advance-not-approved", "Your employer hasn't given this advance yet");
+    if (a.receipt?.state === "confirmed") return { advanceId, received: "confirmed", alreadyConfirmed: true };
+    const notes = await prepareNotifications(tx, {
+      tenant,
+      actor,
+      events: [{ type: "household.advance_received", key: `${advanceId}-received`, title: "Advance confirmed", message: `${a.staffName} confirmed receiving the ${peso(a.amount)} advance${a.paidDate ? ` (${dayRange(a.paidDate, a.paidDate)})` : ""}.`, recordType: "advance", recordId: advanceId }],
+    });
+    const stamp = FieldValue.serverTimestamp();
+    tx.update(ref, { receipt: { state: "confirmed", at: new Date(), by: { uid: actor.uid, name: actor.name ?? null } }, history: append(a.history, { at: new Date(), actor: { uid: actor.uid, name: actor.name ?? null }, label: `${a.staffName} confirmed receiving it` }), updatedAt: stamp });
+    notes.commit({ FieldValue, actor });
+    return { advanceId, received: "confirmed" };
+  }, TX_OPTIONS);
+}
+
+// Their own proof only (salary or advance): the record must belong to the
+// staff record linked to their account.
+export async function myProof({ tenant, bucket, businessId, staffId, kind, recordId }) {
+  const id = linked(staffId);
+  if (typeof recordId !== "string" || !/^[A-Za-z0-9_-]{8,60}$/.test(recordId)) throw new PayrollError("not-found", "Proof not found");
+  if (kind === "salary") {
+    const m = /^([A-Za-z0-9]{8,40})_(\d{4}-\d{2}-\d{2})$/.exec(recordId);
+    if (!m || m[1] !== id) throw new PayrollError("not-found", "Proof not found");
+    const snap = await tenant.doc("payrolls", recordId).get();
+    if (!snap.exists || snap.data().staffId !== id || !snap.data().salary?.proof) throw new PayrollError("not-found", "Proof not found");
+    return readProofFile({ bucket, businessId, proof: snap.data().salary.proof });
+  }
+  if (kind === "advance") {
+    const snap = await tenant.doc("advances", recordId).get();
+    if (!snap.exists || snap.data().staffId !== id || !snap.data().proof) throw new PayrollError("not-found", "Proof not found");
+    return readProofFile({ bucket, businessId, proof: snap.data().proof });
+  }
+  throw new PayrollError("not-found", "Proof not found");
 }

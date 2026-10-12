@@ -150,10 +150,11 @@ describe("advances: released (Paid / Not Yet Paid) vs deducted", () => {
     const notPaid = (await api("advances", u.mom, { action: "create", advance: { staffId: id, date: "2026-10-02", amount: 30000 } })).body.advanceId;
     const { payrollId } = (await api("payroll", u.mom, { action: "prepare", staffId: id, periodStart: "2026-10-01" })).body;
     expect(payroll(payrollId).deductions).toEqual([]);
-    // marked paid while the draft is open: joins it now
-    await api("advances", u.mom, { action: "markPaid", advanceId: notPaid, release: { method: "gcash", reference: "GC123" } });
+    // released on Oct 10 (Oct 1-15 not paid yet): planned for Oct 1-15, so the open draft gets it now
+    await api("advances", u.mom, { action: "markPaid", advanceId: notPaid, release: { method: "gcash", reference: "GC123", paidDate: "2026-10-10" } });
     expect(payroll(payrollId)).toMatchObject({ deductionsTotal: 30000, netPay: 720000 - 30000 });
-    expect(docAt(`advances/${notPaid}`)).toMatchObject({ status: "paid", method: "gcash", reference: "GC123", paidDate: "2026-10-16", deductionPayrollId: payrollId });
+    expect(docAt(`advances/${notPaid}`)).toMatchObject({ status: "paid", method: "gcash", reference: "GC123", paidDate: "2026-10-10" });
+    expect(docAt(`advances/${notPaid}`).schedule).toMatchObject([{ periodStart: "2026-10-01", periodEnd: "2026-10-15", amount: 30000, state: "planned" }]);
     await api("payroll", u.mom, { action: "release", payrollId, payment: { method: "cash" } });
     expect(docAt(`advances/${notPaid}`).deducted).toBe(true);
     // the next payroll doesn't deduct it again
@@ -165,7 +166,7 @@ describe("advances: released (Paid / Not Yet Paid) vs deducted", () => {
   it("an advance paid with no open payroll is picked up by the next one prepared; 'deduct next payroll' moves it", async () => {
     const id = await maria();
     const a = (await api("advances", u.mom, { action: "create", advance: { staffId: id, date: "2026-10-01", amount: 20000 } })).body.advanceId;
-    await api("advances", u.mom, { action: "markPaid", advanceId: a });
+    await api("advances", u.mom, { action: "markPaid", advanceId: a, release: { paidDate: "2026-10-01" } });
     const p1 = (await api("payroll", u.mom, { action: "prepare", staffId: id, periodStart: "2026-10-01" })).body.payrollId;
     expect(payroll(p1).deductionsTotal).toBe(20000);
     expect((await api("payroll", u.mom, { action: "deferAdvance", payrollId: p1, advanceId: a })).status).toBe(200);
@@ -188,7 +189,7 @@ describe("advances: released (Paid / Not Yet Paid) vs deducted", () => {
   it("deleting an unpaid payroll gives its advances back to the next payroll", async () => {
     const id = await maria();
     const a = (await api("advances", u.mom, { action: "create", advance: { staffId: id, date: "2026-10-01", amount: 20000 } })).body.advanceId;
-    await api("advances", u.mom, { action: "markPaid", advanceId: a });
+    await api("advances", u.mom, { action: "markPaid", advanceId: a, release: { paidDate: "2026-10-01" } });
     const p1 = (await api("payroll", u.mom, { action: "prepare", staffId: id, periodStart: "2026-10-01" })).body.payrollId;
     await api("payroll", u.mom, { action: "deleteDraft", payrollId: p1 });
     expect(payroll(p1)).toBeUndefined();
@@ -368,7 +369,7 @@ describe("Excel downloads (Phase 12.5 Export Core)", () => {
     await markPeriod(id, "2026-10-01", OCT_1_15);
     await mark(other, "2026-10-02", "present");
     const a = (await api("advances", u.mom, { action: "create", advance: { staffId: id, date: "2026-10-05", amount: 50000 } })).body.advanceId;
-    await api("advances", u.mom, { action: "markPaid", advanceId: a });
+    await api("advances", u.mom, { action: "markPaid", advanceId: a, release: { paidDate: "2026-10-05" } });
     await api("payroll", u.mom, { action: "prepare", staffId: id, periodStart: "2026-10-01" });
     await api("payroll", u.mom, { action: "prepare", staffId: other, periodStart: "2026-10-01" });
     const r = await xport(u.mom, "payroll", { staffId: id, from: "2026-10-01", to: "2026-10-01" });
