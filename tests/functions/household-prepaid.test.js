@@ -90,7 +90,7 @@ describe("the exact scenario: paid the full Oct 1-15 on Oct 12", () => {
     const original = docAt(`payrolls/${pid}`).salary;
     expect(original).toMatchObject({ amount: 15 * W, earned: 12 * W, prepaid: { days: 3, from: OCT(13), to: OCT(15), amount: 3 * W }, paidDate: OCT(12), timing: "early" });
     expect(docAt(`attendance/${y}_${OCT(13)}`)).toBeUndefined(); // no fake attendance
-    expect((await api("payroll", u.mom, { action: "release", staffId: y, periodStart: OCT(1), payment: { method: "gcash", prepaidDays: 4 } })).body.error).toBe("payroll-released");
+    expect((await api("payroll", u.mom, { action: "release", staffId: y, periodStart: OCT(1), payment: { method: "gcash", prepaidDays: 3 } })).body.error).toBe("payroll-released");
     // 7. The helper confirms the money received (not the upcoming days).
     expect((await me(uid)).body.me.salaries[0].received).toEqual({ earned: 12 * W, prepaid: { days: 3, from: OCT(13), to: OCT(15), amount: 3 * W }, additional: [], total: 15 * W });
     expect((await me(uid, { action: "received", payrollId: pid })).status).toBe(200);
@@ -263,5 +263,16 @@ describe("a day not recorded after the period isn't 'not earned'", () => {
     await mark(y, [OCT(15)], "absent");
     expect((await row(y, OCT(1), OCT(15))).reconcile).toMatchObject({ waiting: false, outstanding: W });
     expect(docAt(`payrolls/${pid}`).salary.amount).toBe(15 * W);
+  });
+});
+
+describe("prepaid days must fit the period", () => {
+  it("more prepaid days than are left is refused before anything is stored", async () => {
+    const y = await staff("Yanie");
+    await mark(y, range(1, 12).map(OCT));
+    const r = await api("payroll", u.mom, { action: "release", staffId: y, periodStart: OCT(1), payment: { method: "cash", prepaidDays: 4 } });
+    expect(r.status).toBe(400);
+    expect(r.body.message).toBe("Only 3 upcoming days in this period after the payment date");
+    expect(docAt(`payrolls/${y}_${OCT(1)}`)).toBeUndefined();
   });
 });

@@ -783,7 +783,16 @@ export async function releaseSalary({ db, bucket = null, tenant, FieldValue, bus
   const data = validateSalaryRelease(release, { today });
   // Owner-pilot batch: a period nobody touched is stored first (once), only
   // after the payment itself is valid.
-  if (!payrollId && staffId !== null) payrollId = (await preparePayroll({ db, tenant, FieldValue, business, staffId, periodStart, actor, now })).payrollId;
+  if (!payrollId && staffId !== null) {
+    // The prepaid days must fit before anything is stored.
+    const snap = await staffRef(tenant, staffId).get();
+    if (snap.exists && data.prepaidDays > 0 && isDayId(periodStart)) {
+      const end = staffPeriod(snap.data(), periodStart).end;
+      const left = data.paidDate < end ? daysIn({ start: addDays(data.paidDate, 1), end }).length : 0;
+      if (data.prepaidDays > left) throw new PayrollError("invalid-input", `Only ${left} upcoming day${left === 1 ? "" : "s"} in this period after the payment date`);
+    }
+    payrollId = (await preparePayroll({ db, tenant, FieldValue, business, staffId, periodStart, actor, now })).payrollId;
+  }
   if (proof && !bucket) throw new PayrollError("invalid-input", "Proof uploads aren't available");
   const stored = proof ? await storeSalaryProof({ db, bucket, tenant, FieldValue, businessId: tenant.businessId, payrollId, proof, actor, now }) : null;
   try {
