@@ -98,6 +98,30 @@ Owner pilot: the user is now testing Luna as a tenant across the four workspaces
   - Headless browser at 390px and 1280px, 29/29: dashboard, Attendance approvals, the notification sheet, Advances, Payroll (Now / single period, early detail, early modal), the staff form, and the staff advance view.
   - The browser check found and I fixed: Payroll opening on one helper's period when cutoffs differed (`daa7531`), a 30px Close button on the phone sheet and unfiltered advance links (`f9c9c9e`), the squeezed approval heading / cut-off "Now" label at 390px (`9adcc5b`), and the dashboard listing a not-yet-employed helper plus the unpadded Pending requests card (`35e73f3`).
 
+### 2026-10-12/13: Early salary, prepaid days, salary overpayment carryover (polish, `34cc460`, `8774a3f`)
+- **Rule (user):** Attendance records reality. Salary payments record money actually given. Prepaid salary bridges the gap when salary is paid before upcoming workdays happen. Salary overpayment reconciles anything ultimately not earned. A cash advance stays separate borrowed money. The helper views, understands and confirms; financial decisions stay with the Owner.
+- **Attendance:** an upcoming day can't be marked at all. The earlier rule that allowed planning leave and rest days ahead is replaced (server-side for every path, including approval of older staff requests). Upcoming rows show "Upcoming" (disabled, no tick box); the period list stops at the current period. Paying early never creates attendance.
+- **Paying early:** the pay dialog offers "Also pay upcoming days (prepaid salary)?". The default is all upcoming days; fewer or none can be chosen. Prepaid = days × daily wage, from the day after the payment.
+  - Stored on the payment: `salary.amount` (total), `earned` (net as of the payment), `prepaid {days, from, to, dailyWage, amount}`, paid date, proof / reference. Never rewritten.
+  - More prepaid days than are left is refused before anything is stored (found on the staging check, fixed in `8774a3f`).
+- **Reconciliation (after the period ends):** final salary (what attendance earned) vs total paid (payment + any additional payments).
+  - **Equal** → Settled.
+  - **Less earned** → **salary overpayment**. It's carried automatically to the next unpaid payroll as its own line ("Previous salary overpayment · from Oct 1–15"), and rolls on if that payroll was already paid. It drops only when a paid payroll deducts it, a separate repayment is recorded, or the Owner waives it (reason kept).
+  - **More earned** → **Additional salary due**, with "Record additional payment" (kept as `salary.additional`; the original stays).
+  - **Days still unrecorded after the period** → Luna waits ("Record the remaining N days") instead of treating a forgotten day as not earned.
+  - The ledger lives on the paid payroll (`overpayment {plan, applied, repayments, waivers}`). Stored unpaid payrolls are kept in step in the same transaction. Voiding the payroll that took it makes it owed again; a source whose overpayment was already taken can't be voided first.
+- **Owner actions** (payslip ⋯ on the source or on the line): Keep on next payroll / Move to another payroll / Mark repaid separately / Waive (reason), plus View source. There is no destructive delete.
+- **Separate from cash advances:** separate lines and separate balances. The advance limit counts only cash advance debt.
+- **Helper view:** My Salary shows Earned through (date) · Prepaid for (days) · Total received, with View proof and "I received my salary" (= the money received, not upcoming days). "Previous salary adjustment ₱411: your Oct 1–15 salary was paid early… planned to come off your Oct 16–31 salary." The helper can't change any of it (403).
+- **Dashboard:** "Additional salary due" and "Days to record (paid early)" per helper.
+- **Tests:**
+  - Unit: 1370 pass, including the new `tests/functions/household-prepaid.test.js` (11) with the exact scenario. It also covers all days earned (₱0), additional due, move, repayment, waive, next payroll already paid (rolls on), two sources as two lines, unrecorded days wait, staff 403, a void reversing it, and prepaid-days validation.
+  - Older tests that planned leave ahead were updated to the new rule.
+  - Emulator: 32/32, including the next payment racing waive / move / repayment (never taken twice; the early payment unchanged).
+- **Staging** (temporary household, deleted; staging today = Oct 13, so period-end reconciliation is covered by the tests above):
+  - Live API 14/14.
+  - 390px browser check 9/9: Upcoming rows, payslip earned / prepaid / total / "final salary so far", pay dialog prepaid options, helper salary view, no sideways scroll.
+
 ### 2026-10-12: Owner can delete payrolls and advances (polish, `cc43000`)
 - **Request:** an easy ⋯ → Delete for payrolls and cash advances (to clean up wrong pilot entries without a database script), financially safe by state. Built as a general Owner capability; no names or business ids in code.
 - **Payroll ⋯ (row and payslip), destructive item last after a separator:**
