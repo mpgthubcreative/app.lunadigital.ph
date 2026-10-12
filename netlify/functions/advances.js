@@ -19,7 +19,7 @@
 
 import { getAdmin } from "./_lib/firebase-admin.js";
 import { payrollActionHandler } from "./_lib/payroll-http.js";
-import { createAdvance, updateAdvance, markAdvancePaid, deleteAdvance, decideAdvanceRequest, giveAdvance, setAdvanceSchedule, recordAdvanceRepayment, readAdvanceProof, attachAdvanceProof } from "./_lib/payroll.js";
+import { voidAdvance, listVoided, createAdvance, updateAdvance, markAdvancePaid, deleteAdvance, decideAdvanceRequest, giveAdvance, setAdvanceSchedule, recordAdvanceRepayment, readAdvanceProof, attachAdvanceProof } from "./_lib/payroll.js";
 
 const P = "advances.manage";
 export const createAdvancesHandler = (deps) =>
@@ -29,6 +29,9 @@ export const createAdvancesHandler = (deps) =>
       create: { permission: P, created: true, fields: ["action", "advance"], run: (c, b) => createAdvance({ ...c, input: b.advance }) },
       update: { permission: P, fields: ["action", "advanceId", "changes"], run: (c, b) => updateAdvance({ ...c, advanceId: b.advanceId, changes: b.changes }) },
       markPaid: { permission: P, fields: ["action", "advanceId", "release", "proof"], run: (c, b) => markAdvancePaid({ ...c, advanceId: b.advanceId, release: b.release ?? {}, proof: b.proof ?? null }) },
+      // Owner-pilot change: void a GIVEN advance (reason required; reversals kept).
+      void: { permission: P, fields: ["action", "advanceId", "reason"], run: (c, b) => voidAdvance({ ...c, advanceId: b.advanceId, reason: b.reason }) },
+      voided: { permission: "advances.view", fields: ["action", "staffId"], run: async (c, b) => ({ voided: await listVoided({ tenant: c.tenant, kind: "advance", staffId: b.staffId ?? null }) }) },
       give: { permission: P, created: true, fields: ["action", "advance", "proof"], run: (c, b) => giveAdvance({ ...c, input: b.advance, proof: b.proof ?? null }) },
       schedule: { permission: P, fields: ["action", "advanceId", "schedule"], run: (c, b) => setAdvanceSchedule({ ...c, advanceId: b.advanceId, schedule: b.schedule }) },
       repay: { permission: P, fields: ["action", "advanceId", "repayment"], run: (c, b) => recordAdvanceRepayment({ ...c, advanceId: b.advanceId, repayment: b.repayment }) },

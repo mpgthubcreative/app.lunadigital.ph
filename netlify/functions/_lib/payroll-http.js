@@ -51,6 +51,9 @@ export const PAYROLL_STATUS = {
   // Owner-pilot batch
   "over-advance-limit": 409,
   "amount-changed": 409,
+  "payroll-unpaid": 409,
+  "advance-not-released": 409,
+  "paid-payroll-deduction": 409,
 };
 const FORBIDDEN = () => new RequestError("forbidden", "This feature isn't available for your account.", 403);
 

@@ -3008,3 +3008,12 @@ tr.is-saving {
   margin: var(--space-4) 0 var(--space-2);
   font-size: var(--text-base);
 }
+
+.voided-link {
+  margin: var(--space-3) 0 0;
+  text-align: right;
+  font-size: var(--text-sm);
+}
+.line-menu-list .menu-sep {
+  margin: var(--space-1) 0;
+}

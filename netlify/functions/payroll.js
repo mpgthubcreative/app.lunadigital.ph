@@ -35,7 +35,7 @@
 
 import { getAdmin } from "./_lib/firebase-admin.js";
 import { payrollActionHandler } from "./_lib/payroll-http.js";
-import { editPayrollLine, correctPayment, payrollPeriodView, preparePayroll, prepareEligible, addDeduction, removeDeduction, deferAdvance, deleteDraftPayroll, releaseSalary, newReceiptLink, addAddition, removeAddition, thirteenthMonthSummary, attachSalaryProof, readSalaryProof, resolveSalaryDispute } from "./_lib/payroll.js";
+import { voidPayroll, listVoided, editPayrollLine, correctPayment, payrollPeriodView, preparePayroll, prepareEligible, addDeduction, removeDeduction, deferAdvance, deleteDraftPayroll, releaseSalary, newReceiptLink, addAddition, removeAddition, thirteenthMonthSummary, attachSalaryProof, readSalaryProof, resolveSalaryDispute } from "./_lib/payroll.js";
 
 const M = "payroll.manage";
 const R = "payroll.release";
@@ -51,6 +51,9 @@ export const createPayrollHandler = (deps) =>
       deferAdvance: { permission: M, fields: ["action", "payrollId", "advanceId"], run: (c, b) => deferAdvance({ ...c, payrollId: b.payrollId, advanceId: b.advanceId }) },
       deleteDraft: { permission: M, fields: ["action", "payrollId"], run: (c, b) => deleteDraftPayroll({ ...c, payrollId: b.payrollId }) },
       period: { permission: "payroll.view", fields: ["action", "period", "staffId"], run: async (c, b) => ({ view: await payrollPeriodView({ ...c, period: b.period ?? null, staffId: b.staffId ?? null }) }) },
+      // Owner-pilot change: void a PAID payroll (reason required; reversals kept).
+      void: { permission: R, fields: ["action", "payrollId", "reason"], run: (c, b) => voidPayroll({ ...c, payrollId: b.payrollId, reason: b.reason }) },
+      voided: { permission: "payroll.view", fields: ["action", "staffId"], run: async (c, b) => ({ voided: await listVoided({ tenant: c.tenant, kind: "payroll", staffId: b.staffId ?? null }) }) },
       editLine: { permission: M, fields: ["action", "payrollId", "lineId", "changes"], run: (c, b) => editPayrollLine({ ...c, payrollId: b.payrollId, lineId: b.lineId, changes: b.changes }) },
       correctPayment: { permission: R, fields: ["action", "payrollId", "correction", "reason"], run: (c, b) => correctPayment({ ...c, payrollId: b.payrollId, correction: b.correction, reason: b.reason }) },
       release: {

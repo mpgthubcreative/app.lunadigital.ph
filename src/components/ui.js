@@ -315,7 +315,7 @@ export function bindRowMenus(root) {
 // are forwarded to the row's [data-act="open"] button.
 export function bindRowOpen(root, { act = "open" } = {}) {
   const onClick = (e) => {
-    if (e.target.closest("button, a, select, input, label, .menu-wrap, textarea")) return;
+    if (e.target.closest("button, a, select, input, label, .menu-wrap, textarea, details, summary")) return;
     const row = e.target.closest("tr[data-open]");
     if (!row || !root.contains(row)) return;
     row.querySelector(`[data-act="${act}"]`)?.click();

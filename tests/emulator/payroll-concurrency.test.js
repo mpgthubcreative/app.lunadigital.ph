@@ -249,3 +249,33 @@ describe("early salary payment racing attendance", () => {
     await expect(pay.setAttendance({ ...later, input: { staffId: w.staffId, date: "2026-10-05", status: "present" } })).rejects.toMatchObject({ code: "payroll-released" });
   });
 });
+
+// Owner-pilot change: voids racing other money actions.
+describe("void racing repayments and plans", () => {
+  it("a paid payroll voided while its advance is repaid and replanned: the books stay whole", async () => {
+    const w = await world();
+    for (const d of daysIn({ start: "2026-10-01", end: "2026-10-05" })) await pay.setAttendance({ ...w.c, input: { staffId: w.staffId, date: d, status: "present" } });
+    const { advanceId } = await pay.createAdvance({ ...w.c, input: { staffId: w.staffId, date: "2026-10-02", amount: 100000 } });
+    await pay.markAdvancePaid({ ...w.c, advanceId, release: { paidDate: "2026-10-02" } });
+    await pay.setAdvanceSchedule({ ...w.c, advanceId, schedule: [{ periodStart: "2026-10-01", amount: 40000 }, { periodStart: "2026-10-16", amount: 60000 }] });
+    const { payrollId } = await pay.preparePayroll({ ...w.c, staffId: w.staffId, periodStart: "2026-10-01" });
+    await pay.releaseSalary({ ...w.c, payrollId, release: { method: "cash" } });
+    const r = await Promise.allSettled([
+      pay.voidPayroll({ ...w.c, payrollId, reason: "Wrong helper" }),
+      pay.voidPayroll({ ...w.c, payrollId, reason: "Wrong helper" }),
+      pay.recordAdvanceRepayment({ ...w.c, advanceId, repayment: { amount: 30000, method: "cash" } }),
+      pay.setAdvanceSchedule({ ...w.c, advanceId, schedule: [{ periodStart: "2026-10-16", amount: 30000 }] }),
+    ]);
+    expectExplicit(r, ["over-owed", "payroll-released"]);
+    const a = (await w.tenant.doc("advances", advanceId).get()).data();
+    expect((await w.tenant.doc("payrolls", payrollId).get()).exists).toBe(false);
+    expect((await w.tenant.collection("voidedPayrolls").where("originalId", "==", payrollId).get()).size).toBe(1);
+    // The 400 the voided salary took is owed again: nothing is deducted any more.
+    expect(a.deductedAmount).toBe(0);
+    const owed = a.amount - a.deductedAmount - (a.repaidAmount || 0);
+    expect(owed).toBeGreaterThanOrEqual(0);
+    const open = (a.schedule || []).filter((e) => e.state === "planned" || e.state === "not_taken").reduce((t, e) => t + e.amount, 0);
+    expect(open).toBeLessThanOrEqual(owed);
+    expect((a.schedule || []).some((e) => e.state === "applied")).toBe(false);
+  });
+});

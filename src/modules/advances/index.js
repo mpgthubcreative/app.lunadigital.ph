@@ -96,11 +96,14 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     if (canManage && a.status === "paid" && owed > 0) items.push({ x: "plan", label: "Edit repayment plan" }, { x: "repay", label: "Record a repayment" });
     if (a.status === "paid" && a.proof) items.push({ x: "proof", label: "View proof" });
     if (canManage && a.status === "paid" && !a.proof) items.push({ x: "add-proof", label: "Add proof" });
-    if (canManage && a.status === "not_yet_paid") items.push({ x: "release", label: "Mark given" }, { x: "delete", label: "Delete", danger: true });
+    if (canManage && a.status === "not_yet_paid") items.push({ x: "release", label: "Mark given" });
+    // Destructive last: delete (money never given) or void (given).
+    if (canManage && a.status === "paid") items.push({ x: "void", label: "Delete / Void advance", danger: true, sep: true });
+    if (canManage && a.status !== "paid") items.push({ x: "delete", label: "Delete advance", danger: true, sep: true });
     return html`<li class="adv-row" data-advance="${a.id}">
       <div class="adv-main"><strong>${formatCentavos(a.amount)}</strong> ${state.staffId ? "" : html`· ${a.staffName} `}<small>${short(a.paidDate || a.date)}${a.description ? ` · ${a.description}` : ""}</small>
         <small>${a.status === "paid" ? (repaid ? "Fully repaid" : html`<strong>${formatCentavos(owed)} owed</strong> · ${planText(a)}`) : a.status === "not_yet_paid" ? "Approved, not given yet" : a.status === "requested" ? "Asked by the helper" : "Not approved"}</small></div>
-      <div class="adv-end">${state_}<details class="line-menu"><summary class="btn btn-compact btn-ghost" aria-label="Actions for the ${formatCentavos(a.amount)} advance">⋯</summary><div class="line-menu-list" role="menu">${items.map((i) => html`<button type="button" class="menu-item${i.danger ? " is-danger" : ""}" role="menuitem" data-x="${i.x}" data-id="${a.id}">${i.label}</button>`)}</div></details></div>
+      <div class="adv-end">${state_}<details class="line-menu"><summary class="btn btn-compact btn-ghost" aria-label="Actions for the ${formatCentavos(a.amount)} advance">⋯</summary><div class="line-menu-list" role="menu">${items.map((i) => html`${i.sep ? html`<div class="menu-sep" role="separator"></div>` : ""}<button type="button" class="menu-item${i.danger ? " is-danger" : ""}" role="menuitem" data-x="${i.x}" data-id="${a.id}">${i.label}</button>`)}</div></details></div>
     </li>`;
   }
 
@@ -134,7 +137,8 @@ export function mount(container, session, { data = defaultData, toast = defaultT
                   ? emptyState({ iconName: "advance", title: "No advances", body: "Advances you give appear here with what's still owed." })
                   : html`<h3 class="slip-head">Open advances</h3>
                     ${open.length ? html`<ul class="adv-list" data-role="advances">${open.map(advanceRow)}</ul>` : html`<p class="stat-hint">Nothing owed right now.</p>`}
-                    ${done.length ? html`<details class="form-more"><summary>Repaid (${done.length})</summary><ul class="adv-list" data-role="advances-repaid">${done.map(advanceRow)}</ul></details>` : ""}`}`}
+                    ${done.length ? html`<details class="form-more"><summary>Repaid (${done.length})</summary><ul class="adv-list" data-role="advances-repaid">${done.map(advanceRow)}</ul></details>` : ""}`}
+                <p class="voided-link"><button type="button" class="btn-linklike" data-act="voided">Voided records</button></p>`}
         </section>`
     );
     for (const btn of container.querySelectorAll('[data-act="export"]')) btn.classList.add("btn-ghost");
@@ -197,6 +201,23 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     });
   }
 
+  async function showVoided() {
+    const backdrop = document.createElement("div");
+    backdrop.className = "modal-backdrop is-panel";
+    document.body.appendChild(backdrop);
+    const paint = (body) => render(backdrop, html`<div class="modal" role="dialog" aria-modal="true" aria-label="Voided advances" data-role="voided"><div class="modal-header"><h2 class="card-title">Voided advances</h2></div><div class="modal-body">${body}</div><div class="modal-footer"><button type="button" class="btn" data-x="close">Close</button></div></div>`);
+    backdrop.addEventListener("click", (e) => {
+      if (e.target === backdrop || e.target.closest('[data-x="close"]')) backdrop.remove();
+    });
+    paint(html`<p class="stat-hint">Loading…</p>`);
+    try {
+      const { voided } = await api({ action: "voided", ...(state.staffId ? { staffId: state.staffId } : {}) });
+      paint(voided.length ? html`<ul class="slip">${voided.map((v) => html`<li><span class="slip-what">${v.staffName} · ${v.date ? short(v.date) : ""}<small>${v.at ? short(v.at.slice(0, 10)) : ""}${v.by ? ` by ${v.by}` : ""} · ${v.reason}</small></span><span class="slip-amt">${formatCentavos(v.amount)}</span><span class="slip-act"></span></li>`)}</ul>` : html`<p class="stat-hint">No voided advances.</p>`);
+    } catch (err) {
+      paint(html`<p class="form-error">${err.message || "Couldn't load"}</p>`);
+    }
+  }
+
   const staffOf = (a) => state.staff.find((s) => s.id === a.staffId) || { payCycle: "semi_monthly" };
   const onClick = async (event) => {
     const el = event.target.closest("[data-act], [data-x]");
@@ -206,6 +227,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     const act = el.dataset.act || el.dataset.x;
     try {
       if (act === "give") return give();
+      if (act === "voided") return showVoided();
       if (!a) return undefined;
       if (act === "details") return details(a);
       if (act === "plan") {
@@ -240,8 +262,28 @@ export function mount(container, session, { data = defaultData, toast = defaultT
         });
         if (r) load();
       } else if (act === "delete") {
-        if (await confirmDialog({ title: "Delete this advance?", body: "Only an advance not given yet can be deleted.", confirmLabel: "Delete", danger: true })) {
+        if (await confirmDialog({ title: `Delete this ${formatCentavos(a.amount)} advance?`, body: "No money has been released, so this will remove the advance and its planned payroll deductions.", confirmLabel: "Delete advance", danger: true })) {
           await api({ action: "delete", advanceId: a.id });
+          toast("Advance deleted.", "success");
+          load();
+        }
+      } else if (act === "void") {
+        const activity = (a.repayments || []).length || (a.schedule || []).some((e) => e.state === "applied") || a.receipt?.state === "confirmed";
+        const reason = await formDialog({
+          title: `Void the ${formatCentavos(a.amount)} advance (${a.staffName})`,
+          intro: activity
+            ? "This advance already has repayment activity. Voiding it will reverse its related repayments/deductions and preserve the history. A deduction already taken by a paid salary needs that payroll voided first (Luna will say which)."
+            : "The money was recorded as given. Voiding cancels what's owed on it and removes its planned payroll deductions. An audit record is kept.",
+          fields: [{ name: "reason", label: "Reason", required: true, placeholder: "e.g. Entered twice, Wrong employee" }],
+          submitLabel: "Continue",
+          onSubmit: (v) => {
+            if (v.reason.trim().length < 3) throw new Error("Say why (at least 3 characters)");
+            return v.reason.trim();
+          },
+        });
+        if (reason && (await confirmDialog({ title: "Void this advance?", body: `Reason: ${reason}. It leaves the active list; you can still see it under Voided records.`, confirmLabel: "Void advance", danger: true }))) {
+          await api({ action: "void", advanceId: a.id, reason });
+          toast("Advance voided. Its history is kept under Voided records.", "success");
           load();
         }
       } else if (act === "approve") {

@@ -64,7 +64,7 @@ export function recentPeriods(cycle, today, count = 4) {
 // A line's ⋯ menu (a native disclosure: works by touch and keyboard).
 const lineMenu = (label, items) =>
   items.length
-    ? html`<details class="line-menu"><summary class="btn btn-compact btn-ghost" aria-label="${label}">⋯</summary><div class="line-menu-list" role="menu">${items.map((i) => html`<button type="button" class="menu-item${i.danger ? " is-danger" : ""}" role="menuitem" data-x="${i.x}" data-id="${i.data?.id ?? ""}" data-kind="${i.data?.kind ?? ""}" data-amount="${i.data?.amount ?? ""}">${i.label}</button>`)}</div></details>`
+    ? html`<details class="line-menu"><summary class="btn btn-compact btn-ghost" aria-label="${label}">⋯</summary><div class="line-menu-list" role="menu">${items.map((i) => html`${i.sep ? html`<div class="menu-sep" role="separator"></div>` : ""}<button type="button" class="menu-item${i.danger ? " is-danger" : ""}" role="menuitem" data-x="${i.x}" data-id="${i.data?.id ?? ""}" data-kind="${i.data?.kind ?? ""}" data-amount="${i.data?.amount ?? ""}">${i.label}</button>`)}</div></details>`
     : "";
 
 export function mount(container, session, { data = defaultData, toast = defaultToast, now = () => new Date(), exportDeps = {}, copy = (t) => navigator.clipboard?.writeText(t) } = {}) {
@@ -97,6 +97,65 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     draw();
   }
 
+  // ⋯ per payroll: View details; Delete (saved, unpaid) / Void (paid) last.
+  const rowMenu = (p) => html`<details class="line-menu"><summary class="btn btn-compact btn-ghost" aria-label="Actions for ${p.staffName}'s payroll">⋯</summary><div class="line-menu-list" role="menu">
+      <button type="button" class="menu-item" role="menuitem" data-act="view" data-id="${p.id}">View details</button>
+      ${canManage && p.status === "draft" && !p.automatic ? html`<div class="menu-sep" role="separator"></div><button type="button" class="menu-item is-danger" role="menuitem" data-act="delete-payroll" data-id="${p.id}">Delete payroll</button>` : ""}
+      ${canRelease && p.status === "released" ? html`<div class="menu-sep" role="separator"></div><button type="button" class="menu-item is-danger" role="menuitem" data-act="void-payroll" data-id="${p.id}">Void payroll</button>` : ""}
+    </div></details>`;
+
+  // Delete a saved, unpaid payroll (the period goes back to automatic).
+  async function deletePayroll(p) {
+    if (!(await confirmDialog({ title: `Delete ${p.staffName}'s ${rowPeriod(p)} payroll?`, body: "This removes this payroll record and its manual payroll entries. Attendance and Staff records will not be deleted. Advance plans stay; the period is worked out automatically again.", confirmLabel: "Delete payroll", danger: true }))) return false;
+    try {
+      await data.payrollApi({ action: "deleteDraft", payrollId: p.id });
+      toast("Payroll deleted. The period is worked out automatically again.", "success");
+      return true;
+    } catch (err) {
+      toast(err.message || "Couldn't delete", "danger");
+      return false;
+    }
+  }
+  // Void a PAID payroll: reason + explicit confirmation; reversals kept.
+  async function voidPaid(p) {
+    const reason = await formDialog({
+      title: `Void ${p.staffName}'s ${rowPeriod(p)} payroll`,
+      intro: `This payroll has already been recorded as paid (${formatCentavos(p.salary?.amount ?? p.netPay)}). Voiding it reverses the payroll: advance deductions go back to what's owed, its days unlock, and the period shows as unpaid again. An audit record of what was originally recorded is kept, including the helper's confirmation and the proof.`,
+      fields: [{ name: "reason", label: "Reason", required: true, placeholder: "e.g. Entered for the wrong helper" }],
+      submitLabel: "Continue",
+      onSubmit: (v) => {
+        if (v.reason.trim().length < 3) throw new Error("Say why (at least 3 characters)");
+        return v.reason.trim();
+      },
+    });
+    if (!reason) return false;
+    if (!(await confirmDialog({ title: "Void this paid payroll?", body: `Reason: ${reason}. It leaves the active payroll; you can still see it under Voided records.`, confirmLabel: "Void payroll", danger: true }))) return false;
+    try {
+      await data.payrollApi({ action: "void", payrollId: p.id, reason });
+      toast("Payroll voided. Its history is kept under Voided records.", "success");
+      return true;
+    } catch (err) {
+      toast(err.message || "Couldn't void", "danger");
+      return false;
+    }
+  }
+  async function showVoided() {
+    const backdrop = document.createElement("div");
+    backdrop.className = "modal-backdrop is-panel";
+    document.body.appendChild(backdrop);
+    const paint = (body) => render(backdrop, html`<div class="modal" role="dialog" aria-modal="true" aria-label="Voided payrolls" data-role="voided"><div class="modal-header"><h2 class="card-title">Voided payrolls</h2></div><div class="modal-body">${body}</div><div class="modal-footer"><button type="button" class="btn" data-x="close">Close</button></div></div>`);
+    backdrop.addEventListener("click", (e) => {
+      if (e.target === backdrop || e.target.closest('[data-x="close"]')) backdrop.remove();
+    });
+    paint(html`<p class="stat-hint">Loading…</p>`);
+    try {
+      const { voided } = await data.payrollApi({ action: "voided", ...(state.staffId ? { staffId: state.staffId } : {}) });
+      paint(voided.length ? html`<ul class="slip">${voided.map((v) => html`<li><span class="slip-what">${v.staffName} · ${periodName(v.period)}<small>${v.at ? short(v.at.slice(0, 10)) : ""}${v.by ? ` by ${v.by}` : ""} · ${v.reason}</small></span><span class="slip-amt">${v.amountPaid !== null ? formatCentavos(v.amountPaid) : "—"}</span><span class="slip-act"></span></li>`)}</ul>` : html`<p class="stat-hint">No voided payrolls.</p>`);
+    } catch (err) {
+      paint(html`<p class="form-error">${err.message || "Couldn't load"}</p>`);
+    }
+  }
+
   function table() {
     if (!state.period) return emptyState({ iconName: "payroll", title: "No pay periods yet", body: "Add household staff with a start date and pay cycle. Their pay periods appear here by themselves." });
     const mixed = state.period.mixed === true;
@@ -117,7 +176,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
               <td class="num"><strong>${formatCentavos(p.netPay)}</strong>${gap && gap.diff ? html`<span class="cell-sub">paid ${formatCentavos(gap.paid)}</span>` : ""}</td>
               <td data-col="payment">${badge(...paymentState(p))}</td>
               <td data-col="received">${badge(...receivedState(p))}</td>
-              <td class="row-actions" data-m="more">${openButton(p.id, `Open payroll of ${p.staffName}`, { act: "view" })}</td>
+              <td class="row-actions" data-m="more"><span class="visually-hidden">${openButton(p.id, `Open payroll of ${p.staffName}`, { act: "view" })}</span>${rowMenu(p)}</td>
             </tr>`;
           })}</tbody></table></div>`}`;
   }
@@ -138,6 +197,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
             ${mayExport(session, "payroll") ? html`<span class="visually-hidden">${exportHint}</span>${exportButton("payroll")}` : ""}
           </div>
           ${state.error ? emptyState({ title: "Couldn't load", body: state.error }) : state.loading && !state.period?.start ? skeleton(5) : table()}
+          <p class="voided-link"><button type="button" class="btn-linklike" data-act="voided">Voided records</button></p>
         </section>`
     );
     for (const btn of container.querySelectorAll('[data-act="export"]')) btn.classList.add("btn-ghost");
@@ -244,9 +304,9 @@ export function mount(container, session, { data = defaultData, toast = defaultT
             ${(p.history || []).length ? html`<details class="form-more"><summary>History</summary><ul class="list activity">${p.history.map((h) => html`<li>${h.label}${h.actor ? ` · ${h.actor.name}` : h.via === "employee-link" ? " · by the helper, via the secure link" : ""}</li>`)}</ul></details>` : ""}
           </div>
           <div class="modal-footer">
-            ${draft && canManage ? html`<details class="line-menu line-menu-up"><summary class="btn">Add ▾</summary><div class="line-menu-list" role="menu"><button type="button" class="menu-item" data-x="add-bonus">Bonus</button><button type="button" class="menu-item" data-x="add">Other deduction</button><button type="button" class="menu-item" data-x="add-13th">13th month pay</button>${p.automatic ? "" : html`<button type="button" class="menu-item is-danger" data-x="delete">Reset to automatic</button>`}</div></details>` : ""}
+            ${draft && canManage ? html`<details class="line-menu line-menu-up"><summary class="btn">Add ▾</summary><div class="line-menu-list" role="menu"><button type="button" class="menu-item" data-x="add-bonus">Bonus</button><button type="button" class="menu-item" data-x="add">Other deduction</button><button type="button" class="menu-item" data-x="add-13th">13th month pay</button>${p.automatic ? "" : html`<div class="menu-sep" role="separator"></div><button type="button" class="menu-item is-danger" data-x="delete">Delete payroll</button>`}</div></details>` : ""}
             ${draft && canRelease ? html`<button type="button" class="btn btn-primary" data-x="release">Pay salary</button>` : ""}
-            ${!draft && canRelease ? html`<details class="line-menu line-menu-up"><summary class="btn">More ▾</summary><div class="line-menu-list" role="menu">${!p.salary?.proof ? html`<button type="button" class="menu-item" data-x="add-proof">Add payment proof</button>` : ""}<button type="button" class="menu-item" data-x="correct">Correct payment</button>${p.receiptStatus === "awaiting" ? html`<button type="button" class="menu-item" data-x="newlink">New receipt link</button>` : ""}${p.dispute?.state === "open" ? html`<button type="button" class="menu-item" data-x="resolve">Answer "not received"</button>` : ""}</div></details>` : ""}
+            ${!draft && canRelease ? html`<details class="line-menu line-menu-up"><summary class="btn">More ▾</summary><div class="line-menu-list" role="menu">${!p.salary?.proof ? html`<button type="button" class="menu-item" data-x="add-proof">Add payment proof</button>` : ""}<button type="button" class="menu-item" data-x="correct">Correct payment</button>${p.receiptStatus === "awaiting" ? html`<button type="button" class="menu-item" data-x="newlink">New receipt link</button>` : ""}${p.dispute?.state === "open" ? html`<button type="button" class="menu-item" data-x="resolve">Answer "not received"</button>` : ""}<div class="menu-sep" role="separator"></div><button type="button" class="menu-item is-danger" data-x="void">Void payroll</button></div></details>` : ""}
             <button type="button" class="btn" data-x="close">Close</button>
           </div>
         </div>`
@@ -338,9 +398,9 @@ export function mount(container, session, { data = defaultData, toast = defaultT
           refresh();
         }
       } else if (x === "delete") {
-        if (await confirmDialog({ title: "Reset this payroll to automatic?", body: "Removes the bonuses and deductions you added here. Attendance and advance plans stay.", confirmLabel: "Reset", danger: true })) {
-          if (await run(() => data.payrollApi({ action: "deleteDraft", payrollId }), "Payroll reset to automatic.")) close();
-        }
+        if (await deletePayroll({ ...p, id: payrollId })) close();
+      } else if (x === "void") {
+        if (await voidPaid({ ...p, id: payrollId })) close();
       } else if (x === "adv-view") {
         backdrop.remove();
         window.history.pushState({}, "", `/advances?staff=${encodeURIComponent(p.staffId)}`);
@@ -408,7 +468,12 @@ export function mount(container, session, { data = defaultData, toast = defaultT
   const onClick = (event) => {
     const el = event.target.closest("[data-act]");
     if (!el || !container.contains(el)) return;
+    el.closest("details")?.removeAttribute("open");
+    const p = state.rows.find((r) => r.id === el.dataset.id);
     if (el.dataset.act === "view") openView(el.dataset.id);
+    else if (el.dataset.act === "delete-payroll" && p) deletePayroll(p).then((ok) => ok && load());
+    else if (el.dataset.act === "void-payroll" && p) voidPaid(p).then((ok) => ok && load());
+    else if (el.dataset.act === "voided") showVoided();
   };
   const onChange = (event) => {
     if (event.target.dataset.role === "period-select") choosePeriod(event.target.value);

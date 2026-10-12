@@ -499,3 +499,69 @@ describe("Payroll: automatic pay periods (Owner-pilot batch)", () => {
     expect(document.querySelector('[data-role="receipt"]').textContent).toMatch(/Not confirmed/);
   });
 });
+
+describe("Owner-pilot change: ⋯ Delete payroll / Void payroll / Delete or Void advance", () => {
+  it("payroll rows: View details first; Delete (saved, unpaid) or Void (paid) last, after a separator; none on an unsaved period", async () => {
+    const draft = payroll();
+    const paid = payroll({ id: "staffRiza00001_2026-10-01", staffId: "staffRiza00001", staffName: "Riza", status: "released", ownerPayment: "paid", receiptStatus: "awaiting", salary: { amount: 670000, paidDate: "2026-10-12", method: "cash" } });
+    const auto = payroll({ id: "staffAna000001_2026-10-01", staffId: "staffAna000001", staffName: "Ana", automatic: true });
+    const data = fakeData({ payrollApi: vi.fn(async (b) => (b.action === "period" ? periodView([draft, paid, auto]) : {})) });
+    mountPayroll(container, home(), { data, now: NOW, toast: () => {} });
+    await flush();
+    const items = (id) => [...container.querySelectorAll(`tr[data-payroll="${id}"] .line-menu-list > *`)].map((x) => (x.classList.contains("menu-sep") ? "—" : x.textContent));
+    expect(items(draft.id)).toEqual(["View details", "—", "Delete payroll"]);
+    expect(items(paid.id)).toEqual(["View details", "—", "Void payroll"]);
+    expect(items(auto.id)).toEqual(["View details"]);
+    // Delete: a plain confirmation, then deleteDraft.
+    container.querySelector(`tr[data-payroll="${draft.id}"] [data-act="delete-payroll"]`).click();
+    await flush();
+    const dlg = [...document.querySelectorAll(".modal-backdrop")].at(-1);
+    expect(dlg.textContent).toMatch(/Delete Maria's Oct 1–15 payroll\?[\s\S]*This removes this payroll record and its manual payroll entries\. Attendance and Staff records will not be deleted\./);
+    dlg.querySelector('[data-action="confirm"], .btn-danger').click();
+    await until(() => data.payrollApi.mock.calls.some((c) => c[0].action === "deleteDraft"));
+    expect(data.payrollApi).toHaveBeenCalledWith({ action: "deleteDraft", payrollId: draft.id });
+  });
+
+  it("void a paid payroll: reason first, then an explicit confirmation", async () => {
+    const paid = payroll({ status: "released", ownerPayment: "paid", receiptStatus: "awaiting", salary: { amount: 670000, paidDate: "2026-10-12", method: "cash" } });
+    const data = fakeData({ payrollApi: vi.fn(async (b) => (b.action === "period" ? periodView([paid]) : {})) });
+    mountPayroll(container, home(), { data, now: NOW, toast: () => {} });
+    await flush();
+    container.querySelector('[data-act="void-payroll"]').click();
+    const f = lastForm();
+    expect(f.textContent).toMatch(/This payroll has already been recorded as paid[\s\S]*An audit record of what was originally recorded is kept/);
+    f.elements.reason.value = "Entered for the wrong helper";
+    submit(f);
+    await flush();
+    expect(data.payrollApi.mock.calls.some((c) => c[0].action === "void")).toBe(false);
+    [...document.querySelectorAll(".modal-backdrop")].at(-1).querySelector('[data-action="confirm"], .btn-danger').click();
+    await until(() => data.payrollApi.mock.calls.some((c) => c[0].action === "void"));
+    expect(data.payrollApi).toHaveBeenCalledWith({ action: "void", payrollId: paid.id, reason: "Entered for the wrong helper" });
+  });
+
+  it("advances: Delete advance (never given) or Delete / Void advance (given, reason) at the bottom", async () => {
+    const given = { id: "adv0000000009", staffId: maria.id, staffName: "Maria", date: "2026-10-02", paidDate: "2026-10-02", amount: 200000, deductedAmount: 0, status: "paid", schedule: [] };
+    const notGiven = { id: "adv0000000010", staffId: maria.id, staffName: "Maria", date: "2026-10-03", amount: 200000, status: "not_yet_paid" };
+    const data = fakeData({ listAdvances: vi.fn(async () => ({ rows: [given, notGiven], hasMore: false })) });
+    mountAdvances(container, home(), { data, now: NOW, toast: () => {} });
+    await flush();
+    const items = (id) => [...container.querySelectorAll(`[data-advance="${id}"] .line-menu-list > *`)].map((x) => (x.classList.contains("menu-sep") ? "—" : x.textContent));
+    expect(items(given.id).slice(-2)).toEqual(["—", "Delete / Void advance"]);
+    expect(items(notGiven.id).slice(-2)).toEqual(["—", "Delete advance"]);
+    container.querySelector(`[data-advance="${notGiven.id}"] [data-x="delete"]`).click();
+    await flush();
+    const dlg = [...document.querySelectorAll(".modal-backdrop")].at(-1);
+    expect(dlg.textContent).toMatch(/Delete this ₱2,000\.00 advance\?[\s\S]*No money has been released/);
+    dlg.querySelector('[data-action="confirm"], .btn-danger').click();
+    await until(() => data.advancesApi.mock.calls.length);
+    expect(data.advancesApi).toHaveBeenCalledWith({ action: "delete", advanceId: notGiven.id });
+    container.querySelector(`[data-advance="${given.id}"] [data-x="void"]`).click();
+    const f = lastForm();
+    f.elements.reason.value = "Entered twice";
+    submit(f);
+    await flush();
+    [...document.querySelectorAll(".modal-backdrop")].at(-1).querySelector('[data-action="confirm"], .btn-danger').click();
+    await until(() => data.advancesApi.mock.calls.some((c) => c[0].action === "void"));
+    expect(data.advancesApi).toHaveBeenCalledWith({ action: "void", advanceId: given.id, reason: "Entered twice" });
+  });
+});

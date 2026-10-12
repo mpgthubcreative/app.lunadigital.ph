@@ -308,13 +308,18 @@ export async function updateAdvance({ db, tenant, FieldValue, business, advanceI
   }, TX_OPTIONS);
 }
 
-export async function deleteAdvance({ db, tenant, advanceId }) {
+// Owner-pilot change: an advance whose money was never given (requested,
+// approved or rejected) can be deleted outright; a released one is voided
+// instead (voidAdvance). Deleting twice is fine (already gone).
+export async function deleteAdvance({ db, tenant, FieldValue = null, advanceId, actor = null }) {
   const ref = advanceRef(tenant, advanceId);
   return db.runTransaction(async (tx) => {
     const snap = await tx.get(ref);
-    if (!snap.exists) throw new PayrollError("not-found", "Advance not found");
-    if (snap.data().status !== "not_yet_paid") throw new PayrollError("advance-paid", snap.data().status === "paid" ? "A released advance can't be deleted" : "Reject the request instead");
+    if (!snap.exists) return { advanceId, deleted: true, alreadyGone: true };
+    const a = snap.data();
+    if (a.status === "paid") throw new PayrollError("advance-paid", "This advance was given: void it instead (with a reason)");
     tx.delete(ref);
+    tx.set(tenant.collection("auditLog").doc(), { type: "advance.deleted", advanceId, staffId: a.staffId, staffName: a.staffName, amount: a.amount, status: a.status, actor, at: FieldValue ? FieldValue.serverTimestamp() : new Date() });
     return { advanceId, deleted: true };
   }, TX_OPTIONS);
 }
@@ -679,8 +684,15 @@ export async function deferAdvance({ db, tenant, FieldValue, business = null, pa
   return r;
 }
 
+// Owner-pilot change: deleting an UNPAID payroll removes the saved record
+// and the lines added to it by hand (bonus, deductions, 13th month).
+// Attendance, the staff record and advances stay; advance plans stay too,
+// so the period simply shows as worked out automatically again (nothing is
+// stored until the next real action). Deleting twice is fine.
 export async function deleteDraftPayroll({ db, tenant, FieldValue, payrollId, actor }) {
+  const ref0 = payrollRef(tenant, payrollId);
   return db.runTransaction(async (tx) => {
+    if (!(await tx.get(ref0)).exists) return { payrollId, deleted: true, alreadyGone: true };
     const draft = await loadDraft(tx, tenant, payrollId);
     const sRef = staffRef(tenant, draft.p.staffId);
     await loadStaff(tx, tenant, draft.p.staffId);
@@ -688,6 +700,7 @@ export async function deleteDraftPayroll({ db, tenant, FieldValue, payrollId, ac
     tx.delete(draft.ref);
     for (const l of lines.docs) tx.update(l.ref, { payrollId: null });
     tx.update(sRef, { payrollTouchedAt: FieldValue.serverTimestamp() });
+    tx.set(tenant.collection("auditLog").doc(), { type: "payroll.deleted", payrollId, staffId: draft.p.staffId, staffName: draft.p.staffName, period: { start: draft.p.periodStart, end: draft.p.periodEnd }, netPay: draft.p.netPay ?? null, manualLines: [...(draft.p.additions || []), ...(draft.p.deductions || []).filter((d) => d.type === "manual")].map((x) => ({ type: x.type, description: x.description, amount: x.amount })), actor, at: FieldValue.serverTimestamp() });
     return { payrollId, deleted: true, by: actor?.uid ?? null };
   }, TX_OPTIONS);
 }
@@ -1714,4 +1727,116 @@ export async function attendanceReview({ tenant, staffId = null, periodStart = n
     if (c.exists) confirmation = { periodStart, counts: c.data().counts, confirmedAt: c.data().confirmedAt?.toDate?.()?.toISOString?.() ?? null };
   }
   return { corrections: corrections.map(({ id, staffId: s, staffName, date, message, createdAt }) => ({ id, staffId: s, staffName, date, message, createdAt })), requests, confirmation };
+}
+
+// ---------- Owner-pilot change: void a paid payroll / a released advance ----------
+//
+// Real money was recorded, so nothing is silently destroyed: the record
+// moves to voidedPayrolls / voidedAdvances (with the reason, who, when and
+// every reversal made) and leaves the active lists. Its proof file stays
+// with the voided record (still metered; never orphaned). Retrying is fine.
+
+const voidReason = (reason) => {
+  const why = typeof reason === "string" ? reason.trim().replace(/\s+/g, " ").slice(0, 200) : "";
+  if (why.length < 3) throw new PayrollError("reason-required", "Say why (e.g. Entered twice, Wrong employee)");
+  return why;
+};
+
+// A PAID payroll: the salary payment is reversed. Advance deductions it took
+// go back to what's owed (planned again for that period), its days unlock,
+// its receipt link stops working; the helper's confirmation and the proof
+// stay in the voided record. The period then shows as unpaid again
+// (worked out automatically). An UNPAID payroll is simply deleted instead.
+export async function voidPayroll({ db, tenant, FieldValue, payrollId, reason, actor, now = new Date() }) {
+  const why = voidReason(reason);
+  const ref = payrollRef(tenant, payrollId);
+  return db.runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    if (!snap.exists) {
+      const done = await tx.get(tenant.collection("voidedPayrolls").where("originalId", "==", payrollId).limit(1));
+      if (!done.empty) return { payrollId, voided: true, alreadyVoided: true };
+      throw new PayrollError("not-found", "Payroll not found");
+    }
+    const p = snap.data();
+    if (p.status !== "released") throw new PayrollError("payroll-unpaid", "This payroll isn't paid: delete it instead");
+    await loadStaff(tx, tenant, p.staffId);
+    const advSnaps = (await tx.get(tenant.collection("advances").where("staffId", "==", p.staffId))).docs;
+    const lineSnaps = (await tx.get(tenant.collection("attendance").where("payrollId", "==", payrollId))).docs;
+    const linkRef = p.receiptLinkHash ? db.collection("receiptLinks").doc(p.receiptLinkHash) : null;
+    const linkSnap = linkRef ? await tx.get(linkRef) : null;
+    const stamp = FieldValue.serverTimestamp();
+    const reversals = [];
+    for (const s of advSnaps) {
+      const a = s.data();
+      const applied = scheduleOf(a).filter((e) => e.state === "applied" && e.payrollId === payrollId);
+      const missed = scheduleOf(a).filter((e) => e.state === "not_taken" && e.payrollId === payrollId);
+      if (!applied.length && !missed.length) continue;
+      const back = applied.reduce((t, e) => t + e.amount, 0);
+      const deductedAmount = Math.max(0, (Number.isSafeInteger(a.deductedAmount) ? a.deductedAmount : 0) - back);
+      const schedule = scheduleOf(a).map((e) => (applied.includes(e) || missed.includes(e) ? { ...e, state: "planned", payrollId: null } : e));
+      if (back) reversals.push({ type: "advance-deduction", advanceId: s.id, amount: back });
+      tx.update(s.ref, { deductedAmount, deducted: false, schedule, deductionLog: [...(Array.isArray(a.deductionLog) ? a.deductionLog : []), ...(back ? [{ payrollId, amount: -back, periodEnd: p.periodEnd, voided: true }] : [])].slice(-100), history: append(a.history, entry(actor, `${back ? `${peso(back)} deduction reversed` : "Plan restored"}: the ${p.periodStart} to ${p.periodEnd} payroll was voided (${why})`)), updatedAt: stamp });
+    }
+    for (const l of lineSnaps) tx.update(l.ref, { payrollId: null });
+    if (lineSnaps.length) reversals.push({ type: "attendance-unlocked", days: lineSnaps.length });
+    if (linkSnap?.exists) tx.delete(linkRef);
+    const voidRef = tenant.collection("voidedPayrolls").doc(`${payrollId}-${now.getTime()}`);
+    tx.create(voidRef, { ...p, originalId: payrollId, void: { reason: why, by: actor ? { uid: actor.uid, name: actor.name } : null, at: now, reversals, receiptWas: p.receiptStatus ?? null }, history: append(p.history, entry(actor, `Voided · Reason: ${why}`)) });
+    tx.delete(ref);
+    tx.update(staffRef(tenant, p.staffId), { payrollTouchedAt: stamp });
+    tx.set(tenant.collection("auditLog").doc(), { type: "payroll.voided", payrollId, voidedId: voidRef.id, staffId: p.staffId, staffName: p.staffName, period: { start: p.periodStart, end: p.periodEnd }, amountPaid: p.salary?.amount ?? null, reason: why, reversals, actor, at: stamp });
+    return { payrollId, voided: true, reversals };
+  }, TX_OPTIONS);
+}
+
+// A RELEASED advance entered by mistake ("Entered twice", "Wrong
+// employee"): what's owed on it is cancelled, its planned deductions leave
+// any unpaid payroll, and separate repayments on it are reversed (listed in
+// the voided record). A deduction already taken by a PAID payroll can't be
+// undone here without rewriting that salary: void (or correct) that payroll
+// first; Luna names it.
+export async function voidAdvance({ db, tenant, FieldValue, advanceId, reason, actor, now = new Date() }) {
+  const why = voidReason(reason);
+  const ref = advanceRef(tenant, advanceId);
+  return db.runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    if (!snap.exists) {
+      const done = await tx.get(tenant.collection("voidedAdvances").doc(advanceId));
+      if (done.exists) return { advanceId, voided: true, alreadyVoided: true };
+      throw new PayrollError("not-found", "Advance not found");
+    }
+    const a = { id: snap.id, ...snap.data() };
+    if (a.status !== "paid") throw new PayrollError("advance-not-released", "This advance wasn't given: delete it instead");
+    const applied = scheduleOf(a).filter((e) => e.state === "applied");
+    if (applied.length) throw new PayrollError("paid-payroll-deduction", `Paid salary already took ${applied.map((e) => `${peso(e.amount)} (${e.periodStart} to ${e.periodEnd})`).join(", ")} from this advance. Void that payroll first, then void the advance.`);
+    await loadStaff(tx, tenant, a.staffId);
+    const payrolls = await staffPayrolls(tx, tenant, a.staffId);
+    const all = (await tx.get(tenant.collection("advances").where("staffId", "==", a.staffId))).docs.map((d) => ({ id: d.id, ...d.data() }));
+    const stamp = FieldValue.serverTimestamp();
+    const repaid = Array.isArray(a.repayments) ? a.repayments : [];
+    const reversals = [
+      { type: "balance-cancelled", amount: advanceRemaining(a) },
+      ...(repaid.length ? [{ type: "repayments-reversed", amount: repaid.reduce((t, r) => t + r.amount, 0), count: repaid.length }] : []),
+      ...(plannedEntries(a).length ? [{ type: "planned-deductions-removed", amount: plannedEntries(a).reduce((t, e) => t + e.amount, 0) }] : []),
+    ];
+    const touched = new Set(plannedEntries(a).map((e) => e.periodStart));
+    const advancesAfter = all.filter((x) => x.id !== a.id);
+    for (const p of payrolls) if (p.status === "draft" && touched.has(p.periodStart)) syncDraftLines(tx, tenant, p, advancesAfter, FieldValue);
+    tx.create(tenant.collection("voidedAdvances").doc(advanceId), { ...snap.data(), originalId: advanceId, void: { reason: why, by: actor ? { uid: actor.uid, name: actor.name } : null, at: now, reversals, receiptWas: a.receipt?.state ?? null }, history: append(a.history, entry(actor, `Voided · Reason: ${why}`)) });
+    tx.delete(ref);
+    tx.update(staffRef(tenant, a.staffId), { payrollTouchedAt: stamp, advanceTouchedAt: stamp });
+    tx.set(tenant.collection("auditLog").doc(), { type: "advance.voided", advanceId, staffId: a.staffId, staffName: a.staffName, amount: a.amount, reason: why, reversals, actor, at: stamp });
+    return { advanceId, voided: true, reversals };
+  }, TX_OPTIONS);
+}
+
+// The voided records, newest first (the optional "Voided records" view).
+export async function listVoided({ tenant, kind, staffId = null }) {
+  const col = kind === "advance" ? "voidedAdvances" : "voidedPayrolls";
+  const snap = await (isValidStaffId(staffId) ? tenant.collection(col).where("staffId", "==", staffId) : tenant.collection(col)).limit(100).get();
+  const iso = (v) => (v instanceof Date ? v : v?.toDate?.())?.toISOString?.() ?? null;
+  return snap.docs
+    .map((d) => d.data())
+    .map((x) => ({ staffName: x.staffName, ...(kind === "advance" ? { amount: x.amount, date: x.paidDate || x.date } : { period: { start: x.periodStart, end: x.periodEnd }, amountPaid: x.salary?.amount ?? null }), reason: x.void?.reason ?? null, by: x.void?.by?.name ?? null, at: iso(x.void?.at), reversals: x.void?.reversals ?? [] }))
+    .sort((a, b) => ((a.at || "") < (b.at || "") ? 1 : -1));
 }
