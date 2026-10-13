@@ -1,6 +1,8 @@
 // Users (Phase 18.6): the Owner manages the team here, no Luna help needed.
-//   Member | Login | Role | Status | actions (Change role · Remove access /
-//   Restore · New activation link)
+//   Member | Login | Role | Status | actions (Change role · New activation
+//   link · Deactivate access / Restore access · Remove user)
+// Owner-pilot cleanup: Deactivate access = temporary ("No access", can be
+// restored); Remove user = the membership goes for good (records stay).
 // "Add member" creates the account with no password and shows a one-time
 // activation link to send; the person chooses their own password. Every
 // rule (no self-changes, owner protected, no Owner role, user limit) is
@@ -41,7 +43,8 @@ export function mount(container, session, { api = defaultApi, toast = defaultToa
     // Owner-pilot fix: a kasambahay who was added as Manager / Admin.
     if (state.householdStaffAccess && !m.householdStaff) items.push({ act: "make-staff", label: "Make household staff" });
     if (m.status === "active" && (m.activation === "pending" || m.usesLoginId)) items.push({ act: "link", label: m.activation === "pending" ? "New activation link" : "Reset password (new link)" });
-    items.push(m.status === "active" ? { act: "remove", label: "Remove access", danger: true } : { act: "restore", label: "Restore access" });
+    items.push(m.status === "active" ? { act: "deactivate", label: "Deactivate access" } : { act: "restore", label: "Restore access" });
+    items.push({ sep: true }, { act: "remove-user", label: "Remove user", danger: true });
     return rowMenu(m.uid, items, { label: `Actions for ${m.name}` });
   };
 
@@ -155,10 +158,17 @@ export function mount(container, session, { api = defaultApi, toast = defaultToa
       if (el.dataset.act === "role") {
         const r = await formDialog({ title: `Change ${m.name}'s role`, fields: [{ name: "role", label: "Role", type: "select", options: roleOptions(), value: m.role }], submitLabel: "Save", onSubmit: (v) => api("members", { method: "POST", body: { action: "setRole", uid: m.uid, role: v.role } }) });
         if (r && !r.unchanged) toast("Role changed.", "success");
-      } else if (el.dataset.act === "remove") {
-        if (!(await confirm({ title: `Remove ${m.name}'s access?`, body: "They're signed out and can't use Luna for this business. Everything they recorded stays. You can restore access later.", confirmLabel: "Remove access", danger: true }))) return;
+      } else if (el.dataset.act === "deactivate") {
+        if (!(await confirm({ title: `Deactivate ${m.name}'s access?`, body: "They're signed out and can't use Luna for this business until you restore access. Everything they recorded stays.", confirmLabel: "Deactivate access", danger: true }))) return;
         await api("members", { method: "POST", body: { action: "setAccess", uid: m.uid, enabled: false } });
         toast(`${m.name} no longer has access.`, "success");
+      } else if (el.dataset.act === "remove-user") {
+        const body = m.householdStaff
+          ? "They will no longer be able to sign in to this Household workspace. Their attendance, payroll and advance history will be kept. This does not automatically deactivate their Household Staff employment record."
+          : "They will no longer be able to sign in to this business, and they leave this list. Everything they recorded stays.";
+        if (!(await confirm({ title: `Remove ${m.name}'s Luna access?`, body, confirmLabel: "Remove user", danger: true }))) return;
+        await api("members", { method: "POST", body: { action: "remove", uid: m.uid } });
+        toast(`${m.name} was removed.`, "success");
       } else if (el.dataset.act === "restore") {
         await api("members", { method: "POST", body: { action: "setAccess", uid: m.uid, enabled: true } });
         toast(`${m.name} has access again.`, "success");

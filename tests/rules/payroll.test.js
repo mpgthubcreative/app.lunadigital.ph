@@ -132,6 +132,20 @@ describe("Phase 18.6: household staff accounts and attendance requests", () => {
     });
   });
 
+  // Owner-pilot cleanup: the Paid Leave allowance and the staff link are
+  // server-only; a helper can't raise their own allowance or keep a link.
+  it("a household staff login can't write the allowance, their staff record or their membership", async () => {
+    const db = dbAs(env, "maria@home-a");
+    await assertFails(db.doc(`businesses/${H}/settings/household`).set({ paidLeaveDays: 30 }));
+    await assertFails(db.doc(`businesses/${H}/householdStaff/s1`).set({ paidLeaveDays: 30 }, { merge: true }));
+    await assertFails(db.doc(`businesses/${H}/attendance/s1_2026-10-03`).set({ status: "official_leave", leaveOverride: { reason: "mine" } }));
+    await assertFails(db.doc(`businesses/${H}/members/maria@home-a`).update({ status: "active" }));
+    await assertFails(db.doc(`businesses/${H}/members/maria@home-a`).delete());
+    await assertFails(db.doc(`businesses/${H}/members/owner@home-a`).delete());
+    await assertFails(dbAs(env, "owner@home-a").doc(`businesses/${H}/settings/household`).set({ paidLeaveDays: 30 }));
+    await assertFails(dbAs(env, "owner@home-a").doc(`businesses/${H}/members/maria@home-a`).delete());
+  });
+
   it("the Owner and Manager read pending requests (attendance.view); other households and roles don't", async () => {
     for (const uid of ["owner@home-a", "manager@home-a"]) {
       await assertSucceeds(dbAs(env, uid).doc(`businesses/${H}/attendanceRequests/s1_2026-10-16`).get());

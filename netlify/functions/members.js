@@ -4,6 +4,8 @@
 //        -> a one-time activation link token for a new account (shown once)
 //   POST { action: "setRole", uid, role }                users.manage
 //   POST { action: "setAccess", uid, enabled }           users.manage (remove / restore)
+//   POST { action: "remove", uid }                       users.manage (Remove user: the
+//                                                        membership goes for good; records stay)
 //   POST { action: "newLink", uid }                      users.manage (account not set up yet,
 //                                                        or a login ID that lost its password)
 //   POST { action: "linkStaff", uid, staffId }           users.manage + household.manage
@@ -16,13 +18,14 @@ import { respond, withErrorHandling, parseJsonBody, RequestError } from "./_lib/
 import { getAdmin } from "./_lib/firebase-admin.js";
 import { requireTenant } from "./_lib/tenant.js";
 import { actorOf, only } from "./_lib/inventory-http.js";
-import { listMembers, inviteMember, setMemberRole, setMemberAccess, newMemberLink, linkMemberToStaff, staffWithoutLogin, assignableRoles, MemberError, ProvisioningError } from "./_lib/members.js";
+import { listMembers, inviteMember, setMemberRole, setMemberAccess, removeMemberFromBusiness, newMemberLink, linkMemberToStaff, staffWithoutLogin, assignableRoles, MemberError, ProvisioningError } from "./_lib/members.js";
 
 const STATUS = { "not-found": 404, "not-yourself": 403, "owner-protected": 403, "already-member": 409, "user-limit-reached": 403, "household-login": 409, "login-disabled": 409, "has-password": 409, "login-id-busy": 503 };
 const ACTIONS = {
   invite: { fields: ["action", "member"], created: true, run: (c, b) => inviteMember({ ...c, input: b.member }) },
   setRole: { fields: ["action", "uid", "role"], run: (c, b) => setMemberRole({ ...c, uid: b.uid, role: b.role }) },
   setAccess: { fields: ["action", "uid", "enabled"], run: (c, b) => setMemberAccess({ ...c, uid: b.uid, enabled: b.enabled }) },
+  remove: { fields: ["action", "uid"], run: (c, b) => removeMemberFromBusiness({ ...c, uid: b.uid }) },
   newLink: { fields: ["action", "uid"], run: (c, b) => newMemberLink({ ...c, uid: b.uid }) },
   linkStaff: { fields: ["action", "uid", "staffId"], also: "household.manage", run: (c, b) => linkMemberToStaff({ ...c, uid: b.uid, staffId: b.staffId }) },
 };

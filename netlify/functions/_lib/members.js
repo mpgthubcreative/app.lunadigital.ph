@@ -17,7 +17,7 @@
 // already has a Luna account is added as is: they sign in as before.
 
 import { ROLE_TEMPLATES } from "../../../shared/permissions.js";
-import { ensureAuthUser, addMember, setMemberStatus, ProvisioningError } from "./provisioning.js";
+import { ensureAuthUser, addMember, setMemberStatus, removeMember, ProvisioningError } from "./provisioning.js";
 import { newActivation, writeActivationLink, loginName, isLoginIdEmail, makeLoginId, loginIdEmail } from "./activation.js";
 
 export class MemberError extends Error {
@@ -163,8 +163,50 @@ export async function setMemberAccess({ db, admin, auth, tenant, businessId, uid
   const { m } = await target(tenant, uid, actor);
   await setMemberStatus({ db, admin, businessId, uid, status: enabled ? "active" : "disabled", audit: { actor, reason: enabled ? "Access restored from the Users page" : "Access removed from the Users page" } });
   if (!enabled) await auth.revokeRefreshTokens(uid).catch(() => {});
-  if (m.staffId) await tenant.doc("householdStaff", m.staffId).update({ "login.status": enabled ? (m.activation?.status === "pending" ? "pending" : "active") : "disabled" }).catch(() => {});
+  // Only while the staff record is still linked to this login (a Remove
+  // user in between unlinks it; nothing is written back then).
+  if (m.staffId) {
+    const ref = tenant.doc("householdStaff", m.staffId);
+    await db.runTransaction(async (tx) => {
+      const s = await tx.get(ref);
+      if (s.exists && s.data().memberUid === uid) tx.update(ref, { "login.status": enabled ? (m.activation?.status === "pending" ? "pending" : "active") : "disabled" });
+    }).catch(() => {});
+  }
   return { uid, status: enabled ? "active" : "disabled" };
+}
+
+// Owner-pilot cleanup: Remove user. The person's membership of THIS
+// business goes for good (not "No access": they leave the Users list; the
+// audit log keeps it). A household staff login is unlinked from its staff
+// record, which stays, with its attendance, payroll, advances and
+// confirmations: removing access doesn't end employment (Household Staff
+// does that). Their Luna account itself is kept (it may belong to other
+// businesses); they're signed out. Re-adding later links the same staff
+// record again (Create login / Add member -> Household Staff). Retrying is
+// harmless.
+export async function removeMemberFromBusiness({ db, admin, auth, tenant, businessId, uid, actor }) {
+  if (typeof uid !== "string" || !UID.test(uid)) throw new MemberError("invalid-input", "Choose a member");
+  if (uid === actor.uid) throw new MemberError("not-yourself", "You can't remove yourself. Ask another owner or Luna.");
+  const snap = await tenant.member(uid).get();
+  if (!snap.exists) return { uid, removed: false, alreadyRemoved: true };
+  if (snap.data().isAccountOwner === true) throw new MemberError("owner-protected", "The business owner can't be removed.");
+  const r = await removeMember({
+    db,
+    admin,
+    businessId,
+    uid,
+    audit: { actor, reason: "Removed from the Users page" },
+    within: async (tx, { member }) => {
+      if (!member.staffId) return null;
+      const ref = tenant.doc("householdStaff", member.staffId);
+      const s = await tx.get(ref);
+      if (!s.exists || s.data().memberUid !== uid) return null;
+      const history = Array.isArray(s.data().history) ? s.data().history : [];
+      return () => tx.update(ref, { memberUid: null, login: null, history: [...history, { at: new Date(), actor: { uid: actor.uid, name: actor.name ?? null }, label: `Luna access removed (login ${loginName(member.email || "")})` }].slice(-200) });
+    },
+  });
+  await auth.revokeRefreshTokens(uid).catch(() => {});
+  return { uid, removed: r.removed, ...(r.alreadyRemoved ? { alreadyRemoved: true } : {}) };
 }
 
 // Owner: a new activation link, for someone who hasn't set up their

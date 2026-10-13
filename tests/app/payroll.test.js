@@ -330,7 +330,7 @@ describe("Household Staff", () => {
     form.elements.payCycle.value = "weekly";
     submit(form);
     await flush();
-    expect(data.staffApi).toHaveBeenCalledWith({ action: "create", staff: { name: "Lito", position: null, dailyWage: 65050, payCycle: "weekly", cutoffs: null, advanceLimit: null, phone: null, startDate: null, endDate: null, notes: null } });
+    expect(data.staffApi).toHaveBeenCalledWith({ action: "create", staff: { name: "Lito", position: null, dailyWage: 65050, payCycle: "weekly", cutoffs: null, advanceLimit: null, paidLeaveDays: null, phone: null, startDate: null, endDate: null, notes: null } });
   });
 
   it("Owner-pilot batch: custom cutoffs (14 and 29) and a ₱5,000 advance limit", async () => {
@@ -382,7 +382,7 @@ describe("Household Staff: ⋯ Delete (added by mistake)", () => {
     await flush();
     container.querySelector('.menu-item[data-act="delete"]').click();
     await flush();
-    expect(data.staffApi).not.toHaveBeenCalled();
+    expect(data.staffApi).not.toHaveBeenCalledWith(expect.objectContaining({ action: "delete" }));
     document.body.innerHTML = '<main id="content"></main>';
     container = document.getElementById("content");
     mountStaff(container, home("manager", { revoke: ["household.manage"] }), { data: fakeData(), toast: () => {} });
@@ -555,13 +555,14 @@ describe("Owner-pilot change: ⋯ Delete payroll / Void payroll / Delete or Void
     await flush();
     const items = (id) => [...container.querySelectorAll(`tr[data-payroll="${id}"] .line-menu-list > *`)].map((x) => (x.classList.contains("menu-sep") ? "—" : x.textContent));
     expect(items(draft.id)).toEqual(["View details", "—", "Delete payroll"]);
-    expect(items(paid.id)).toEqual(["View details", "—", "Void payroll"]);
-    expect(items(auto.id)).toEqual(["View details"]);
+    expect(items(paid.id)).toEqual(["View details", "Correct payment", "—", "Void payroll"]);
+    // Owner-pilot cleanup: always visible; nothing saved = it explains.
+    expect(items(auto.id)).toEqual(["View details", "—", "Delete payroll"]);
     // Delete: a plain confirmation, then deleteDraft.
     container.querySelector(`tr[data-payroll="${draft.id}"] [data-act="delete-payroll"]`).click();
     await flush();
     const dlg = [...document.querySelectorAll(".modal-backdrop")].at(-1);
-    expect(dlg.textContent).toMatch(/Delete Maria's Oct 1–15 payroll\?[\s\S]*This removes this payroll record and its manual payroll entries\. Attendance and Staff records will not be deleted\./);
+    expect(dlg.textContent).toMatch(/Delete Maria's Oct 1–15 payroll\?[\s\S]*This removes the saved payroll record and manual payroll entries\. Attendance, Staff and Advances will remain\./);
     dlg.querySelector('[data-action="confirm"], .btn-danger').click();
     await until(() => data.payrollApi.mock.calls.some((c) => c[0].action === "deleteDraft"));
     expect(data.payrollApi).toHaveBeenCalledWith({ action: "deleteDraft", payrollId: draft.id });
@@ -608,5 +609,112 @@ describe("Owner-pilot change: ⋯ Delete payroll / Void payroll / Delete or Void
     [...document.querySelectorAll(".modal-backdrop")].at(-1).querySelector('[data-action="confirm"], .btn-danger').click();
     await until(() => data.advancesApi.mock.calls.some((c) => c[0].action === "void"));
     expect(data.advancesApi).toHaveBeenCalledWith({ action: "void", advanceId: given.id, reason: "Entered twice" });
+  });
+});
+
+describe("Owner-pilot cleanup: payroll eligibility, Delete / Correct from ⋯, Paid Leave allowance", () => {
+  it("Employee dropdown and Everyone list come from the same server rule: only Loriza, total only hers", async () => {
+    const loriza = payroll({ id: "staffLoriza001_2026-10-01", staffId: "staffLoriza001", staffName: "Loriza Ibanez", automatic: true, deductions: [], deductionsTotal: 0, basePay: 493200, netPay: 493200, status: "draft" });
+    const view = periodView([loriza], { start: "2026-10-01", end: "2026-10-15", state: "in_progress" });
+    view.view.people = [{ id: "staffLoriza001", name: "Loriza Ibanez", active: true }];
+    // activeStaff (old source) would still list someone else: the view's list wins.
+    const data = fakeData({ activeStaff: vi.fn(async () => [maria, { id: "staffLoriza001", name: "Loriza Ibanez" }]), payrollApi: vi.fn(async (b) => (b.action === "period" ? view : {})) });
+    mountPayroll(container, home(), { data, now: NOW, toast: () => {} });
+    await flush();
+    expect([...container.querySelectorAll('[data-role="pick-staff"] option')].map((o) => o.textContent)).toEqual(["Everyone", "Loriza Ibanez"]);
+    expect([...container.querySelectorAll("tr[data-payroll] td.cell-strong")].map((td) => td.textContent.trim())).toEqual(["Loriza Ibanez"]);
+    expect(container.querySelector('[data-role="period-state"]').textContent).toMatch(/₱4,932\.00 still to pay/);
+  });
+
+  it("an automatic (unsaved) payroll: ⋯ Delete payroll explains there's nothing saved and changes nothing", async () => {
+    const auto = payroll({ automatic: true });
+    const data = fakeData({ payrollApi: vi.fn(async (b) => (b.action === "period" ? periodView([auto]) : {})) });
+    mountPayroll(container, home(), { data, now: NOW, toast: () => {} });
+    await flush();
+    container.querySelector('[data-act="delete-payroll"]').click();
+    await flush();
+    const dlg = [...document.querySelectorAll(".modal-backdrop")].at(-1);
+    expect(dlg.textContent).toMatch(/Nothing saved for Maria's Oct 1–15 payroll[\s\S]*no saved record to delete/);
+    dlg.querySelector('[data-action="confirm"], .btn-danger, .btn-primary').click();
+    await flush();
+    expect(data.payrollApi.mock.calls.some((c) => c[0].action === "deleteDraft")).toBe(false);
+  });
+
+  it("a paid payroll: ⋯ Correct payment opens the correction form directly", async () => {
+    const paid = payroll({ status: "released", ownerPayment: "paid", receiptStatus: "awaiting", salary: { amount: 670000, paidDate: "2026-10-12", method: "cash" } });
+    const data = fakeData({ payrollApi: vi.fn(async (b) => (b.action === "period" ? periodView([paid]) : {})) });
+    mountPayroll(container, home(), { data, now: NOW, toast: () => {} });
+    await flush();
+    container.querySelector('[data-act="correct-payment"]').click();
+    await until(() => lastForm()?.elements.reason);
+    expect(lastForm().closest(".modal-backdrop").textContent).toMatch(/Correct this payment/);
+  });
+
+  it("Attendance shows Paid Leave used / remaining; a used-up allowance asks: Unpaid Leave instead, or override with a reason", async () => {
+    const used = { date: "2026-10-16", code: "leave-allowance-used", error: "Paid Leave allowance has been fully used (5 of 5 days in 2026)." };
+    const setAttendanceMany = vi.fn(async (_s, days, _reason, override) => (days[0].status === "official_leave" && !override ? { saved: [], failed: [used] } : { saved: days, failed: [] }));
+    const data = fakeData({ setAttendanceMany, attendanceReview: vi.fn(async () => ({ corrections: [], requests: [], confirmation: null, leave: { year: 2026, entitled: 5, used: 5, remaining: 0, source: "household" } })) });
+    mountAttendance(container, home(), { data, now: NOW, toast: () => {} });
+    await flush();
+    expect(container.querySelector('[data-role="leave"]').textContent.replace(/\s+/g, " ")).toMatch(/Paid Leave 2026: used 5 of 5 days · 0 remaining/);
+    const mark = async () => {
+      const sel = container.querySelector('select[data-act="mark"][data-date="2026-10-16"]');
+      sel.value = "official_leave";
+      sel.dispatchEvent(new Event("change", { bubbles: true }));
+      await until(() => lastForm()?.elements.choice);
+      return lastForm();
+    };
+    let f = await mark();
+    expect(f.closest(".modal-backdrop").textContent).toMatch(/Paid Leave allowance has been fully used\./);
+    expect([...f.elements.choice.options].map((o) => o.textContent)).toEqual(["Unpaid Leave instead", "Paid Leave anyway (override)"]);
+    submit(f);
+    await until(() => setAttendanceMany.mock.calls.length === 2);
+    expect(setAttendanceMany).toHaveBeenLastCalledWith(maria.id, [{ date: "2026-10-16", status: "unpaid_leave" }], null, null);
+    await flush();
+    f = await mark();
+    f.elements.choice.value = "override";
+    submit(f); // no reason: refused in the form
+    await flush();
+    expect(setAttendanceMany.mock.calls.length).toBe(3);
+    f.elements.reason.value = "Family emergency";
+    submit(f);
+    await until(() => setAttendanceMany.mock.calls.length === 4);
+    expect(setAttendanceMany).toHaveBeenLastCalledWith(maria.id, [{ date: "2026-10-16", status: "official_leave" }], null, "Family emergency");
+  });
+
+  it("Household Staff: the household Paid Leave default (Change) and an optional number per helper", async () => {
+    const data = fakeData({ staffApi: vi.fn(async (b) => (b.action === "settings" ? { settings: { paidLeaveDays: 5, leaveYear: "calendar" } } : { staffId: "x" })) });
+    mountStaff(container, home(), { data, toast: () => {} });
+    await flush();
+    expect(container.querySelector('[data-role="leave-default"]').textContent.replace(/\s+/g, " ")).toMatch(/Paid Leave allowance: 5 days a year per helper \(Jan–Dec\)/);
+    container.querySelector('[data-act="leave-default"]').click();
+    let f = lastForm();
+    f.elements.days.value = "7";
+    submit(f);
+    await until(() => data.staffApi.mock.calls.some((c) => c[0].action === "saveSettings"));
+    expect(data.staffApi).toHaveBeenCalledWith({ action: "saveSettings", settings: { paidLeaveDays: 7 } });
+    await flush();
+    container.querySelector('[data-act="new"]').click();
+    await flush();
+    f = lastForm();
+    expect(f.elements.paidLeaveDays.placeholder).toMatch(/Household default/);
+    f.elements.name.value = "Lito";
+    f.elements.dailyWage.value = "500";
+    f.elements.paidLeaveDays.value = "10";
+    submit(f);
+    await flush();
+    expect(data.staffApi).toHaveBeenCalledWith({ action: "create", staff: expect.objectContaining({ name: "Lito", paidLeaveDays: 10 }) });
+  });
+
+  it("the deactivate confirmation says payroll stops (current period too) and that the login is separate", async () => {
+    const confirm = vi.fn(async () => false);
+    const data = fakeData();
+    mountStaff(container, home(), { data, toast: () => {}, confirm });
+    await flush();
+    container.querySelector('.menu-item[data-act="status"]').click();
+    await flush();
+    expect(confirm.mock.calls[0][0].title).toBe("Deactivate Maria?");
+    expect(confirm.mock.calls[0][0].body).toMatch(/stop appearing on Attendance and Payroll, including the current pay period[\s\S]*history stays[\s\S]*managed separately under Users/);
+    expect(data.staffApi).not.toHaveBeenCalledWith(expect.objectContaining({ action: "setStatus" }));
   });
 });

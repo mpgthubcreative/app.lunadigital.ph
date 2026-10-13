@@ -67,7 +67,7 @@ describe("attendance edits racing each other and the payroll", () => {
     expectExplicit(r);
     await consistent(w, payrollId);
     r = await Promise.allSettled([...days, ...days].map((d, i) => pay.setAttendance({ ...w.c, input: { staffId: w.staffId, date: d, status: ["present", "absent", "official_leave"][i % 3] } })));
-    expectExplicit(r);
+    expectExplicit(r, ["leave-allowance-used"]); // Owner-pilot cleanup: 5 Paid Leave days a year by default
     await consistent(w, payrollId);
   });
 
@@ -306,5 +306,49 @@ describe("salary overpayment racing the next payment", () => {
     const taken = (await w.tenant.doc("payrolls", next.payrollId).get()).data().deductions.filter((d) => d.type === "overpayment").reduce((t, d) => t + d.amount, 0);
     expect(sum(src.overpayment?.applied)).toBe(taken);
     expect(src.salary.amount).toBe(15 * 60000); // the early payment is never rewritten
+  });
+});
+
+// Owner-pilot cleanup (2026-10-13).
+describe("Paid Leave allowance racing itself", () => {
+  it("8 days marked Paid Leave at once with 2 days allowed: exactly 2 saved, the rest refused (no override), the payroll matches", async () => {
+    const w = await world();
+    await pay.updateStaff({ ...w.c, staffId: w.staffId, changes: { paidLeaveDays: 2 } });
+    const { payrollId } = await pay.preparePayroll({ ...w.c, staffId: w.staffId, periodStart: "2026-10-01" });
+    const days = daysIn({ start: "2026-10-01", end: "2026-10-08" });
+    const r = await Promise.allSettled(days.map((d) => pay.setAttendance({ ...w.c, input: { staffId: w.staffId, date: d, status: "official_leave" } })));
+    expectExplicit(r, ["leave-allowance-used"]);
+    expect(ok(r)).toHaveLength(2);
+    const leave = (await w.tenant.collection("attendance").where("staffId", "==", w.staffId).where("status", "==", "official_leave").get()).size;
+    expect(leave).toBe(2);
+    expect((await consistent(w, payrollId)).officialLeave).toBe(2);
+    expect((await pay.paidLeaveOf({ tenant: w.tenant, staffId: w.staffId, year: 2026 })).remaining).toBe(0);
+  });
+});
+
+describe("Remove user racing Restore access and itself", () => {
+  it("the membership ends up gone, the staff record unlinked (no stale login), the records kept", async () => {
+    const w = await world();
+    const members = await import("../../netlify/functions/_lib/members.js");
+    const auth = { revokeRefreshTokens: async () => {} };
+    const uid = `helper-${w.c.business.id}`;
+    await prov.addMember({ db, admin, businessId: w.c.business.id, uid, email: `h-${w.c.business.id}@pay.test`, name: "Maria", roleTemplate: "household_staff", extra: { staffId: w.staffId } });
+    await w.tenant.doc("householdStaff", w.staffId).update({ memberUid: uid, login: { login: "maria", status: "active" } });
+    await pay.setAttendance({ ...w.c, input: { staffId: w.staffId, date: "2026-10-01", status: "present" } });
+    await prov.setMemberStatus({ db, admin, businessId: w.c.business.id, uid, status: "disabled" });
+    const common = { db, admin, auth, tenant: w.tenant, businessId: w.c.business.id, actor: w.c.actor };
+    const r = await Promise.allSettled([
+      members.removeMemberFromBusiness({ ...common, uid }),
+      members.setMemberAccess({ ...common, uid, enabled: true }),
+      members.removeMemberFromBusiness({ ...common, uid }),
+      members.setMemberAccess({ ...common, uid, enabled: true }),
+    ]);
+    expectExplicit(r, ["not-found"]);
+    expect((await w.tenant.member(uid).get()).exists).toBe(false);
+    const s = (await w.tenant.doc("householdStaff", w.staffId).get()).data();
+    expect(s.memberUid ?? null).toBeNull();
+    expect(s.login ?? null).toBeNull();
+    expect((await w.tenant.doc("attendance", `${w.staffId}_2026-10-01`).get()).exists).toBe(true);
+    expect((await db.collection("users").doc(uid).get()).data().businessIds).not.toContain(w.c.business.id);
   });
 });

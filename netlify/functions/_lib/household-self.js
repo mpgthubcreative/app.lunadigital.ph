@@ -11,7 +11,7 @@
 import { PayrollError, staffPeriod, paidPayrollLocks, advanceCapacity, cycleLabel, plannedEntries, scheduleOf, reconcileOf, paidTotal, daysIn, attendanceId, summarizeAttendance, isValidStaffId, advanceRemaining, nextDeduction, selfDayLock, MAX_DAYS_AHEAD, ATTENDANCE_STATUSES, ADVANCE_STATUSES, SALARY_METHODS, payrollId as payrollIdOf } from "../../../shared/payroll.js";
 import { businessDate, addDays, isDayId } from "../../../shared/metrics.js";
 import { prepareNotifications } from "./notifications.js";
-import { readProofFile, dayRange, overpaymentLinesFor } from "./payroll.js";
+import { readProofFile, dayRange, overpaymentLinesFor, paidLeaveOf } from "./payroll.js";
 
 const TX_OPTIONS = { maxAttempts: 10 };
 const MAX_HISTORY = 200;
@@ -99,13 +99,15 @@ export async function myHousehold({ db, tenant, business, staffId, now = new Dat
   }
   const sheetDays = daysIn(sheetPeriod);
   // Single-field equality queries only (no composite index), sorted here.
-  const [lineSnaps, reqSnap, paySnap, advSnap, confSnap, corrSnap] = await Promise.all([
+  const [lineSnaps, reqSnap, paySnap, advSnap, confSnap, corrSnap, leave] = await Promise.all([
     db.getAll(...[...new Set([...days, ...sheetDays])].map((d) => tenant.doc("attendance", attendanceId(id, d)))),
     tenant.collection("attendanceRequests").where("staffId", "==", id).get(),
     tenant.collection("payrolls").where("staffId", "==", id).get(),
     tenant.collection("advances").where("staffId", "==", id).get(),
     tenant.doc("attendanceConfirmations", `${id}_${sheetPeriod.start}`).get(),
     tenant.collection("attendanceCorrections").where("staffId", "==", id).get(),
+    // Owner-pilot cleanup: their Paid Leave this calendar year (view only).
+    paidLeaveOf({ tenant, staffId: id, staff, year: Number(today.slice(0, 4)) }).catch(() => null),
   ]);
   const lines = lineSnaps.filter((s) => s.exists).map((s) => s.data());
   const payrolls = paySnap.docs.map((d) => ({ id: d.id, ...d.data() })).sort((a, b) => (a.periodStart < b.periodStart ? 1 : -1));
@@ -158,6 +160,7 @@ export async function myHousehold({ db, tenant, business, staffId, now = new Dat
     staff: { name: staff.name, position: staff.position ?? null, dailyWage: staff.dailyWage, payCycle: staff.payCycle, payCycleLabel: cycleLabel(staff), startDate: staff.startDate ?? null, endDate: staff.endDate ?? null },
     // Owner-pilot batch: their cash advance limit (null limit = no limit set).
     advanceLimit: advanceCapacity(staff, advances),
+    leave: leave ? { year: leave.year, entitled: leave.entitled, used: leave.used, remaining: leave.remaining } : null,
     today,
     todayStatus: lines.find((l) => l.date === today)?.status ?? null,
     period: { start: period.start, end: period.end, days: days.map((d) => ({ date: d, status: lines.find((l) => l.date === d)?.status ?? null, pending: requests.find((r) => r.date === d && r.state === "pending")?.status ?? null })), counts: sum, estimate },

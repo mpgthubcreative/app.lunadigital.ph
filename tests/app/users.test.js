@@ -40,8 +40,8 @@ describe("Users page", () => {
     expect(container.querySelector('[data-act="add"]').textContent).toMatch(/Add member/);
     // Nothing to change on yourself or the account owner.
     expect(rows[0].querySelector(".menu-item")).toBeNull();
-    expect([...rows[1].querySelectorAll(".menu-item")].map((b) => b.textContent.trim())).toEqual(["Change role", "New activation link", "Remove access"]);
-    expect([...rows[2].querySelectorAll(".menu-item")].map((b) => b.textContent.trim())).toEqual(["Restore access"]);
+    expect([...rows[1].querySelectorAll(".menu-item")].map((b) => b.textContent.trim())).toEqual(["Change role", "New activation link", "Deactivate access", "Remove user"]);
+    expect([...rows[2].querySelectorAll(".menu-item")].map((b) => b.textContent.trim())).toEqual(["Restore access", "Remove user"]);
     const roles = container.querySelector('[data-role="role-templates"]');
     expect(roles.tagName).toBe("DETAILS");
     expect(roles.hasAttribute("open")).toBe(false);
@@ -112,5 +112,28 @@ describe("Users page (Household): a kasambahay gets Household Staff access, neve
     submit(lastForm());
     await flush();
     expect(api).toHaveBeenCalledWith("members", { method: "POST", body: { action: "linkStaff", uid: "u5", staffId: "st1" } });
+  });
+
+  it("Owner-pilot cleanup: Deactivate access (temporary) vs Remove user (for good; history kept, employment not ended)", async () => {
+    const api = vi.fn(async (path, opts) => (opts ? {} : HOME));
+    const confirm = vi.fn(async () => true);
+    mount(container, sessionFixture(), { api, toast: vi.fn(), confirm });
+    await flush();
+    const riza = container.querySelector('[data-member="u6"]');
+    expect([...riza.querySelectorAll(".menu > *")].map((b) => (b.classList.contains("menu-sep") ? "—" : b.textContent.trim()))).toEqual(["Deactivate access", "—", "Remove user"]);
+    riza.querySelector('[data-act="deactivate"]').click();
+    await flush();
+    expect(api).toHaveBeenCalledWith("members", { method: "POST", body: { action: "setAccess", uid: "u6", enabled: false } });
+    container.querySelector('[data-member="u6"] [data-act="remove-user"]').click();
+    await flush();
+    expect(confirm.mock.calls.at(-1)[0]).toMatchObject({ title: "Remove Riza's Luna access?", confirmLabel: "Remove user", danger: true });
+    expect(confirm.mock.calls.at(-1)[0].body).toMatch(/no longer be able to sign in to this Household workspace\. Their attendance, payroll and advance history will be kept\. This does not automatically deactivate their Household Staff employment record\./);
+    expect(api).toHaveBeenCalledWith("members", { method: "POST", body: { action: "remove", uid: "u6" } });
+    // Cancelling sends nothing.
+    api.mockClear();
+    confirm.mockResolvedValueOnce(false);
+    container.querySelector('[data-member="u6"] [data-act="remove-user"]').click();
+    await flush();
+    expect(api).not.toHaveBeenCalledWith("members", expect.anything());
   });
 });

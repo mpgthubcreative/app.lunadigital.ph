@@ -76,7 +76,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
   const businessId = session.business.id;
   const today = businessDate(session.business.timezone, now());
   const fromUrl = new URLSearchParams(typeof location === "undefined" ? "" : location.search).get("staff") || "";
-  const state = { staffId: ID.test(fromUrl) ? fromUrl : "", staff: [], loading: true, error: null, periods: [], period: null, rows: [] };
+  const state = { staffId: ID.test(fromUrl) ? fromUrl : "", staff: [], people: null, loading: true, error: null, periods: [], period: null, rows: [] };
   let alive = true;
 
   const periodQuery = () => (state.period && !state.period.mixed && !state.period.current ? { period: { start: state.period.start, end: state.period.end } } : state.period ? { period: { current: true } } : {});
@@ -87,6 +87,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
       if (!state.staff.length && data.activeStaff) state.staff = await data.activeStaff(businessId).catch(() => []);
       const { view } = await data.payrollApi({ action: "period", ...periodQuery(), ...(state.staffId ? { staffId: state.staffId } : {}) });
       state.periods = view.periods;
+      if (view.people) state.people = view.people;
       state.period = view.period;
       state.rows = view.rows;
       state.error = null;
@@ -98,16 +99,23 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     draw();
   }
 
-  // ⋯ per payroll: View details; Delete (saved, unpaid) / Void (paid) last.
+  // ⋯ per payroll: View details; Delete (unpaid) / Void (paid) last.
+  // Owner-pilot cleanup: always visible. An automatic payroll has nothing
+  // saved, so Delete explains that instead of doing nothing.
   const rowMenu = (p) => html`<details class="line-menu"><summary class="btn btn-compact btn-ghost" aria-label="Actions for ${p.staffName}'s payroll">⋯</summary><div class="line-menu-list" role="menu">
       <button type="button" class="menu-item" role="menuitem" data-act="view" data-id="${p.id}">View details</button>
-      ${canManage && p.status === "draft" && !p.automatic ? html`<div class="menu-sep" role="separator"></div><button type="button" class="menu-item is-danger" role="menuitem" data-act="delete-payroll" data-id="${p.id}">Delete payroll</button>` : ""}
+      ${canRelease && p.status === "released" && p.salary ? html`<button type="button" class="menu-item" role="menuitem" data-act="correct-payment" data-id="${p.id}">Correct payment</button>` : ""}
+      ${canManage && p.status === "draft" ? html`<div class="menu-sep" role="separator"></div><button type="button" class="menu-item is-danger" role="menuitem" data-act="delete-payroll" data-id="${p.id}">Delete payroll</button>` : ""}
       ${canRelease && p.status === "released" ? html`<div class="menu-sep" role="separator"></div><button type="button" class="menu-item is-danger" role="menuitem" data-act="void-payroll" data-id="${p.id}">Void payroll</button>` : ""}
     </div></details>`;
 
   // Delete a saved, unpaid payroll (the period goes back to automatic).
   async function deletePayroll(p) {
-    if (!(await confirmDialog({ title: `Delete ${p.staffName}'s ${rowPeriod(p)} payroll?`, body: "This removes this payroll record and its manual payroll entries. Attendance and Staff records will not be deleted. Advance plans stay; the period is worked out automatically again.", confirmLabel: "Delete payroll", danger: true }))) return false;
+    if (p.automatic) {
+      await confirmDialog({ title: `Nothing saved for ${p.staffName}'s ${rowPeriod(p)} payroll`, body: `Luna works this payroll out by itself from attendance and advances, so there's no saved record to delete. It stays until the period is paid. To stop paying ${p.staffName}, deactivate them or set an end date on Household Staff.`, confirmLabel: "OK" });
+      return false;
+    }
+    if (!(await confirmDialog({ title: `Delete ${p.staffName}'s ${rowPeriod(p)} payroll?`, body: "This removes the saved payroll record and manual payroll entries. Attendance, Staff and Advances will remain. The period is then worked out automatically again (planned advance deductions stay planned and still owed).", confirmLabel: "Delete payroll", danger: true }))) return false;
     try {
       await data.payrollApi({ action: "deleteDraft", payrollId: p.id });
       toast("Payroll deleted. The period is worked out automatically again.", "success");
@@ -186,7 +194,8 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     if (!alive) return;
     const hasMixed = !state.staffId && state.periods.filter((x) => x.current).length > 1;
     const mixed = state.period?.mixed === true;
-    const names = state.staff.length ? state.staff : [...new Map(state.rows.map((r) => [r.staffId, { id: r.staffId, name: r.staffName }])).values()];
+    // Owner-pilot cleanup: the server's list, by the same rule as the rows.
+    const names = state.people || (state.staff.length ? state.staff : [...new Map(state.rows.map((r) => [r.staffId, { id: r.staffId, name: r.staffName }])).values()]);
     render(
       container,
       html`
@@ -205,7 +214,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
   }
 
   // ---------- One payroll, as a payslip ----------
-  async function openView(id) {
+  async function openView(id, then = null) {
     const backdrop = document.createElement("div");
     backdrop.className = "modal-backdrop is-panel";
     document.body.appendChild(backdrop);
@@ -521,6 +530,8 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     });
     paint();
     await refresh();
+    // From the row's ⋯ (e.g. Correct payment): open that action directly.
+    if (then) backdrop.querySelector(`[data-x="${then}"]`)?.click();
   }
 
   function choosePeriod(key) {
@@ -537,6 +548,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     el.closest("details")?.removeAttribute("open");
     const p = state.rows.find((r) => r.id === el.dataset.id);
     if (el.dataset.act === "view") openView(el.dataset.id);
+    else if (el.dataset.act === "correct-payment") openView(el.dataset.id, "correct");
     else if (el.dataset.act === "delete-payroll" && p) deletePayroll(p).then((ok) => ok && load());
     else if (el.dataset.act === "void-payroll" && p) voidPaid(p).then((ok) => ok && load());
     else if (el.dataset.act === "voided") showVoided();

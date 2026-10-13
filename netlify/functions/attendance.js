@@ -7,6 +7,9 @@
 //   { action: "review", staffId?, periodStart? }                         attendance.view (open reports, legacy
 //        requests, the helper's confirmation of that period)
 //   { action: "resolveCorrection", correctionId, note? }                 attendance.edit
+// Owner-pilot cleanup: set / setMany take leaveOverride (a reason) to record
+// Paid Leave beyond the helper's allowance on purpose; without it such a day
+// is refused with code "leave-allowance-used". review returns `leave`.
 // official_leave is shown as "Paid Leave". Leave and rest days may be
 // planned ahead; Present / Absent only up to today.
 // One line per person per business-local day; Luna computes payable days
@@ -14,6 +17,7 @@
 // straight to Firestore (attendance.view).
 
 import { getAdmin } from "./_lib/firebase-admin.js";
+import { businessDate } from "../../shared/metrics.js";
 import { payrollActionHandler } from "./_lib/payroll-http.js";
 import { setAttendance, decideAttendanceRequest, decideAttendanceRequests, setAttendanceMany, attendanceReview, resolveCorrection } from "./_lib/payroll.js";
 
@@ -21,11 +25,11 @@ export const createAttendanceHandler = (deps) =>
   payrollActionHandler("attendance", {
     ...deps,
     actions: {
-      set: { permission: "attendance.edit", fields: ["action", "staffId", "date", "status", "note", "reason"], run: (c, b) => setAttendance({ ...c, input: { staffId: b.staffId, date: b.date, status: b.status, note: b.note, reason: b.reason } }) },
+      set: { permission: "attendance.edit", fields: ["action", "staffId", "date", "status", "note", "reason", "leaveOverride"], run: (c, b) => setAttendance({ ...c, input: { staffId: b.staffId, date: b.date, status: b.status, note: b.note, reason: b.reason, leaveOverride: b.leaveOverride } }) },
       decide: { permission: "attendance.edit", fields: ["action", "requestId", "decision"], run: (c, b) => decideAttendanceRequest({ ...c, requestId: b.requestId, decision: b.decision }) },
       decideMany: { permission: "attendance.edit", fields: ["action", "requestIds", "decision"], run: (c, b) => decideAttendanceRequests({ ...c, requestIds: b.requestIds, decision: b.decision }) },
-      setMany: { permission: "attendance.edit", fields: ["action", "staffId", "days", "reason"], run: (c, b) => setAttendanceMany({ ...c, staffId: b.staffId, days: b.days, reason: typeof b.reason === "string" && b.reason.trim() ? b.reason : null }) },
-      review: { permission: "attendance.view", fields: ["action", "staffId", "periodStart"], run: async (c, b) => ({ review: await attendanceReview({ tenant: c.tenant, staffId: b.staffId ?? null, periodStart: b.periodStart ?? null }) }) },
+      setMany: { permission: "attendance.edit", fields: ["action", "staffId", "days", "reason", "leaveOverride"], run: (c, b) => setAttendanceMany({ ...c, staffId: b.staffId, days: b.days, reason: typeof b.reason === "string" && b.reason.trim() ? b.reason : null, leaveOverride: b.leaveOverride ?? null }) },
+      review: { permission: "attendance.view", fields: ["action", "staffId", "periodStart"], run: async (c, b) => ({ review: await attendanceReview({ tenant: c.tenant, staffId: b.staffId ?? null, periodStart: b.periodStart ?? null, today: businessDate(c.business.timezone, c.now) }) }) },
       resolveCorrection: { permission: "attendance.edit", fields: ["action", "correctionId", "note"], run: (c, b) => resolveCorrection({ ...c, correctionId: b.correctionId, note: b.note ?? null }) },
     },
   });

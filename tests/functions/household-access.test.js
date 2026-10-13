@@ -166,12 +166,14 @@ describe("the staff record drives payroll: no second enrollment", () => {
     expect(later.body.prepared.map((x) => x.name).sort()).toEqual(["Late Starter", "Maria"]);
   });
 
-  it("deactivating ends employment today: history kept, final period still payable, no later period; reactivating restores eligibility", async () => {
+  // Owner-pilot cleanup (2026-10-13): a deactivated helper gets no payroll at
+  // all, not even the period they left in (pay them before deactivating).
+  it("deactivating ends employment today: history kept, no payroll worked out any more; reactivating restores eligibility", async () => {
     const maria = await staff("Maria", { startDate: "2026-06-01" });
     await api("attendance", u.carlo, { action: "set", staffId: maria, date: "2026-10-15", status: "present" });
     expect((await api("staff", u.carlo, { action: "setStatus", staffId: maria, status: "inactive" })).body).toMatchObject({ status: "inactive", endDate: "2026-10-16" });
     expect(docAt(`attendance/${paths("attendance/")[0].split("/").at(-1)}`).staffId).toBe(maria);
-    expect((await api("payroll", u.carlo, { action: "prepare", staffId: maria, periodStart: "2026-10-16" })).status).toBe(201); // final period
+    expect((await api("payroll", u.carlo, { action: "prepare", staffId: maria, periodStart: "2026-10-16" })).body.error).toBe("not-eligible");
     clock = new Date("2026-11-20T04:00:00Z");
     const nov = await api("payroll", u.carlo, { action: "prepareAll", asOf: "2026-11-01" });
     expect(nov.body.prepared).toEqual([]);
@@ -184,7 +186,7 @@ describe("the staff record drives payroll: no second enrollment", () => {
     const period = { start: "2026-10-01", end: "2026-10-15" };
     expect(payrollEligibility({ status: "active", startDate: "2026-10-20" }, period)).toMatchObject({ eligible: false });
     expect(payrollEligibility({ status: "active", startDate: "2026-10-15" }, period).eligible).toBe(true);
-    expect(payrollEligibility({ status: "inactive", endDate: "2026-10-03" }, period).eligible).toBe(true);
+    expect(payrollEligibility({ status: "inactive", endDate: "2026-10-03" }, period).eligible).toBe(false);
     expect(payrollEligibility({ status: "inactive", endDate: "2026-09-30" }, period).eligible).toBe(false);
     expect(payrollEligibility({ status: "inactive" }, period).eligible).toBe(false);
   });

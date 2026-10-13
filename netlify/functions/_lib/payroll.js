@@ -19,6 +19,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { decodeProof } from "./payments.js";
 import { reserveStorage, prepareStorageFinalize, releaseStorageReservation } from "./storage-usage.js";
 import { payrollEligibility,
+  onPayroll,
   staffPeriod,
   staffPeriods,
   paidPayrollLocks,
@@ -65,6 +66,11 @@ import { payrollEligibility,
   validateRepayment,
   MAX_SCHEDULE_ENTRIES,
   reconcileOf,
+  paidLeaveBalance,
+  validatePaidLeaveDays,
+  leaveYearOf,
+  PAID_LEAVE_STATUS,
+  DEFAULT_PAID_LEAVE_DAYS,
   paidTotal,
 } from "../../../shared/payroll.js";
 import { businessDate, isDayId, addDays } from "../../../shared/metrics.js";
@@ -143,14 +149,16 @@ export async function updateStaff({ db, tenant, FieldValue, staffId, changes, ac
       if (!drafts.empty) throw new PayrollError("has-draft-payroll", "Pay or delete this person's unpaid payroll before changing the pay cycle");
     }
     const limitText = (v) => (Number.isSafeInteger(v) ? peso(v) : "no limit");
-    const labels = changed.map((k) => (k === "dailyWage" ? `Daily wage changed ${peso(current.dailyWage)} → ${peso(data.dailyWage)}` : k === "notes" ? "Notes updated" : k === "advanceLimit" ? `Advance limit ${limitText(current.advanceLimit)} → ${limitText(data.advanceLimit)}` : k === "cutoffs" || k === "payCycle" ? `Pay cycle: ${cycleLabel({ payCycle: cycle, cutoffs: data.cutoffs ?? current.cutoffs ?? null })}` : `${k} changed`)).filter((l, i, all) => all.indexOf(l) === i);
+    const leaveText = (v) => (Number.isSafeInteger(v) ? `${v} days a year` : "household default");
+    const labels = changed.map((k) => (k === "dailyWage" ? `Daily wage changed ${peso(current.dailyWage)} → ${peso(data.dailyWage)}` : k === "notes" ? "Notes updated" : k === "advanceLimit" ? `Advance limit ${limitText(current.advanceLimit)} → ${limitText(data.advanceLimit)}` : k === "paidLeaveDays" ? `Paid Leave allowance ${leaveText(current.paidLeaveDays)} → ${leaveText(data.paidLeaveDays)}` : k === "cutoffs" || k === "payCycle" ? `Pay cycle: ${cycleLabel({ payCycle: cycle, cutoffs: data.cutoffs ?? current.cutoffs ?? null })}` : `${k} changed`)).filter((l, i, all) => all.indexOf(l) === i);
     tx.update(ref, { ...Object.fromEntries(changed.map((k) => [k, data[k]])), ...(changed.includes("name") ? { nameLower: lower(data.name) } : {}), history: append(current.history, entry(actor, labels.join(" · "))), revision: (current.revision || 1) + 1, updatedBy: actor, updatedAt: FieldValue.serverTimestamp() });
     return { staffId };
   }, TX_OPTIONS);
 }
 
-// Deactivate: employment ends today (unless an end date was already set),
-// so the final pay period can still be prepared but no later one is.
+// Deactivate: employment ends today (unless an end date was already set).
+// Owner-pilot cleanup: from then on no payroll is worked out for them (pay
+// what's owed before deactivating); saved payrolls stay as history.
 // History (attendance, leave, advances, payroll, receipts) is kept as is.
 // Reactivate: an end date that deactivation set is cleared again.
 export async function setStaffStatus({ db, tenant, FieldValue, business = null, staffId, status, actor, now = new Date() }) {
@@ -200,12 +208,72 @@ export async function deleteStaff({ db, tenant, FieldValue, staffId, actor }) {
 // after, who and when. A paid payroll's days stay locked (as before).
 export async function setAttendance({ db, tenant, FieldValue, business, input, actor, now = new Date() }) {
   const today = businessDate(business.timezone, now);
-  const { staffId, date, status, note, reason } = validateAttendanceInput(input, { today });
+  const { leaveOverride: overrideInput, ...rest } = input && typeof input === "object" ? input : {};
+  const { staffId, date, status, note, reason } = validateAttendanceInput(rest, { today });
+  const leaveOverride = overrideReason(overrideInput);
   return db.runTransaction(async (tx) => {
     const plan = await prepareAttendanceWrite(tx, { tenant, staffId, date, today });
     if (plan.fromStaff && plan.before && plan.before.status !== status && !reason) throw new PayrollError("reason-required", "Say why you're correcting what the employee sent");
-    return plan.commit({ FieldValue, status, note, actor, reason });
+    const leave = await paidLeaveGate(tx, { tenant, staffId, staff: plan.staff, date, before: plan.before, status, override: leaveOverride });
+    leave.commit({ FieldValue });
+    return plan.commit({ FieldValue, status, note, actor, reason, leaveOverride: leave.override });
   }, TX_OPTIONS);
+}
+
+// ---- Owner-pilot cleanup: Paid Leave allowance ----
+// Household default: settings/household { paidLeaveDays } (5 until the
+// Owner changes it). See shared/payroll.js paidLeaveBalance for the rule.
+const householdSettingsRef = (tenant) => tenant.doc("settings", "household");
+const overrideReason = (v) => {
+  if (v === undefined || v === null || v === "") return null;
+  const why = typeof v === "string" ? v.trim().replace(/\s+/g, " ").slice(0, 200) : "";
+  if (why.length < 3) throw new PayrollError("reason-required", "Say why you're giving Paid Leave beyond the allowance");
+  return why;
+};
+const paidLeaveLines = (reader, tenant, staffId) => reader.get(tenant.collection("attendance").where("staffId", "==", staffId).where("status", "==", PAID_LEAVE_STATUS));
+
+export async function readHouseholdSettings({ tenant }) {
+  const snap = await householdSettingsRef(tenant).get();
+  const s = snap.exists ? snap.data() : {};
+  return { paidLeaveDays: Number.isSafeInteger(s.paidLeaveDays) ? s.paidLeaveDays : DEFAULT_PAID_LEAVE_DAYS, leaveYear: "calendar" };
+}
+
+export async function saveHouseholdSettings({ db, tenant, FieldValue, input, actor }) {
+  if (!input || typeof input !== "object" || Array.isArray(input) || Object.keys(input).some((k) => k !== "paidLeaveDays")) throw new PayrollError("invalid-input", "Invalid settings");
+  const days = validatePaidLeaveDays(input.paidLeaveDays, { allowNull: false });
+  return db.runTransaction(async (tx) => {
+    const ref = householdSettingsRef(tenant);
+    const snap = await tx.get(ref);
+    const before = snap.exists && Number.isSafeInteger(snap.data().paidLeaveDays) ? snap.data().paidLeaveDays : DEFAULT_PAID_LEAVE_DAYS;
+    if (snap.exists && snap.data().paidLeaveDays === days) return { paidLeaveDays: days, unchanged: true };
+    tx.set(ref, { paidLeaveDays: days, history: append(snap.exists ? snap.data().history : [], entry(actor, `Paid Leave allowance ${before} → ${days} days a year`)), updatedBy: actor, updatedAt: FieldValue.serverTimestamp() }, { merge: true });
+    return { paidLeaveDays: days };
+  }, TX_OPTIONS);
+}
+
+// One helper's Paid Leave for a calendar year (Owner, the helper's own view).
+export async function paidLeaveOf({ tenant, staffId, staff = null, year }) {
+  const [s, settings, lines] = await Promise.all([staff ? Promise.resolve(staff) : tenant.doc("householdStaff", staffId).get().then((x) => (x.exists ? x.data() : null)), householdSettingsRef(tenant).get(), paidLeaveLines({ get: (q) => q.get() }, tenant, staffId)]);
+  if (!s) throw new PayrollError("not-found", "Staff member not found");
+  return paidLeaveBalance({ staff: s, household: settings.exists ? settings.data() : null, lines: lines.docs.map((d) => d.data()), year });
+}
+
+// Inside an attendance write (reads only; commit() after all reads): a day
+// newly marked Paid Leave when the allowance is used up needs the Owner's
+// deliberate override (with a reason); otherwise it's refused and nothing
+// changes. The staff record is touched so two writes can't both take the
+// last day.
+async function paidLeaveGate(tx, { tenant, staffId, staff, date, before, status, override = null }) {
+  const none = { override: null, commit() {} };
+  if (status !== PAID_LEAVE_STATUS) return none;
+  if (before?.status === PAID_LEAVE_STATUS) return { override: before.leaveOverride ?? null, commit() {} };
+  const [settings, lines] = await Promise.all([tx.get(householdSettingsRef(tenant)), paidLeaveLines(tx, tenant, staffId)]);
+  const year = leaveYearOf(date);
+  const bal = paidLeaveBalance({ staff, household: settings.exists ? settings.data() : null, lines: lines.docs.map((d) => d.data()), year, exceptDate: date });
+  const commit = ({ FieldValue }) => tx.update(staffRef(tenant, staffId), { leaveTouchedAt: FieldValue.serverTimestamp() });
+  if (bal.remaining > 0) return { override: null, commit };
+  if (!override) throw Object.assign(new PayrollError("leave-allowance-used", `Paid Leave allowance has been fully used (${bal.used} of ${bal.entitled} days in ${year}). Use Unpaid Leave instead, or override with a reason.`), { details: { year, entitled: bal.entitled, used: bal.used } });
+  return { override: { reason: override, beyondAllowance: bal.entitled }, commit };
 }
 
 // Phase 18.6: reads for one attendance line (staff, the line, its payroll);
@@ -237,8 +305,9 @@ async function prepareAttendanceWrite(tx, { tenant, staffId, date, today = null 
     before,
     // The day came from the employee's own request (approved by the Owner).
     fromStaff: Boolean(before && (before.source === "staff_request" || (before.history || []).some((h) => /request, approved/.test(h.label || "")))),
-    commit({ FieldValue, status, note, actor, via = null, reason = null }) {
+    commit({ FieldValue, status, note, actor, via = null, reason = null, leaveOverride = null }) {
     if (before && before.status === status && (before.note ?? null) === note) return { staffId, date, status, unchanged: true };
+    const overrideNow = leaveOverride && !(before?.status === PAID_LEAVE_STATUS) ? leaveOverride : null;
 
     const payable = ATTENDANCE_STATUSES[status].payable;
     const line = {
@@ -252,7 +321,9 @@ async function prepareAttendanceWrite(tx, { tenant, staffId, date, today = null 
       payableAmount: payable ? staff.dailyWage : 0,
       note,
       payrollId: payroll ? pRef.id : null,
-      history: append(before?.history, entry(actor, `${before ? `${statusLabel(before.status)} → ${statusLabel(status)}` : `Marked ${statusLabel(status)}`}${via ? ` (${via})` : ""}${reason ? ` · Reason: ${reason}` : ""}`, { from: before?.status ?? null, to: status, ...(reason ? { reason } : {}) })),
+      // Paid Leave beyond the allowance, deliberately (kept with the day).
+      leaveOverride: status === PAID_LEAVE_STATUS ? (overrideNow ? { ...overrideNow, by: actor ? { uid: actor.uid, name: actor.name ?? null } : null, at: new Date() } : before?.leaveOverride ?? null) : null,
+      history: append(before?.history, entry(actor, `${before ? `${statusLabel(before.status)} → ${statusLabel(status)}` : `Marked ${statusLabel(status)}`}${via ? ` (${via})` : ""}${reason ? ` · Reason: ${reason}` : ""}${overrideNow ? ` · Paid Leave beyond the allowance (${overrideNow.beyondAllowance} days) · Reason: ${overrideNow.reason}` : ""}`, { from: before?.status ?? null, to: status, ...(reason ? { reason } : {}), ...(overrideNow ? { leaveOverride: overrideNow.reason } : {}) })),
       ...(via ? { source: "staff_request" } : before?.source ? {} : { source: "owner" }),
       updatedBy: actor,
       updatedAt: FieldValue.serverTimestamp(),
@@ -1159,6 +1230,8 @@ export async function decideAttendanceRequest({ db, tenant, FieldValue, business
     if (d.decision === "approve") {
       if (r.date > today) throw new PayrollError("invalid-date", "That day hasn't come yet: approve it on or after the day");
       const plan = await prepareAttendanceWrite(tx, { tenant, staffId: r.staffId, date: r.date, today });
+      const leave = await paidLeaveGate(tx, { tenant, staffId: r.staffId, staff: plan.staff, date: r.date, before: plan.before, status: r.status });
+      leave.commit({ FieldValue });
       result = plan.commit({ FieldValue, status: r.status, note: r.note ?? null, actor, via: `${r.staffName}'s request, approved` });
     }
     const stamp = FieldValue.serverTimestamp();
@@ -1500,21 +1573,38 @@ export async function payrollPeriodView({ db, tenant, business, period: wanted =
   const today = businessDate(business.timezone, now);
   const wantsCurrent = wanted !== null && typeof wanted === "object" && wanted.current === true;
   if (wanted !== null && !wantsCurrent && (typeof wanted !== "object" || !isDayId(wanted.start) || !isDayId(wanted.end))) throw new PayrollError("invalid-period", "Invalid pay period");
-  // Owner-pilot simplification batch: Employee filter = one helper's periods.
-  const staff = (await tenant.collection("householdStaff").get()).docs.map((d) => ({ id: d.id, ...d.data() })).filter((s) => !staffId || s.id === staffId);
+  // Owner-pilot cleanup: ONE rule (onPayroll) for the Employee dropdown, the
+  // Everyone list and the still-to-pay total. Household Staff decides: an
+  // active helper gets her own pay-cycle periods worked out; anyone else
+  // (deactivated) only shows where a payroll was saved (history).
+  const all = (await tenant.collection("householdStaff").get()).docs.map((d) => ({ id: d.id, ...d.data() }));
+  const savedOf = new Map();
+  await Promise.all(
+    all.filter((s) => s.status !== "active").map(async (s) => {
+      const snap = await tenant.collection("payrolls").where("staffId", "==", s.id).get();
+      savedOf.set(s.id, snap.docs.map((d) => ({ start: d.data().periodStart, end: d.data().periodEnd })));
+    }),
+  );
+  const isSaved = (s, p) => (savedOf.get(s.id) || []).some((x) => x.start === p.start && x.end === p.end);
   const floor = addDays(today, -366);
-  const options = new Map();
-  for (const s of staff) {
+  const periodsOf = (s) => {
+    if (s.status !== "active") return savedOf.get(s.id) || [];
     const from = [s.startDate, floor].filter(Boolean).sort().pop();
     const to = s.endDate && s.endDate < today ? s.endDate : today;
-    let list = [];
     try {
-      list = staffPeriods(s, from, to, VIEW_MAX_PERIODS);
+      return staffPeriods(s, from, to, VIEW_MAX_PERIODS).filter((p) => onPayroll(s, p));
     } catch {
-      continue; // an unknown pay cycle
+      return []; // an unknown pay cycle
     }
-    for (const p of list) {
-      if (!payrollEligibility(s, p).eligible) continue;
+  };
+  const owned = new Map(all.map((s) => [s.id, periodsOf(s)]));
+  const people = all.filter((s) => owned.get(s.id).length).map((s) => ({ id: s.id, name: s.name, active: s.status === "active" })).sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+  // Owner-pilot simplification batch: Employee filter = one helper's periods.
+  const staff = all.filter((s) => !staffId || s.id === staffId);
+  const included = (s, p) => onPayroll(s, p, { saved: isSaved(s, p) });
+  const options = new Map();
+  for (const s of staff) {
+    for (const p of owned.get(s.id)) {
       const key = `${p.start}_${p.end}`;
       if (!options.has(key)) options.set(key, { start: p.start, end: p.end, people: 0, current: p.start <= today && today <= p.end });
       options.get(key).people += 1;
@@ -1526,37 +1616,23 @@ export async function payrollPeriodView({ db, tenant, business, period: wanted =
   const exact = wanted && !wantsCurrent ? periods.find((p) => p.start === wanted.start && p.end === wanted.end) : null;
   // Everyone's own current period (several cycles at once).
   if (!exact && currents.length > 1) {
-    const people = staff.flatMap((s) => {
-      const p = currents.find((c) => {
-        try {
-          const own = staffPeriod(s, c.start);
-          return own.start === c.start && own.end === c.end && payrollEligibility(s, own).eligible;
-        } catch {
-          return false;
-        }
-      });
+    const inPeriod = staff.flatMap((s) => {
+      const p = currents.find((c) => included(s, c));
       return p ? [{ s, period: { start: p.start, end: p.end } }] : [];
     });
-    const rows = await Promise.all(people.map(({ s, period }) => periodRow({ db, tenant, s, period, today })));
+    const rows = await Promise.all(inPeriod.map(({ s, period }) => periodRow({ db, tenant, s, period, today })));
     rows.sort((a, b) => (a.staffName || "").localeCompare(b.staffName || ""));
     const start = currents.map((c) => c.start).sort()[0];
     const end = currents.map((c) => c.end).sort().at(-1);
-    return { today, periods: listed, period: { start, end, state: "in_progress", mixed: true }, rows };
+    return { today, people, periods: listed, period: { start, end, state: "in_progress", mixed: true }, rows };
   }
   const pick = exact || currents[0] || periods[0] || null;
-  if (!pick) return { today, periods: [], period: null, rows: [] };
+  if (!pick) return { today, people, periods: [], period: null, rows: [] };
   const period = { start: pick.start, end: pick.end };
-  const people = staff.filter((s) => {
-    try {
-      const p = staffPeriod(s, period.start);
-      return p.start === period.start && p.end === period.end && payrollEligibility(s, period).eligible;
-    } catch {
-      return false;
-    }
-  });
-  const rows = await Promise.all(people.map((s) => periodRow({ db, tenant, s, period, today })));
+  const inPeriod = staff.filter((s) => included(s, period));
+  const rows = await Promise.all(inPeriod.map((s) => periodRow({ db, tenant, s, period, today })));
   rows.sort((a, b) => (a.staffName || "").localeCompare(b.staffName || ""));
-  return { today, periods: listed, period: { ...period, state: today <= period.end ? "in_progress" : "ended" }, rows };
+  return { today, people, periods: listed, period: { ...period, state: today <= period.end ? "in_progress" : "ended" }, rows };
 }
 
 // One person's payroll for one period: stored, or worked out now.
@@ -1716,7 +1792,7 @@ export async function correctPayment({ db, tenant, FieldValue, business, payroll
 // The Owner marks several days for one helper at once (the attendance
 // sheet). Each day is its own write with its own history, exactly like one
 // day; the answer lists any day that couldn't be saved.
-export async function setAttendanceMany({ db, tenant, FieldValue, business, staffId, days, reason = null, actor, now = new Date() }) {
+export async function setAttendanceMany({ db, tenant, FieldValue, business, staffId, days, reason = null, leaveOverride = null, actor, now = new Date() }) {
   if (!isValidStaffId(staffId)) throw new PayrollError("invalid-staff", "Choose a staff member");
   if (!Array.isArray(days) || !days.length || days.length > 31) throw new PayrollError("invalid-input", "Choose up to 31 days");
   const seen = new Set();
@@ -1728,7 +1804,7 @@ export async function setAttendanceMany({ db, tenant, FieldValue, business, staf
   const failed = [];
   for (const d of days) {
     try {
-      const r = await setAttendance({ db, tenant, FieldValue, business, input: { staffId, date: d.date, status: d.status, ...(reason ? { reason } : {}) }, actor, now });
+      const r = await setAttendance({ db, tenant, FieldValue, business, input: { staffId, date: d.date, status: d.status, ...(reason ? { reason } : {}), ...(leaveOverride ? { leaveOverride } : {}) }, actor, now });
       saved.push({ date: d.date, unchanged: Boolean(r.unchanged) });
     } catch (err) {
       if (!(err instanceof PayrollError)) throw err;
@@ -1812,7 +1888,7 @@ export async function resolveCorrection({ db, tenant, FieldValue, correctionId, 
 
 // For the Owner's Attendance page: open reports and legacy staff requests
 // (compact "Needs review"), and one helper's confirmation for one period.
-export async function attendanceReview({ tenant, staffId = null, periodStart = null }) {
+export async function attendanceReview({ tenant, staffId = null, periodStart = null, today = null }) {
   const [corr, reqs] = await Promise.all([correctionsOf(tenant).where("state", "==", "open").limit(100).get(), tenant.collection("attendanceRequests").where("state", "==", "pending").limit(100).get()]);
   const corrections = corr.docs.map((d) => ({ id: d.id, ...d.data(), createdAt: d.data().createdAt?.toDate?.()?.toISOString?.() ?? null })).sort((a, b) => (a.createdAt || "").localeCompare(b.createdAt || ""));
   const requests = reqs.docs.map((d) => ({ id: d.id, ...d.data() })).map((r) => ({ id: r.id, staffId: r.staffId, staffName: r.staffName, date: r.date, status: r.status, note: r.note ?? null }));
@@ -1821,7 +1897,10 @@ export async function attendanceReview({ tenant, staffId = null, periodStart = n
     const c = await confirmationRef(tenant, staffId, periodStart).get();
     if (c.exists) confirmation = { periodStart, counts: c.data().counts, confirmedAt: c.data().confirmedAt?.toDate?.()?.toISOString?.() ?? null };
   }
-  return { corrections: corrections.map(({ id, staffId: s, staffName, date, message, createdAt }) => ({ id, staffId: s, staffName, date, message, createdAt })), requests, confirmation };
+  // Owner-pilot cleanup: the helper's Paid Leave for the period's year.
+  const year = isDayId(periodStart) ? leaveYearOf(periodStart) : today ? leaveYearOf(today) : null;
+  const leave = isValidStaffId(staffId) && year ? await paidLeaveOf({ tenant, staffId, year }).catch(() => null) : null;
+  return { corrections: corrections.map(({ id, staffId: s, staffName, date, message, createdAt }) => ({ id, staffId: s, staffName, date, message, createdAt })), requests, confirmation, leave };
 }
 
 // ---------- Owner-pilot change: void a paid payroll / a released advance ----------

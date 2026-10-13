@@ -18,6 +18,7 @@ export const PAYROLL_STATUS = {
   "not-found": 404,
   "days-not-allowed": 409,
   "has-draft-payroll": 409,
+  "leave-allowance-used": 409,
   "staff-in-use": 409,
   "not-eligible": 409,
   "payroll-released": 409,

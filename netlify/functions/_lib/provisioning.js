@@ -634,6 +634,52 @@ export async function setMemberStatus({ db, admin, businessId, uid, status, audi
   return { businessId, uid, status };
 }
 
+// Owner-pilot cleanup (2026-10-13): removes a membership from ONE business
+// for good (Remove user), as opposed to disabling it. In one transaction:
+// the member document goes, this business leaves the person's
+// users/{uid}.businessIds index (their default moves to another business
+// they still belong to), a pending activation link is deleted, and the
+// audit log keeps a snapshot. `within(tx, { member })` runs after the reads
+// for linked records (the household staff link). The Firebase Auth account
+// is NOT touched: it may belong to other businesses, and the membership
+// document alone decides access (./tenant.js). The account owner and the
+// last active owner can't be removed.
+export async function removeMember({ db, admin, businessId, uid, audit = null, within = null }) {
+  const tenant = tenantDb(db, businessId);
+  const memberRef = tenant.member(uid);
+  const userRef = db.collection("users").doc(uid);
+  const FieldValue = admin.firestore.FieldValue;
+  return db.runTransaction(async (tx) => {
+    const [businessSnap, memberSnap, userSnap, ownersSnap, activeSnap, usersUsage] = await Promise.all([
+      tx.get(tenant.ref),
+      tx.get(memberRef),
+      tx.get(userRef),
+      tx.get(tenant.collection("members").where("roleTemplate", "==", "owner")),
+      tx.get(tenant.collection("members").where("status", "==", "active")),
+      tx.get(usageCurrentRef(tenant, "users")),
+    ]);
+    if (!businessSnap.exists) throw new ProvisioningError("not-found", `Business ${businessId} not found.`);
+    if (!memberSnap.exists) return { businessId, uid, removed: false, alreadyRemoved: true };
+    const member = memberSnap.data();
+    if (member.isAccountOwner === true) throw new ProvisioningError("owner-protected", "The business owner can't be removed.");
+    if (member.roleTemplate === "owner" && ownersSnap.docs.filter((d) => d.id !== uid && d.data().status === "active").length === 0) throw new ProvisioningError("owner-protected", "The last owner can't be removed.");
+    const wasActive = member.status === "active";
+    const userAlerts = await prepareUserAlerts(tx, { tenant, businessSnap, usersUsage, activeAfter: activeSnap.size - (wasActive ? 1 : 0) });
+    const withinCommit = within ? await within(tx, { member }) : null;
+    if (audit) writeAudit(tx, db, tenant, { type: "member.removed", businessId, actor: audit.actor, reason: audit.reason ?? null, member: { uid, email: member.email ?? null }, before: { roleTemplate: member.roleTemplate, status: member.status, name: member.name ?? null, staffId: member.staffId ?? null }, after: null, at: FieldValue.serverTimestamp() });
+    tx.delete(memberRef);
+    if (member.activation?.linkHash) tx.delete(db.collection("activationLinks").doc(member.activation.linkHash));
+    if (userSnap.exists) {
+      const profile = userSnap.data();
+      const others = (Array.isArray(profile.businessIds) ? profile.businessIds : []).filter((id) => id !== businessId);
+      tx.update(userRef, { businessIds: others, ...(profile.defaultBusinessId === businessId ? { defaultBusinessId: others[0] ?? null } : {}), updatedAt: FieldValue.serverTimestamp() });
+    }
+    if (withinCommit) withinCommit();
+    userAlerts.commit({ FieldValue });
+    return { businessId, uid, removed: true };
+  });
+}
+
 // ---------- Permission resync (after permission keys or templates change) ----------
 
 // Re-resolves every member's stored permission map from its role template +

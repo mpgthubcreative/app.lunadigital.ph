@@ -82,6 +82,7 @@ export function mountStaffPortal(root, session, { api = defaultApi, onSignOut = 
         <button type="button" class="btn btn-compact" data-act="period" data-period="${s.next ?? ""}" ${s.next ? "" : "disabled"} aria-label="Next pay period">›</button>
       </div>
       <dl class="staff-totals" data-role="totals">${rows.map(([l, n]) => html`<dt>${l}</dt><dd>${days(n)}</dd>`)}</dl>
+      ${m.leave ? html`<p class="stat-hint" data-role="leave">Paid Leave ${m.leave.year}: used ${m.leave.used} of ${days(m.leave.entitled)} · ${days(m.leave.remaining)} remaining</p>` : ""}
       <button type="button" class="btn btn-block" data-act="details">${state.details ? "Hide details" : "View details"}</button>
       ${state.details ? html`<ul class="staff-days-list" data-role="days">${s.days.filter((d) => d.lock !== "Before your start date" && d.lock !== "After your last day").map((d) => html`<li><span>${shortDay(d.date)}</span><span>${d.status ? label(d.status) : d.pending ? `${label(d.pending)} (sent)` : html`<small>Not recorded</small>`}</span></li>`)}</ul>` : ""}
       ${s.canConfirm

@@ -22,7 +22,7 @@ import * as defaultData from "./data.js";
 const cycleOptions = Object.entries(PAY_CYCLES).map(([value, c]) => ({ value, label: c.label }));
 const centsText = (c) => (c ? String(c / 100) : "");
 
-function staffFields(s = {}) {
+function staffFields(s = {}, leaveDefault = null) {
   return [
     { name: "name", label: "Name", value: s.name ?? "", required: true },
     { name: "position", label: "Position", value: s.position ?? "", hint: "e.g. Kasambahay, Yaya, Driver" },
@@ -31,6 +31,8 @@ function staffFields(s = {}) {
     // Owner-pilot batch: custom semi-monthly cutoffs and the advance limit.
     { name: "cutoffs", label: "Semi-monthly cutoff days", value: Array.isArray(s.cutoffs) ? `${s.cutoffs[0]} and ${s.cutoffs[1]}` : "", placeholder: "15 and end of month", hint: "Last day of each period, e.g. 14 and 29. Leave blank for 1–15 and 16–end. Short months stop at their last day." },
     { name: "advanceLimit", label: "Cash advance limit (₱)", value: Number.isSafeInteger(s.advanceLimit) ? String(s.advanceLimit / 100) : "", inputmode: "decimal", placeholder: "No limit", hint: "The most they can owe at once. Blank = no limit; 0 = no advances." },
+    // Owner-pilot cleanup: blank = the household's Paid Leave allowance.
+    { name: "paidLeaveDays", label: "Paid Leave days a year", value: Number.isSafeInteger(s.paidLeaveDays) ? String(s.paidLeaveDays) : "", inputmode: "numeric", placeholder: leaveDefault === null ? "Household default" : `Household default (${leaveDefault})`, hint: "Only if this helper gets a different number. Counted per calendar year." },
     { name: "phone", label: "Phone", value: s.phone ?? "", inputmode: "tel" },
     { name: "startDate", label: "Start date", type: "date", value: s.startDate ?? "", hint: "Payroll includes them from this date." },
     { name: "endDate", label: "End date (if they've left)", type: "date", value: s.endDate ?? "", hint: "No payroll after this date; their history stays." },
@@ -48,7 +50,8 @@ export function parseCutoffs(text) {
 }
 
 function toInput(v) {
-  const out = { ...v, dailyWage: parseCentavos(v.dailyWage), cutoffs: v.payCycle === "semi_monthly" ? parseCutoffs(v.cutoffs) : null, advanceLimit: String(v.advanceLimit ?? "").trim() === "" ? null : parseCentavos(v.advanceLimit) };
+  const out = { ...v, dailyWage: parseCentavos(v.dailyWage), cutoffs: v.payCycle === "semi_monthly" ? parseCutoffs(v.cutoffs) : null, advanceLimit: String(v.advanceLimit ?? "").trim() === "" ? null : parseCentavos(v.advanceLimit), paidLeaveDays: String(v.paidLeaveDays ?? "").trim() === "" ? null : Number(String(v.paidLeaveDays).trim()) };
+  if (out.paidLeaveDays !== null && !(Number.isInteger(out.paidLeaveDays) && out.paidLeaveDays >= 0)) throw new Error("Paid Leave days must be a whole number (blank = household default)");
   if (out.cutoffs && out.cutoffs[0] === 15 && out.cutoffs[1] === 31) out.cutoffs = null;
   if (out.advanceLimit !== null && !(out.advanceLimit >= 0)) throw new Error("The advance limit must be ₱0 or more (blank = no limit)");
   for (const k of ["position", "phone", "startDate", "endDate", "notes"]) if (out[k] === "") out[k] = null;
@@ -63,7 +66,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
   const canLogins = canManage && perms["users.manage"] === true;
   const loginBadge = (x) => (x.login ? badge(...(LOGIN[x.login.status] || [x.login.status, "neutral"])) : html`<span class="stat-hint">No login</span>`);
   const businessId = session.business.id;
-  const state = { status: "active", rows: [], loading: true, error: null };
+  const state = { status: "active", rows: [], loading: true, error: null, settings: null };
   let alive = true;
 
   async function load() {
@@ -71,6 +74,10 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     draw();
     try {
       state.rows = (await data.listStaff(businessId, { status: state.status })).rows;
+      if (canManage && !state.settingsAsked) {
+        state.settingsAsked = true;
+        state.settings = (await data.staffApi({ action: "settings" }).catch(() => null))?.settings ?? null;
+      }
       state.error = null;
     } catch (err) {
       console.error("household: load failed:", err && (err.code || err.message));
@@ -86,6 +93,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
       container,
       html`
         ${pageHeader({ title: "Household Staff", subtitle: "The people you pay: their daily wage and pay cycle drive attendance and payroll.", actions: canManage ? html`<button type="button" class="btn btn-primary" data-act="new">+ Add staff</button>` : "" })}
+        ${canManage && state.settings ? html`<p class="chart-note" data-role="leave-default">Paid Leave allowance: <strong>${state.settings.paidLeaveDays} day${state.settings.paidLeaveDays === 1 ? "" : "s"} a year</strong> per helper (Jan–Dec). <button type="button" class="btn btn-compact btn-ghost" data-act="leave-default">Change</button></p>` : ""}
         ${filterBar({
           fields: [{ name: "status", label: "Status", type: "select", primary: true, def: "active", options: Object.entries(STAFF_STATUSES).map(([k, x]) => [k, x.label]), value: state.status }],
           end: mayExport(session, "householdStaff") ? html`<span class="visually-hidden">${exportHint}</span>${exportButton("householdStaff")}` : "",
@@ -130,13 +138,22 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     if (!el || !container.contains(el) || el.dataset.act === "export") return;
     const s = state.rows.find((r) => r.id === el.dataset.id);
     try {
-      if (el.dataset.act === "new") {
-        const r = await formDialog({ title: "Add household staff", fields: staffFields(), submitLabel: "Save", onSubmit: (v) => data.staffApi({ action: "create", staff: toInput(v) }) });
+      if (el.dataset.act === "leave-default") {
+        const r = await formDialog({ title: "Paid Leave allowance", intro: "Days of Paid Leave each helper gets per calendar year (Jan 1 to Dec 31). A helper with their own number on Household Staff keeps it.", fields: [{ name: "days", label: "Days per year", value: String(state.settings?.paidLeaveDays ?? 5), required: true, inputmode: "numeric" }], submitLabel: "Save", onSubmit: (v) => {
+          const n = Number(String(v.days).trim());
+          if (!Number.isInteger(n) || n < 0) throw new Error("Enter a whole number of days");
+          return data.staffApi({ action: "saveSettings", settings: { paidLeaveDays: n } });
+        } });
+        if (!r) return;
+        state.settingsAsked = false;
+        toast("Paid Leave allowance saved.", "success");
+      } else if (el.dataset.act === "new") {
+        const r = await formDialog({ title: "Add household staff", fields: staffFields({}, state.settings?.paidLeaveDays ?? null), submitLabel: "Save", onSubmit: (v) => data.staffApi({ action: "create", staff: toInput(v) }) });
         if (r) toast("Staff member added.", "success");
       } else if (el.dataset.act === "edit" && s) {
         const r = await formDialog({
           title: `Edit ${s.name}`,
-          fields: staffFields(s),
+          fields: staffFields(s, state.settings?.paidLeaveDays ?? null),
           onSubmit: (v) => {
             const next = toInput(v);
             const changes = Object.fromEntries(Object.entries(next).filter(([k, val]) => JSON.stringify(s[k] ?? null) !== JSON.stringify(val ?? null)));
@@ -166,6 +183,8 @@ export function mount(container, session, { data = defaultData, toast = defaultT
         await data.staffApi({ action: "setLogin", staffId: s.id, enabled: on });
         toast(on ? `${s.name}'s login is on.` : `${s.name}'s login is off.`, "success");
       } else if (el.dataset.act === "status" && s) {
+        // Owner-pilot cleanup: a deactivated helper gets no new payroll.
+        if (s.status === "active" && !(await confirm({ title: `Deactivate ${s.name}?`, body: "They stop appearing on Attendance and Payroll, including the current pay period, so pay any salary still owed first. Their attendance, payroll and advance history stays. Their Luna login is managed separately under Users.", confirmLabel: "Deactivate", danger: true }))) return;
         await data.staffApi({ action: "setStatus", staffId: s.id, status: s.status === "active" ? "inactive" : "active" });
       } else if (el.dataset.act === "delete" && s) {
         const ok = await confirm({ title: `Delete ${s.name}?`, body: "Only for someone added by mistake. People with attendance, payroll or advances can't be deleted; deactivate them instead so their pay history stays.", confirmLabel: "Delete", danger: true });

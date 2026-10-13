@@ -259,7 +259,42 @@ const money = (v, { field, max }) => {
   return v;
 };
 
-export const STAFF_FIELDS = Object.freeze(["name", "position", "dailyWage", "payCycle", "cutoffs", "advanceLimit", "phone", "startDate", "endDate", "notes"]);
+export const STAFF_FIELDS = Object.freeze(["name", "position", "dailyWage", "payCycle", "cutoffs", "advanceLimit", "paidLeaveDays", "phone", "startDate", "endDate", "notes"]);
+
+// Owner-pilot cleanup (2026-10-13): Paid Leave allowance. The Owner sets a
+// household default (days per year, 5 until changed) and, optionally, a
+// number for one helper (Household Staff); no number = the default.
+// The allowance year is the CALENDAR year (Jan 1 to Dec 31, business-local
+// dates), the same year the 13th month pay uses: on Jan 1 every helper
+// starts again at 0 used. Used = days recorded as Paid Leave that year
+// (including any the Owner deliberately recorded beyond the allowance, with
+// a reason). Unpaid Leave never counts. Payroll follows the recorded status.
+export const DEFAULT_PAID_LEAVE_DAYS = 5;
+export const MAX_PAID_LEAVE_DAYS = 60;
+export const PAID_LEAVE_STATUS = "official_leave";
+
+export function validatePaidLeaveDays(value, { allowNull = true } = {}) {
+  if (allowNull && (value === null || value === undefined || value === "")) return null;
+  if (!Number.isSafeInteger(value) || value < 0 || value > MAX_PAID_LEAVE_DAYS) throw new PayrollError("invalid-input", `Paid Leave days must be a whole number from 0 to ${MAX_PAID_LEAVE_DAYS}`);
+  return value;
+}
+
+// { days, source: "staff" | "household" }
+export function paidLeaveAllowance(staff, household = null) {
+  if (Number.isSafeInteger(staff?.paidLeaveDays)) return { days: staff.paidLeaveDays, source: "staff" };
+  return { days: Number.isSafeInteger(household?.paidLeaveDays) ? household.paidLeaveDays : DEFAULT_PAID_LEAVE_DAYS, source: "household" };
+}
+
+export const leaveYearOf = (date) => Number(String(date).slice(0, 4));
+
+// lines: the person's attendance lines (any year; only Paid Leave in `year`
+// count). exceptDate: the day being changed (not counted twice).
+export function paidLeaveBalance({ staff, household = null, lines = [], year, exceptDate = null }) {
+  const { days: entitled, source } = paidLeaveAllowance(staff, household);
+  const taken = lines.filter((l) => l.status === PAID_LEAVE_STATUS && leaveYearOf(l.date) === year && l.date !== exceptDate);
+  const used = taken.length;
+  return { year, entitled, source, used, beyond: Math.max(0, used - entitled), overrides: taken.filter((l) => l.leaveOverride).length, remaining: Math.max(0, entitled - used) };
+}
 
 // Owner-pilot batch: a per-person cash advance limit (centavos). null = no
 // limit (shown as "No limit"); 0 = no advances.
@@ -306,6 +341,7 @@ export function validateStaffInput(input, { partial = false } = {}) {
     if (out.cutoffs && cycle !== undefined && cycle !== "semi_monthly") throw new PayrollError("invalid-input", "Cutoff days are for semi-monthly pay");
   }
   if (has("advanceLimit")) out.advanceLimit = validateAdvanceLimit(input.advanceLimit);
+  if (has("paidLeaveDays")) out.paidLeaveDays = validatePaidLeaveDays(input.paidLeaveDays);
   if (has("phone")) out.phone = text(input.phone, { field: "Phone", max: 30 });
   if (has("startDate")) {
     if (input.startDate !== null && input.startDate !== undefined && input.startDate !== "" && !isDayId(input.startDate)) throw new PayrollError("invalid-date", "Invalid start date");
@@ -325,12 +361,34 @@ export function validateStaffInput(input, { partial = false } = {}) {
 // in it (start date on or before its end, no end date before its start) and
 // either active or ended within / after it (a final payroll after leaving).
 // Returns { eligible, reason }.
+// Owner-pilot cleanup (2026-10-13): the Household Staff record alone decides
+// who gets payroll worked out for a period: active, started by the period's
+// end, not ended before its start. A deactivated helper gets no new payroll
+// (not even for the period they were deactivated in: pay them before
+// deactivating); their saved payrolls stay as history (see onPayroll).
 export function payrollEligibility(staff, period) {
   if (!staff) return { eligible: false, reason: "No staff record" };
+  if (staff.status !== "active") return { eligible: false, reason: "Inactive" };
   if (staff.startDate && staff.startDate > period.end) return { eligible: false, reason: `Starts ${staff.startDate}` };
   if (staff.endDate && staff.endDate < period.start) return { eligible: false, reason: `Employment ended ${staff.endDate}` };
-  if (staff.status !== "active" && !staff.endDate) return { eligible: false, reason: "Inactive" };
   return { eligible: true, reason: null };
+}
+
+// The one rule every payroll list uses (Employee dropdown, Everyone list,
+// still-to-pay total, the dashboard): a row for this person and period if
+// a payroll is saved for it (history, kept even after they leave), or if
+// the period is one of their own pay-cycle periods and they're eligible.
+export function onPayroll(staff, period, { saved = false } = {}) {
+  if (!staff) return false;
+  if (saved) return true;
+  if (!PAY_CYCLES[staff.payCycle]) return false;
+  try {
+    const own = staffPeriod(staff, period.start);
+    if (own.start !== period.start || own.end !== period.end) return false;
+  } catch {
+    return false;
+  }
+  return payrollEligibility(staff, period).eligible;
 }
 
 // A day's status, only once the day has come (Owner-pilot refinement,

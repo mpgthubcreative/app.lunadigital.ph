@@ -23,7 +23,7 @@
 // advance not confirmed by them yet, a salary reported not received,
 // deductions not taken, and any staff request still waiting.
 
-import { staffPeriod, payrollEligibility, daysIn, attendanceId, summarizeAttendance, advanceRemaining, plannedFor, scheduleOf, reconcileOf } from "../../../shared/payroll.js";
+import { staffPeriod, onPayroll as isOnPayroll, daysIn, attendanceId, summarizeAttendance, advanceRemaining, plannedFor, scheduleOf, reconcileOf } from "../../../shared/payroll.js";
 import { businessDate, addDays } from "../../../shared/metrics.js";
 
 const int = (v) => (Number.isSafeInteger(v) ? v : 0);
@@ -46,8 +46,8 @@ export async function householdSummary({ db, tenant, business, now = new Date() 
     g.total += n;
   };
   // Owner-pilot batch: only people on payroll for their current period
-  // (start / end dates), the same rule as the Payroll page.
-  const onPayroll = new Set(staffSnap.docs.filter((d) => payrollEligibility(d.data(), staffPeriod(d.data(), today)).eligible).map((d) => d.id));
+  // (status, start / end dates), the same rule as the Payroll page.
+  const onPayroll = new Set(staffSnap.docs.filter((d) => isOnPayroll(d.data(), staffPeriod(d.data(), today))).map((d) => d.id));
   const rows = await Promise.all(
     staffSnap.docs.map(async (d) => {
       const s = d.data();

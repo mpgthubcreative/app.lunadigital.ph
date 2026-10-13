@@ -100,6 +100,13 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     return html`<p class="stat-hint" data-role="confirmation">${same ? badge("Confirmed", "success") : badge("Changed since", "warning")} ${s.name} confirmed this attendance${c.confirmedAt ? ` on ${short(c.confirmedAt.slice(0, 10))}` : ""}${same ? "." : "; days changed after that."}</p>`;
   }
 
+  // Owner-pilot cleanup: Paid Leave this calendar year.
+  function leaveLine() {
+    const l = state.review.leave;
+    if (!l) return "";
+    return html`<p class="stat-hint" data-role="leave">Paid Leave ${l.year}: used <strong>${l.used} of ${l.entitled}</strong> day${l.entitled === 1 ? "" : "s"} · ${l.remaining} remaining${l.used > l.entitled ? ` · ${l.used - l.entitled} beyond the allowance` : ""}</p>`;
+  }
+
   function sheet() {
     const s = person();
     if (!s) return emptyState({ iconName: "staff", title: "No household staff yet", body: "Add the people you pay on the Household Staff page first.", action: html`<a class="btn btn-primary" href="/household-staff" data-link>Add staff</a>` });
@@ -112,6 +119,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     return html`
       <p class="chart-note" data-role="totals">Present ${sum.present} · Absent ${sum.absent} · Rest Day ${sum.restDay} · Paid Leave ${sum.officialLeave} · Unpaid Leave ${sum.unpaidLeave}${sum.notMarked ? ` · Not marked ${sum.notMarked}` : ""} → <strong>${sum.payableDays} paid days · ${formatCentavos(sum.basePay)}</strong></p>
       ${confirmationLine(sum)}
+      ${leaveLine()}
       ${canEdit && n
         ? html`<div class="sheet-bulk" data-role="bulk"><span>${n} selected:</span>${ORDER.map((k) => html`<button type="button" class="btn btn-compact" data-act="bulk" data-status="${k}" ${state.saving ? "disabled" : ""}>${ATTENDANCE_STATUSES[k].label}</button>`)}<button type="button" class="btn btn-compact btn-ghost" data-act="clear">Clear</button></div>`
         : canEdit
@@ -167,6 +175,28 @@ export function mount(container, session, { data = defaultData, toast = defaultT
           const again = await data.setAttendanceMany(state.staffId, days.filter((d) => needReason.some((f) => f.date === d.date)), reason);
           r = { saved: [...r.saved, ...again.saved], failed: [...r.failed.filter((f) => f.code !== "reason-required"), ...again.failed] };
         } else r = { ...r, failed: r.failed.filter((f) => f.code !== "reason-required") };
+      }
+      // Paid Leave allowance used up: the Owner decides, never silently.
+      const overLimit = r.failed.filter((f) => f.code === "leave-allowance-used");
+      if (overLimit.length) {
+        const choice = await formDialog({
+          title: "Paid Leave allowance has been fully used.",
+          intro: `${person()?.name ?? "This helper"} has no Paid Leave days left for ${overLimit[0].date.slice(0, 4)}. What should ${overLimit.map((f) => short(f.date)).join(", ")} be?`,
+          fields: [
+            { name: "choice", label: "Record as", type: "select", value: "unpaid", options: [{ value: "unpaid", label: "Unpaid Leave instead" }, { value: "override", label: "Paid Leave anyway (override)" }] },
+            { name: "reason", label: "Reason (for an override)", placeholder: "e.g. Family emergency" },
+          ],
+          submitLabel: "Save",
+          onSubmit: (v) => {
+            if (v.choice === "override" && v.reason.trim().length < 3) throw new Error("Say why you're giving Paid Leave beyond the allowance");
+            return { choice: v.choice, reason: v.reason.trim() };
+          },
+        });
+        if (choice) {
+          const redo = overLimit.map((f) => ({ date: f.date, status: choice.choice === "override" ? "official_leave" : "unpaid_leave" }));
+          const again = await data.setAttendanceMany(state.staffId, redo, null, choice.choice === "override" ? choice.reason : null);
+          r = { saved: [...r.saved, ...again.saved], failed: [...r.failed.filter((f) => f.code !== "leave-allowance-used"), ...again.failed] };
+        } else r = { ...r, failed: r.failed.filter((f) => f.code !== "leave-allowance-used") };
       }
       if (r.failed.length) toast(`${r.failed.length} day${r.failed.length === 1 ? "" : "s"} not saved: ${r.failed[0].error}`, "danger");
       else if (days.length > 1) toast(`${r.saved.length} days saved.`, "success");
