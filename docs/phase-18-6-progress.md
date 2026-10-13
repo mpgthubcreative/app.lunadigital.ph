@@ -189,6 +189,44 @@ Resume file for Phase 18.6 (usability, Baby payers, household self-service and p
 
 Scope boundaries: staging only (Firebase `luna-business-os`, Netlify `luna-business-os`). No production deploy, no Phase 19, no rule weakening, no pricing changes, never delete `C:\MONPRA~1`.
 
+### 2026-10-13 · Household cleanup: payroll eligibility, Remove user, payroll ⋯, Paid Leave allowance (6e8f8f8)
+
+Reported: Payroll's Everyone list still showed Riza and Yanie (only Loriza works now) while the Employee dropdown showed only Loriza, so "still to pay" was wrong; Users only had No access; Payroll seemed to have no delete; plus a Paid Leave allowance.
+
+- **Root cause (rwp-d419):** Riza and Yanie were deactivated on Oct 12. Deactivation set their employment end date to Oct 12, and the old rule kept a helper on payroll for any period their employment overlapped ("final period still payable"). The dropdown read active staff only, so the two disagreed. No orphaned or stale payroll records were involved: rwp-d419 has no saved payrolls.
+- **Fix (general, no names or IDs):** one shared rule, `onPayroll` / `payrollEligibility` in `shared/payroll.js`, used by the Employee dropdown (the period view now returns `people`), the Everyone list, the still-to-pay total and the dashboard.
+  - The Household Staff record decides: active, started by the period's end, no end date before its start, and a valid pay cycle with the period being one of their own.
+  - A deactivated helper gets no payroll worked out, not even the period they left in. Pay what's owed before deactivating, or reactivate. The Deactivate confirmation now says so.
+  - Saved payrolls of a deactivated helper stay visible as history in their own periods.
+  - Nothing was deleted or changed in the real data.
+- **Real household verified (read-only, through the server code):** Payroll · Everyone · Oct 1–15 shows only Loriza Ibanez, ₱4,932.00 (12 days), still to pay ₱4,932.00; the dropdown shows Everyone + Loriza Ibanez. Users: Carlo = Owner, Loriza = Household Staff (active), Yanie = Household Staff (No access, left as is until the Owner chooses Remove user).
+- **Users:** three distinct states.
+  - **Active.**
+  - **Deactivate access:** temporary; shows as No access, with Restore access.
+  - **Remove user** (bottom of the ⋯, destructive):
+    - Removes this business's membership for good (`members` `remove`, `removeMember` in provisioning), takes this business out of `users/{uid}.businessIds` (the default moves to another business), deletes a pending activation link, signs the person out and writes an audit entry `member.removed`.
+    - The Household Staff record stays (employment unchanged) but is unlinked, with a history line "Luna access removed". Attendance, payroll, advances and confirmations stay.
+    - The Firebase Auth account is never deleted, since it may belong to other businesses.
+    - Re-adding (Create login / Add member → Household Staff) links the same staff record; no duplicate.
+    - The account owner and you yourself can't be removed. Staff get 403. Retrying is harmless. A Restore racing a Remove can't leave a stale login on the staff record.
+- **Payroll ⋯ (Delete / Void already existed since cc43000):** the Owner's real payrolls were all automatic (nothing saved), so the menu only had View details.
+  - Every unpaid row now shows **Delete payroll**. On an automatic row it explains that nothing is saved; how to stop paying someone is Household Staff.
+  - Paid rows show **View details / Correct payment / Void payroll**.
+  - The confirmation text follows the requested wording.
+  - Deleting keeps the advance's planned deduction planned (still owed); the recalculated period shows it again.
+- **Paid Leave allowance:**
+  - **Allowance:** a household default (Household Staff → "Paid Leave allowance: 5 days a year per helper (Jan–Dec) · Change"; `settings/household`, 5 until changed). An optional per-helper number goes on the staff form; blank = the default.
+  - **Year and counting:** the year is the calendar year (Jan 1–Dec 31), the same as the 13th month; it starts again at 0 on Jan 1. Used = days recorded as Paid Leave that year; Unpaid Leave never counts.
+  - **Where it shows:** Attendance shows "Paid Leave 2026: used 2 of 5 days · 3 remaining"; the helper sees the same, read-only.
+  - **When it's used up:** the server refuses a new Paid Leave day (`leave-allowance-used`). The Owner chooses "Unpaid Leave instead" or "Paid Leave anyway (override)" with a reason, kept on the day (`leaveOverride`) and in its history. This applies to approvals of old helper requests too (no override there).
+  - **Payroll and history:** payroll follows the recorded status. Leave history stays with attendance through access deactivation or removal.
+  - **Concurrency:** the staff record is touched on each new Paid Leave day, so parallel marks can't both take the last day.
+- **Tests:**
+  - **Unit:** 1388 pass. The new `tests/functions/household-cleanup.test.js` (11) covers the Loriza / Riza / Yanie regression, Remove user (another business untouched, re-add without a duplicate), delete / void reversals and the allowance rules. New UI tests cover the dropdown / list agreement, the ⋯ menus, the allowance dialog, the staff settings and the Users menu.
+  - **Emulator (targeted):** 62/62. New: 8 parallel Paid Leave marks with 2 allowed → exactly 2; Remove user racing Restore. Rules: a helper can't write the allowance, their staff record or memberships.
+- **Staging:** live API 23/23 on a temporary household (deleted afterwards). The 390px / 1280px browser check passed 20/21. The one miss was my own expectation: a login-ID helper's menu also has the existing "Reset password (new link)". No sideways scroll.
+- **For a possible 18.7 (not built):** a per-person employment-year allowance, if the Owner prefers it to the calendar year; carrying unused leave over (the Kasambahay law has no carry-over rule, so none is applied).
+
 ## Plan (decisions made from the brief)
 
 ### Stage 1: Distributor
