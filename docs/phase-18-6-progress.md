@@ -225,7 +225,7 @@ Reported: Payroll's Everyone list still showed Riza and Yanie (only Loriza works
   - **Unit:** 1388 pass. The new `tests/functions/household-cleanup.test.js` (11) covers the Loriza / Riza / Yanie regression, Remove user (another business untouched, re-add without a duplicate), delete / void reversals and the allowance rules. New UI tests cover the dropdown / list agreement, the ⋯ menus, the allowance dialog, the staff settings and the Users menu.
   - **Emulator (targeted):** 62/62. New: 8 parallel Paid Leave marks with 2 allowed → exactly 2; Remove user racing Restore. Rules: a helper can't write the allowance, their staff record or memberships.
 - **Staging:** live API 23/23 on a temporary household (deleted afterwards). The 390px / 1280px browser check passed 20/21. The one miss was my own expectation: a login-ID helper's menu also has the existing "Reset password (new link)". No sideways scroll.
-- **For a possible 18.7 (not built):** a per-person employment-year allowance, if the Owner prefers it to the calendar year; carrying unused leave over (the Kasambahay law has no carry-over rule, so none is applied).
+- **Owner decision (2026-10-13):** Paid Leave stays on the calendar year (Jan 1–Dec 31), not the employment anniversary. No automatic proration for mid-year hires: the household default applies unless the Owner sets a per-helper number. No carry-over of unused leave. Batch accepted; staging kept as is.
 
 ## Plan (decisions made from the brief)
 
