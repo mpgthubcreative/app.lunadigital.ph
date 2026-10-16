@@ -3585,7 +3585,8 @@ tr.is-saving {
 }
 @media (max-width: 719px) {
   /* Status chips stay narrow so names keep the room. */
-  .select.select-chip.wl-status { max-width: 6.9rem; padding: 0 22px 0 10px; font-size: var(--text-xs); }
+  .select.select-chip.wl-status { max-width: 7.8rem; padding: 0 20px 0 8px; font-size: var(--text-xs); }
   .wl-row { gap: 6px; }
   .wl-due { min-width: 3.1em; }
 }
+.wl-amt { padding-right: var(--space-3); }
