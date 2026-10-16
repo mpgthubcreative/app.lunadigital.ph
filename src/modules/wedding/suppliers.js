@@ -207,7 +207,9 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     return html`<li class="wl-row wl-money" data-kind="${r.kind}" data-${r.kind === "supplier" ? "supplier" : r.kind === "planned" ? "planned" : "expense"}="${r.id}" data-state="${r.status}">
       <button type="button" class="wl-main" data-act="open" data-kind="${r.kind}" data-id="${r.id}">
         <span class="wl-cat-col d-only">${r.category || "—"}</span>
-        <span class="wl-name${r.name ? "" : " is-quiet"}">${r.kind === "supplier" || r.name ? who : r.category || who}</span>
+        ${r.kind === "supplier" || r.name
+          ? html`<span class="wl-name">${who}</span>`
+          : html`<span class="wl-name m-title-only">${r.category || who}</span><span class="wl-name-d is-quiet">${who}</span>`}
         <span class="wl-sub m-only-inline" data-role="sub">${[r.kind === "supplier" || r.name ? r.category : r.kind === "planned" ? "No supplier yet" : "", shortPeso(r.total)].filter(Boolean).join(" · ")}</span>
       </button>
       <span class="wl-col wl-num d-only" data-role="total">${shortPeso(r.total)}</span>

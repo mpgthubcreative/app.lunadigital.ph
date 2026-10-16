@@ -3636,3 +3636,8 @@ tr.is-saving {
 .wl-fieldset legend { padding: 0 4px; font-weight: 600; }
 .wl-check { display: flex; align-items: flex-start; gap: 8px; margin: var(--space-2) 0; }
 .wl-check input { margin-top: 3px; }
+.wl-money .wl-name-d { display: none; }
+@media (min-width: 720px) {
+  .wl-money .m-title-only { display: none; }
+  .wl-money .wl-name-d { display: block; font-weight: 500; color: var(--text-muted); }
+}
