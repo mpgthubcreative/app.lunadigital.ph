@@ -317,6 +317,27 @@ Owner request: the Dashboard was redundant; Payroll is the financial home, Advan
   - **Browser at 390px / 1280px:** 31/31 on a temporary household (deleted). Checks: lands on Payroll; no Dashboard and no "/" link; the bell count and items by helper; a bell item opens Payroll on that helper's period; solid Pay / Save attendance / Give an advance / + Add staff / + Add member (44px, one line); disabled buttons grey; Correct payroll visible; "Not yet confirmed" shown first; helper portal unchanged.
   - **Real household (read-only):** the bell will show 3 items for Loriza: 8 days of Sep 16–30 still to record (salary already paid), Oct 1–15 salary not confirmed, ₱500 advance (Oct 12) not confirmed.
 
+### 2026-10-17 · Household consolidated UI simplification (f50521f, facdf89)
+
+Items 1–4, 13–19, 29 and 30 of the request were already live (no Dashboard and Payroll as home in 5d27d7a; payslip, corrections, Delete / Void, Users, current staff in earlier batches) and were re-checked. New:
+
+- **Advances (20–28):**
+  - **Helper card:** one card per helper is the working area. It shows Outstanding / Available / Next deduction, then [Give advance] (solid) and [⋯ More]. ⋯ More holds Repaid advances, which opens a sheet.
+  - **Current advances:** listed right under the figures, each as "₱500 · Oct 12 / ₱500 owed · Deduct ₱500 Nov 1–15" with a status chip (Not confirmed / Confirmed) and its own ⋯.
+  - **Removed:** the "Open advances" heading and the page intro.
+  - **Voided records:** a quiet link at the page bottom, outside the cards (Payroll too).
+- **Attendance (7–12):**
+  - **Removed:** the intro text. The work area is now Employee / Period, one summary line ("14 paid days · ₱5,754" plus the helper's confirmation chip), shortcuts, the grid, the status buttons and Save attendance.
+  - **Details (folded):** the full breakdown, the confirmation sentence and Paid Leave.
+  - **Shortcuts:** Confirm through today comes first and is the primary button while days up to today are open. Fill normal schedule and Copy previous period are quiet.
+  - **Legend:** one short line.
+- **Payroll home (13):** the period line shows Paid / Still to pay / Prepaid ("in paid", never added on top).
+- **Text noise (5, 6):** page intros removed (Payroll, Attendance, Advances, Staff, Notifications); Users keeps "Who can sign in to Luna."
+- **Tests:**
+  - **Unit:** 1412 pass. Advances card structure (no Open advances, Give advance + ⋯ More, Voided outside the cards), Payroll home figures, updated Attendance.
+  - **Browser (temporary household, deleted):** 27/27 at 390px / 1280px. Checks: lands on Payroll, no Dashboard, Payroll figures, the Advances card layout and solid Give advance, ⋯ More → Repaid sheet, Give advance preselected, the quiet Attendance header with Confirm through today first, a solid Save attendance above the tab bar, the payslip status first with Correct payroll visible, a bell item deep link. No sideways scroll and no clipped buttons.
+  - **Emulator:** not rerun; no rules, payroll or ledger code changed.
+
 ## Plan (decisions made from the brief)
 
 ### Stage 1: Distributor
