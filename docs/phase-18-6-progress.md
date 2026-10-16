@@ -356,6 +356,59 @@ Items 1–4, 13–19, 29 and 30 of the request were already live (no Dashboard a
   - **Browser at 390px (temporary household, deleted):** 14/14. Panel order, ⋯ Mark as read on screen and tappable, the badge −1 with the item still listed, the read mark survives a reload, Mark as unread brings it back, Mark all as read clears the badge and keeps the items, tapping an item opens its page.
   - **Desktop run:** shown afterwards for the same Owner, everything was correctly already read. That's why 2 checks expecting "New" failed; it confirms the marks persist.
 
+### 2026-10-17 · Bridal UX: Money home, compact Tasks, Guests RSVP | Seating (dd9f67a, e247f4f, 3235a77, b09ed31)
+
+Bridal only; Household unchanged. Logic underneath kept: financial rules, supplier ↔ expense links, category-derived budget, task statuses, guest categories, RSVP rules, security, history, exports.
+
+- **Navigation:** no Dashboard in the menu. **Money** (the Wedding Suppliers module, path /wedding-suppliers) is home ("/" opens it).
+  - **Phone:** Money / Tasks / Guests / More (Budget, Users, Subscription, Settings).
+  - **Desktop:** Money, Tasks, Guests, Budget, then Manage.
+  - **Off the menu:** Wedding Expenses and Supplier Payments keep their pages (linked from Money: All expenses ›, Payment history ›) via a new template key `menuHidden`.
+  - **Staff:** someone who can't open Money (Bridal Staff) still gets the Wedding Dashboard, so nobody lands nowhere.
+- **Money:**
+  - **Summary:** one compact block: Wedding budget, Paid / Spent, Still to pay, Remaining budget.
+    - Spent = every active Wedding Expense, supplier payments included, so nothing is counted twice.
+    - Still to pay = what suppliers are still owed on their agreements, plus anything scheduled to a supplier without one.
+    - Remaining = budget − spent − still to pay.
+  - **Suppliers:** one compact row each: name, then (phone) "Partly paid · ₱15,000 due"; desktop adds agreed / status / due columns. All / Unpaid / Partly paid / Paid, and a search once there are more than 6 suppliers.
+  - **Pay:** shown when something is owed. It pays the next scheduled payment (Mark paid → one expense) or records one Wedding Expense for the supplier. Nothing is typed twice.
+  - **⋯:** Record payment / Paid in full / each scheduled payment / Schedule a payment / View details / Edit.
+  - **Other expenses:** the latest expenses not paid to a saved supplier, with + Add expense.
+- **Tasks:** one line each: task, status ▾, due date, ⋯.
+  - **Status words:** To do / In progress / Done. The stored statuses stay; Cancelled shows only on a cancelled task.
+  - **Order:** sections Overdue, Due soon, Later, No due date, so it never relies on colour; done tasks fold under "Completed (n)".
+  - **⋯:** Edit / Change due date / Details & history / Delete.
+  - **Add task:** asks Task + Due date; category, assignee, priority and notes sit under More options.
+- **Guests:**
+  - **Top:** a compact RSVP | Seating switch next to Search guest. The summary counts people (seats), e.g. "12 invited · 5 attending · 4 waiting · 2 declined".
+  - **RSVP view:** All / Waiting / Attending / Declined. Guests are grouped by Luna's guest categories ("Not set" for older guests), each group with its own counts; empty groups hide when filtered and groups collapse.
+    - **Row:** Name | Seats | RSVP ▾ | ⋯. Seats shows "1/2" when fewer than invited are coming.
+    - **Attending:** a party asks how many are coming; Waiting / Declined is one tap.
+  - **Seating view:** attending · seated · unassigned (people). Unassigned comes first, then each table with used / capacity ("over by" when over). Row: Name | Seats | ⋯ (Assign to a table / Move / Unassign); + Add table; ⋯ on a table: Rename / change seats, Delete (its guests go back to Unassigned).
+  - **Seating data:** tables are one document `guestTotals/seating` (already readable with guests.view, so no rules change). A guest's table is `guests/{id}.tableId`, written by the server only. Only Attending guests can be seated; leaving Attending frees the seat (logged). Seats = confirmed attendees. Over capacity is shown, not refused.
+- **RSVP history, ready for a future invitation link:** an RSVP set in Luna is stored with `rsvpSource: "owner"` and `source` on its history line (who, when, from → to). A later guest answer can be recorded as "guest" without overwriting the trail.
+- **Bell:** GET `/api/wedding-attention` lists supplier payments overdue or due within 7 days, and overdue tasks (grouped Money / Tasks).
+  - It uses the same per-person read marks as Household: read is not resolved, and an item leaves only when paid / cancelled / done.
+  - Opening the bell now re-asks the server, so a task just finished leaves straight away (Household too).
+  - Not built: an RSVP-deadline reminder, because there is no RSVP deadline in the data yet.
+- **Page noise:** long subtitles are gone; Budget, Wedding Expenses and Supplier Payments show "‹ Money" instead.
+- **Tests:**
+  - **Unit:** 1434 pass.
+    - New UI tests: Money summary and rows, Pay, filters, Other expenses, permissions; Tasks order, folding, quick status, due date, the short Add task; Guests summary in people, category counts, filter and search, the RSVP dialog for parties, Seating view and actions, `seatingPlan`; the wedding bell.
+    - New server tests: tables, seat / move / unassign, Waiting refused, leaving Attending frees the seat, deleting a table unassigns, rsvpSource, wedding attention per person, read ≠ resolved, Staff gets none, other workspaces get a 403.
+  - **Live API probe (temporary wedding `p186b-wed-tmp`):** 9/9.
+  - **Browser on staging (390px and 1280px, same temporary wedding, deleted afterwards):** 43/43.
+    - **Layout:** lands on Money; tabs and menu as above; no sideways scroll; supplier, task and guest rows one line (a long guest name truncates); the first guest row is under 330px from the top on a phone.
+    - **Phone actions:** assign a guest from ⋯; RSVP from the row updates the summary; a task done from the row moves to Completed and leaves the bell; a bell item opens that supplier; Pay marks the scheduled ₱15,000 paid. Spent +₱15,000 and Still to pay −₱15,000, with Remaining unchanged.
+- **Fixed during the checks:**
+  - The bell kept a just-finished task until its next refresh.
+  - Money flashed "₱0.00" while loading.
+  - The status chip clipped "In progress".
+  - Seating rows showed "1/2" instead of the confirmed seats.
+- **Not in this batch (separate scope, to be agreed first):** the Wedding Website / digital invitation.
+  - **Not built yet:** secure per-party invitation links / QR, the guest-facing RSVP page, an RSVP deadline, link regeneration.
+  - **Ready for it:** the guest record stays the source of truth (party size, confirmed seats, RSVP status, category, table), and the RSVP trail already records who answered.
+
 ## Plan (decisions made from the brief)
 
 ### Stage 1: Distributor
