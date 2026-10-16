@@ -94,6 +94,8 @@ export const SUPPLIER_SERVICES = Object.freeze({
   stationery: { label: "Invitations / Stationery" },
   transport: { label: "Transportation" },
   accommodation: { label: "Accommodation" },
+  // Owner-pilot Bridal UX: a supplier added from just its category.
+  other: { label: "Other" },
   other: { label: "Other" },
 });
 export const SUPPLIER_SERVICE_IDS = Object.freeze(Object.keys(SUPPLIER_SERVICES));

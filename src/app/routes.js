@@ -8,6 +8,8 @@
 // nothing; this just keeps the screen honest.
 
 import { resolveNavigation, canUseModule, canUseNotifications, terminologyLabels, getWorkspaceTemplate, snapshotWorkspaceTemplateId } from "@shared/index.js";
+import { EXPORT_DATASETS } from "@shared/export-datasets.js";
+import { canExport } from "@shared/exports.js";
 import { html, render } from "../lib/html.js";
 import { pageHeader, card, emptyState } from "../components/ui.js";
 
@@ -20,6 +22,11 @@ const NOTIFICATIONS_ROUTE = Object.freeze({ path: "/notifications", label: "Noti
 // module registry: every workspace has it, whatever its template.
 export const SUBSCRIPTION_ROUTE = Object.freeze({ path: "/subscription", label: "Subscription", moduleId: "subscription" });
 export const canSeeSubscription = (session) => session?.member?.permissions?.["billing.view"] === true;
+// Owner-pilot Bridal UX: one Downloads page (under More) for the workspace's
+// Excel downloads, when the template lists them and this person may export
+// at least one. The export permission / entitlement checks stay per dataset.
+export const DOWNLOADS_ROUTE = Object.freeze({ path: "/downloads", label: "Downloads", moduleId: "downloads" });
+export const downloadsFor = (session) => (getWorkspaceTemplate(snapshotWorkspaceTemplateId(session?.entitlements))?.downloads || []).filter((id) => canExport({ entitlements: session.entitlements, permissions: session.member.permissions }, EXPORT_DATASETS[id]));
 
 export function buildRoutes(session) {
   // Tenant terminology (Phase 17) relabels a module (e.g. Customers -> Dealers); ids and paths never change.
@@ -27,6 +34,7 @@ export function buildRoutes(session) {
   const routes = resolveNavigation(accessOf(session)).map((mod) => ({ path: mod.path, label: labels[mod.id] ?? mod.label, moduleId: mod.id }));
   if (canUseNotifications(accessOf(session))) routes.push({ ...NOTIFICATIONS_ROUTE });
   if (canSeeSubscription(session)) routes.push({ ...SUBSCRIPTION_ROUTE });
+  if (downloadsFor(session).length) routes.push({ ...DOWNLOADS_ROUTE });
   // Owner-pilot UX: a workspace whose home isn't the Dashboard (Household:
   // Payroll) sends "/" (sign-in, old links) there.
   const home = getWorkspaceTemplate(snapshotWorkspaceTemplateId(session.entitlements))?.home;
@@ -38,6 +46,7 @@ export function buildRoutes(session) {
 export function routeAllowed(session, route) {
   if (route && route.moduleId === NOTIFICATIONS_ROUTE.moduleId) return canUseNotifications(accessOf(session));
   if (route && route.moduleId === SUBSCRIPTION_ROUTE.moduleId) return canSeeSubscription(session);
+  if (route && route.moduleId === DOWNLOADS_ROUTE.moduleId) return downloadsFor(session).length > 0;
   return Boolean(route && route.moduleId) && canUseModule(accessOf(session), route.moduleId);
 }
 

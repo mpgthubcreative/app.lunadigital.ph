@@ -1,9 +1,11 @@
 // Wedding Tasks (Phase 16; Owner-pilot Bridal UX): a compact checklist,
 // not project-management software. One task = one line:
 //   Task | Status ▾ (To do / In progress / Done) | Due | ⋯
-// Order: Overdue, Due soon (next DUE_SOON_DAYS days), Later, No due date;
-// done (and cancelled) tasks fold into "Completed (n)". The section heading
-// says Overdue / Due soon, so it never relies on colour.
+// Owner-pilot second pass: ONE active list, by due date (earliest first,
+// so late ones come first; no due date last), no Overdue / Due soon
+// sections: the bell reminds about late tasks. A late due date is shown
+// quietly (the date in red, "Overdue" for screen readers). Done (and cancelled) tasks fold into
+// "Completed (n)". Downloads live under More.
 // Status changes inline (a controlled value, logged previous → new with who
 // and when); completing records the completed date, reopening is logged.
 // The stored statuses stay (not_started / in_progress / completed /
@@ -16,7 +18,6 @@ import { pageHeader, emptyState, skeleton } from "../../components/ui.js";
 import { formDialog } from "../../components/form-dialog.js";
 import { toast as defaultToast, confirmDialog } from "../../components/feedback.js";
 import { formatDayId } from "../../lib/format.js";
-import { exportButton, bindExport, mayExport, exportHint } from "../../lib/export.js";
 import { TASK_STATUSES, TASK_PRIORITIES, SUGGESTED_TASK_CATEGORIES, taskTiming, businessDate, isOpenStatus } from "@shared/index.js";
 import { activityLines, detailsDialog } from "../baby/common.js";
 import * as defaultData from "./data.js";
@@ -25,12 +26,6 @@ const PRIORITY_OPTIONS = Object.entries(TASK_PRIORITIES).map(([value, p]) => ({ 
 // Simple words for the stored statuses (Cancelled only shows on a cancelled task).
 export const STATUS_WORDS = { not_started: "To do", in_progress: "In progress", completed: "Done", cancelled: "Cancelled" };
 const STATUS_TONE = { not_started: "", in_progress: "info", completed: "success", cancelled: "" };
-const GROUPS = [
-  ["overdue", "Overdue"],
-  ["soon", "Due soon"],
-  ["later", "Later"],
-  ["nodate", "No due date"],
-];
 const MAX_TASKS = 500;
 
 // Task + Due date up front; the rest under More options.
@@ -47,25 +42,16 @@ export function toTaskInput(v) {
   return { title: v.title.trim(), category: (v.category || "").trim() || null, assignee: (v.assignee || "").trim() || null, dueDate: v.dueDate || null, priority: v.priority || "normal", notes: (v.notes || "").trim() || null };
 }
 
-// overdue → due soon → later → no due date (each by date, then title); done last.
-export function groupTasks(tasks, today) {
-  const by = { overdue: [], soon: [], later: [], nodate: [], done: [] };
-  for (const t of tasks) {
-    if (!isOpenStatus(t.status)) by.done.push(t);
-    else if (!t.dueDate) by.nodate.push(t);
-    else {
-      const timing = taskTiming(t, today);
-      by[timing === "overdue" ? "overdue" : timing === "due_soon" ? "soon" : "later"].push(t);
-    }
-  }
-  const byDate = (a, b) => (a.dueDate || "").localeCompare(b.dueDate || "") || a.title.localeCompare(b.title);
-  for (const k of ["overdue", "soon", "later"]) by[k].sort(byDate);
-  by.nodate.sort((a, b) => a.title.localeCompare(b.title));
-  by.done.sort((a, b) => (b.completedDate || b.dueDate || "").localeCompare(a.completedDate || a.dueDate || ""));
-  return by;
+// Unfinished by due date (no due date last, then by title); done last, newest first.
+export function sortTasks(tasks) {
+  const active = tasks.filter((t) => isOpenStatus(t.status));
+  const done = tasks.filter((t) => !isOpenStatus(t.status));
+  active.sort((a, b) => (a.dueDate ? 0 : 1) - (b.dueDate ? 0 : 1) || (a.dueDate || "").localeCompare(b.dueDate || "") || a.title.localeCompare(b.title));
+  done.sort((a, b) => (b.completedDate || b.dueDate || "").localeCompare(a.completedDate || a.dueDate || ""));
+  return { active, done };
 }
 
-export function mount(container, session, { data = defaultData, toast = defaultToast, now = () => new Date(), exportDeps = {}, confirm = confirmDialog, location: loc = globalThis.location } = {}) {
+export function mount(container, session, { data = defaultData, toast = defaultToast, now = () => new Date(), confirm = confirmDialog, location: loc = globalThis.location } = {}) {
   const canManage = session.member.permissions["tasks.manage"] === true;
   const businessId = session.business.id;
   const timezone = session.business.timezone;
@@ -89,7 +75,11 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     if (focus) {
       const t = state.rows.find((r) => r.id === focus);
       focus = null;
-      container.querySelector(`[data-task="${t?.id}"]`)?.scrollIntoView?.({ block: "center" });
+      // From the bell: the task itself opens.
+      if (t) {
+        container.querySelector(`[data-task="${t.id}"]`)?.scrollIntoView?.({ block: "center" });
+        openView(t);
+      }
     }
   }
 
@@ -103,7 +93,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
   const row = (t) => html`<li class="wl-row wl-task${isOpenStatus(t.status) ? "" : " is-done"}" data-task="${t.id}">
     <button type="button" class="wl-main" data-act="view" data-id="${t.id}"><span class="wl-name">${t.title}</span></button>
     ${statusControl(t)}
-    <span class="wl-due" data-role="due">${t.dueDate ? short(t.dueDate) : ""}</span>
+    ${taskTiming(t, today()) === "overdue" ? html`<span class="wl-due is-over" data-role="due" title="Overdue"><span class="visually-hidden">Overdue, due </span>${short(t.dueDate)}</span>` : html`<span class="wl-due" data-role="due">${t.dueDate ? short(t.dueDate) : ""}</span>`}
     <details class="line-menu"><summary class="btn btn-compact btn-ghost" aria-label="More for ${t.title}">⋯</summary><div class="line-menu-list" role="menu">
       ${canManage ? html`<button type="button" class="menu-item" role="menuitem" data-act="edit" data-id="${t.id}">Edit</button><button type="button" class="menu-item" role="menuitem" data-act="due" data-id="${t.id}">Change due date</button>` : ""}
       <button type="button" class="menu-item" role="menuitem" data-act="view" data-id="${t.id}">Details &amp; history</button>
@@ -113,8 +103,8 @@ export function mount(container, session, { data = defaultData, toast = defaultT
 
   function draw() {
     if (!alive) return;
-    const g = groupTasks(state.rows, today());
-    const open = state.rows.length - g.done.length;
+    const g = sortTasks(state.rows);
+    const open = g.active.length;
     render(
       container,
       html`
@@ -126,15 +116,10 @@ export function mount(container, session, { data = defaultData, toast = defaultT
             : !state.rows.length
               ? emptyState({ iconName: "tasks", title: "No tasks yet", body: "Add the wedding to-dos: requirements, fittings, tastings, deadlines." })
               : html`
-                <p class="wl-count" data-role="task-count">${open} to do${g.overdue.length ? html` · <strong class="is-over">${g.overdue.length} overdue</strong>` : ""}</p>
-                ${!open ? html`<p class="stat-hint wl-none">Everything is done.</p>` : ""}
-                ${GROUPS.filter(([k]) => g[k].length).map(
-                  ([k, label]) => html`<section class="wl-section" data-group="${k}"><h2 class="wl-group-title${k === "overdue" ? " is-over" : ""}">${label} <span>${g[k].length}</span></h2><ul class="wl-list" data-role="tasks">${g[k].map(row)}</ul></section>`
-                )}
+                ${open ? html`<ul class="wl-list wl-section" data-role="tasks">${g.active.map(row)}</ul>` : html`<p class="stat-hint wl-none">Everything is done.</p>`}
                 ${g.done.length
                   ? html`<details class="wl-fold" data-role="done" ${state.showDone ? "open" : ""}><summary>Completed (${g.done.length})</summary><ul class="wl-list">${g.done.map(row)}</ul></details>`
-                  : ""}`}
-        ${mayExport(session, "weddingTasks") ? html`<p class="page-foot wl-links"><span class="visually-hidden">${exportHint}</span>${exportButton("weddingTasks")}</p>` : ""}`
+                  : ""}`}`
     );
   }
 
@@ -240,11 +225,9 @@ export function mount(container, session, { data = defaultData, toast = defaultT
   container.addEventListener("click", onClick);
   container.addEventListener("change", onChange);
   container.addEventListener("toggle", onToggle, true);
-  const unbindExport = bindExport(container, () => ({ state: "all" }), { toast, deps: exportDeps });
   load();
   return () => {
     alive = false;
-    unbindExport();
     container.removeEventListener("click", onClick);
     container.removeEventListener("change", onChange);
     container.removeEventListener("toggle", onToggle, true);

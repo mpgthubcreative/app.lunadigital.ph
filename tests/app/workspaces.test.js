@@ -46,7 +46,7 @@ describe("navigation", () => {
   it("Bridal: Money / Tasks / Guests / Budget, no Dashboard, no Orders / Inventory / Payments", () => {
     renderShell(document.getElementById("app"), bridal());
     // Owner-pilot Bridal UX: Wedding Expenses and Supplier Payments open from Money (no menu entry).
-    expect(navOf()).toEqual(["/wedding-suppliers Money", "/wedding-tasks Tasks", "/guests Guests", "/budget Budget", "/users Users", "/subscription Subscription", "/settings Settings"]);
+    expect(navOf()).toEqual(["/wedding-suppliers Money", "/wedding-tasks Tasks", "/guests Guests", "/budget Budget", "/downloads Downloads", "/users Users", "/subscription Subscription", "/settings Settings"]);
   });
 
   it("Bridal staff: roles still apply", () => {

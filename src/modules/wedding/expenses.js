@@ -15,6 +15,7 @@ import { exportButton, bindExport, mayExport, exportHint } from "../../lib/expor
 import { EXPENSE_METHODS, EXPENSE_METHOD_IDS, parseCentavos, businessDate } from "@shared/index.js";
 import { categoryName, optionsOf, activityLines, detailsDialog } from "../baby/common.js";
 import * as defaultData from "./data.js";
+import { categoryField, resolveCategory } from "./categories.js";
 
 const methodLabel = (id) => EXPENSE_METHODS[id]?.label ?? id;
 const METHOD_OPTIONS = EXPENSE_METHOD_IDS.map((id) => ({ value: id, label: EXPENSE_METHODS[id].label }));
@@ -122,7 +123,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     );
   }
 
-  const actions = expenseActions({ data, currency, timezone, can, toast, getCtx: () => ({ today: today(), categories: state.categories, suppliers: state.suppliers }), reload: () => load() });
+  const actions = expenseActions({ data, currency, timezone, can: { ...can, category: perms["budget.manage"] === true }, toast, getCtx: () => ({ today: today(), categories: state.categories, suppliers: state.suppliers }), reload: () => load() });
   const { addDialog, openView } = actions;
   const done = actions.done;
 
@@ -131,10 +132,6 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     if (!el || !container.contains(el) || el.dataset.act === "export") return undefined;
     switch (el.dataset.act) {
       case "new":
-        if (!state.categories.some((c) => c.status === "active")) {
-          toast("Add a wedding budget category first (Wedding Budget).", "danger");
-          return undefined;
-        }
         return done("Expense added")(await addDialog());
       case "view":
         return openView(state.rows.find((r) => r.id === el.dataset.id));
@@ -185,16 +182,36 @@ export function mount(container, session, { data = defaultData, toast = defaultT
 export function expenseActions({ data, currency, timezone, can, toast, getCtx, reload }) {
   const ctx = getCtx;
   const names = () => new Map(getCtx().categories.map((c) => [c.id, c.name]));
-  const addDialog = () =>
-    formDialog({
-      title: "Add wedding expense",
-      fields: fields(null, ctx()),
-      onSubmit: (v) => {
-        const e = parseWeddingExpense(v);
-        for (const k of Object.keys(e)) if (e[k] === null || e[k] === undefined) delete e[k];
+  // Owner-pilot Bridal UX: Amount, Supplier / Payee, Category, Date; the
+  // rest under More options. No budget category needed first: a new name
+  // becomes a category (resolveCategory). Typing a saved supplier's name
+  // links the expense to it (counts toward its balance).
+  const addDialog = () => {
+    const { today: day, categories, suppliers } = ctx();
+    return formDialog({
+      title: "Add expense",
+      fields: [
+        { name: "amount", label: "Amount (₱)", value: "", inputmode: "decimal", required: true },
+        { name: "payee", label: "Supplier / Payee", value: "", placeholder: "e.g. Van rental", suggestions: suppliers.map((s) => s.name), hint: "Optional." },
+        categoryField(categories),
+        { name: "date", label: "Date paid", type: "date", value: day, max: day, required: true },
+        { name: "method", label: "Payment method", type: "select", options: METHOD_OPTIONS, value: "cash", more: true, default: true },
+        { name: "reference", label: "Reference (OR no., invoice, transfer ref)", value: "", more: true },
+        { name: "notes", label: "Notes", type: "textarea", value: "", more: true },
+      ],
+      moreLabel: "More options",
+      submitLabel: "Add expense",
+      onSubmit: async (v) => {
+        const amount = parseCentavos(v.amount);
+        if (!(amount > 0)) throw new Error("Enter an amount more than ₱0");
+        const typed = (v.payee || "").trim();
+        const supplier = suppliers.find((s) => s.name.toLocaleLowerCase("en") === typed.toLocaleLowerCase("en"));
+        const category = await resolveCategory(v.category, { categories, data, canCreate: can.category === true });
+        const e = { date: v.date, category, amount, method: v.method, ...(supplier ? { supplierId: supplier.id } : typed ? { payee: typed } : {}), ...(v.reference.trim() ? { reference: v.reference.trim() } : {}), ...(v.notes.trim() ? { notes: v.notes.trim() } : {}) };
         return data.expensesApi({ action: "create", expense: e });
       },
     });
+  };
   const editDialog = (e) =>
     formDialog({
       title: "Edit expense",

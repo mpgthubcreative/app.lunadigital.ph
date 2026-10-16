@@ -18,6 +18,7 @@ import { html, render } from "../lib/html.js";
 import { icon, lunaMark } from "../components/icons.js";
 import { initials } from "../lib/format.js";
 import { mountBell } from "./notification-bell.js";
+import { downloadsFor } from "./routes.js";
 
 // One bell per rendered shell (a business switch renders a new shell).
 let bell = null;
@@ -29,7 +30,7 @@ const SUBSCRIPTION_MESSAGES = {
 };
 
 // The purpose of each page decides its group (and nothing else).
-const MANAGE = new Set(["users", "settings", "imports", "subscription"]);
+const MANAGE = new Set(["users", "settings", "imports", "subscription", "downloads"]);
 export const navGroup = (id) => (id === "dashboard" ? "overview" : id === "reports" ? "analyze" : MANAGE.has(id) ? "manage" : "work");
 const GROUP_LABELS = { overview: "Overview", work: "Work", analyze: "Analyze", manage: "Manage" };
 // One-word labels for the phone tab bar (display only; ids never change).
@@ -81,6 +82,11 @@ export function renderShell(root, session, handlers = {}) {
   if (session.member.permissions?.["billing.view"] === true) {
     const at = nav.findIndex((m) => m.id === "settings");
     nav.splice(at < 0 ? nav.length : at, 0, { id: "subscription", path: "/subscription", label: "Subscription", icon: "payments" });
+  }
+  // Owner-pilot Bridal UX: Excel downloads on one page under More / Manage.
+  if (downloadsFor(session).length) {
+    const at = nav.findIndex((m) => m.id === "users");
+    nav.splice(at < 0 ? nav.length : at, 0, { id: "downloads", path: "/downloads", label: "Downloads", icon: "download" });
   }
   const notifications = canUseNotifications({ entitlements: session.entitlements, permissions: session.member.permissions });
   if (bell) bell.stop();

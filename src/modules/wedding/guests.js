@@ -15,13 +15,18 @@
 // changes made here are recorded as the Owner side's (rsvpSource "owner",
 // with who and when in the history), so a future invitation-link answer
 // ("guest") can sit beside them without overwriting the trail.
+// Owner-pilot second pass: the summary line, the RSVP | Seating switch,
+// then Search + "RSVP: All ▾" on one line. A category header is just
+// "FAMILY · 18/24" (people attending / invited). Each group's list scrolls
+// inside its own box past ~6 rows, so one big category never takes over the
+// page; ⋯ menus inside a scrolling box open as a floating layer. Downloads
+// live under More.
 
 import { html, render } from "../../lib/html.js";
 import { pageHeader, emptyState, skeleton, segmented } from "../../components/ui.js";
 import { formDialog } from "../../components/form-dialog.js";
 import { confirmDialog, toast as defaultToast } from "../../components/feedback.js";
 import { formatDayId } from "../../lib/format.js";
-import { exportButton, bindExport, mayExport, exportHint } from "../../lib/export.js";
 import { RSVP_STATUSES, GUEST_SIDES, GUEST_CATEGORIES, GUEST_CATEGORY_IDS, rsvpSummary, seatingPlan, MAX_TABLE_CAPACITY } from "@shared/index.js";
 import { activityLines, detailsDialog } from "../baby/common.js";
 import * as defaultData from "./data.js";
@@ -79,11 +84,11 @@ export function groupGuests(guests) {
   return [...by.entries()].filter(([, list]) => list.length).map(([id, list]) => ({ id: id || "none", label: id ? GUEST_CATEGORIES[id].label : "Not set", guests: list }));
 }
 
-export function mount(container, session, { data = defaultData, toast = defaultToast, confirm = confirmDialog, exportDeps = {} } = {}) {
+export function mount(container, session, { data = defaultData, toast = defaultToast, confirm = confirmDialog } = {}) {
   const canManage = session.member.permissions["guests.manage"] === true;
   const businessId = session.business.id;
   const timezone = session.business.timezone;
-  const state = { view: "rsvp", filter: "all", search: "", rows: [], totals: null, seating: null, loading: true, error: null, collapsed: new Set() };
+  const state = { view: "rsvp", filter: "all", search: "", rows: [], totals: null, seating: null, loading: true, error: null };
   let alive = true;
 
   async function load() {
@@ -126,7 +131,6 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     const q = state.search.toLowerCase();
     return state.rows.filter((g) => (state.filter === "all" || g.rsvp === state.filter) && (!q || g.name.toLowerCase().includes(q)));
   };
-  const countsLine = (c) => html`${fmt(c.invited)} invited · ${fmt(c.attending)} attending · ${fmt(c.awaiting)} waiting${c.declined ? ` · ${fmt(c.declined)} declined` : ""}`;
 
   function rsvpView() {
     const list = shown();
@@ -134,10 +138,14 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     if (!state.rows.length) return emptyState({ iconName: "users", title: "No guests yet", body: "Add each guest or household with its number of seats." });
     if (!groups.length) return html`<p class="stat-hint wl-none">No ${state.filter === "all" ? "" : RSVP_WORDS[state.filter].toLowerCase() + " "}guests${state.search ? ` matching "${state.search}"` : ""}.</p>`;
     return groups.map(
-      (gr) => html`<details class="wl-cat" data-category="${gr.id}" ${state.collapsed.has(gr.id) ? "" : "open"}>
-        <summary class="wl-cat-head"><span class="wl-group-title">${gr.label}</span><span class="wl-cat-counts" data-role="cat-counts">${countsLine(seatCounts(gr.guests))}</span></summary>
-        <ul class="wl-list" data-role="guests">${gr.guests.map(rsvpRow)}</ul>
-      </details>`
+      (gr) => {
+        // Attending / invited, in people (for the guests shown).
+        const c = seatCounts(gr.guests);
+        return html`<section class="wl-cat" data-category="${gr.id}">
+          <h2 class="wl-cat-head"><span class="wl-group-title">${gr.label}</span><span class="wl-cat-counts" data-role="cat-counts" title="${c.attending} attending of ${c.invited} invited">· ${fmt(c.attending)}/${fmt(c.invited)}</span></h2>
+          <ul class="wl-list wl-scroll" data-role="guests">${gr.guests.map(rsvpRow)}</ul>
+        </section>`;
+      }
     );
   }
 
@@ -146,16 +154,15 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     const seatRow = (g, table) =>
       html`<li class="wl-row wl-guest" data-guest="${g.id}"><button type="button" class="wl-main" data-act="view" data-id="${g.id}"><span class="wl-name">${g.name}</span></button>${seats(g, String(g.confirmed))}${menu(`Seating for ${g.name}`, canManage ? (table ? [{ act: "seat", id: g.id, label: "Move to another table" }, { act: "unseat", id: g.id, label: "Unassign" }] : [{ act: "seat", id: g.id, label: "Assign to a table" }]) : [{ act: "view", id: g.id, label: "Details & history" }])}</li>`;
     return html`
-      <p class="wl-count" data-role="seating-summary">${fmt(plan.attendingSeats)} attending · ${fmt(plan.seatedSeats)} seated · <strong class="${plan.unassignedSeats ? "is-warn" : ""}">${fmt(plan.unassignedSeats)} unassigned</strong></p>
       <section class="wl-section" data-group="unassigned">
         <h2 class="wl-group-title">Unassigned <span>${fmt(plan.unassignedSeats)} seat${plan.unassignedSeats === 1 ? "" : "s"}</span></h2>
-        ${plan.unassigned.length ? html`<ul class="wl-list" data-role="unassigned">${plan.unassigned.map((g) => seatRow(g, null))}</ul>` : html`<p class="stat-hint wl-none">${plan.attendingSeats ? "Everyone attending has a table." : "Guests appear here once they're attending."}</p>`}
+        ${plan.unassigned.length ? html`<ul class="wl-list wl-scroll" data-role="unassigned">${plan.unassigned.map((g) => seatRow(g, null))}</ul>` : html`<p class="stat-hint wl-none">${plan.attendingSeats ? "Everyone attending has a table." : "Guests appear here once they're attending."}</p>`}
       </section>
       ${plan.tables.length
         ? plan.tables.map(
             (t) => html`<section class="wl-section" data-table="${t.id}">
               <div class="wl-head"><h2 class="wl-group-title">${t.name} <span class="${t.used > t.capacity ? "is-over" : ""}" data-role="table-seats">${t.used}/${t.capacity} seats${t.used > t.capacity ? ` · over by ${t.used - t.capacity}` : ""}</span></h2>${canManage ? menu(`Table ${t.name}`, [{ act: "table-edit", id: t.id, label: "Rename / change seats" }, { act: "table-delete", id: t.id, label: "Delete table", danger: true, sep: true }]) : ""}</div>
-              ${t.guests.length ? html`<ul class="wl-list" data-role="table-guests">${t.guests.map((g) => seatRow(g, t))}</ul>` : html`<p class="stat-hint wl-none">No one yet.</p>`}
+              ${t.guests.length ? html`<ul class="wl-list wl-scroll" data-role="table-guests">${t.guests.map((g) => seatRow(g, t))}</ul>` : html`<p class="stat-hint wl-none">No one yet.</p>`}
             </section>`
           )
         : html`<p class="stat-hint wl-none" data-role="no-tables">No tables yet.${canManage ? " Add your reception tables, then assign guests." : ""}</p>`}`;
@@ -165,22 +172,30 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     if (!alive) return;
     const t = rsvpSummary(state.totals);
     const seatingOn = state.view === "seating";
+    const plan = seatingOn ? seatingPlan(state.rows, state.seating) : null;
     render(
       container,
       html`
         ${pageHeader({ title: "Guests", actions: canManage ? (seatingOn ? html`<button type="button" class="btn btn-primary" data-act="new-table">+ Add table</button>` : html`<button type="button" class="btn btn-primary" data-act="new">+ Add guest</button>`) : "" })}
-        <div class="wl-tools wl-guest-tools">${segmented("view", [["rsvp", "RSVP"], ["seating", "Seating"]], state.view, { label: "Guests view" })}
-          ${seatingOn ? "" : html`<input class="input wl-search" type="search" data-role="search" placeholder="Search guest" aria-label="Search guest" value="${state.search}">`}</div>
+        ${state.loading || state.error
+          ? ""
+          : seatingOn
+            ? html`<p class="wl-count" data-role="seating-summary">${fmt(plan.attendingSeats)} attending · ${fmt(plan.seatedSeats)} seated · <strong class="${plan.unassignedSeats ? "is-warn" : ""}">${fmt(plan.unassignedSeats)} unassigned</strong></p>`
+            : html`<p class="wl-count" data-role="rsvp-summary" title="People (seats), not invitations">${fmt(t.invitedSeats)} invited · ${fmt(t.attendingSeats)} attending · ${fmt(t.awaitingSeats)} waiting${t.declinedSeats ? ` · ${fmt(t.declinedSeats)} declined` : ""}</p>`}
+        <div class="wl-tools">${segmented("view", [["rsvp", "RSVP"], ["seating", "Seating"]], state.view, { label: "Guests view" })}</div>
+        ${seatingOn || !state.rows.length
+          ? ""
+          : html`<div class="wl-tools wl-guest-tools">
+              <input class="input wl-search" type="search" data-role="search" placeholder="Search guest" aria-label="Search guest" value="${state.search}">
+              <label class="wl-pick"><span class="wl-pick-label">RSVP:</span><select class="select select-compact" data-role="filter" aria-label="RSVP filter">${FILTERS.map(([v, l]) => html`<option value="${v}" ${v === state.filter ? "selected" : ""}>${l}</option>`)}</select></label>
+            </div>`}
         ${state.error
           ? emptyState({ title: "Couldn't load", body: state.error })
           : state.loading
             ? skeleton(6)
             : seatingOn
               ? seatingView()
-              : html`<p class="wl-count" data-role="rsvp-summary" title="People (seats), not invitations">${fmt(t.invitedSeats)} invited · ${fmt(t.attendingSeats)} attending · ${fmt(t.awaitingSeats)} waiting · ${fmt(t.declinedSeats)} declined</p>
-                  ${state.rows.length ? html`<div class="wl-tools">${segmented("filter", FILTERS, state.filter, { label: "Show guests" })}</div>` : ""}
-                  ${rsvpView()}`}
-        ${mayExport(session, "guests") ? html`<p class="page-foot wl-links"><span class="visually-hidden">${exportHint}</span>${exportButton("guests")}</p>` : ""}`
+              : rsvpView()}`
     );
   }
 
@@ -301,6 +316,11 @@ export function mount(container, session, { data = defaultData, toast = defaultT
   // RSVP ▾ in the row. Attending asks how many when more than one is invited.
   const onChange = async (event) => {
     const el = event.target;
+    if (el.dataset?.role === "filter") {
+      state.filter = el.value;
+      draw();
+      return;
+    }
     if (el.dataset?.role !== "rsvp" || !container.contains(el)) return;
     const g = state.rows.find((r) => r.id === el.dataset.id);
     if (!g) return;
@@ -331,22 +351,33 @@ export function mount(container, session, { data = defaultData, toast = defaultT
       box.setSelectionRange(pos, pos);
     }
   };
-  // Remember collapsed categories across redraws.
+  // A ⋯ menu inside a scrolling list floats (fixed) so the box doesn't clip
+  // it; scrolling the box closes it.
   const onToggle = (event) => {
     const d = event.target;
-    if (!d.classList?.contains("wl-cat")) return;
-    if (d.open) state.collapsed.delete(d.dataset.category);
-    else state.collapsed.add(d.dataset.category);
+    if (!d.matches?.("details.line-menu") || !d.closest(".wl-scroll")) return;
+    const list = d.querySelector(".line-menu-list");
+    if (!d.open) {
+      list.removeAttribute("style");
+      return;
+    }
+    const r = d.querySelector("summary").getBoundingClientRect();
+    const up = r.bottom + 240 > innerHeight;
+    list.style.cssText = `position:fixed;left:auto;right:${Math.max(8, innerWidth - r.right)}px;${up ? `top:auto;bottom:${innerHeight - r.top + 4}px` : `top:${r.bottom + 4}px;bottom:auto`}`;
+  };
+  const onScroll = (event) => {
+    if (!event.target.classList?.contains("wl-scroll")) return;
+    for (const d of event.target.querySelectorAll("details.line-menu[open]")) d.removeAttribute("open");
   };
   container.addEventListener("click", onClick);
   container.addEventListener("change", onChange);
   container.addEventListener("input", onInput);
   container.addEventListener("toggle", onToggle, true);
-  const unbindExport = bindExport(container, () => (state.filter === "all" ? {} : { rsvp: state.filter }), { toast, deps: exportDeps });
+  container.addEventListener("scroll", onScroll, true);
   load();
   return () => {
     alive = false;
-    unbindExport();
+    container.removeEventListener("scroll", onScroll, true);
     container.removeEventListener("click", onClick);
     container.removeEventListener("change", onChange);
     container.removeEventListener("input", onInput);

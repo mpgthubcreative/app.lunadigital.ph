@@ -7,9 +7,11 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { mount as mountBudget } from "../../src/modules/wedding/budget.js";
 import { mount as mountExpenses, parseWeddingExpense } from "../../src/modules/wedding/expenses.js";
-import { mount as mountSuppliers, toSupplierInput, paidState, moneySummary } from "../../src/modules/wedding/suppliers.js";
+import { mount as mountSuppliers, toSupplierInput, paidState, moneySummary, shortPeso } from "../../src/modules/wedding/suppliers.js";
+import { guessService } from "../../src/modules/wedding/categories.js";
+import { mount as mountDownloads } from "../../src/modules/downloads/index.js";
 import { mount as mountPayments } from "../../src/modules/wedding/payments.js";
-import { mount as mountTasks, groupTasks } from "../../src/modules/wedding/tasks.js";
+import { mount as mountTasks, sortTasks } from "../../src/modules/wedding/tasks.js";
 import { toGuestInput, mount as mountGuests, parseRsvp, seatsText, groupGuests } from "../../src/modules/wedding/guests.js";
 import { seatingPlan } from "../../shared/wedding.js";
 import { renderShell } from "../../src/app/shell.js";
@@ -123,12 +125,19 @@ describe("Money (Owner-pilot Bridal UX): budget, suppliers and other expenses on
   const money = (extra = {}) => fakeData({ listSuppliers: vi.fn(async (_b, f) => ({ rows: f.status === "inactive" ? [] : [SUP], hasMore: false })), listWeddingExpenses: vi.fn(async () => ({ rows: [OTHER, { ...OTHER, id: "expPhoto00001", supplierId: SUP.id, payee: "ABC Photo Studio" }], hasMore: false })), ...extra });
   const rowOf = (id) => container.querySelector(`[data-supplier="${id}"]`);
 
-  it("one compact summary: budget ₱500,000 · spent ₱20,000 · still to pay ₱60,000 · remaining ₱420,000 (no double counting)", async () => {
+  it("one small line of figures: Budget ₱500k · Spent ₱20k · To pay ₱60k · Left ₱420k (no double counting); one + Add; no Download on the page", async () => {
     const data = money();
     mountSuppliers(container, wedding(), { data, now: NOW, toast: () => {} });
     await flush();
-    const k = (x) => container.querySelector(`[data-role="money-summary"] [data-k="${x}"]`).textContent.trim().replace(/\.00/g, "");
-    expect([k("budget"), k("spent"), k("still"), k("remaining")]).toEqual(["₱500,000", "₱20,000", "₱60,000", "₱420,000"]);
+    const k = (x) => container.querySelector(`[data-role="money-summary"] [data-k="${x}"]`);
+    expect(["budget", "spent", "still", "remaining"].map((x) => [...k(x).children].map((c) => c.textContent).join(" "))).toEqual(["Budget ₱500k", "Spent ₱20k", "To pay ₱60k", "Left ₱420k"]);
+    expect(k("remaining").title).toBe("₱420,000.00");
+    expect(shortPeso(15250000)).toBe("₱152.5k");
+    expect(shortPeso(120000000)).toBe("₱1.2M");
+    expect(shortPeso(85000)).toBe("₱850");
+    expect([...container.querySelectorAll('[data-role="add"] .menu-item')].map((b) => b.textContent)).toEqual(["Add supplier", "Add expense", "Set / edit budget"]);
+    expect(container.querySelectorAll(".page-header .btn-primary")).toHaveLength(1);
+    expect(container.querySelector('[data-act="export"]')).toBeNull();
     expect(container.querySelectorAll(".stat-card")).toHaveLength(0);
     // A supplier without an agreement adds what's scheduled to it.
     expect(moneySummary(BUDGET, [SUP, NOAGREE])).toEqual({ budget: 50000000, spent: 2000000, stillToPay: 6500000, remaining: 41500000 });
@@ -142,8 +151,9 @@ describe("Money (Owner-pilot Bridal UX): budget, suppliers and other expenses on
     await flush();
     const row = rowOf(SUP.id);
     expect(row.querySelector(".wl-name").textContent).toBe("ABC Photo Studio");
-    expect(row.querySelector('[data-role="sub"]').textContent.replace(/\.00/g, "")).toBe("Partly paid · ₱60,000 due");
-    expect([...row.querySelectorAll('[data-act="menu"]')].map((b) => b.textContent)).toEqual(["Record another payment", "Due Dec 1 · ₱30,000.00", "Schedule a payment", "View details", "Edit"]);
+    expect(row.querySelector('[data-role="sub"]').textContent).toBe("Partly paid · ₱60,000 due");
+    // Record payment first; payments and the schedule live behind View payments.
+    expect([...row.querySelectorAll('[data-act="menu"]')].map((b) => b.textContent)).toEqual(["Record payment", "View payments", "Schedule a payment", "Edit supplier", "Details"]);
     row.querySelector('[data-act="pay"]').click();
     await flush();
     submit(lastForm());
@@ -181,7 +191,7 @@ describe("Money (Owner-pilot Bridal UX): budget, suppliers and other expenses on
     expect(data.paymentsApi).toHaveBeenCalledWith({ action: "create", payment: expect.objectContaining({ supplierId: SUP.id, amount: 1000000, dueDate: "2027-01-10", category: "catPhotoVid01" }) });
   });
 
-  it("All / Unpaid / Partly paid / Paid filter the list; search matches anywhere in the name", async () => {
+  it("one dropdown (All / Unpaid / Partly paid / Paid) filters the list", async () => {
     const paidOne = { ...SUP, id: "supVenue00001", name: "Garden Venue", agreedAmount: 1000000, paid: 1000000 };
     const fresh = { ...SUP, id: "supFlorist001", name: "Florist", paid: 0, upcoming: 0, upcomingCount: 0 };
     const data = money({ listSuppliers: vi.fn(async (_b, f) => ({ rows: f.status === "active" ? [SUP, paidOne, fresh] : [], hasMore: false })) });
@@ -189,25 +199,100 @@ describe("Money (Owner-pilot Bridal UX): budget, suppliers and other expenses on
     await flush();
     const ids = () => [...container.querySelectorAll('[data-role="suppliers"] [data-supplier]')].map((r) => r.dataset.supplier);
     expect(ids()).toEqual([SUP.id, paidOne.id, fresh.id]);
-    container.querySelector('[data-seg="filter"][data-value="unpaid"]').click();
+    const pick = (v) => {
+      const sel = container.querySelector('[data-role="filter"]');
+      sel.value = v;
+      sel.dispatchEvent(new Event("change", { bubbles: true }));
+    };
+    pick("unpaid");
     expect(ids()).toEqual([fresh.id]);
-    container.querySelector('[data-seg="filter"][data-value="paid"]').click();
+    pick("paid");
     expect(ids()).toEqual([paidOne.id]);
     expect(rowOf(paidOne.id).querySelector('[data-act="pay"]')).toBeNull(); // nothing due
-    container.querySelector('[data-seg="filter"][data-value="all"]').click();
+    pick("all");
     expect(rowOf(fresh.id).querySelector('[data-act="pay"]')).not.toBeNull();
   });
 
-  it("Other expenses: only those not paid to a saved supplier, + Add expense; links to the full pages", async () => {
+  it("Other expenses folded at the bottom: only those not paid to a saved supplier, + All expenses", async () => {
     const data = money();
     mountSuppliers(container, wedding(), { data, now: NOW, toast: () => {} });
     await flush();
-    const other = [...container.querySelectorAll('[data-role="other-expenses"] [data-expense]')].map((r) => r.dataset.expense);
-    expect(other).toEqual([OTHER.id]);
-    container.querySelector('[data-act="add-expense"]').click();
+    const fold = container.querySelector('[data-role="other"]');
+    expect(fold.open).toBe(false);
+    expect(fold.querySelector("summary").textContent).toBe("Other expenses (1)");
+    expect([...fold.querySelectorAll("[data-expense]")].map((r) => r.dataset.expense)).toEqual([OTHER.id]);
+    expect(fold.querySelector(".wl-links a").getAttribute("href")).toBe("/expenses");
+  });
+
+  it("+ Add → Add expense: Amount, Supplier / Payee, Category, Date (rest under More options); a NEW category is created on the spot, no budget needed", async () => {
+    const data = money({ budgetApi: vi.fn(async () => ({ categoryId: "catNewFlower1" })) });
+    mountSuppliers(container, wedding(), { data, now: NOW, toast: () => {} });
     await flush();
-    expect(lastForm().elements.amount).toBeDefined();
-    expect([...container.querySelectorAll(".wl-links a")].map((a) => a.getAttribute("href"))).toEqual(["/expenses", "/supplier-payments", "/budget"]);
+    container.querySelector('[data-act="add"][data-x="expense"]').click();
+    const form = lastForm();
+    const main = [...form.querySelectorAll(".field")].filter((f) => !f.closest(".form-more")).map((f) => f.querySelector("input,select,textarea").name);
+    expect(main).toEqual(["amount", "payee", "category", "date"]);
+    expect(form.querySelector(".form-more summary").textContent).toBe("More options");
+    form.elements.amount.value = "1200";
+    form.elements.payee.value = "Petal Shop";
+    form.elements.category.value = "Flowers";
+    submit(form);
+    await flush();
+    expect(data.budgetApi).toHaveBeenCalledWith({ action: "createCategory", category: { name: "Flowers", budget: null } });
+    expect(data.expensesApi).toHaveBeenCalledWith({ action: "create", expense: { date: "2026-10-16", category: "catNewFlower1", amount: 120000, method: "cash", payee: "Petal Shop" } });
+  });
+
+  it("an existing category (any case) is reused; a saved supplier's name links the expense to it; a blank category is Miscellaneous", async () => {
+    const data = money({ budgetApi: vi.fn(async () => ({ categoryId: "catMisc000001" })) });
+    mountSuppliers(container, wedding(), { data, now: NOW, toast: () => {} });
+    await flush();
+    container.querySelector('[data-act="add"][data-x="expense"]').click();
+    let form = lastForm();
+    form.elements.amount.value = "500";
+    form.elements.payee.value = "abc photo studio";
+    form.elements.category.value = "photo / video";
+    submit(form);
+    await flush();
+    expect(data.budgetApi).not.toHaveBeenCalled();
+    expect(data.expensesApi).toHaveBeenLastCalledWith({ action: "create", expense: { date: "2026-10-16", category: "catPhotoVid01", amount: 50000, method: "cash", supplierId: SUP.id } });
+    container.querySelector('[data-act="add"][data-x="expense"]').click();
+    form = lastForm();
+    form.elements.amount.value = "80";
+    submit(form);
+    await flush();
+    expect(data.budgetApi).toHaveBeenCalledWith({ action: "createCategory", category: { name: "Miscellaneous", budget: null } });
+  });
+
+  it("+ Add → Add supplier: name, category, total amount; the category is created if new and the service follows it", async () => {
+    const data = money({ budgetApi: vi.fn(async () => ({ categoryId: "catHmua000001" })), suppliersApi: vi.fn(async () => ({ supplierId: "x" })) });
+    mountSuppliers(container, wedding(), { data, now: NOW, toast: () => {} });
+    await flush();
+    container.querySelector('[data-act="add"][data-x="supplier"]').click();
+    const form = lastForm();
+    const main = [...form.querySelectorAll(".field")].filter((f) => !f.closest(".form-more")).map((f) => f.querySelector("input,select,textarea").name);
+    expect(main).toEqual(["name", "category", "agreedAmount"]);
+    form.elements.name.value = "Glam by Jo";
+    form.elements.category.value = "HMUA";
+    form.elements.agreedAmount.value = "15000";
+    submit(form);
+    await flush();
+    expect(data.suppliersApi).toHaveBeenCalledWith({ action: "create", supplier: { name: "Glam by Jo", service: "hair_makeup", agreedAmount: 1500000, categoryId: "catHmua000001", contactPerson: null, phone: null, email: null, location: null, notes: null } });
+    expect(guessService("Photo & Video")).toBe("photo_video");
+    expect(guessService("Souvenirs")).toBe("other");
+  });
+
+  it("⋯ View payments lists what was paid and what's scheduled (open a scheduled one to pay / edit it)", async () => {
+    const data = money({ listWeddingExpenses: vi.fn(async (_b, f) => ({ rows: f.supplierId ? [{ id: "e1", date: "2026-10-01", amount: 1500000, supplierId: SUP.id }, { id: "e2", date: "2026-10-10", amount: 500000, supplierId: SUP.id }] : [], hasMore: false })) });
+    mountSuppliers(container, wedding(), { data, now: NOW, toast: () => {} });
+    await flush();
+    rowOf(SUP.id).querySelector('[data-x="payments"]').click();
+    await flush();
+    const box = document.querySelector('[data-role="supplier-payments"]');
+    expect(data.listWeddingExpenses).toHaveBeenCalledWith("demo-distributor-a", { status: "active", supplierId: SUP.id }, { pageSize: 100 });
+    expect([...box.querySelectorAll('[data-role="paid-list"] .slip-what')].map((x) => x.textContent)).toEqual(["₱15,000 paid Oct 1", "₱5,000 paid Oct 10"]);
+    expect(box.querySelector('[data-role="scheduled-list"] .wl-name').textContent).toBe("₱30,000 due Dec 1");
+    box.querySelector('[data-x="scheduled"]').click();
+    expect(document.querySelector('[data-role="details"] .card-title').textContent).toContain("Second payment");
   });
 
   it("no Pay / record without expenses.create; no schedule without vendorpayments.manage; nothing hidden is offered", async () => {
@@ -219,7 +304,7 @@ describe("Money (Owner-pilot Bridal UX): budget, suppliers and other expenses on
     expect(container.querySelector('[data-act="pay"]')).toBeNull();
     expect(container.querySelector('[data-x="record"]')).toBeNull();
     expect(container.querySelector('[data-x="schedule"]')).toBeNull();
-    expect(container.querySelector('[data-act="add-expense"]')).toBeNull();
+    expect(container.querySelector('[data-x="expense"]')).toBeNull();
   });
 
   it("paidState and toSupplierInput keep their rules", () => {
@@ -264,22 +349,31 @@ describe("Tasks (Owner-pilot Bridal UX): a compact checklist", () => {
     { id: "taskNoDate001", title: "Choose songs", dueDate: null, priority: "normal", status: "in_progress", open: true, history: [] },
     { id: "taskDone00001", title: "Finalize invitation", dueDate: "2026-10-01", completedDate: "2026-10-02", priority: "normal", status: "completed", open: false, history: [] },
   ];
-  it("order: Overdue, Due soon, Later, No due date; done folded under Completed (n); one line each: task · status ▾ · due · ⋯", async () => {
+  it("ONE active list by due date (late first, no date last), no Overdue / Due soon sections; done folded under Completed (n); one line: task · status ▾ · due · ⋯", async () => {
     const data = fakeData({ listTasks: vi.fn(async () => ({ rows: MORE, hasMore: false })) });
     mountTasks(container, wedding(), { data, now: NOW, toast: () => {} });
     await flush();
     expect(data.listTasks).toHaveBeenCalledWith("demo-distributor-a", { state: "all" }, { today: "2026-10-16", pageSize: 500 });
-    const groups = [...container.querySelectorAll("[data-group]")].map((s) => [s.dataset.group, [...s.querySelectorAll("[data-task]")].map((r) => r.dataset.task)]);
-    expect(groups).toEqual([["overdue", ["taskChurch001"]], ["soon", ["taskFitting01"]], ["later", ["taskLater0001"]], ["nodate", ["taskNoDate001"]]]);
+    expect(container.querySelectorAll("[data-group], .wl-group-title")).toHaveLength(0);
+    expect([...container.querySelectorAll('[data-role="tasks"] > [data-task]')].map((r) => r.dataset.task)).toEqual(["taskChurch001", "taskFitting01", "taskLater0001", "taskNoDate001"]);
     expect(container.querySelector('[data-role="done"] summary').textContent).toBe("Completed (1)");
     expect(container.querySelector('[data-role="done"]').open).toBe(false);
-    expect(container.querySelector('[data-role="task-count"]').textContent).toBe("4 to do · 1 overdue");
     const row = container.querySelector('[data-task="taskChurch001"]');
     expect(row.querySelector(".wl-name").textContent).toBe("Submit church requirements");
-    expect(row.querySelector('[data-role="due"]').textContent).toBe("Oct 10");
+    // Late: a quiet red date (and "Overdue" for screen readers), no section.
+    const due = row.querySelector('[data-role="due"]');
+    expect([due.textContent, due.classList.contains("is-over")]).toEqual(["Overdue, due Oct 10", true]);
+    expect(container.querySelector('[data-task="taskFitting01"] [data-role="due"]').textContent).toBe("Oct 20");
+    expect(container.querySelector('[data-act="export"]')).toBeNull();
     expect([...row.querySelectorAll('select[data-act="status"] option')].map((o) => o.textContent)).toEqual(["To do", "In progress", "Done"]);
     expect([...row.querySelectorAll(".menu-item")].map((b) => b.textContent)).toEqual(["Edit", "Change due date", "Details & history", "Delete"]);
-    expect(groupTasks(MORE, "2026-10-16").done.map((x) => x.id)).toEqual(["taskDone00001"]);
+    expect(sortTasks(MORE).done.map((x) => x.id)).toEqual(["taskDone00001"]);
+  });
+
+  it("a bell link (?task=) opens that task", async () => {
+    mountTasks(container, wedding(), { data: fakeData(), now: NOW, toast: () => {}, location: { search: "?task=taskFitting01" } });
+    await flush();
+    expect(document.querySelector('[data-role="details"] .card-title').textContent).toBe("Gown fitting");
   });
 
   it("status changes from the row (one setStatus); Change due date sends one update", async () => {
@@ -335,12 +429,21 @@ describe("Guests (Owner-pilot Bridal UX): RSVP | Seating", () => {
     expect(data.listGuests).toHaveBeenCalledWith("demo-distributor-a", {}, { pageSize: 1000 });
     expect(container.querySelector('[data-role="rsvp-summary"]').textContent).toBe("9 invited · 3 attending · 4 waiting · 2 declined");
     expect(container.querySelectorAll(".stat-card")).toHaveLength(0);
+    // Order: summary, RSVP | Seating, then Search + RSVP ▾ (one dropdown, no chips).
+    const order = [...container.querySelectorAll('[data-role="rsvp-summary"], [data-role="seg-view"], [data-role="search"], [data-role="filter"]')].map((x) => x.dataset.role);
+    expect(order).toEqual(["rsvp-summary", "seg-view", "search", "filter"]);
+    expect([...container.querySelector('[data-role="filter"]').options].map((o) => o.textContent)).toEqual(["All", "Waiting", "Attending", "Declined"]);
+    expect(container.querySelector('[data-role="seg-filter"]')).toBeNull();
+    // Category header: "FAMILY · 2/6" = people attending / invited.
     const cats = [...container.querySelectorAll("[data-category]")].map((d) => [d.dataset.category, d.querySelector(".wl-group-title").textContent, d.querySelector('[data-role="cat-counts"]').textContent]);
     expect(cats).toEqual([
-      ["family", "Family", "6 invited · 2 attending · 4 waiting"],
-      ["friends", "Friends", "4 invited · 2 attending · 0 waiting · 1 declined"],
-      ["none", "Not set", "1 invited · 0 attending · 1 waiting"],
+      ["family", "Family", "· 2/6"],
+      ["friends", "Friends", "· 2/4"],
+      ["none", "Not set", "· 0/1"],
     ]);
+    // Each group's list scrolls in its own box (CSS caps it at ~6 rows).
+    expect([...container.querySelectorAll('[data-role="guests"]')].every((u) => u.classList.contains("wl-scroll"))).toBe(true);
+    expect(container.querySelector('[data-act="export"]')).toBeNull();
     const row = container.querySelector('[data-guest="guestReyes001"]');
     expect([row.querySelector(".wl-name").textContent, row.querySelector('[data-role="seats"]').textContent, row.querySelector('[data-role="rsvp"]').selectedOptions[0].textContent]).toEqual(["Carlo Reyes", "2/3", "Attending"]);
     expect(seatsText({ rsvp: "awaiting", partySize: 4, confirmed: 0 })).toBe("4");
@@ -350,10 +453,16 @@ describe("Guests (Owner-pilot Bridal UX): RSVP | Seating", () => {
   it("Waiting shows only waiting guests under each category (empty categories hidden); search works across categories", async () => {
     mountGuests(container, wedding(), { data: guestsData(), toast: () => {} });
     await flush();
-    container.querySelector('[data-seg="filter"][data-value="awaiting"]').click();
+    const pick = (v) => {
+      const sel = container.querySelector('[data-role="filter"]');
+      sel.value = v;
+      sel.dispatchEvent(new Event("change", { bubbles: true }));
+    };
+    pick("awaiting");
     expect([...container.querySelectorAll("[data-category]")].map((d) => d.dataset.category)).toEqual(["family", "none"]);
+    expect(container.querySelector('[data-category="family"] [data-role="cat-counts"]').textContent).toBe("· 0/4");
     const box = container.querySelector('[data-role="search"]');
-    container.querySelector('[data-seg="filter"][data-value="all"]').click();
+    pick("all");
     const search = container.querySelector('[data-role="search"]');
     search.value = "cruz";
     search.dispatchEvent(new Event("input", { bubbles: true }));
@@ -504,6 +613,25 @@ describe("Phase 18.5 corrections: Delete what was added by mistake", () => {
     container.querySelector('[data-act="delete"][data-id="catVenue00001"]').click();
     await flush();
     expect(data.budgetApi).toHaveBeenCalledWith({ action: "deleteCategory", categoryId: "catVenue00001" });
+  });
+});
+
+describe("Downloads (Owner-pilot Bridal UX): Excel downloads under More, not on the everyday screens", () => {
+  it("the Owner gets a Downloads page (More / Manage) listing the wedding lists; Staff don't; other workspaces keep theirs on the pages", async () => {
+    expect(buildRoutes(wedding()).find((r) => r.path === "/downloads")).toMatchObject({ moduleId: "downloads", label: "Downloads" });
+    expect(buildRoutes(wedding("staff")).some((r) => r.path === "/downloads")).toBe(false);
+    expect(buildRoutes(sessionFixture({ workspaceTemplateId: "distributor" })).some((r) => r.path === "/downloads")).toBe(false);
+    document.body.innerHTML = '<div id="app"></div>';
+    renderShell(document.getElementById("app"), wedding());
+    expect([...document.querySelectorAll('nav.nav [data-group="manage"] .nav-label')].map((x) => x.textContent)).toEqual(["Downloads", "Users", "Subscription", "Settings"]);
+    document.body.innerHTML = '<main id="content"></main>';
+    container = document.getElementById("content");
+    const download = vi.fn(async () => ({ blob: new Blob(["x"]), fileName: "f.xlsx", rows: 3 }));
+    mountDownloads(container, wedding(), { toast: () => {}, exportDeps: { download, save: () => {} } });
+    expect([...container.querySelectorAll("[data-download]")].map((r) => r.dataset.download)).toEqual(["weddingSuppliers", "weddingExpenses", "supplierPayments", "weddingBudget", "weddingTasks", "guests"]);
+    container.querySelector('[data-download="weddingTasks"] [data-act="export"]').click();
+    await flush();
+    expect(download).toHaveBeenCalledWith("exports", { dataset: "weddingTasks", filters: { state: "all" } });
   });
 });
 

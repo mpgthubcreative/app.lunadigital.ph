@@ -40,4 +40,6 @@ export const MODULE_LOADERS = {
   // Not a module in shared/modules.js: the core Notifications page (Phase 13).
   notifications: () => import("./notifications/index.js"),
   subscription: () => import("./subscription/index.js"),
+  // Owner-pilot Bridal UX: the workspace's Excel downloads (under More).
+  downloads: () => import("./downloads/index.js"),
 };

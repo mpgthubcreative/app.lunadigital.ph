@@ -430,8 +430,8 @@ describe("the bell's Needs attention in a wedding (GET /api/wedding-attention)",
     ok(await api("tasks", u.camille, { action: "create", task: { title: "Gown fitting", dueDate: "2026-10-30" } }), 201);
     const r = ok(await attention(u.camille));
     expect(r.summary.todos.map((x) => [x.kind, x.name, x.text, x.read])).toEqual([
-      ["paymentOverdue", "Money", "₱10,000 to ABC Photo Studio (Downpayment) was due Oct 10.", false],
-      ["paymentDue", "Money", "₱10,000 to ABC Photo Studio (Second payment) is due Oct 20.", false],
+      ["paymentOverdue", "Money", "ABC Photo Studio: Downpayment (₱10,000) is overdue, due Oct 10.", false],
+      ["paymentDue", "Money", "ABC Photo Studio: Second payment (₱10,000) is due Oct 20.", false],
       ["taskOverdue", "Tasks", '"Submit church requirements" was due Oct 12.', false],
     ]);
     expect(r.summary.todos[0].href).toBe(`/wedding-suppliers?supplier=${s}`);
@@ -445,6 +445,19 @@ describe("the bell's Needs attention in a wedding (GET /api/wedding-attention)",
     ok(await markPaid(late));
     ok(await api("tasks", u.camille, { action: "setStatus", taskId: task, status: "completed" }));
     expect(ok(await attention(u.camille)).summary.todos.map((x) => x.kind)).toEqual(["paymentDue"]);
+  });
+  it("relative days: a task due yesterday says so", async () => {
+    ok(await api("tasks", u.camille, { action: "create", task: { title: "Finalize invitation", dueDate: "2026-10-15" } }), 201);
+    expect(ok(await attention(u.camille)).summary.todos.map((x) => x.text)).toEqual(['"Finalize invitation" was due yesterday.']);
+  });
+  it("Owner-pilot second pass: a category made on the spot has no budget; a supplier can be 'Other'", async () => {
+    const c = ok(await api("budget", u.camille, { action: "createCategory", category: { name: "Flowers", budget: null } }), 201).categoryId;
+    expect(docAt(`expenseCategories/${c}`)).toMatchObject({ name: "Flowers", status: "active" });
+    expect(docAt(`expenseCategories/${c}`).budget ?? null).toBe(null);
+    ok(await api("expenses", u.camille, { action: "create", expense: { date: "2026-10-15", method: "cash", category: c, amount: 120000, payee: "Petal Shop" } }), 201);
+    expect(summary()).toMatchObject({ spent: 120000 });
+    const s = ok(await api("suppliers", u.camille, { action: "create", supplier: { name: "Souvenir Co", service: "other", agreedAmount: 500000, categoryId: c } }), 201).supplierId;
+    expect(docAt(`weddingSuppliers/${s}`).service).toBe("other");
   });
   it("Staff (no payments / tasks view) get nothing; other workspaces can't call it", async () => {
     expect(ok(await attention(u.helper)).summary.todos).toEqual([]);
