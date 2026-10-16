@@ -409,6 +409,67 @@ Bridal only; Household unchanged. Logic underneath kept: financial rules, suppli
   - **Not built yet:** secure per-party invitation links / QR, the guest-facing RSVP page, an RSVP deadline, link regeneration.
   - **Ready for it:** the guest record stays the source of truth (party size, confirmed seats, RSVP status, category, table), and the RSVP trail already records who answered.
 
+### 2026-10-17 · Bridal final pass: unified Money, invitations + guest RSVP, Wedding Setup, Export & Backup (e4ec276, a34328e, 6b7b5be, 9e71b9f)
+
+Replaces the second-pass Bridal layout (the second brief arrived mid-work and was folded into this one). Logic underneath kept: financial rules, supplier payment ↔ expense link, guest / RSVP rules, seating, security, history, tenant isolation.
+
+- **Money is one list.** Each row is Category | Supplier / Payee | Total | Status | Remaining | ⋯; on a phone it's the name with "Category · ₱30k" under it and the status over "₱20k left".
+  - **Supplier rows:** Paid / Partial / Unpaid / Overdue.
+  - **Planned lines:** a budget line with no supplier yet shows "No supplier yet" and Planned. Adding a supplier in that category replaces the line, so there's no duplicate.
+  - **Expense rows:** an expense paid to no saved supplier shows Paid, ₱0 left.
+  - **Summary:** "Budget · Spent · To pay · Left" on one small line; on a phone it wraps to two.
+  - **Controls:** one + Add (Expense / Supplier / Budget item) and one filter dropdown (All / Unpaid / Partial / Paid / Planned).
+  - **⋯ by row type:** supplier = Record payment, View payments (what was paid plus what's scheduled), Edit, Change category, Payment schedule, Details, Archive (Delete when nothing was recorded). Expense = Details, Change category, Remove. Planned line = Add supplier, Add expense, Change amount, Remove from budget.
+- **No budget setup first.** Expense and supplier forms take a category name with suggestions.
+  - **Matching:** an existing category is reused (any letter case), an inactive one is brought back, and a new name is created on the spot with no budget. A blank category becomes Miscellaneous.
+  - **Supplier service:** follows the category (a new "Other" service).
+  - **Expense form:** Amount, Supplier / Payee, Category, Date; method, reference and notes are under More options. Typing a saved supplier's name links the expense to it.
+  - **Supplier form:** Supplier name, Category, Total / contract amount; the rest under More options.
+- **Tasks:**
+  - **List:** one active list by due date, with late dates in red ("Overdue" for screen readers). There are no sections.
+  - **Done tasks:** Completed (n) stays folded.
+  - **Reminders:** the bell does the reminding, and a bell link opens that task.
+- **Guests:** the summary line comes first, then RSVP | Seating, then Search with an "RSVP: All ▾" dropdown.
+  - **Category header:** "FAMILY · 18/24", people attending / invited.
+  - **Scrolling:** each category scrolls inside its own box after about 6 rows. Vertical only, the header stays outside, and small groups size naturally.
+  - **⋯ inside a scrolling box:** opens as a floating layer that stays fully on screen.
+- **Seating:**
+  - **Unassigned:** "UNASSIGNED · n" comes first, with a visible Assign button on each row.
+  - **Tables:** "TABLE 1 · 8/10".
+- **Wedding Setup (More):** couple names, date, ceremony / reception time, venue, address and map link (https only), dress code, welcome message and cover photo (shrunk in the browser).
+  - **RSVP settings:** on / off, the RSVP deadline, and "close guest RSVPs after the deadline". The Owner can always change RSVPs in Luna.
+  - **Stored as:** `weddingSetup/current` and `weddingSetup/hero`, server-only and read through `/api/wedding-setup`.
+- **Invitations:** a public page at `/invite/{token}`, no login, one elegant theme. All wording comes from Wedding Setup; nothing about a couple is built in.
+  - **Links:** the token is 24 random bytes (base64url), never derived from ids. The lookup is `invitations/{sha256(token)}` (top level, server-only), and the stored link is in `businesses/{bid}/guestInvites/{guestId}` (server-only).
+  - **Regenerate:** deletes the old lookup, so the old link stops at once. Every bad, revoked or guessed link gets the same "not valid" answer, and the page never returns ids.
+  - **Guest ⋯:** View invitation, Copy invitation link (falls back to showing the link if the clipboard isn't available), Regenerate invitation link.
+- **Guest RSVP:**
+  - **Answering:** the page already knows the party name and invited seats. Accept asks how many (1 to the invited seats); Decline thanks them.
+  - **Same record:** the answer updates the SAME guest: RSVP, confirmed seats, `rsvpSource: "guest"`, the totals and category counts. A guest who declines is taken off their table.
+  - **History:** reads "Guest responded: Attending 2"; an Owner change reads "Owner changed: Attending 2 → Attending 1", and both lines are kept with source, from / to and time.
+  - **Closed RSVPs:** answers are refused after the deadline (when set to close) or when RSVP is off.
+  - **Notification:** one informational line in Recent ("Maria Santos RSVP'd Attending · 2", new category "Guest RSVPs from invitations"). It never goes under Needs attention.
+  - **Table on the invitation:** not shown, and not built yet (a setting is reserved, off).
+- **Export & Backup (More, every workspace):** Download Excel is gone from everyday pages in Household, Bridal, Baby and Distributor. Reports keeps its workbook.
+  - **The page:** Download Master Backup (Owner: billing.view and data.export), plus each single list downloaded whole.
+  - **Master Backup:** `/api/backup` builds one workbook. It covers every record of every collection the workspace's modules own, removed / voided / inactive ones included, read in pages of 500 and never truncated (an error above 60,000 records). Plus Export Info, Users & Memberships and the Audit log.
+  - **Bridal sheets:** Wedding Setup, Budget, Suppliers, Supplier Payments, Expenses, Tasks, Guest Categories, Guests, RSVP History, Tables, Seating Assignments.
+  - **Never exported:** fields named token / secret / hash / password, and the invitation link collections.
+  - **Sheet name:** "Users & Memberships", because Excel sheet names can't contain "/".
+  - **Paid unlock later:** this page is the one place to gate exports; nothing is blocked today.
+- **Tests:**
+  - **Unit:** 1452 pass.
+    - New Bridal UI tests: unified Money rows and planned replacement, + Add flows, typed / new / reused / Miscellaneous categories, supplier ⋯, Change category, budget item, View payments, Tasks single list, Guests header / dropdown / scroll class, Seating Assign, Wedding Setup, guest invitation actions, the invitation page (Accept count, Decline, closed, bad link).
+    - New Export & Backup tests for every workspace.
+    - New server file `tests/functions/wedding-invite.test.js`: setup validation; tokens (entropy, hash lookup, regenerate revokes, guessed / other-wedding refused); guest RSVP (same record, seats cap, totals and category, history source, Owner change kept, table freed, notification, deadline / off, unchanged answer); Master Backup (all Bridal sheets, removed rows kept, RSVP history, no token or hash, 1,200 guests not truncated, Owner only, own business only, Distributor sheets).
+  - **Firestore rules (emulator):** 385 pass, including the new `tests/rules/invitations.test.js`. Lookups, stored links and Wedding Setup can't be read or written from a browser, even by the Owner or anonymously; seating is guests.view only.
+  - **Live API probe (temporary wedding `p186b-wed-tmp`):** 18/18, covering the sample invitation, the public view, the seats cap, guest RSVP on the same record, regenerate revoking the old link, a made-up token refused, and the Master Backup's sheets with no tokens inside.
+  - **Browser on staging (390px and 1280px):** 81/81, covering Money, Add expense with a new category, supplier ⋯ and paying from View payments, Tasks, Guests (headers, scrolling boxes, floating ⋯ with invitation actions, RSVP dropdown), Seating Assign, the Owner's RSVP change keeping the guest's history line, the bell clearing a finished task, Recent showing the guest's RSVP, More, Wedding Setup, Export & Backup, and the guest's invitation (Accept with a seat count, thank-you, same guest record updated).
+- **Fixed during the checks:**
+  - A 7-item guest ⋯ ran past the screen edge; it now measures itself and flips or scrolls.
+  - On desktop a planned line repeated its category; it now reads "No supplier yet".
+- **Not built:** the "proof" upload on expenses (expenses have no file attachment yet); a table shown on the invitation (setting reserved, off); more themes or a page builder (by design).
+
 ## Plan (decisions made from the brief)
 
 ### Stage 1: Distributor
