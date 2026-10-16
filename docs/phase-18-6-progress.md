@@ -227,6 +227,60 @@ Reported: Payroll's Everyone list still showed Riza and Yanie (only Loriza works
 - **Staging:** live API 23/23 on a temporary household (deleted afterwards). The 390px / 1280px browser check passed 20/21. The one miss was my own expectation: a login-ID helper's menu also has the existing "Reset password (new link)". No sideways scroll.
 - **Owner decision (2026-10-13):** Paid Leave stays on the calendar year (Jan 1–Dec 31), not the employment anniversary. No automatic proration for mid-year hires: the household default applies unless the Owner sets a per-helper number. No carry-over of unused leave. Batch accepted; staging kept as is.
 
+### 2026-10-16 · Household consolidated polish: dashboard money, simple payslip, Correct payroll, tap-grid attendance, one-step advances, safe bottom (8fa5746, 923fda0)
+
+Items B (eligibility), C (payroll Delete / Void) and D (Remove user) were already live from 6e8f8f8 and were re-verified on the real household. New in this batch:
+
+- **Dashboard (E–G, W):**
+  - **Money card:** one compact card for this cutoff, with only an Employee filter (Everyone / each helper). It shows:
+    - Salary paid.
+    - Still to pay.
+    - Prepaid salary, labelled "included in salary paid": it's part of Salary paid, not added on top.
+    - Advances outstanding: real unrepaid balance; plans don't lower it; salary overpayments aren't included.
+  - **Unpaid ended periods:** "₱X from ended pay periods is still not paid" now also catches an ended period that was never saved (worked out automatically) and nobody paid.
+  - **Below the card:** Needs your attention, grouped per helper and following the filter. Then "This cutoff", one line per helper ("Paid ₱5,565 · Prepaid ₱822" plus a confirmation badge such as "Confirmed by Loriza on Oct 15"); a tap opens Payroll for that helper.
+  - **+ Give advance** opens the form with the selected helper preselected.
+- **Payslip (H–J):**
+  - **First view:** the confirmation badge, then Basic pay, each bonus / deduction ("Advance deduction"), Prepaid salary (date range, "not a cash advance"), and Total paid (or To pay).
+  - **Paid early:** Basic pay shows what was earned when paid; the payment now stores `salary.atPayment`.
+  - **After payment:** "Actually paid / Final salary" (or "Corrected entitlement") with the existing Salary overpayment / Additional salary due / Settled status.
+  - **Folded:** calculation, payment, receipt and history sit under View details.
+- **Correct payroll (K–M):**
+  - **Where:** on paid payrolls, row ⋯ = View details / Correct payroll / Correct payment / Void payroll.
+  - **How:** Correct payroll puts a ⋯ on each line that can be wrong:
+    - Bonus / manual deduction: edit amount or label, or remove.
+    - Advance deduction: correct the amount or remove it. A lower amount leaves the rest owed as "not taken" for that period (Move to next payroll / Mark repaid). A higher amount trims later plans so they never exceed what's owed. The advance itself stays.
+    - Prepaid salary: correct the days. Total paid stays the same; earned = paid − prepaid; the original is kept.
+    - Basic pay can't be typed: it follows attendance.
+  - **Rules:** a reason is required; history and `corrections` keep before / after, who and when. The payment record is never changed (only Correct payment does that). The overpayment, additional salary due and carryover to the next unpaid payroll recalculate.
+- **Attendance (N–P):**
+  - **Grid:** a calculator-style tap grid (P / A / PL / UL / R with a legend). Tap one or several days, tap a status (or Clear), then Save; a sticky save bar sits above the tab bar.
+  - **Fill normal schedule:** shows Expected days (dashed) from the helper's usual rest day. That's a new Household Staff field, `restDays`, defaulting to Sunday.
+  - **Confirm through today:** turns the expected days up to today into changes to save.
+  - **Copy previous period:** repeats last period's pattern by weekday.
+  - **Clear:** new on the server (`status: "clear"`). It takes a recorded day back to Not marked, moves an unpaid payroll's counts, and writes an audit entry (`attendance.cleared`). The usual locks apply.
+  - Upcoming days are never recorded.
+- **Advances (Q–V):**
+  - **Form:** Helper, Amount, Deduct on (Next unpaid payroll / Split repayment / No payroll deduction).
+  - **Available amount:** shown in the helper list and checked before sending ("Maximum available is ₱…"); the server still enforces it.
+  - **More options (closed):** date (today), method (last used on this device, else Cash), reference, proof, note.
+  - **Split** opens the plan editor right after. The server takes `plan: "none"`.
+  - **Quick result:** Advance given / Outstanding / Next deduction / Still available / Waiting for confirmation.
+  - **Per helper:** Outstanding / Available / Next deduction, plus a + Give advance button.
+- **Phone safe bottom (X):**
+  - Modals are sized to the visible screen (`dvh`); the body scrolls and the footer never does.
+  - Footer menus scroll if they're long.
+  - The viewport uses `interactive-widget=resizes-content` (the keyboard resizes the page).
+  - The helper portal has safe-area padding at the bottom.
+- **Not changed (Y, Z):** the early-salary model and everything the helper confirms ("I received my salary" / "I received this advance" / "I reviewed my attendance").
+- **Tests:**
+  - **Unit:** 1402 pass. New: `tests/functions/household-polish.test.js` (10). It covers the pilot's exact ₱5,565 → ₱5,315 → ₱250 overpayment case, bonus / deduction / advance / prepaid corrections, Correct payment vs Correct payroll, dashboard money (Everyone vs one, prepaid inside paid, voided excluded, unpaid ended period), Clear, rest days, and give with no deduction. Also rewritten UI tests for the grid, payslip, give flow and dashboard.
+  - **Emulator:** 36/36, including Correct payroll racing repayments and itself.
+- **Staging:**
+  - **Live API:** 14/14 on a temporary household.
+  - **Browser at 390px / 1280px:** 30/30. Every footer / Save / Give button is fully on screen and above the tab bar; no sideways scroll.
+  - **Real household (rwp-d419), read-only:** Loriza only on Payroll and Dashboard; Oct 1–15 flagged "days to record" (paid early with 2 prepaid days); advances outstanding ₱500. Nothing was modified.
+
 ## Plan (decisions made from the brief)
 
 ### Stage 1: Distributor
