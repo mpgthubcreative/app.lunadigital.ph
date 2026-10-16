@@ -281,6 +281,42 @@ Items B (eligibility), C (payroll Delete / Void) and D (Remove user) were alread
   - **Browser at 390px / 1280px:** 30/30. Every footer / Save / Give button is fully on screen and above the tab bar; no sideways scroll.
   - **Real household (rwp-d419), read-only:** Loriza only on Payroll and Dashboard; Oct 1–15 flagged "days to record" (paid early with 2 prepaid days); advances outstanding ₱500. Nothing was modified.
 
+### 2026-10-17 · Household without a Dashboard: Payroll is home, the bell holds what needs attention, clearer buttons (5d27d7a)
+
+Owner request: the Dashboard was redundant; Payroll is the financial home, Advances has its balances, and pending actions belong in the bell. CI for 923fda0 (previous batch follow-up) passed.
+
+- **Navigation (Household only):**
+  - **Sidebar:** Payroll · Attendance · Advances · Household Staff · Users (+ Subscription, Settings).
+  - **Phone:** Payroll · Attendance · Advances · Staff · More, with the bell in the header.
+  - **Home:** "/" (sign-in, the activation page's "Go to sign in", old links) redirects to Payroll and keeps the query.
+  - **Dashboard kept, hidden:** the module stays allowed and entitled. The template now has `navHidden: ["dashboard"]` and `home: "payroll"`, and the validator checks both: a template without a Dashboard needs a home, and phones may have up to four tabs then.
+  - **Other workspaces:** Distributor / Baby / Bridal keep their Dashboard and three tabs. The helper portal is unchanged.
+- **The bell = Needs your attention:**
+  - **Source:** GET /api/household-summary now returns `todos`, one plain sentence per open item, naming the helper. Kinds:
+    - Days still to record after a salary was paid ("early" or "already paid", whichever applies).
+    - Salary or advance not confirmed.
+    - Salary reported not received.
+    - Additional salary due.
+    - Advance deduction not taken.
+    - An ended period nobody paid.
+    - An attendance correction reported.
+    - Older helper requests.
+  - **Links:** each item links to the exact tab / helper / period (Payroll now accepts `?period=<start>_<end>`).
+  - **Display:** items are grouped by helper at the top of the bell drawer and of the Notifications page.
+  - **Count:** the bell count = these items + unread notifications.
+  - **Clearing:** items go away by themselves once handled (derived each time; nothing stored).
+- **Buttons (Household screens and dialogs):**
+  - **Styles:** primary buttons are solid and bold. Disabled buttons are grey (not just faded). Quiet links are underlined. On phones buttons are 44px tall (40px for compact) with more space between footer buttons. "View details" / "More options" are styled as links.
+  - **Pay:** a solid Pay button on each unpaid payroll row opens the pay dialog directly.
+  - **Correct payroll:** a visible button on a paid payslip; Delete / Void stay inside ⋯.
+  - **Attendance:** "Confirm through today" is the primary button while days up to today are open; the save button reads "Save attendance".
+- **Tests:**
+  - **Unit:** 1411 pass. New `tests/app/household-nav.test.js` (7): redirect, deep links, sidebar / phone tabs, other workspaces keep / Dashboard, bell count / groups / links, Notifications section. Template validator tests; server bell sentences and links, gone once handled.
+  - **Emulator:** not rerun; no rules, payroll or ledger code changed.
+- **Staging:**
+  - **Browser at 390px / 1280px:** 31/31 on a temporary household (deleted). Checks: lands on Payroll; no Dashboard and no "/" link; the bell count and items by helper; a bell item opens Payroll on that helper's period; solid Pay / Save attendance / Give an advance / + Add staff / + Add member (44px, one line); disabled buttons grey; Correct payroll visible; "Not yet confirmed" shown first; helper portal unchanged.
+  - **Real household (read-only):** the bell will show 3 items for Loriza: 8 days of Sep 16–30 still to record (salary already paid), Oct 1–15 salary not confirmed, ₱500 advance (Oct 12) not confirmed.
+
 ## Plan (decisions made from the brief)
 
 ### Stage 1: Distributor
