@@ -36,3 +36,5 @@ export const suppliersApi = (body) => post("wedding-suppliers", body);
 export const paymentsApi = (body) => post("supplier-payments", body);
 export const tasksApi = (body) => post("wedding-tasks", body);
 export const guestsApi = (body) => post("guests", body);
+// Owner-pilot Bridal UX: the reception tables (guestTotals/seating).
+export const getSeating = (businessId) => getOne(businessId, "guestTotals", "seating");

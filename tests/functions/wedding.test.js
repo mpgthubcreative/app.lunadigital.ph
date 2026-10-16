@@ -13,6 +13,8 @@ import { createWeddingTasksHandler } from "../../netlify/functions/wedding-tasks
 import { createGuestsHandler } from "../../netlify/functions/guests.js";
 import { createExportsHandler } from "../../netlify/functions/exports.js";
 import { createProvidersHandler } from "../../netlify/functions/providers.js";
+import { createWeddingAttentionHandler } from "../../netlify/functions/wedding-attention.js";
+import { createNotificationsHandler } from "../../netlify/functions/notifications.js";
 import { createBusiness, addMember, ensureAuthUser } from "../../netlify/functions/_lib/provisioning.js";
 import { buildWorld, request } from "../helpers/tenants.js";
 import { notificationId } from "../../shared/notifications.js";
@@ -366,6 +368,87 @@ describe("Guests & RSVP", () => {
     ok(await api("guests", u.camille, { action: "remove", guestId: ids[0] }));
     expect(rsvpSummary(docAt("guestTotals/current")).invitations).toBe(4);
     expect(paths(`businesses/${W}/auditLog/`).map((k) => world.db.docs.get(k)).some((a) => a.type === "guest.removed" && a.name === "Guest 0")).toBe(true);
+  });
+});
+
+describe("Seating (Owner-pilot Bridal UX): tables in guestTotals/seating, a guest's table on the guest", () => {
+  const seating = () => docAt("guestTotals/seating")?.tables || {};
+  it("add tables; seat / move / unassign an Attending guest (history kept); Waiting can't be seated; leaving Attending frees the seat; deleting a table unassigns", async () => {
+    const t1 = ok(await api("guests", u.camille, { action: "createTable", table: { name: "Table 1", capacity: 8 } }), 201).tableId;
+    const t2 = ok(await api("guests", u.camille, { action: "createTable", table: { name: "Table 2", capacity: 10 } }), 201).tableId;
+    expect(seating()[t1]).toEqual({ name: "Table 1", capacity: 8, order: 1 });
+    expect((await api("guests", u.camille, { action: "createTable", table: { name: "table 1", capacity: 4 } })).status).toBe(400);
+    expect((await api("guests", u.camille, { action: "createTable", table: { name: "Big", capacity: 51 } })).status).toBe(400);
+    const g = ok(await api("guests", u.camille, { action: "create", guest: { name: "Santos Family", category: "family", side: "bride", partySize: 3 } }), 201).guestId;
+    expect((await api("guests", u.camille, { action: "seat", guestId: g, tableId: t1 })).status).toBe(400); // still Waiting
+    ok(await api("guests", u.camille, { action: "setRsvp", guestId: g, rsvp: { status: "attending", confirmed: 3 } }));
+    ok(await api("guests", u.camille, { action: "seat", guestId: g, tableId: t1 }));
+    ok(await api("guests", u.mon, { action: "seat", guestId: g, tableId: t2 }));
+    expect(docAt(`guests/${g}`).tableId).toBe(t2);
+    expect(docAt(`guests/${g}`).history.slice(-2).map((h) => h.label)).toEqual(["Seated at Table 1", "Moved from Table 1 to Table 2"]);
+    expect(ok(await api("guests", u.camille, { action: "seat", guestId: g, tableId: t2 })).unchanged).toBe(true);
+    ok(await api("guests", u.camille, { action: "seat", guestId: g, tableId: null }));
+    expect(docAt(`guests/${g}`).tableId).toBe(null);
+    ok(await api("guests", u.camille, { action: "seat", guestId: g, tableId: t1 }));
+    ok(await api("guests", u.camille, { action: "setRsvp", guestId: g, rsvp: { status: "declined" } }));
+    expect(docAt(`guests/${g}`)).toMatchObject({ tableId: null, rsvp: "declined" });
+    expect(docAt(`guests/${g}`).history.at(-1).label).toBe("RSVP changed Attending → Declined · removed from their table");
+    ok(await api("guests", u.camille, { action: "setRsvp", guestId: g, rsvp: { status: "attending", confirmed: 2 } }));
+    ok(await api("guests", u.camille, { action: "seat", guestId: g, tableId: t2 }));
+    ok(await api("guests", u.camille, { action: "updateTable", tableId: t2, changes: { name: "Sponsors", capacity: 6 } }));
+    expect(seating()[t2]).toMatchObject({ name: "Sponsors", capacity: 6 });
+    expect(ok(await api("guests", u.camille, { action: "deleteTable", tableId: t2 })).unseated).toBe(1);
+    expect(Object.keys(seating())).toEqual([t1]);
+    expect(docAt(`guests/${g}`).tableId).toBe(null);
+    // The RSVP totals never moved with the seating.
+    expect(rsvpSummary(docAt("guestTotals/current"))).toMatchObject({ attending: 1, attendingSeats: 2 });
+    // Staff can't seat or add tables; another wedding's table id is unknown here.
+    expect((await api("guests", u.helper, { action: "createTable", table: { name: "X", capacity: 2 } })).status).toBe(403);
+    expect((await api("guests", u.camille, { action: "seat", guestId: g, tableId: "tNotHere123" })).status).toBe(404);
+  });
+
+  it("an RSVP set here is recorded as the Owner side's answer (source kept in history, ready for a future invitation link)", async () => {
+    const g = ok(await api("guests", u.camille, { action: "create", guest: { name: "Lim", category: "friends", side: "both", partySize: 2 } }), 201).guestId;
+    ok(await api("guests", u.mon, { action: "setRsvp", guestId: g, rsvp: { status: "attending", confirmed: 2 } }));
+    expect(docAt(`guests/${g}`).rsvpSource).toBe("owner");
+    expect(docAt(`guests/${g}`).history.at(-1)).toMatchObject({ source: "owner", actor: { uid: u.mon }, from: { rsvp: "awaiting", confirmed: 0 }, to: { status: "attending", confirmed: 2 } });
+  });
+});
+
+describe("the bell's Needs attention in a wedding (GET /api/wedding-attention)", () => {
+  const attention = async (uid, businessId = W) => {
+    const res = await createWeddingAttentionHandler(deps())(request({ uid, businessId, method: "GET" }));
+    return { status: res.statusCode, body: JSON.parse(res.body) };
+  };
+  it("supplier payments overdue / due within 7 days and overdue tasks; done items leave; read is not resolved", async () => {
+    const cats = await setup();
+    const s = await photographer(cats);
+    const late = await schedule(s, cats["Photo / Video"], 1000000, "2026-10-10", "Downpayment");
+    await schedule(s, cats["Photo / Video"], 1000000, "2026-10-20", "Second payment");
+    await schedule(s, cats["Photo / Video"], 1000000, "2026-12-20", "Balance");
+    const task = ok(await api("tasks", u.camille, { action: "create", task: { title: "Submit church requirements", dueDate: "2026-10-12" } }), 201).taskId;
+    ok(await api("tasks", u.camille, { action: "create", task: { title: "Gown fitting", dueDate: "2026-10-30" } }), 201);
+    const r = ok(await attention(u.camille));
+    expect(r.summary.todos.map((x) => [x.kind, x.name, x.text, x.read])).toEqual([
+      ["paymentOverdue", "Money", "₱10,000 to ABC Photo Studio (Downpayment) was due Oct 10.", false],
+      ["paymentDue", "Money", "₱10,000 to ABC Photo Studio (Second payment) is due Oct 20.", false],
+      ["taskOverdue", "Tasks", '"Submit church requirements" was due Oct 12.', false],
+    ]);
+    expect(r.summary.todos[0].href).toBe(`/wedding-suppliers?supplier=${s}`);
+    // Read (the notifications endpoint) doesn't resolve it.
+    const id = r.summary.todos[0].id;
+    const notes = await createNotificationsHandler(deps())({ ...request({ uid: u.camille, businessId: W, method: "POST" }), body: JSON.stringify({ action: "attention", ids: [id], read: true }) });
+    expect(notes.statusCode).toBe(200);
+    expect(ok(await attention(u.camille)).summary.todos.find((x) => x.id === id).read).toBe(true);
+    expect(ok(await attention(u.mon)).summary.todos.find((x) => x.id === id).read).toBe(false); // per person
+    // Done -> gone.
+    ok(await markPaid(late));
+    ok(await api("tasks", u.camille, { action: "setStatus", taskId: task, status: "completed" }));
+    expect(ok(await attention(u.camille)).summary.todos.map((x) => x.kind)).toEqual(["paymentDue"]);
+  });
+  it("Staff (no payments / tasks view) get nothing; other workspaces can't call it", async () => {
+    expect(ok(await attention(u.helper)).summary.todos).toEqual([]);
+    expect((await attention(u.home, "biz-home")).status).toBe(403);
   });
 });
 

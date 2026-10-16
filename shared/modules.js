@@ -105,10 +105,12 @@ export function resolveNavigation({ entitlements, permissions }) {
   const templateId = snapshotWorkspaceTemplateId(entitlements);
   const template = getWorkspaceTemplate(templateId);
   if (!template) return [];
-  return template.navigation
-    .filter((id) => canUseModule({ entitlements, permissions }, id))
-    .map((id) => {
-      const mod = getModule(id);
-      return { ...mod, label: workspaceModuleLabel(templateId, id, mod.label) };
-    });
+  const ids = template.navigation.filter((id) => canUseModule({ entitlements, permissions }, id));
+  // Owner-pilot UX: a hidden Dashboard comes back for someone who can't open
+  // the workspace's home page (e.g. Bridal Staff), so nobody lands nowhere.
+  if (template.home && !ids.includes(template.home) && (template.navHidden || []).includes("dashboard") && canUseModule({ entitlements, permissions }, "dashboard")) ids.unshift("dashboard");
+  return ids.map((id) => {
+    const mod = getModule(id);
+    return { ...mod, label: workspaceModuleLabel(templateId, id, mod.label) };
+  });
 }

@@ -62,8 +62,8 @@ describe("Household navigation without a Dashboard", () => {
     expect(document.querySelector('.tab-link[href="/"]')).toBeNull();
   });
 
-  it("the other workspaces keep their Dashboard at /", () => {
-    for (const t of ["distributor", "baby-expense", "bridal-expense"]) {
+  it("the other workspaces keep their Dashboard at / (Bridal: Money, see wedding.test.js)", () => {
+    for (const t of ["distributor", "baby-expense"]) {
       const s = sessionFixture({ workspaceTemplateId: t });
       expect(visit(s, "/").route.moduleId, t).toBe("dashboard");
       document.getElementById("app").innerHTML = "";

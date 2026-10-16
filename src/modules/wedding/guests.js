@@ -1,44 +1,54 @@
-// Guests & RSVP (Phase 16): one compact row per invitation (a guest or a
-// household), with the RSVP summary on top.
-//   Guest | Category | Side | Party Size | RSVP ▾ | Confirmed Guests | Invitation | View details
-// Phase 18.6: a fixed Category (filterable; the older free-text Group stays
-// on existing guests as a note) and the RSVP status as a row dropdown:
-// Attending confirms the whole party (change the count in View details).
-// Party size (invited people) and confirmed attendees are kept apart:
-// Confirmed guests counts PEOPLE (sum of confirmed attendees), Awaiting /
-// Attending / Declined count invitations. Luna keeps the totals.
+// Guests (Phase 16; Owner-pilot Bridal UX): mobile-first, two views behind
+// one compact switch.
+//   RSVP     a one-line summary in PEOPLE (seats): invited · attending ·
+//            waiting · declined; All / Waiting / Attending / Declined and a
+//            search across categories; guests grouped by their category
+//            (the categories Luna keeps; "Not set" for older guests), each
+//            group with its own counts. One line per guest:
+//              Name | Seats | RSVP ▾ | ⋯
+//            Seats = the invited party size; for Attending, the confirmed
+//            number ("3/4" when fewer than invited are coming).
+//   Seating  attending · seated · unassigned (people); Unassigned first,
+//            then each table with its seats used / capacity. One line per
+//            guest: Name | Seats | ⋯ (assign / move / unassign).
+// Party size (invited people) and confirmed attendees stay apart. RSVP
+// changes made here are recorded as the Owner side's (rsvpSource "owner",
+// with who and when in the history), so a future invitation-link answer
+// ("guest") can sit beside them without overwriting the trail.
 
 import { html, render } from "../../lib/html.js";
-import { pageHeader, emptyState, badge, statCard, skeleton, mobileCell, openButton, bindRowOpen, bindFilterBar, rowMenu, bindRowMenus, filterBar } from "../../components/ui.js";
+import { pageHeader, emptyState, skeleton, segmented } from "../../components/ui.js";
 import { formDialog } from "../../components/form-dialog.js";
 import { confirmDialog, toast as defaultToast } from "../../components/feedback.js";
-import { formatDayId, formatNumber } from "../../lib/format.js";
+import { formatDayId } from "../../lib/format.js";
 import { exportButton, bindExport, mayExport, exportHint } from "../../lib/export.js";
-import { RSVP_STATUSES, GUEST_SIDES, GUEST_CATEGORIES, rsvpSummary } from "@shared/index.js";
+import { RSVP_STATUSES, GUEST_SIDES, GUEST_CATEGORIES, GUEST_CATEGORY_IDS, rsvpSummary, seatingPlan, MAX_TABLE_CAPACITY } from "@shared/index.js";
 import { activityLines, detailsDialog } from "../baby/common.js";
 import * as defaultData from "./data.js";
 
 const SIDE_OPTIONS = Object.entries(GUEST_SIDES).map(([value, s]) => ({ value, label: s.label }));
-const RSVP_OPTIONS = Object.entries(RSVP_STATUSES).map(([value, s]) => ({ value, label: s.label }));
+// Simple words for the stored RSVP statuses.
+export const RSVP_WORDS = { awaiting: "Waiting", attending: "Attending", declined: "Declined" };
+const RSVP_TONE = { awaiting: "warning", attending: "success", declined: "" };
 const CATEGORY_OPTIONS = Object.entries(GUEST_CATEGORIES).map(([value, c]) => ({ value, label: c.label }));
-const categoryLabel = (g) => GUEST_CATEGORIES[g.category]?.label ?? null;
-const TONE = { awaiting: "warning", attending: "success", declined: "neutral" };
+const FILTERS = [["all", "All"], ["awaiting", "Waiting"], ["attending", "Attending"], ["declined", "Declined"]];
+const MAX_GUESTS = 1000;
 
 const guestFields = (g = {}) => [
-  { name: "name", label: "Guest or household", value: g.name ?? "", required: true, hint: "e.g. Prado Family" },
+  { name: "name", label: "Guest or household", value: g.name ?? "", required: true, placeholder: "e.g. Prado Family" },
   { name: "category", label: "Category", type: "select", options: [{ value: "", label: "— Choose —" }, ...CATEGORY_OPTIONS], value: g.category ?? "", required: true },
-  { name: "side", label: "Side", type: "select", options: SIDE_OPTIONS, value: g.side ?? "both" },
-  { name: "partySize", label: "Invited party size", value: g.partySize ?? 1, inputmode: "numeric", required: true },
-  { name: "contact", label: "Contact", value: g.contact ?? "" },
-  { name: "invitationSent", label: "Invitation sent on", type: "date", value: g.invitationSent ?? "" },
-  { name: "notes", label: "Notes", type: "textarea", value: g.notes ?? "" },
+  { name: "partySize", label: "Seats (party size)", value: g.partySize ?? 1, inputmode: "numeric", required: true },
+  { name: "side", label: "Side", type: "select", options: SIDE_OPTIONS, value: g.side ?? "both", more: true, default: true },
+  { name: "contact", label: "Contact", value: g.contact ?? "", more: true },
+  { name: "invitationSent", label: "Invitation sent on", type: "date", value: g.invitationSent ?? "", more: true },
+  { name: "notes", label: "Notes", type: "textarea", value: g.notes ?? "", more: true },
 ];
 
 export function toGuestInput(v) {
   const partySize = Number(v.partySize);
   if (!Number.isSafeInteger(partySize) || partySize < 1) throw new Error("Party size must be a whole number, 1 or more");
   if (!v.category) throw new Error("Choose a category");
-  return { name: v.name.trim(), category: v.category, side: v.side, partySize, contact: v.contact.trim() || null, invitationSent: v.invitationSent || null, notes: (v.notes || "").trim() || null };
+  return { name: v.name.trim(), category: v.category, side: v.side || "both", partySize, contact: (v.contact || "").trim() || null, invitationSent: v.invitationSent || null, notes: (v.notes || "").trim() || null };
 }
 
 export function parseRsvp(v, partySize) {
@@ -49,21 +59,41 @@ export function parseRsvp(v, partySize) {
   return { status: "attending", confirmed };
 }
 
+// Seats shown on a row: invited party size, or confirmed (of invited) when attending.
+export const seatsText = (g) => (g.rsvp === "attending" && g.confirmed !== g.partySize ? `${g.confirmed}/${g.partySize}` : String(g.rsvp === "attending" ? g.confirmed : g.partySize));
+// People per status for a list of guests (the same model as guestTotals).
+export function seatCounts(guests) {
+  const c = { invited: 0, attending: 0, awaiting: 0, declined: 0 };
+  for (const g of guests) {
+    c.invited += g.partySize || 0;
+    if (g.rsvp === "attending") c.attending += g.confirmed || 0;
+    else if (g.rsvp === "declined") c.declined += g.partySize || 0;
+    else c.awaiting += g.partySize || 0;
+  }
+  return c;
+}
+// Category groups in Luna's category order; "Not set" last. Empty groups dropped.
+export function groupGuests(guests) {
+  const by = new Map([...GUEST_CATEGORY_IDS, ""].map((id) => [id, []]));
+  for (const g of guests) by.get(GUEST_CATEGORY_IDS.includes(g.category) ? g.category : "").push(g);
+  return [...by.entries()].filter(([, list]) => list.length).map(([id, list]) => ({ id: id || "none", label: id ? GUEST_CATEGORIES[id].label : "Not set", guests: list }));
+}
+
 export function mount(container, session, { data = defaultData, toast = defaultToast, confirm = confirmDialog, exportDeps = {} } = {}) {
   const canManage = session.member.permissions["guests.manage"] === true;
   const businessId = session.business.id;
   const timezone = session.business.timezone;
-  const state = { filters: {}, cursors: [], rows: [], hasMore: false, totals: null, loading: true, error: null };
+  const state = { view: "rsvp", filter: "all", search: "", rows: [], totals: null, seating: null, loading: true, error: null, collapsed: new Set() };
   let alive = true;
 
   async function load() {
-    state.loading = true;
+    state.loading = !state.rows.length;
     draw();
     try {
-      const [totals, page] = await Promise.all([data.getGuestTotals(businessId), data.listGuests(businessId, state.filters, { cursor: state.cursors.at(-1) || null })]);
+      const [totals, page, seating] = await Promise.all([data.getGuestTotals(businessId), data.listGuests(businessId, {}, { pageSize: MAX_GUESTS }), data.getSeating ? data.getSeating(businessId).catch(() => null) : null]);
       state.totals = totals;
       state.rows = page.rows;
-      state.hasMore = page.hasMore;
+      state.seating = seating;
       state.error = null;
     } catch (err) {
       console.error("guests: load failed:", err && (err.code || err.message));
@@ -73,108 +103,163 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     draw();
   }
 
-  const opt = (v, l, sel) => html`<option value="${v}" ${sel === v ? "selected" : ""}>${l}</option>`;
+  const fmt = (n) => Number(n || 0).toLocaleString("en-PH");
+  const menu = (label, items) =>
+    items.length
+      ? html`<details class="line-menu"><summary class="btn btn-compact btn-ghost" aria-label="${label}">⋯</summary><div class="line-menu-list" role="menu">${items.map((i) => html`${i.sep ? html`<div class="menu-sep" role="separator"></div>` : ""}<button type="button" class="menu-item${i.danger ? " menu-danger" : ""}" role="menuitem" data-act="${i.act}" data-id="${i.id}">${i.label}</button>`)}</div></details>`
+      : "";
+  const rsvpControl = (g) =>
+    canManage
+      ? html`<select class="select select-chip wl-status" data-role="rsvp" data-id="${g.id}" data-tone="${RSVP_TONE[g.rsvp] || ""}" aria-label="RSVP for ${g.name}">${Object.keys(RSVP_STATUSES).map((k) => html`<option value="${k}" ${k === g.rsvp ? "selected" : ""}>${RSVP_WORDS[k]}</option>`)}</select>`
+      : html`<span class="wl-chip" data-tone="${RSVP_TONE[g.rsvp] || ""}">${RSVP_WORDS[g.rsvp] ?? g.rsvp}</span>`;
+  const seats = (g) => html`<span class="wl-seats" data-role="seats" aria-label="${seatsText(g)} seats">${seatsText(g)}</span>`;
+  const guestMenu = (g) =>
+    menu(`More for ${g.name}`, [
+      ...(canManage && g.rsvp === "attending" && g.partySize > 1 ? [{ act: "count", id: g.id, label: "Change number attending" }] : []),
+      ...(canManage ? [{ act: "edit", id: g.id, label: "Edit" }] : []),
+      { act: "view", id: g.id, label: "Details & history" },
+      ...(canManage ? [{ act: "remove", id: g.id, label: "Remove guest", danger: true, sep: true }] : []),
+    ]);
+  const rsvpRow = (g) => html`<li class="wl-row wl-guest" data-guest="${g.id}"><button type="button" class="wl-main" data-act="view" data-id="${g.id}"><span class="wl-name">${g.name}</span></button>${seats(g)}${rsvpControl(g)}${guestMenu(g)}</li>`;
 
-  function draw() {
-    if (!alive) return;
-    const f = state.filters;
-    const t = rsvpSummary(state.totals);
-    render(
-      container,
-      html`
-        ${pageHeader({ title: "Guests & RSVP", subtitle: "Who's invited, who's coming and how many seats you need.", actions: canManage ? html`<button type="button" class="btn btn-primary" data-act="new">Add guest</button>` : "" })}
-        <section class="section" data-section="rsvp">
-          <h2 class="section-title">RSVP summary · as of now</h2>
-          <div class="stat-grid">
-            ${statCard({ id: "invited", label: "Invited (people)", value: formatNumber(t.invitedSeats), hint: `${t.invitations} invitation${t.invitations === 1 ? "" : "s"} · ${t.invitationsSent} sent` })}
-            ${statCard({ id: "confirmed", label: "Confirmed guests (people)", value: formatNumber(t.attendingSeats), hint: `${t.attending} invitation${t.attending === 1 ? "" : "s"} attending` })}
-            ${statCard({ id: "declined", label: "Declined (invitations)", value: formatNumber(t.declined), hint: `${t.declinedSeats} people` })}
-            ${statCard({ id: "awaiting", label: "Awaiting RSVP (invitations)", value: formatNumber(t.awaiting), hint: `${t.awaitingSeats} people not yet answered` })}
-          </div>
-        </section>
-        ${filterBar({
-          fields: [
-            { name: "search", label: "Name starts with…", type: "search", primary: true, value: f.search },
-            { name: "category", label: "Category", type: "select", primary: true, options: CATEGORY_OPTIONS.map((c) => [c.value, c.label]), value: f.category, all: "Any category" },
-            { name: "rsvp", label: "RSVP", type: "select", primary: true, options: RSVP_OPTIONS.map((r) => [r.value, r.label]), value: f.rsvp, all: "Any RSVP" },
-            { name: "side", label: "Side", type: "select", primary: false, options: SIDE_OPTIONS.map((s) => [s.value, s.label]), value: f.side, all: "Any side" },
-            { name: "invited", label: "Invitation", type: "select", primary: false, options: [["sent", "Sent"], ["not_sent", "Not sent"]], value: f.invited, all: "Invitation: any" },
-          ],
-          end: mayExport(session, "guests") ? html`<span class="visually-hidden">${exportHint}</span>${exportButton("guests")}` : "",
-        })}
-        <section class="card">
-          ${state.error
-            ? emptyState({ title: "Couldn't load", body: state.error })
-            : state.loading
-              ? skeleton(5)
-              : !state.rows.length
-                ? emptyState({ iconName: "users", title: "No guests here", body: "Add each guest or household with its party size, then record RSVPs as they come in." })
-                : html`<div class="table-wrap"><table class="table table-compact rows" data-role="guests">
-                    <thead><tr><th class="m-only"></th><th>Guest</th><th class="col-secondary">Category</th><th class="col-secondary">Side</th><th class="num">Party size</th><th>RSVP</th><th class="num">Confirmed</th><th class="col-secondary">Invitation</th><th></th></tr></thead>
-                    <tbody>${state.rows.map(
-                      (g) => html`<tr data-guest="${g.id}" data-open>${mobileCell({ title: g.name, sub: `${GUEST_SIDES[g.side]?.label ?? g.side} · ${g.partySize} seat${g.partySize === 1 ? "" : "s"}${g.rsvp === "attending" ? ` · ${g.confirmed} confirmed` : ""}`, end: badge(RSVP_STATUSES[g.rsvp]?.label ?? g.rsvp, TONE[g.rsvp] || "neutral") })}
-                        <td>${g.name}</td><td class="col-secondary">${categoryLabel(g) || "—"}</td><td class="col-secondary">${GUEST_SIDES[g.side]?.label ?? g.side}</td>
-                        <td class="num">${g.partySize}</td>
-                        <td data-m="ctl">${canManage ? html`<select class="select select-compact" data-role="rsvp" data-id="${g.id}" aria-label="RSVP for ${g.name}">${RSVP_OPTIONS.map((o) => opt(o.value, o.label, g.rsvp))}</select>` : badge(RSVP_STATUSES[g.rsvp]?.label ?? g.rsvp, TONE[g.rsvp] || "neutral")}</td>
-                        <td class="num">${g.rsvp === "attending" ? g.confirmed : "—"}</td>
-                        <td class="col-secondary">${g.invitationSent ? `Sent ${formatDayId(g.invitationSent)}` : "Not sent"}</td>
-                        <td class="row-actions" data-m="more">
-                          ${openButton(g.id, "View details", { act: "view" })}
-                        </td>
-                      </tr>`
-                    )}</tbody></table></div>
-                  <div class="pager"><button type="button" class="btn btn-ghost" data-act="prev" ${state.cursors.length ? "" : "disabled"}>‹ Previous</button><button type="button" class="btn btn-ghost" data-act="next" ${state.hasMore ? "" : "disabled"}>Next ›</button></div>`}
-        </section>`
+  const shown = () => {
+    const q = state.search.toLowerCase();
+    return state.rows.filter((g) => (state.filter === "all" || g.rsvp === state.filter) && (!q || g.name.toLowerCase().includes(q)));
+  };
+  const countsLine = (c) => html`${fmt(c.invited)} invited · ${fmt(c.attending)} attending · ${fmt(c.awaiting)} waiting${c.declined ? ` · ${fmt(c.declined)} declined` : ""}`;
+
+  function rsvpView() {
+    const list = shown();
+    const groups = groupGuests(list);
+    if (!state.rows.length) return emptyState({ iconName: "users", title: "No guests yet", body: "Add each guest or household with its number of seats." });
+    if (!groups.length) return html`<p class="stat-hint wl-none">No ${state.filter === "all" ? "" : RSVP_WORDS[state.filter].toLowerCase() + " "}guests${state.search ? ` matching "${state.search}"` : ""}.</p>`;
+    return groups.map(
+      (gr) => html`<details class="wl-cat" data-category="${gr.id}" ${state.collapsed.has(gr.id) ? "" : "open"}>
+        <summary class="wl-cat-head"><span class="wl-group-title">${gr.label}</span><span class="wl-cat-counts" data-role="cat-counts">${countsLine(seatCounts(gr.guests))}</span></summary>
+        <ul class="wl-list" data-role="guests">${gr.guests.map(rsvpRow)}</ul>
+      </details>`
     );
   }
 
-  const rsvpDialog = (g) =>
+  function seatingView() {
+    const plan = seatingPlan(state.rows, state.seating);
+    const seatRow = (g, table) =>
+      html`<li class="wl-row wl-guest" data-guest="${g.id}"><button type="button" class="wl-main" data-act="view" data-id="${g.id}"><span class="wl-name">${g.name}</span></button>${seats(g)}${menu(`Seating for ${g.name}`, canManage ? (table ? [{ act: "seat", id: g.id, label: "Move to another table" }, { act: "unseat", id: g.id, label: "Unassign" }] : [{ act: "seat", id: g.id, label: "Assign to a table" }]) : [{ act: "view", id: g.id, label: "Details & history" }])}</li>`;
+    return html`
+      <p class="wl-count" data-role="seating-summary">${fmt(plan.attendingSeats)} attending · ${fmt(plan.seatedSeats)} seated · <strong class="${plan.unassignedSeats ? "is-warn" : ""}">${fmt(plan.unassignedSeats)} unassigned</strong></p>
+      <section class="wl-section" data-group="unassigned">
+        <h2 class="wl-group-title">Unassigned <span>${fmt(plan.unassignedSeats)}</span></h2>
+        ${plan.unassigned.length ? html`<ul class="wl-list" data-role="unassigned">${plan.unassigned.map((g) => seatRow(g, null))}</ul>` : html`<p class="stat-hint wl-none">${plan.attendingSeats ? "Everyone attending has a table." : "Guests appear here once they're attending."}</p>`}
+      </section>
+      ${plan.tables.length
+        ? plan.tables.map(
+            (t) => html`<section class="wl-section" data-table="${t.id}">
+              <div class="wl-head"><h2 class="wl-group-title">${t.name} <span class="${t.used > t.capacity ? "is-over" : ""}" data-role="table-seats">${t.used}/${t.capacity} seats${t.used > t.capacity ? ` · over by ${t.used - t.capacity}` : ""}</span></h2>${canManage ? menu(`Table ${t.name}`, [{ act: "table-edit", id: t.id, label: "Rename / change seats" }, { act: "table-delete", id: t.id, label: "Delete table", danger: true, sep: true }]) : ""}</div>
+              ${t.guests.length ? html`<ul class="wl-list" data-role="table-guests">${t.guests.map((g) => seatRow(g, t))}</ul>` : html`<p class="stat-hint wl-none">No one yet.</p>`}
+            </section>`
+          )
+        : html`<p class="stat-hint wl-none" data-role="no-tables">No tables yet.${canManage ? " Add your reception tables, then assign guests." : ""}</p>`}`;
+  }
+
+  function draw() {
+    if (!alive) return;
+    const t = rsvpSummary(state.totals);
+    const seatingOn = state.view === "seating";
+    render(
+      container,
+      html`
+        ${pageHeader({ title: "Guests", actions: canManage ? (seatingOn ? html`<button type="button" class="btn btn-primary" data-act="new-table">+ Add table</button>` : html`<button type="button" class="btn btn-primary" data-act="new">+ Add guest</button>`) : "" })}
+        <div class="wl-tools wl-guest-tools">${segmented("view", [["rsvp", "RSVP"], ["seating", "Seating"]], state.view, { label: "Guests view" })}
+          ${seatingOn ? "" : html`<input class="input wl-search" type="search" data-role="search" placeholder="Search guest" aria-label="Search guest" value="${state.search}">`}</div>
+        ${state.error
+          ? emptyState({ title: "Couldn't load", body: state.error })
+          : state.loading
+            ? skeleton(6)
+            : seatingOn
+              ? seatingView()
+              : html`<p class="wl-count" data-role="rsvp-summary" title="People (seats), not invitations">${fmt(t.invitedSeats)} invited · ${fmt(t.attendingSeats)} attending · ${fmt(t.awaitingSeats)} waiting · ${fmt(t.declinedSeats)} declined</p>
+                  ${state.rows.length ? html`<div class="wl-tools">${segmented("filter", FILTERS, state.filter, { label: "Show guests" })}</div>` : ""}
+                  ${rsvpView()}`}
+        ${mayExport(session, "guests") ? html`<p class="page-foot wl-links"><span class="visually-hidden">${exportHint}</span>${exportButton("guests")}</p>` : ""}`
+    );
+  }
+
+  const rsvpDialog = (g, status = "attending") =>
     formDialog({
-      title: `RSVP: ${g.name}`,
-      intro: `Invited party of ${g.partySize}. Confirmed guests count only for Attending.`,
+      title: `${g.name}: how many are coming?`,
+      fields: [{ name: "confirmed", label: `Attending (of ${g.partySize} invited)`, value: g.rsvp === "attending" ? g.confirmed : g.partySize, inputmode: "numeric", required: true }],
+      submitLabel: "Save",
+      onSubmit: (v) => data.guestsApi({ action: "setRsvp", guestId: g.id, rsvp: parseRsvp({ status, confirmed: v.confirmed }, g.partySize) }),
+    });
+  const after = (message) => (r) => {
+    if (r && !r.unchanged) toast(message, "success");
+    if (r) load();
+    return Boolean(r);
+  };
+  const editDialog = (g) =>
+    formDialog({
+      title: `Edit ${g.name}`,
+      fields: guestFields(g),
+      onSubmit: (v) => {
+        const next = toGuestInput(v);
+        const changes = Object.fromEntries(Object.entries(next).filter(([k, val]) => (g[k] ?? null) !== (val ?? null)));
+        return Object.keys(changes).length ? data.guestsApi({ action: "update", guestId: g.id, expectedRevision: g.revision, changes }) : { unchanged: true };
+      },
+    });
+  async function removeGuest(g) {
+    if (!(await confirm({ title: `Remove ${g.name}?`, body: "Use this for a guest added by mistake. The RSVP totals drop their party.", confirmLabel: "Remove guest", danger: true }))) return false;
+    await data.guestsApi({ action: "remove", guestId: g.id });
+    toast("Guest removed.", "success");
+    load();
+    return true;
+  }
+  const tables = () => seatingPlan(state.rows, state.seating).tables;
+  const seatDialog = (g) => {
+    const list = tables().filter((t) => t.id !== g.tableId);
+    if (!list.length) {
+      toast(tables().length ? "There's no other table yet." : "Add a table first (+ Add table).", "danger");
+      return null;
+    }
+    return formDialog({
+      title: `Seat ${g.name} (${g.confirmed})`,
+      fields: [{ name: "tableId", label: "Table", type: "select", options: list.map((t) => ({ value: t.id, label: `${t.name} · ${t.used}/${t.capacity}${t.used + g.confirmed > t.capacity ? " (over)" : ""}` })), value: list.find((t) => t.used + g.confirmed <= t.capacity)?.id ?? list[0].id }],
+      submitLabel: g.tableId ? "Move" : "Assign",
+      onSubmit: (v) => data.guestsApi({ action: "seat", guestId: g.id, tableId: v.tableId }),
+    });
+  };
+  const capacity = (v) => {
+    const n = Number(v);
+    if (!Number.isSafeInteger(n) || n < 1 || n > MAX_TABLE_CAPACITY) throw new Error(`Seats must be 1 to ${MAX_TABLE_CAPACITY}`);
+    return n;
+  };
+  const tableDialog = (t = null) =>
+    formDialog({
+      title: t ? `Edit ${t.name}` : "Add table",
       fields: [
-        { name: "status", label: "RSVP", type: "select", options: RSVP_OPTIONS, value: g.rsvp },
-        { name: "confirmed", label: "Confirmed guests (if Attending)", value: g.rsvp === "attending" ? g.confirmed : g.partySize, inputmode: "numeric" },
+        { name: "name", label: "Table name", value: t ? t.name : `Table ${tables().length + 1}`, required: true },
+        { name: "capacity", label: "Seats", value: t ? t.capacity : 10, inputmode: "numeric", required: true },
       ],
-      onSubmit: (v) => data.guestsApi({ action: "setRsvp", guestId: g.id, rsvp: parseRsvp(v, g.partySize) }),
+      submitLabel: t ? "Save" : "Add table",
+      onSubmit: (v) => {
+        const table = { name: v.name.trim(), capacity: capacity(v.capacity) };
+        if (!t) return data.guestsApi({ action: "createTable", table });
+        const changes = Object.fromEntries(Object.entries(table).filter(([k, val]) => t[k] !== val));
+        return Object.keys(changes).length ? data.guestsApi({ action: "updateTable", tableId: t.id, changes }) : { unchanged: true };
+      },
     });
 
   function openView(g) {
+    const table = g.tableId ? tables().find((t) => t.id === g.tableId) : null;
     detailsDialog({
       title: g.name,
-      badgeHtml: badge(RSVP_STATUSES[g.rsvp]?.label ?? g.rsvp, TONE[g.rsvp] || "neutral"),
-      rows: [["Category", categoryLabel(g)], ...(g.group ? [["Group (earlier note)", g.group]] : []), ["Side", GUEST_SIDES[g.side]?.label], ["Invited party size", String(g.partySize)], ["Confirmed guests", g.rsvp === "attending" ? String(g.confirmed) : null], ["RSVP date", g.rsvpDate ? formatDayId(g.rsvpDate) : null], ["Invitation sent", g.invitationSent ? formatDayId(g.invitationSent) : "Not sent"], ["Contact", g.contact], ["Notes", g.notes]],
+      badgeHtml: html`<span class="wl-chip" data-tone="${RSVP_TONE[g.rsvp] || ""}">${RSVP_WORDS[g.rsvp] ?? g.rsvp}</span>`,
+      rows: [["Category", GUEST_CATEGORIES[g.category]?.label ?? "Not set"], ...(g.group ? [["Group (earlier note)", g.group]] : []), ["Seats invited", String(g.partySize)], ["Attending", g.rsvp === "attending" ? String(g.confirmed) : null], ["Table", table ? table.name : null], ["RSVP date", g.rsvpDate ? formatDayId(g.rsvpDate) : null], ["Side", GUEST_SIDES[g.side]?.label], ["Invitation sent", g.invitationSent ? formatDayId(g.invitationSent) : "Not sent"], ["Contact", g.contact], ["Notes", g.notes]],
       activity: activityLines(g.history, timezone),
-      actions: canManage ? [{ act: "remove", label: "Remove guest", danger: true }, { act: "edit", label: "Edit" }, { act: "rsvp", label: "RSVP & confirmed guests" }] : [],
+      actions: canManage ? [{ act: "remove", label: "Remove guest", danger: true }, { act: "edit", label: "Edit" }] : [],
       onAction: async (act) => {
         try {
-          if (act === "rsvp") {
-            const r = await rsvpDialog(g);
-            if (r && !r.unchanged) toast("RSVP saved.", "success");
-            if (r) load();
-            return Boolean(r);
-          }
-          if (act === "edit") {
-            const r = await formDialog({
-              title: `Edit ${g.name}`,
-              fields: guestFields(g),
-              onSubmit: (v) => {
-                const next = toGuestInput(v);
-                const changes = Object.fromEntries(Object.entries(next).filter(([k, val]) => (g[k] ?? null) !== (val ?? null)));
-                return Object.keys(changes).length ? data.guestsApi({ action: "update", guestId: g.id, expectedRevision: g.revision, changes }) : { unchanged: true };
-              },
-            });
-            if (r && !r.unchanged) toast("Saved.", "success");
-            if (r) load();
-            return Boolean(r);
-          }
-          if (act === "remove") {
-            if (!(await confirm({ title: `Remove ${g.name}?`, body: "Use this for a guest added by mistake. The RSVP totals drop their party.", confirmLabel: "Remove guest", danger: true }))) return false;
-            await data.guestsApi({ action: "remove", guestId: g.id });
-            toast("Guest removed.", "success");
-            load();
-            return true;
-          }
+          if (act === "edit") return after("Saved.")(await editDialog(g));
+          if (act === "remove") return await removeGuest(g);
         } catch (err) {
           toast(err.message || "Something went wrong", "danger");
         }
@@ -186,77 +271,85 @@ export function mount(container, session, { data = defaultData, toast = defaultT
   const onClick = async (event) => {
     const el = event.target.closest("[data-act]");
     if (!el || !container.contains(el) || el.dataset.act === "export") return;
+    const a = el.dataset.act;
+    if (a === "seg") {
+      state[el.dataset.seg === "view" ? "view" : "filter"] = el.dataset.value;
+      draw();
+      return;
+    }
+    el.closest("details.line-menu")?.removeAttribute("open");
     const g = state.rows.find((r) => r.id === el.dataset.id);
+    const t = state.seating?.tables?.[el.dataset.id] ? { id: el.dataset.id, ...state.seating.tables[el.dataset.id] } : null;
     try {
-      switch (el.dataset.act) {
-        case "new": {
-          const r = await formDialog({ title: "Add guest", fields: guestFields(), onSubmit: (v) => data.guestsApi({ action: "create", guest: toGuestInput(v) }) });
-          if (r) {
-            toast("Guest added.", "success");
-            load();
-          }
-          return;
-        }
-        case "view":
-          if (g) openView(g);
-          return;
-        case "next":
-          state.cursors.push(state.rows.at(-1));
-          load();
-          return;
-        case "prev":
-          state.cursors.pop();
-          load();
-          return;
-        default:
-          return;
-      }
+      if (a === "new") after("Guest added.")(await formDialog({ title: "Add guest", fields: guestFields(), submitLabel: "Add guest", onSubmit: (v) => data.guestsApi({ action: "create", guest: toGuestInput(v) }) }));
+      else if (a === "new-table") after("Table added.")(await tableDialog());
+      else if (a === "table-edit" && t) after("Saved.")(await tableDialog(t));
+      else if (a === "table-delete" && t) {
+        if (!(await confirm({ title: `Delete ${t.name}?`, body: "Its guests go back to Unassigned.", confirmLabel: "Delete table", danger: true }))) return;
+        after("Table deleted.")(await data.guestsApi({ action: "deleteTable", tableId: t.id }));
+      } else if (!g) return;
+      else if (a === "view") openView(g);
+      else if (a === "edit") after("Saved.")(await editDialog(g));
+      else if (a === "remove") await removeGuest(g);
+      else if (a === "count") after("RSVP saved.")(await rsvpDialog(g));
+      else if (a === "seat") after(g.tableId ? "Moved." : "Seated.")(await seatDialog(g));
+      else if (a === "unseat") after("Unassigned.")(await data.guestsApi({ action: "seat", guestId: g.id, tableId: null }));
     } catch (err) {
       toast(err.message || "Something went wrong", "danger");
     }
   };
-  const onSubmit = (event) => {
-    if (event.target.dataset.role !== "filters") return;
-    event.preventDefault();
-    const el = event.target.elements;
-    state.filters = Object.fromEntries([["category", el.category.value], ["rsvp", el.rsvp.value], ["side", el.side.value], ["invited", el.invited.value], ["search", el.search.value.trim()]].filter(([, v]) => v));
-    state.cursors = [];
-    load();
-  };
-  // RSVP ▾ in the row: Attending confirms the whole invited party.
+  // RSVP ▾ in the row. Attending asks how many when more than one is invited.
   const onChange = async (event) => {
     const el = event.target;
     if (el.dataset?.role !== "rsvp" || !container.contains(el)) return;
     const g = state.rows.find((r) => r.id === el.dataset.id);
     if (!g) return;
     const status = el.value;
-    el.disabled = true;
     try {
+      if (status === "attending" && g.partySize > 1) {
+        el.value = g.rsvp;
+        after("RSVP saved.")(await rsvpDialog(g));
+        return;
+      }
+      el.disabled = true;
       const r = await data.guestsApi({ action: "setRsvp", guestId: g.id, rsvp: status === "attending" ? { status, confirmed: g.partySize } : { status } });
-      if (r && !r.unchanged) toast(status === "attending" ? `RSVP saved: ${g.partySize} confirmed.` : "RSVP saved.", "success");
-      load();
+      after(g.tableId && status !== "attending" ? "RSVP saved. Their table seat was freed." : "RSVP saved.")(r || {});
     } catch (err) {
       el.value = g.rsvp;
       el.disabled = false;
       toast(err.message || "Something went wrong", "danger");
     }
   };
+  const onInput = (event) => {
+    if (event.target.dataset?.role !== "search") return;
+    state.search = event.target.value.trim();
+    const pos = event.target.selectionStart;
+    draw();
+    const box = container.querySelector('[data-role="search"]');
+    if (box) {
+      box.focus();
+      box.setSelectionRange(pos, pos);
+    }
+  };
+  // Remember collapsed categories across redraws.
+  const onToggle = (event) => {
+    const d = event.target;
+    if (!d.classList?.contains("wl-cat")) return;
+    if (d.open) state.collapsed.delete(d.dataset.category);
+    else state.collapsed.add(d.dataset.category);
+  };
   container.addEventListener("click", onClick);
   container.addEventListener("change", onChange);
-  container.addEventListener("submit", onSubmit);
-  const unbindFilters = bindFilterBar(container);
-  const unbindRows = bindRowOpen(container, { act: "view" });
-  const unbindMenus = bindRowMenus(container);
-  const unbindExport = bindExport(container, () => ({ ...state.filters }), { toast, deps: exportDeps });
+  container.addEventListener("input", onInput);
+  container.addEventListener("toggle", onToggle, true);
+  const unbindExport = bindExport(container, () => (state.filter === "all" ? {} : { rsvp: state.filter }), { toast, deps: exportDeps });
   load();
   return () => {
     alive = false;
     unbindExport();
-    unbindFilters();
-    unbindRows();
-    unbindMenus();
     container.removeEventListener("click", onClick);
     container.removeEventListener("change", onChange);
-    container.removeEventListener("submit", onSubmit);
+    container.removeEventListener("input", onInput);
+    container.removeEventListener("toggle", onToggle, true);
   };
 }

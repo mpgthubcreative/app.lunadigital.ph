@@ -11,7 +11,7 @@ import { toast as defaultToast } from "../../components/feedback.js";
 import { NOTIFICATION_CATEGORIES } from "@shared/notifications.js";
 import * as defaultData from "./data.js";
 import { notificationRow, myCategories } from "./view.js";
-import { hasHouseholdTodos, todoList, markAttention } from "../../app/notification-bell.js";
+import { attentionSource, todoList, markAttention } from "../../app/notification-bell.js";
 import { api as defaultApi } from "../../lib/api.js";
 
 const STATUS_TONE = { Unread: "info", Read: "neutral", Resolved: "success" };
@@ -20,7 +20,8 @@ const STATUS_TONE = { Unread: "info", Read: "neutral", Resolved: "success" };
 // onChange() lets the shell refresh the bell after a read.
 export function mount(container, session, { data = defaultData, toast = defaultToast, now = () => new Date(), onChange = () => window.dispatchEvent(new CustomEvent("luna:notifications")), api = defaultApi } = {}) {
   // Owner-pilot UX: Household "Needs your attention" first (from the records).
-  const withTodos = hasHouseholdTodos(session);
+  const source = attentionSource(session);
+  const withTodos = source !== null;
   let todos = [];
   const businessId = session.business.id;
   const uid = session.user.uid;
@@ -32,7 +33,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
   async function load() {
     state.loading = true;
     draw();
-    if (withTodos) todos = await api("household-summary").then((r) => r.summary?.todos || [], () => todos);
+    if (withTodos) todos = await api(source).then((r) => r.summary?.todos || [], () => todos);
     try {
       const page = await data.listNotifications(businessId, uid, { unread: state.unread, category: state.category }, { cursor: state.cursors.at(-1) || null });
       state.rows = page.rows;

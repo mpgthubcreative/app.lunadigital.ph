@@ -1,52 +1,84 @@
-// Wedding Tasks (Phase 16): one compact row per task.
-//   Task | Category | Assigned To | Due Date | Priority | Status ▾ | View details
+// Wedding Tasks (Phase 16; Owner-pilot Bridal UX): a compact checklist,
+// not project-management software. One task = one line:
+//   Task | Status ▾ (To do / In progress / Done) | Due | ⋯
+// Order: Overdue, Due soon (next DUE_SOON_DAYS days), Later, No due date;
+// done (and cancelled) tasks fold into "Completed (n)". The section heading
+// says Overdue / Due soon, so it never relies on colour.
 // Status changes inline (a controlled value, logged previous → new with who
 // and when); completing records the completed date, reopening is logged.
-// Overdue / Due soon are derived from the due date and the business's today,
-// never stored. Not a project-management board: a focused list.
+// The stored statuses stay (not_started / in_progress / completed /
+// cancelled); only the words are simpler. Overdue is derived from the due
+// date and the business's today, never stored. Edit, Change due date and
+// Delete sit under ⋯.
 
 import { html, render } from "../../lib/html.js";
-import { pageHeader, emptyState, badge, statCard, skeleton, mobileCell, openButton, bindRowOpen, bindFilterBar, rowMenu, bindRowMenus, filterBar } from "../../components/ui.js";
+import { pageHeader, emptyState, skeleton } from "../../components/ui.js";
 import { formDialog } from "../../components/form-dialog.js";
 import { toast as defaultToast, confirmDialog } from "../../components/feedback.js";
 import { formatDayId } from "../../lib/format.js";
 import { exportButton, bindExport, mayExport, exportHint } from "../../lib/export.js";
-import { TASK_STATUSES, TASK_PRIORITIES, SUGGESTED_TASK_CATEGORIES, taskTiming, keyOf, businessDate } from "@shared/index.js";
+import { TASK_STATUSES, TASK_PRIORITIES, SUGGESTED_TASK_CATEGORIES, taskTiming, businessDate, isOpenStatus } from "@shared/index.js";
 import { activityLines, detailsDialog } from "../baby/common.js";
 import * as defaultData from "./data.js";
 
 const PRIORITY_OPTIONS = Object.entries(TASK_PRIORITIES).map(([value, p]) => ({ value, label: p.label }));
-const TIMING = { overdue: ["Overdue", "danger"], due_soon: ["Due soon", "warning"] };
-const STATE_OPTIONS = [["open", "Open"], ["overdue", "Overdue"], ["all", "All"]];
+// Simple words for the stored statuses (Cancelled only shows on a cancelled task).
+export const STATUS_WORDS = { not_started: "To do", in_progress: "In progress", completed: "Done", cancelled: "Cancelled" };
+const STATUS_TONE = { not_started: "", in_progress: "info", completed: "success", cancelled: "" };
+const GROUPS = [
+  ["overdue", "Overdue"],
+  ["soon", "Due soon"],
+  ["later", "Later"],
+  ["nodate", "No due date"],
+];
+const MAX_TASKS = 500;
 
+// Task + Due date up front; the rest under More options.
 const taskFields = (t = {}) => [
-  { name: "title", label: "Task", value: t.title ?? "", required: true, hint: "e.g. Submit church requirements" },
-  { name: "category", label: "Category", value: t.category ?? "", hint: `e.g. ${SUGGESTED_TASK_CATEGORIES.slice(0, 4).join(", ")}` },
-  { name: "assignee", label: "Assigned to", value: t.assignee ?? "", hint: "Anyone: the couple, family, the coordinator (no Luna account needed)" },
+  { name: "title", label: "Task", value: t.title ?? "", required: true, placeholder: "e.g. Book florist" },
   { name: "dueDate", label: "Due date", type: "date", value: t.dueDate ?? "" },
-  { name: "priority", label: "Priority", type: "select", options: PRIORITY_OPTIONS, value: t.priority ?? "normal" },
-  { name: "notes", label: "Notes", type: "textarea", value: t.notes ?? "" },
+  { name: "category", label: "Category", value: t.category ?? "", suggestions: SUGGESTED_TASK_CATEGORIES, more: true },
+  { name: "assignee", label: "Assigned to", value: t.assignee ?? "", hint: "Anyone (no Luna account needed)", more: true },
+  { name: "priority", label: "Priority", type: "select", options: PRIORITY_OPTIONS, value: t.priority ?? "normal", more: true, default: true },
+  { name: "notes", label: "Notes", type: "textarea", value: t.notes ?? "", more: true },
 ];
 
 export function toTaskInput(v) {
-  return { title: v.title.trim(), category: v.category.trim() || null, assignee: v.assignee.trim() || null, dueDate: v.dueDate || null, priority: v.priority, notes: (v.notes || "").trim() || null };
+  return { title: v.title.trim(), category: (v.category || "").trim() || null, assignee: (v.assignee || "").trim() || null, dueDate: v.dueDate || null, priority: v.priority || "normal", notes: (v.notes || "").trim() || null };
 }
 
-export function mount(container, session, { data = defaultData, toast = defaultToast, now = () => new Date(), exportDeps = {}, confirm = confirmDialog } = {}) {
+// overdue → due soon → later → no due date (each by date, then title); done last.
+export function groupTasks(tasks, today) {
+  const by = { overdue: [], soon: [], later: [], nodate: [], done: [] };
+  for (const t of tasks) {
+    if (!isOpenStatus(t.status)) by.done.push(t);
+    else if (!t.dueDate) by.nodate.push(t);
+    else {
+      const timing = taskTiming(t, today);
+      by[timing === "overdue" ? "overdue" : timing === "due_soon" ? "soon" : "later"].push(t);
+    }
+  }
+  const byDate = (a, b) => (a.dueDate || "").localeCompare(b.dueDate || "") || a.title.localeCompare(b.title);
+  for (const k of ["overdue", "soon", "later"]) by[k].sort(byDate);
+  by.nodate.sort((a, b) => a.title.localeCompare(b.title));
+  by.done.sort((a, b) => (b.completedDate || b.dueDate || "").localeCompare(a.completedDate || a.dueDate || ""));
+  return by;
+}
+
+export function mount(container, session, { data = defaultData, toast = defaultToast, now = () => new Date(), exportDeps = {}, confirm = confirmDialog, location: loc = globalThis.location } = {}) {
   const canManage = session.member.permissions["tasks.manage"] === true;
   const businessId = session.business.id;
   const timezone = session.business.timezone;
   const today = () => businessDate(timezone, now());
-  const state = { filters: { state: "open" }, cursors: [], rows: [], hasMore: false, loading: true, error: null };
+  const state = { rows: [], loading: true, error: null, showDone: false };
   let alive = true;
+  let focus = new URLSearchParams(loc?.search || "").get("task");
 
   async function load() {
-    state.loading = true;
+    state.loading = !state.rows.length;
     draw();
     try {
-      const page = await data.listTasks(businessId, state.filters, { today: today(), cursor: state.cursors.at(-1) || null });
-      state.rows = page.rows;
-      state.hasMore = page.hasMore;
+      state.rows = (await data.listTasks(businessId, { state: "all" }, { today: today(), pageSize: MAX_TASKS })).rows;
       state.error = null;
     } catch (err) {
       console.error("wedding tasks: load failed:", err && (err.code || err.message));
@@ -54,98 +86,103 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     }
     state.loading = false;
     draw();
+    if (focus) {
+      const t = state.rows.find((r) => r.id === focus);
+      focus = null;
+      container.querySelector(`[data-task="${t?.id}"]`)?.scrollIntoView?.({ block: "center" });
+    }
   }
 
-  const opt = (v, l, sel) => html`<option value="${v}" ${sel === v ? "selected" : ""}>${l}</option>`;
-  const statusCell = (t) =>
-    canManage
-      ? html`<select class="select select-compact" data-act="status" data-id="${t.id}" aria-label="Status">${Object.entries(TASK_STATUSES).map(([k, s]) => opt(k, s.label, t.status))}</select>`
-      : badge(TASK_STATUSES[t.status]?.label ?? t.status, t.status === "completed" ? "success" : "neutral");
-  const dueCell = (t) => {
-    if (!t.dueDate) return "—";
-    const timing = TIMING[taskTiming(t, today())];
-    return html`${formatDayId(t.dueDate)}${timing ? html` ${badge(timing[0], timing[1])}` : ""}`;
+  const short = (d) => formatDayId(d).replace(/, \d{4}$/, "");
+  const statusControl = (t) => {
+    const words = canManage ? Object.keys(TASK_STATUSES).filter((k) => k !== "cancelled" || t.status === "cancelled") : [];
+    return canManage
+      ? html`<select class="select select-chip wl-status" data-act="status" data-id="${t.id}" data-tone="${STATUS_TONE[t.status] || ""}" aria-label="Status of ${t.title}">${words.map((k) => html`<option value="${k}" ${k === t.status ? "selected" : ""}>${STATUS_WORDS[k]}</option>`)}</select>`
+      : html`<span class="wl-chip" data-tone="${STATUS_TONE[t.status] || ""}">${STATUS_WORDS[t.status] ?? t.status}</span>`;
   };
+  const row = (t) => html`<li class="wl-row wl-task${isOpenStatus(t.status) ? "" : " is-done"}" data-task="${t.id}">
+    <button type="button" class="wl-main" data-act="view" data-id="${t.id}"><span class="wl-name">${t.title}</span></button>
+    ${statusControl(t)}
+    <span class="wl-due" data-role="due">${t.dueDate ? short(t.dueDate) : ""}</span>
+    <details class="line-menu"><summary class="btn btn-compact btn-ghost" aria-label="More for ${t.title}">⋯</summary><div class="line-menu-list" role="menu">
+      ${canManage ? html`<button type="button" class="menu-item" role="menuitem" data-act="edit" data-id="${t.id}">Edit</button><button type="button" class="menu-item" role="menuitem" data-act="due" data-id="${t.id}">Change due date</button>` : ""}
+      <button type="button" class="menu-item" role="menuitem" data-act="view" data-id="${t.id}">Details &amp; history</button>
+      ${canManage ? html`<div class="menu-sep" role="separator"></div><button type="button" class="menu-item menu-danger" role="menuitem" data-act="delete" data-id="${t.id}">Delete</button>` : ""}
+    </div></details>
+  </li>`;
 
   function draw() {
     if (!alive) return;
-    const f = state.filters;
+    const g = groupTasks(state.rows, today());
+    const open = state.rows.length - g.done.length;
     render(
       container,
       html`
-        ${pageHeader({ title: "Wedding Tasks", subtitle: "Everything still to do before the big day, who's on it and when it's due.", actions: canManage ? html`<button type="button" class="btn btn-primary" data-act="new">Add task</button>` : "" })}
-        ${filterBar({
-          fields: [
-            { name: "state", label: "Show", type: "select", primary: true, options: STATE_OPTIONS, value: f.status ? "all" : f.state || "open", def: "open" },
-            { name: "assignee", label: "Assigned to", type: "search", primary: true, value: f.assignee },
-            { name: "status", label: "Status", type: "select", primary: false, options: Object.entries(TASK_STATUSES).map(([k, s]) => [k, s.label]), value: f.status, all: "Any status" },
-            { name: "priority", label: "Priority", type: "select", primary: false, options: PRIORITY_OPTIONS.map((p) => [p.value, p.label]), value: f.priority, all: "Any priority" },
-            { name: "category", label: "Category", type: "search", primary: false, value: f.category },
-            { name: "from", label: "Due from", type: "date", value: f.from },
-            { name: "to", label: "Due to", type: "date", value: f.to },
-          ],
-          end: mayExport(session, "weddingTasks") ? html`<span class="visually-hidden">${exportHint}</span>${exportButton("weddingTasks")}` : "",
-        })}
-        <section class="card">
-          ${state.error
-            ? emptyState({ title: "Couldn't load", body: state.error })
-            : state.loading
-              ? skeleton(5)
-              : !state.rows.length
-                ? emptyState({ iconName: "tasks", title: f.state === "overdue" ? "Nothing overdue" : "No tasks here", body: "Add the wedding to-dos: requirements, fittings, tastings, deadlines." })
-                : html`<div class="table-wrap"><table class="table table-compact rows" data-role="tasks">
-                    <thead><tr><th class="m-only"></th><th>Task</th><th class="col-secondary">Category</th><th>Assigned to</th><th>Due date</th><th class="col-secondary">Priority</th><th>Status</th><th></th></tr></thead>
-                    <tbody>${state.rows.map(
-                      (t) => html`<tr data-task="${t.id}" data-open>${mobileCell({ title: t.title, sub: [t.assignee || "Unassigned", t.category].filter(Boolean).join(" · "), end: dueCell(t) })}
-                        <td>${t.title}</td><td class="col-secondary">${t.category || "—"}</td><td>${t.assignee || "—"}</td>
-                        <td>${dueCell(t)}</td><td class="col-secondary">${TASK_PRIORITIES[t.priority]?.label ?? t.priority}</td>
-                        <td data-m="ctl">${statusCell(t)}</td>
-                        <td class="row-actions" data-m="more">${openButton(t.id, "View details", { act: "view" })}</td>
-                      </tr>`
-                    )}</tbody></table></div>
-                  <div class="pager"><button type="button" class="btn btn-ghost" data-act="prev" ${state.cursors.length ? "" : "disabled"}>‹ Previous</button><button type="button" class="btn btn-ghost" data-act="next" ${state.hasMore ? "" : "disabled"}>Next ›</button></div>`}
-        </section>`
+        ${pageHeader({ title: "Tasks", actions: canManage ? html`<button type="button" class="btn btn-primary" data-act="new">+ Add task</button>` : "" })}
+        ${state.error
+          ? html`<section class="card">${emptyState({ title: "Couldn't load", body: state.error })}</section>`
+          : state.loading
+            ? skeleton(5)
+            : !state.rows.length
+              ? emptyState({ iconName: "tasks", title: "No tasks yet", body: "Add the wedding to-dos: requirements, fittings, tastings, deadlines." })
+              : html`
+                <p class="wl-count" data-role="task-count">${open} to do${g.overdue.length ? html` · <strong class="is-over">${g.overdue.length} overdue</strong>` : ""}</p>
+                ${!open ? html`<p class="stat-hint wl-none">Everything is done.</p>` : ""}
+                ${GROUPS.filter(([k]) => g[k].length).map(
+                  ([k, label]) => html`<section class="wl-section" data-group="${k}"><h2 class="wl-group-title${k === "overdue" ? " is-over" : ""}">${label} <span>${g[k].length}</span></h2><ul class="wl-list" data-role="tasks">${g[k].map(row)}</ul></section>`
+                )}
+                ${g.done.length
+                  ? html`<details class="wl-fold" data-role="done" ${state.showDone ? "open" : ""}><summary>Completed (${g.done.length})</summary><ul class="wl-list">${g.done.map(row)}</ul></details>`
+                  : ""}`}
+        ${mayExport(session, "weddingTasks") ? html`<p class="page-foot wl-links"><span class="visually-hidden">${exportHint}</span>${exportButton("weddingTasks")}</p>` : ""}`
     );
   }
+
+  const editDialog = (t) =>
+    formDialog({
+      title: "Edit task",
+      fields: taskFields(t),
+      moreLabel: "More options",
+      onSubmit: (v) => {
+        const next = toTaskInput(v);
+        const changes = Object.fromEntries(Object.entries(next).filter(([k, val]) => (t[k] ?? null) !== (val ?? null)));
+        return Object.keys(changes).length ? data.tasksApi({ action: "update", taskId: t.id, expectedRevision: t.revision, changes }) : { unchanged: true };
+      },
+    });
+  const dueDialog = (t) =>
+    formDialog({
+      title: `Due date: ${t.title}`,
+      fields: [{ name: "dueDate", label: "Due date", type: "date", value: t.dueDate ?? "", hint: "Leave empty for no due date." }],
+      onSubmit: (v) => ((v.dueDate || null) === (t.dueDate ?? null) ? { unchanged: true } : data.tasksApi({ action: "update", taskId: t.id, expectedRevision: t.revision, changes: { dueDate: v.dueDate || null } })),
+    });
+  async function remove(t) {
+    if (!(await confirm({ title: `Delete "${t.title}"?`, body: "The task is removed from the list. A record of it is kept in the activity log.", confirmLabel: "Delete task", danger: true }))) return false;
+    await data.tasksApi({ action: "delete", taskId: t.id });
+    toast("Task deleted.", "success");
+    load();
+    return true;
+  }
+  const saved = (r) => {
+    if (r && !r.unchanged) toast("Saved.", "success");
+    if (r) load();
+    return Boolean(r);
+  };
 
   function openView(t) {
     detailsDialog({
       title: t.title,
-      badgeHtml: badge(TASK_STATUSES[t.status]?.label ?? t.status, t.status === "completed" ? "success" : "neutral"),
-      rows: [["Category", t.category], ["Assigned to", t.assignee], ["Due date", t.dueDate ? formatDayId(t.dueDate) : null], ["Priority", TASK_PRIORITIES[t.priority]?.label], ["Completed", t.completedDate ? `${formatDayId(t.completedDate)}${t.completedBy?.name ? ` · ${t.completedBy.name}` : ""}` : null], ["Notes", t.notes]],
+      badgeHtml: html`<span class="wl-chip" data-tone="${STATUS_TONE[t.status] || ""}">${STATUS_WORDS[t.status] ?? t.status}</span>`,
+      rows: [["Due date", t.dueDate ? formatDayId(t.dueDate) : null], ["Category", t.category], ["Assigned to", t.assignee], ["Priority", t.priority && t.priority !== "normal" ? TASK_PRIORITIES[t.priority]?.label : null], ["Completed", t.completedDate ? `${formatDayId(t.completedDate)}${t.completedBy?.name ? ` · ${t.completedBy.name}` : ""}` : null], ["Notes", t.notes]],
       activity: activityLines(t.history, timezone),
       actions: canManage ? [{ act: "delete", label: "Delete", danger: true }, { act: "edit", label: "Edit" }] : [],
       onAction: async (act) => {
-        if (act === "delete") {
-          if (!(await confirm({ title: `Delete "${t.title}"?`, body: "The task is removed from the list and the task counts. A record of it is kept in the activity log.", confirmLabel: "Delete task", danger: true }))) return false;
-          try {
-            await data.tasksApi({ action: "delete", taskId: t.id });
-            toast("Task deleted.", "success");
-            load();
-            return true;
-          } catch (err) {
-            toast(err.message || "Something went wrong", "danger");
-            return false;
-          }
-        }
-        if (act !== "edit") return false;
         try {
-          const r = await formDialog({
-            title: "Edit task",
-            fields: taskFields(t),
-            onSubmit: (v) => {
-              const next = toTaskInput(v);
-              const changes = Object.fromEntries(Object.entries(next).filter(([k, val]) => (t[k] ?? null) !== (val ?? null)));
-              return Object.keys(changes).length ? data.tasksApi({ action: "update", taskId: t.id, expectedRevision: t.revision, changes }) : { unchanged: true };
-            },
-          });
-          if (r && !r.unchanged) toast("Saved.", "success");
-          if (r) load();
-          return Boolean(r);
+          if (act === "delete") return await remove(t);
+          if (act === "edit") return saved(await editDialog(t));
         } catch (err) {
           toast(err.message || "Something went wrong", "danger");
-          return false;
         }
+        return false;
       },
     });
   }
@@ -153,28 +190,29 @@ export function mount(container, session, { data = defaultData, toast = defaultT
   const onClick = async (event) => {
     const el = event.target.closest("[data-act]");
     if (!el || !container.contains(el) || ["export", "status"].includes(el.dataset.act)) return;
+    el.closest("details.line-menu")?.removeAttribute("open");
+    const t = state.rows.find((r) => r.id === el.dataset.id);
     try {
       switch (el.dataset.act) {
         case "new": {
-          const r = await formDialog({ title: "Add task", fields: taskFields(), onSubmit: (v) => data.tasksApi({ action: "create", task: toTaskInput(v) }) });
+          const r = await formDialog({ title: "Add task", fields: taskFields(), moreLabel: "More options", submitLabel: "Add task", onSubmit: (v) => data.tasksApi({ action: "create", task: toTaskInput(v) }) });
           if (r) {
             toast("Task added.", "success");
             load();
           }
           return;
         }
-        case "view": {
-          const t = state.rows.find((r) => r.id === el.dataset.id);
+        case "view":
           if (t) openView(t);
           return;
-        }
-        case "next":
-          state.cursors.push(state.rows.at(-1));
-          load();
+        case "edit":
+          if (t) saved(await editDialog(t));
           return;
-        case "prev":
-          state.cursors.pop();
-          load();
+        case "due":
+          if (t) saved(await dueDialog(t));
+          return;
+        case "delete":
+          if (t) await remove(t);
           return;
         default:
           return;
@@ -190,44 +228,25 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     el.disabled = true;
     try {
       const r = await data.tasksApi({ action: "setStatus", taskId: el.dataset.id, status: el.value });
-      if (!r.unchanged) toast(el.value === "completed" ? "Task completed." : "Status updated.", "success");
+      if (!r.unchanged) toast(el.value === "completed" ? "Done." : "Status updated.", "success");
     } catch (err) {
       toast(err.message || "Something went wrong", "danger");
     }
     load();
   };
-  const onSubmit = (event) => {
-    if (event.target.dataset.role !== "filters") return;
-    event.preventDefault();
-    const el = event.target.elements;
-    if (el.from.value && el.to.value && el.from.value > el.to.value) {
-      toast("Choose a valid date range (the start can't be after the end).", "danger");
-      return;
-    }
-    const category = el.category.value.trim();
-    const assignee = el.assignee.value.trim();
-    // A status filter shows every task with that status (open or not).
-    state.filters = Object.fromEntries([["state", el.status.value ? "all" : el.state.value], ["status", el.status.value], ["category", category], ["categoryKey", keyOf(category)], ["assignee", assignee], ["assigneeKey", keyOf(assignee)], ["priority", el.priority.value], ["from", el.from.value], ["to", el.to.value]].filter(([, v]) => v));
-    state.cursors = [];
-    load();
+  const onToggle = (event) => {
+    if (event.target.dataset?.role === "done") state.showDone = event.target.open;
   };
   container.addEventListener("click", onClick);
   container.addEventListener("change", onChange);
-  container.addEventListener("submit", onSubmit);
-  const unbindFilters = bindFilterBar(container);
-  const unbindRows = bindRowOpen(container, { act: "view" });
-  const unbindMenus = bindRowMenus(container);
-  // The export takes the query filters only (keys, not the typed text).
-  const unbindExport = bindExport(container, () => Object.fromEntries(Object.entries(state.filters).filter(([k]) => !["category", "assignee"].includes(k))), { toast, deps: exportDeps });
+  container.addEventListener("toggle", onToggle, true);
+  const unbindExport = bindExport(container, () => ({ state: "all" }), { toast, deps: exportDeps });
   load();
   return () => {
     alive = false;
     unbindExport();
-    unbindFilters();
-    unbindRows();
-    unbindMenus();
     container.removeEventListener("click", onClick);
     container.removeEventListener("change", onChange);
-    container.removeEventListener("submit", onSubmit);
+    container.removeEventListener("toggle", onToggle, true);
   };
 }

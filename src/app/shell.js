@@ -33,7 +33,7 @@ const MANAGE = new Set(["users", "settings", "imports", "subscription"]);
 export const navGroup = (id) => (id === "dashboard" ? "overview" : id === "reports" ? "analyze" : MANAGE.has(id) ? "manage" : "work");
 const GROUP_LABELS = { overview: "Overview", work: "Work", analyze: "Analyze", manage: "Manage" };
 // One-word labels for the phone tab bar (display only; ids never change).
-const SHORT = { dashboard: "Dashboard", tasks: "Tasks", guests: "Guests", vendors: "Suppliers", vendorpayments: "Payments", expenses: "Expenses", budget: "Budget", schedule: "Schedule", providers: "Providers", household: "Staff", attendance: "Attendance", payroll: "Payroll", advances: "Advances", orders: "Orders", inventory: "Inventory", payments: "Payments", customers: "Customers" };
+const SHORT = { dashboard: "Dashboard", tasks: "Tasks", guests: "Guests", vendors: "Money", vendorpayments: "Payments", expenses: "Expenses", budget: "Budget", schedule: "Schedule", providers: "Providers", household: "Staff", attendance: "Attendance", payroll: "Payroll", advances: "Advances", orders: "Orders", inventory: "Inventory", payments: "Payments", customers: "Customers" };
 // Tenant terminology (Phase 17) always wins over the short label.
 export const shortLabel = (m, terms = {}) => terms[m.id] ?? SHORT[m.id] ?? m.label;
 
@@ -46,8 +46,9 @@ export function mobileTabs(nav, templateId) {
   const wanted = getWorkspaceTemplate(templateId)?.mobileTabs || [];
   const picked = wanted.filter((id) => usable.has(id));
   // Owner-pilot UX: a workspace without a Dashboard (Household) gets four
-  // work tabs instead (+ More), never five or six squeezed in.
-  const room = usable.has("dashboard") ? 3 : 4;
+  // work tabs instead (+ More), never five or six squeezed in; Bridal asks
+  // for three (Money, Tasks, Guests) and gets three.
+  const room = usable.has("dashboard") ? 3 : Math.min(4, wanted.length || 4);
   for (const m of nav) if (picked.length < room && m.id !== "dashboard" && navGroup(m.id) === "work" && !picked.includes(m.id)) picked.push(m.id);
   return [...(usable.has("dashboard") ? ["dashboard"] : []), ...picked.slice(0, room)].map((id) => usable.get(id));
 }
@@ -71,8 +72,10 @@ export function renderShell(root, session, handlers = {}) {
   const labels = terminologyLabels(session.config);
   // Phase 18.6: Supplier Payments is run from the Wedding Suppliers rows; its
   // page stays reachable (payment history) but leaves the menu.
+  // Owner-pilot Bridal UX: the template's menuHidden pages keep their route only.
+  const menuHidden = new Set(getWorkspaceTemplate(snapshotWorkspaceTemplateId(session.entitlements))?.menuHidden || []);
   const nav = resolveNavigation({ entitlements: session.entitlements, permissions: session.member.permissions })
-    .filter((m) => !NAV_HIDDEN.has(m.id))
+    .filter((m) => !NAV_HIDDEN.has(m.id) && !menuHidden.has(m.id))
     .map((m) => (labels[m.id] ? { ...m, label: labels[m.id] } : m));
   // Phase 18.6: the Owner's Luna subscription, under Manage (before Settings).
   if (session.member.permissions?.["billing.view"] === true) {

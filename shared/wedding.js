@@ -25,6 +25,10 @@
 //   guests/{id}              guest or household, group, side, party size,
 //                            RSVP status, confirmed attendees
 //   guestTotals/current      invitations / seats per RSVP status
+//   guestTotals/seating      (Owner-pilot Bridal UX) the reception tables:
+//                            { tables: { [id]: { name, capacity, order } } };
+//                            a guest's table is guests/{id}.tableId (only
+//                            while Attending)
 //
 // Luna computes, nobody types:
 //   Supplier paid    = the supplier's active Wedding Expenses
@@ -363,6 +367,46 @@ export function rsvpByCategory(doc) {
   }
   if (rest.invitations > 0) rows.push({ id: null, label: "Not set", ...rest });
   return rows;
+}
+
+// ---------- Seating (Owner-pilot Bridal UX) ----------
+
+export const SEATING_DOC_ID = "seating";
+export const MAX_TABLES = 150;
+export const MAX_TABLE_CAPACITY = 50;
+export const TABLE_ID = /^t[A-Za-z0-9]{6,24}$/;
+export function validateTableInput(input, { partial = false } = {}) {
+  only(input, ["name", "capacity"], "table");
+  const has = (k) => !partial || Object.hasOwn(input, k);
+  const out = {};
+  if (has("name")) out.name = text(input.name, { field: "Table name", max: 40, required: true });
+  if (has("capacity")) {
+    if (!Number.isSafeInteger(input.capacity) || input.capacity < 1 || input.capacity > MAX_TABLE_CAPACITY) throw new WeddingError("invalid-input", `Seats per table must be 1 to ${MAX_TABLE_CAPACITY}`);
+    out.capacity = input.capacity;
+  }
+  if (partial && !Object.keys(out).length) throw new WeddingError("invalid-input", "Nothing to change");
+  return out;
+}
+// Tables in order, each with its seated attending guests and seats used.
+// Seats = confirmed attendees (people). A guest whose table is gone (or who
+// isn't attending) counts as unassigned / not seated.
+export function seatingPlan(guests, seatingDoc) {
+  const raw = seatingDoc && typeof seatingDoc.tables === "object" && seatingDoc.tables ? seatingDoc.tables : {};
+  const tables = Object.entries(raw)
+    .map(([id, t]) => ({ id, name: t.name, capacity: int(t.capacity), order: int(t.order), guests: [], used: 0 }))
+    .sort((a, b) => a.order - b.order || a.name.localeCompare(b.name));
+  const byId = new Map(tables.map((t) => [t.id, t]));
+  const attending = (guests || []).filter((g) => g.rsvp === "attending");
+  const unassigned = [];
+  for (const g of attending) {
+    const t = g.tableId ? byId.get(g.tableId) : null;
+    if (t) {
+      t.guests.push(g);
+      t.used += int(g.confirmed);
+    } else unassigned.push(g);
+  }
+  const seats = (list) => list.reduce((s, g) => s + int(g.confirmed), 0);
+  return { tables, unassigned, attendingSeats: seats(attending), seatedSeats: tables.reduce((s, t) => s + t.used, 0), unassignedSeats: seats(unassigned) };
 }
 
 // ---------- Dashboard figures ----------

@@ -87,7 +87,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     render(
       container,
       html`
-        ${pageHeader({ title: "Wedding Expenses", subtitle: "What you've paid for the wedding. Payments to a saved supplier count toward its balance.", actions: can.create ? html`<button type="button" class="btn btn-primary" data-act="new">Add expense</button>` : "" })}
+        ${pageHeader({ title: "Wedding Expenses", subtitle: html`<a href="/wedding-suppliers" data-link>‹ Money</a>`, actions: can.create ? html`<button type="button" class="btn btn-primary" data-act="new">+ Add expense</button>` : "" })}
         ${filterBar({
           fields: [
             { name: "search", label: "Payee or reference", type: "search", primary: true, value: f.search },
@@ -122,76 +122,9 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     );
   }
 
-  const ctx = () => ({ today: today(), categories: state.categories, suppliers: state.suppliers });
-  const addDialog = () =>
-    formDialog({
-      title: "Add wedding expense",
-      fields: fields(null, ctx()),
-      onSubmit: (v) => {
-        const e = parseWeddingExpense(v);
-        for (const k of Object.keys(e)) if (e[k] === null || e[k] === undefined) delete e[k];
-        return data.expensesApi({ action: "create", expense: e });
-      },
-    });
-  const editDialog = (e) =>
-    formDialog({
-      title: "Edit expense",
-      fields: fields(e, ctx()),
-      onSubmit: (v) => {
-        const next = parseWeddingExpense(v, e);
-        const changes = {};
-        for (const [k, val] of Object.entries(next)) {
-          if (val === undefined) continue; // payee comes from the saved supplier
-          if (k === "recurring" ? Boolean(e.recurring) !== val : (e[k] ?? null) !== (val ?? null)) changes[k] = val;
-        }
-        if (!Object.keys(changes).length) return { unchanged: true };
-        return data.expensesApi({ action: "update", expenseId: e.id, expectedRevision: e.revision, changes });
-      },
-    });
-  const removeDialog = (e) =>
-    formDialog({
-      title: `Remove ${formatCentavos(e.amount, currency)} expense?`,
-      intro: e.supplierPaymentId ? "It stays in the history but no longer counts as spent or as paid to the supplier. Its supplier payment goes back to Upcoming." : "Use this for an expense entered by mistake. It stays in the history but no longer counts as spent.",
-      fields: [{ name: "reason", label: "Reason", type: "textarea", required: true }],
-      submitLabel: "Remove expense",
-      onSubmit: (v) => data.expensesApi({ action: "remove", expenseId: e.id, reason: v.reason }),
-    });
-  const done = (message) => (result) => {
-    if (!result) return false;
-    if (!result.unchanged) toast(message, "success");
-    load();
-    return true;
-  };
-
-  function openView(e) {
-    const active = e.status === "active";
-    detailsDialog({
-      title: `${formatCentavos(e.amount, currency)} · ${categoryName(names(), e)}`,
-      badgeHtml: active ? "" : badge("Removed", "neutral"),
-      rows: [
-        ["Date paid", formatDayId(e.date)],
-        ["Amount", formatCentavos(e.amount, currency)],
-        ["Category", categoryName(names(), e)],
-        ["Supplier / payee", e.payee || "—"],
-        ["Payment method", methodLabel(e.method)],
-        ["Reference", e.reference || "—"],
-        ["Recurring", e.recurring ? "Yes" : "No"],
-        ["From a supplier payment", e.supplierPaymentId ? "Yes" : null],
-        ["Notes", e.notes],
-      ],
-      activity: activityLines(e.history, timezone),
-      actions: [...(active && can.remove ? [{ act: "remove", label: "Remove expense", danger: true }] : []), ...(active && can.update ? [{ act: "edit", label: "Edit" }] : [])],
-      onAction: async (act) => {
-        try {
-          if (act === "edit") return done("Expense updated")(await editDialog(e));
-          if (act === "remove") return done("Expense removed")(await removeDialog(e));
-        } catch (err) {
-          toast(err.message || "Something went wrong", "danger");
-        }
-        return false;
-      },
-    });
-  }
+  const actions = expenseActions({ data, currency, timezone, can, toast, getCtx: () => ({ today: today(), categories: state.categories, suppliers: state.suppliers }), reload: () => load() });
+  const { addDialog, openView } = actions;
+  const done = actions.done;
 
   const onClick = async (event) => {
     const el = event.target.closest("[data-act]");
@@ -245,4 +178,82 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     container.removeEventListener("click", onClick);
     container.removeEventListener("submit", onSubmit);
   };
+}
+
+// Owner-pilot Bridal UX: the add / view / edit / remove dialogs, shared with
+// Money (its "Other expenses" section). can: { create, update, remove }.
+export function expenseActions({ data, currency, timezone, can, toast, getCtx, reload }) {
+  const ctx = getCtx;
+  const names = () => new Map(getCtx().categories.map((c) => [c.id, c.name]));
+  const addDialog = () =>
+    formDialog({
+      title: "Add wedding expense",
+      fields: fields(null, ctx()),
+      onSubmit: (v) => {
+        const e = parseWeddingExpense(v);
+        for (const k of Object.keys(e)) if (e[k] === null || e[k] === undefined) delete e[k];
+        return data.expensesApi({ action: "create", expense: e });
+      },
+    });
+  const editDialog = (e) =>
+    formDialog({
+      title: "Edit expense",
+      fields: fields(e, ctx()),
+      onSubmit: (v) => {
+        const next = parseWeddingExpense(v, e);
+        const changes = {};
+        for (const [k, val] of Object.entries(next)) {
+          if (val === undefined) continue; // payee comes from the saved supplier
+          if (k === "recurring" ? Boolean(e.recurring) !== val : (e[k] ?? null) !== (val ?? null)) changes[k] = val;
+        }
+        if (!Object.keys(changes).length) return { unchanged: true };
+        return data.expensesApi({ action: "update", expenseId: e.id, expectedRevision: e.revision, changes });
+      },
+    });
+  const removeDialog = (e) =>
+    formDialog({
+      title: `Remove ${formatCentavos(e.amount, currency)} expense?`,
+      intro: e.supplierPaymentId ? "It stays in the history but no longer counts as spent or as paid to the supplier. Its supplier payment goes back to Upcoming." : "Use this for an expense entered by mistake. It stays in the history but no longer counts as spent.",
+      fields: [{ name: "reason", label: "Reason", type: "textarea", required: true }],
+      submitLabel: "Remove expense",
+      onSubmit: (v) => data.expensesApi({ action: "remove", expenseId: e.id, reason: v.reason }),
+    });
+  const done = (message) => (result) => {
+    if (!result) return false;
+    if (!result.unchanged) toast(message, "success");
+    reload();
+    return true;
+  };
+
+  function openView(e) {
+    const active = e.status === "active";
+    detailsDialog({
+      title: `${formatCentavos(e.amount, currency)} · ${categoryName(names(), e)}`,
+      badgeHtml: active ? "" : badge("Removed", "neutral"),
+      rows: [
+        ["Date paid", formatDayId(e.date)],
+        ["Amount", formatCentavos(e.amount, currency)],
+        ["Category", categoryName(names(), e)],
+        ["Supplier / payee", e.payee || "—"],
+        ["Payment method", methodLabel(e.method)],
+        ["Reference", e.reference || "—"],
+        ["Recurring", e.recurring ? "Yes" : "No"],
+        ["From a supplier payment", e.supplierPaymentId ? "Yes" : null],
+        ["Notes", e.notes],
+      ],
+      activity: activityLines(e.history, timezone),
+      actions: [...(active && can.remove ? [{ act: "remove", label: "Remove expense", danger: true }] : []), ...(active && can.update ? [{ act: "edit", label: "Edit" }] : [])],
+      onAction: async (act) => {
+        try {
+          if (act === "edit") return done("Expense updated")(await editDialog(e));
+          if (act === "remove") return done("Expense removed")(await removeDialog(e));
+        } catch (err) {
+          toast(err.message || "Something went wrong", "danger");
+        }
+        return false;
+      },
+    });
+  }
+
+  return { addDialog, openView, done };
 }

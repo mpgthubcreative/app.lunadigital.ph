@@ -57,7 +57,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     render(
       container,
       html`
-        ${pageHeader({ title: "Wedding Budget", subtitle: "Your wedding budget by category. Luna works out what's spent, what's left and what you still owe suppliers." })}
+        ${pageHeader({ title: "Budget", subtitle: html`<a href="/wedding-suppliers" data-link>‹ Money</a>` })}
         ${state.error
           ? html`<section class="card">${emptyState({ title: "Couldn't load", body: state.error })}</section>`
           : html`

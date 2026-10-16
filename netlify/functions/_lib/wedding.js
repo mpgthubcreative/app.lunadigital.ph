@@ -23,7 +23,7 @@
 // the wedding sink applies the same cap to the expenses themselves.
 
 import { BUDGET_DOC_ID, isValidRecordId } from "../../../shared/baby.js";
-import { WeddingError, WEDDING_SCHEMA_VERSION, TOTALS_DOC_ID, SUPPLIER_SERVICES, SUPPLIER_STATUSES, TASK_STATUSES, TASK_PRIORITIES, RSVP_STATUSES, GUEST_SIDES, isOpenStatus, keyOf, validateSupplierInput, validateSupplierPaymentInput, validateTaskInput, validateGuestInput, validateRsvp, taskTotalsDelta, guestDelta, guestCategoryDelta, supplierBalance } from "../../../shared/wedding.js";
+import { WeddingError, WEDDING_SCHEMA_VERSION, TOTALS_DOC_ID, SUPPLIER_SERVICES, SUPPLIER_STATUSES, TASK_STATUSES, TASK_PRIORITIES, RSVP_STATUSES, GUEST_SIDES, isOpenStatus, keyOf, validateSupplierInput, validateSupplierPaymentInput, validateTaskInput, validateGuestInput, validateRsvp, taskTotalsDelta, guestDelta, guestCategoryDelta, supplierBalance, SEATING_DOC_ID, MAX_TABLES, TABLE_ID, validateTableInput } from "../../../shared/wedding.js";
 import { EXPENSE_METHODS } from "../../../shared/expenses.js";
 import { businessDate, isDayId } from "../../../shared/metrics.js";
 import { prepareExpenseCreate } from "./expenses.js";
@@ -511,10 +511,14 @@ export async function setRsvp({ db, tenant, FieldValue, business, guestId, rsvp,
     const g = snap.data();
     const v = validateRsvp(rsvp, g.partySize);
     if (v.status === g.rsvp && v.confirmed === int(g.confirmed)) return { guestId, unchanged: true };
-    const text = v.status === g.rsvp ? `Confirmed guests ${int(g.confirmed)} → ${v.confirmed}` : `RSVP changed ${label(RSVP_STATUSES, g.rsvp)} → ${label(RSVP_STATUSES, v.status)}${v.status === "attending" ? ` · ${v.confirmed} confirmed` : ""}`;
+    // Owner-pilot Bridal UX: no longer Attending -> the table seat is freed.
+    const unseat = v.status !== "attending" && Boolean(g.tableId);
+    const text = (v.status === g.rsvp ? `Confirmed guests ${int(g.confirmed)} → ${v.confirmed}` : `RSVP changed ${label(RSVP_STATUSES, g.rsvp)} → ${label(RSVP_STATUSES, v.status)}${v.status === "attending" ? ` · ${v.confirmed} confirmed` : ""}`) + (unseat ? " · removed from their table" : "");
     const next = { ...g, rsvp: v.status, confirmed: v.confirmed };
     const stamp = FieldValue.serverTimestamp();
-    tx.update(gRef, { rsvp: v.status, confirmed: v.confirmed, rsvpDate: v.status === "awaiting" ? null : businessDate(business.timezone, now), history: append(g.history, entry(actor, text, { from: { rsvp: g.rsvp, confirmed: int(g.confirmed) }, to: v })), revision: g.revision + 1, updatedBy: who(actor), updatedAt: stamp });
+    // source: who answered (the Owner side here; a future invitation link
+    // records "guest"), kept on the guest and in each history line.
+    tx.update(gRef, { rsvp: v.status, confirmed: v.confirmed, rsvpDate: v.status === "awaiting" ? null : businessDate(business.timezone, now), rsvpSource: "owner", ...(unseat ? { tableId: null } : {}), history: append(g.history, entry(actor, text, { from: { rsvp: g.rsvp, confirmed: int(g.confirmed) }, to: v, source: "owner" })), revision: g.revision + 1, updatedBy: who(actor), updatedAt: stamp });
     tx.set(guestTotalsRef(tenant), { schemaVersion: WEDDING_SCHEMA_VERSION, ...guestTotalsWrite(FieldValue, g, next), updatedAt: stamp }, { merge: true });
     return { guestId, rsvp: v.status, confirmed: v.confirmed };
   }, TX_OPTIONS);
@@ -552,6 +556,85 @@ export async function removeGuest({ db, tenant, FieldValue, guestId, actor }) {
     tx.set(guestTotalsRef(tenant), { schemaVersion: WEDDING_SCHEMA_VERSION, ...guestTotalsWrite(FieldValue, g, null), updatedAt: stamp }, { merge: true });
     tx.set(tenant.collection("auditLog").doc(), { type: "guest.removed", guestId, name: g.name, partySize: g.partySize, rsvp: g.rsvp, confirmed: int(g.confirmed), actor: who(actor), at: stamp });
     return { guestId, removed: true };
+  }, TX_OPTIONS);
+}
+
+// ---------- Seating (Owner-pilot Bridal UX) ----------
+// Tables live in one document (guestTotals/seating); a guest's table is
+// guests/{id}.tableId. Only Attending guests are seated; seats = confirmed
+// attendees. A table can be over capacity (shown, not refused: the couple
+// decides), but never seat a guest who isn't Attending.
+
+const seatingRef = (tenant) => tenant.doc("guestTotals", SEATING_DOC_ID);
+const tablesOf = (snap) => (snap.exists && snap.data().tables && typeof snap.data().tables === "object" ? snap.data().tables : {});
+const tableIdOk = (id) => {
+  if (typeof id !== "string" || !TABLE_ID.test(id)) throw new WeddingError("invalid-table", "Invalid table");
+  return id;
+};
+
+export async function createTable({ db, tenant, FieldValue, input }) {
+  const data = validateTableInput(input);
+  for (const k of ["name", "capacity"]) if (data[k] === undefined) throw new WeddingError("invalid-input", `${k} is required`);
+  return db.runTransaction(async (tx) => {
+    const snap = await tx.get(seatingRef(tenant));
+    const tables = tablesOf(snap);
+    if (Object.keys(tables).length >= MAX_TABLES) throw new WeddingError("invalid-input", `At most ${MAX_TABLES} tables`);
+    if (Object.values(tables).some((t) => lower(t.name) === lower(data.name))) throw new WeddingError("invalid-input", `There's already a table called ${data.name}`);
+    const tableId = `t${tenant.collection("guests").doc().id.replace(/[^A-Za-z0-9]/g, "").slice(0, 20)}`;
+    const order = Math.max(0, ...Object.values(tables).map((t) => int(t.order))) + 1;
+    tx.set(seatingRef(tenant), { schemaVersion: WEDDING_SCHEMA_VERSION, tables: { ...tables, [tableId]: { name: data.name, capacity: data.capacity, order } }, updatedAt: FieldValue.serverTimestamp() });
+    return { tableId };
+  }, TX_OPTIONS);
+}
+
+export async function updateTable({ db, tenant, FieldValue, tableId, changes }) {
+  tableIdOk(tableId);
+  const data = validateTableInput(changes, { partial: true });
+  return db.runTransaction(async (tx) => {
+    const snap = await tx.get(seatingRef(tenant));
+    const tables = tablesOf(snap);
+    if (!tables[tableId]) throw new WeddingError("not-found", "Table not found");
+    if (data.name && Object.entries(tables).some(([id, t]) => id !== tableId && lower(t.name) === lower(data.name))) throw new WeddingError("invalid-input", `There's already a table called ${data.name}`);
+    tx.set(seatingRef(tenant), { schemaVersion: WEDDING_SCHEMA_VERSION, tables: { ...tables, [tableId]: { ...tables[tableId], ...data } }, updatedAt: FieldValue.serverTimestamp() });
+    return { tableId };
+  }, TX_OPTIONS);
+}
+
+// Deleting a table moves its guests back to Unassigned (nothing else changes).
+export async function deleteTable({ db, tenant, FieldValue, tableId, actor }) {
+  tableIdOk(tableId);
+  return db.runTransaction(async (tx) => {
+    const snap = await tx.get(seatingRef(tenant));
+    const seated = await tx.get(tenant.collection("guests").where("tableId", "==", tableId).limit(200));
+    const tables = tablesOf(snap);
+    if (!tables[tableId]) throw new WeddingError("not-found", "Table not found");
+    const stamp = FieldValue.serverTimestamp();
+    const { [tableId]: gone, ...rest } = tables;
+    for (const d of seated.docs) {
+      const g = d.data();
+      tx.update(d.ref, { tableId: null, history: append(g.history, entry(actor, `Table ${gone.name} deleted · unassigned`)), revision: g.revision + 1, updatedBy: who(actor), updatedAt: stamp });
+    }
+    tx.set(seatingRef(tenant), { schemaVersion: WEDDING_SCHEMA_VERSION, tables: rest, updatedAt: stamp });
+    return { tableId, deleted: true, unseated: seated.docs.length };
+  }, TX_OPTIONS);
+}
+
+// Assign / move (tableId) or unassign (null) one Attending guest.
+export async function seatGuest({ db, tenant, FieldValue, guestId, tableId, actor }) {
+  const gRef = guestRef(tenant, guestId);
+  if (tableId !== null) tableIdOk(tableId);
+  return db.runTransaction(async (tx) => {
+    const [snap, seating] = [await tx.get(gRef), await tx.get(seatingRef(tenant))];
+    if (!snap.exists) throw new WeddingError("not-found", "Guest not found");
+    const g = snap.data();
+    const tables = tablesOf(seating);
+    if (tableId !== null && !tables[tableId]) throw new WeddingError("not-found", "Table not found");
+    if (tableId !== null && g.rsvp !== "attending") throw new WeddingError("invalid-input", "Only guests who are attending can be seated");
+    if ((g.tableId ?? null) === tableId) return { guestId, unchanged: true };
+    const from = g.tableId && tables[g.tableId] ? tables[g.tableId].name : null;
+    const text = tableId === null ? `Unassigned from ${from ?? "their table"}` : from ? `Moved from ${from} to ${tables[tableId].name}` : `Seated at ${tables[tableId].name}`;
+    tx.update(gRef, { tableId, history: append(g.history, entry(actor, text)), revision: g.revision + 1, updatedBy: who(actor), updatedAt: FieldValue.serverTimestamp() });
+    return { guestId, tableId };
   }, TX_OPTIONS);
 }
 

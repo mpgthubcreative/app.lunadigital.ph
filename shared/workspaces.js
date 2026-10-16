@@ -22,6 +22,10 @@
 //                  hides the Dashboard
 //   home           (Owner-pilot UX) the module "/" opens when the Dashboard
 //                  is hidden (Household: payroll)
+//   menuHidden     (Owner-pilot Bridal UX) navigation modules that keep
+//                  their route but get no menu entry: reached from another
+//                  page (Bridal: Wedding Expenses and Supplier Payments open
+//                  from Money)
 //   dashboard      widget ids (shared/dashboard.js) in display order, and
 //                  the empty state shown when none apply yet
 //   labels         plain-text display names by module id; ids, permission
@@ -169,17 +173,24 @@ const TEMPLATES = [
     description: "A compact wedding command center: budget, suppliers, payments, tasks and guests.",
     status: "live",
     modules: [...CORE, "expenses", "budget", "vendors", "vendorpayments", "tasks", "guests"],
-    // Phase 18.5: the wedding story is Tasks → Guests → Suppliers →
-    // Payments → Budget / Expenses ("are we on track?" first).
-    navigation: ["dashboard", "tasks", "guests", "vendors", "vendorpayments", "budget", "expenses", "users", "settings"],
-    mobileTabs: ["tasks", "guests", "vendors"],
+    // Owner-pilot Bridal UX: no Dashboard. Money (budget, suppliers, other
+    // expenses, payments: the Wedding Suppliers module) is the home page,
+    // then Tasks and Guests; the Budget categories sit with Users and
+    // Settings under More on a phone. Wedding Expenses and Supplier Payments
+    // keep their pages (opened from Money), not the menu. The dashboard
+    // module itself stays (core) so it can come back.
+    navigation: ["vendors", "tasks", "guests", "budget", "expenses", "vendorpayments", "users", "settings"],
+    mobileTabs: ["vendors", "tasks", "guests"],
+    navHidden: ["dashboard"],
+    menuHidden: ["expenses", "vendorpayments"],
+    home: "vendors",
     dashboard: {
       // Selected period (spending, payments made), then the current state (as of now).
       widgets: ["weddingSpent", "weddingSupplierPaid", "weddingExpenseCount", "weddingBudgetTotal", "weddingSpentNow", "weddingRemaining", "weddingSupplierBalance", "weddingUpcoming", "weddingOpenTasks", "weddingOverdueTasks", "weddingConfirmedGuests", "weddingAwaitingRsvp", "upcomingSupplierPayments", "tasksDueSoon", "recentWeddingExpenses", "rsvpSummary", "supplierSummary"],
       empty: { title: "Your wedding workspace is ready", body: "Set your budget, add suppliers, tasks and guests to get started." },
       sectionLabels: { period: "Spending in the selected period", current: "Wedding plan" },
     },
-    labels: { modules: { dashboard: "Wedding Dashboard", budget: "Wedding Budget", expenses: "Wedding Expenses", vendors: "Wedding Suppliers", vendorpayments: "Supplier Payments", tasks: "Wedding Tasks", guests: "Guests & RSVP" } },
+    labels: { modules: { dashboard: "Wedding Dashboard", budget: "Budget", expenses: "Wedding Expenses", vendors: "Money", vendorpayments: "Supplier Payments", tasks: "Tasks", guests: "Guests" } },
     settings: {},
     plannedModules: [{ id: "wedding-reports", name: "Reports" }],
   },
@@ -248,7 +259,7 @@ export function validateWorkspaceTemplate(t, { moduleIds, coreModuleIds, availab
   const problems = [];
   const isObj = (v) => Boolean(v) && typeof v === "object" && !Array.isArray(v);
   if (!isObj(t)) return ["template must be an object"];
-  const allowedKeys = ["id", "version", "upgradingFrom", "name", "description", "status", "modules", "navigation", "mobileTabs", "navHidden", "home", "dashboard", "labels", "settings", "plannedModules"];
+  const allowedKeys = ["id", "version", "upgradingFrom", "name", "description", "status", "modules", "navigation", "mobileTabs", "navHidden", "menuHidden", "home", "dashboard", "labels", "settings", "plannedModules"];
   for (const k of Object.keys(t)) if (!allowedKeys.includes(k)) problems.push(`unknown key ${k}`);
   if (typeof t.id !== "string" || !WORKSPACE_TEMPLATE_ID_PATTERN.test(t.id)) problems.push("invalid id");
   if (!Number.isSafeInteger(t.version) || t.version < 1) problems.push("version must be a positive integer");
@@ -272,6 +283,9 @@ export function validateWorkspaceTemplate(t, { moduleIds, coreModuleIds, availab
   for (const m of hidden || []) if (!mods.includes(m) || nav.includes(m)) problems.push(`navHidden ${m} must be an allowed module that isn't in the navigation`);
   for (const m of mods) if (!nav.includes(m) && !(hidden || []).includes(m)) problems.push(`allowed module ${m} has no navigation position`);
   if (t.home !== undefined && (!nav.includes(t.home) || t.home === "dashboard")) problems.push("home must be a navigation module");
+  const menuHidden = t.menuHidden === undefined ? [] : Array.isArray(t.menuHidden) ? t.menuHidden : null;
+  if (!menuHidden || new Set(menuHidden).size !== menuHidden.length) problems.push("menuHidden must be a list without duplicates");
+  for (const m of menuHidden || []) if (!nav.includes(m) || m === t.home || (t.mobileTabs || []).includes(m)) problems.push(`menuHidden ${m} must be a navigation module that isn't home or a phone tab`);
   if (t.home === undefined && !nav.includes("dashboard")) problems.push("a template without the Dashboard in its navigation needs a home module");
   // Phase 18.5: up to three phone tabs (after Dashboard), from the navigation;
   // four when there's no Dashboard tab.

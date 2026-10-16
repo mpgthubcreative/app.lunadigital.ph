@@ -20,6 +20,9 @@
 // unread (⋯); a read item that still needs action stays under Needs
 // attention, labelled "Read · still needs attention", until the task is
 // actually done in its tab. Mark all as read sits at the top.
+// Owner-pilot Bridal UX: a wedding (no Dashboard either) gets the same
+// "Needs attention" from GET /api/wedding-attention: supplier payments
+// overdue or due soon, overdue tasks (grouped Money / Tasks).
 
 import { html, render } from "../lib/html.js";
 import { icon } from "../components/icons.js";
@@ -28,6 +31,11 @@ import { api as defaultApi } from "../lib/api.js";
 
 // Household owners / managers who see payroll get the attention items.
 export const hasHouseholdTodos = (session) => session?.entitlements?.workspaceTemplateId === "household-payroll" && session?.member?.permissions?.["payroll.view"] === true;
+const hasWeddingTodos = (session) => session?.entitlements?.workspaceTemplateId === "bridal-expense" && (session?.member?.permissions?.["vendorpayments.view"] === true || session?.member?.permissions?.["tasks.view"] === true);
+// The endpoint that lists this person's "needs attention" items, or null.
+export const attentionSource = (session) => (hasHouseholdTodos(session) ? "household-summary" : hasWeddingTodos(session) ? "wedding-attention" : null);
+export const emptyBellText = (session) =>
+  hasHouseholdTodos(session) ? "Nothing new. Confirmations and reports from your helpers appear here." : hasWeddingTodos(session) ? "Nothing new. Payments recorded by others appear here." : "Nothing yet. Payments to verify, low stock and ready orders will appear here.";
 export const groupTodos = (todos) => {
   const by = new Map();
   for (const t of todos || []) {
@@ -57,7 +65,8 @@ const loadData = () => import("../modules/notifications/data.js");
 export function mountBell(slot, session, { data = null, now = () => new Date(), api = defaultApi } = {}) {
   const businessId = session.business.id;
   const uid = session.user.uid;
-  const withTodos = hasHouseholdTodos(session);
+  const source = attentionSource(session);
+  const withTodos = source !== null;
   const state = { count: 0, open: false, rows: null, error: false, todos: [] };
   let alive = true;
   let timer = null;
@@ -82,7 +91,7 @@ export function mountBell(slot, session, { data = null, now = () => new Date(), 
                 : state.rows === null
                   ? html`<p class="stat-hint bell-empty">Loading…</p>`
                   : !rows.length
-                    ? html`<p class="stat-hint bell-empty">${withTodos ? "Nothing new. Confirmations and reports from your helpers appear here." : "Nothing yet. Payments to verify, low stock and ready orders will appear here."}</p>`
+                    ? html`<p class="stat-hint bell-empty">${emptyBellText(session)}</p>`
                     : html`<ul class="bell-list">${rows.map(
                         (r) => html`<li class="bell-item ${r.unread ? "is-unread" : "is-read"}" data-notification="${r.id}">
                           <div class="bell-title">${r.unread ? html`<span class="bell-dot" aria-label="Unread">●</span> ` : ""}${r.title}${r.resolved ? html` <span class="stat-hint">· Resolved</span>` : ""}</div>
@@ -103,7 +112,7 @@ export function mountBell(slot, session, { data = null, now = () => new Date(), 
     try {
       const [count, todos] = await Promise.all([
         (await getData()).fetchUnreadCount(businessId, uid),
-        withTodos ? api("household-summary").then((r) => r.summary?.todos || [], () => state.todos) : Promise.resolve([]),
+        withTodos ? api(source).then((r) => r.summary?.todos || [], () => state.todos) : Promise.resolve([]),
       ]);
       if (!alive) return;
       state.count = count;

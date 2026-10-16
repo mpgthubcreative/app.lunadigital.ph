@@ -437,7 +437,8 @@ describe("navigation", () => {
 
   it("non-Distributor workspaces get no Distributor navigation, and their own names", () => {
     // Phase 18.5: the wedding story order (Tasks → Guests → Suppliers → Payments → Budget / Expenses).
-    expect(nav("bridal-expense", "owner")).toEqual(["/ Wedding Dashboard", "/wedding-tasks Wedding Tasks", "/guests Guests & RSVP", "/wedding-suppliers Wedding Suppliers", "/supplier-payments Supplier Payments", "/budget Wedding Budget", "/expenses Wedding Expenses", "/users Users", "/settings Settings"]);
+    // Owner-pilot Bridal UX: Money first (home), no Dashboard; Expenses / Payments keep a route.
+    expect(nav("bridal-expense", "owner")).toEqual(["/wedding-suppliers Money", "/wedding-tasks Tasks", "/guests Guests", "/budget Budget", "/expenses Wedding Expenses", "/supplier-payments Supplier Payments", "/users Users", "/settings Settings"]);
     expect(nav("baby-expense", "owner")).toEqual(["/ Baby Dashboard", "/budget Budget & Categories", "/expenses Baby Expenses", "/payment-schedule Payment Schedule", "/providers Providers / Vendors", "/users Users", "/settings Settings"]);
     // Owner-pilot UX (2026-10-17): no Dashboard in Household; Payroll first (home).
     expect(nav("household-payroll", "owner")).toEqual(["/payroll Payroll", "/attendance Attendance", "/advances Advances", "/household-staff Household Staff", "/users Users", "/settings Settings"]);
@@ -452,11 +453,22 @@ describe("navigation", () => {
     expect(validateWorkspaceTemplate({ ...t, home: "dashboard" }, CTX)).toContain("home must be a navigation module");
     expect(validateWorkspaceTemplate({ ...t, navHidden: [] }, CTX)).toContain("allowed module dashboard has no navigation position");
     expect(validateWorkspaceTemplate({ ...t, mobileTabs: ["payroll", "attendance", "advances", "household", "users"] }, CTX)).toContain("mobileTabs must be up to four distinct module ids");
-    // The others keep their Dashboard (and three tabs).
-    for (const id of ["distributor", "baby-expense", "bridal-expense"]) {
+    // Distributor and Baby keep their Dashboard (and three tabs).
+    for (const id of ["distributor", "baby-expense"]) {
       expect(WORKSPACE_TEMPLATES[id].navigation[0]).toBe("dashboard");
       expect(validateWorkspaceTemplate({ ...WORKSPACE_TEMPLATES[id], mobileTabs: [...WORKSPACE_TEMPLATES[id].mobileTabs, "users"] }, CTX)).toContain("mobileTabs must be up to three distinct module ids");
     }
+  });
+
+  it("Bridal (Owner-pilot UX): Dashboard hidden, Money (vendors) home; Expenses / Payments routed but off the menu; the validator holds menuHidden", () => {
+    const t = WORKSPACE_TEMPLATES["bridal-expense"];
+    expect(t).toMatchObject({ navHidden: ["dashboard"], home: "vendors", menuHidden: ["expenses", "vendorpayments"], mobileTabs: ["vendors", "tasks", "guests"] });
+    expect(t.modules).toContain("dashboard");
+    expect(validateWorkspaceTemplate(t, CTX)).toEqual([]);
+    expect(validateWorkspaceTemplate({ ...t, menuHidden: ["vendors"] }, CTX)).toContain("menuHidden vendors must be a navigation module that isn't home or a phone tab");
+    expect(validateWorkspaceTemplate({ ...t, menuHidden: ["dashboard"] }, CTX)).toContain("menuHidden dashboard must be a navigation module that isn't home or a phone tab");
+    // Staff can't open Money: the hidden Dashboard comes back for them.
+    expect(nav("bridal-expense", "staff")).toEqual(["/ Wedding Dashboard"]);
   });
 
   it("roles still differ inside a workspace (staff: no Users/Settings)", () => {
@@ -465,7 +477,7 @@ describe("navigation", () => {
 
   it("labels never change ids, paths or permissions", () => {
     const m = resolveNavigation(access("bridal-expense"))[0];
-    expect(m).toMatchObject({ id: "dashboard", path: "/", permission: "dashboard.view", label: "Wedding Dashboard" });
+    expect(m).toMatchObject({ id: "vendors", path: "/wedding-suppliers", permission: "vendors.view", label: "Money" });
   });
 });
 
