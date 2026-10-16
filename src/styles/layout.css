@@ -714,6 +714,10 @@
 .todo-meta {
   padding: 0 4px 4px 10px;
 }
+.bell-section .bell-count-inline {
+  background: var(--surface-sunken);
+  color: var(--text-muted);
+}
 .bell-section {
   padding: var(--space-2) var(--space-3) 2px;
   font-size: 12px;

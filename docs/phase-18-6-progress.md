@@ -338,6 +338,24 @@ Items 1–4, 13–19, 29 and 30 of the request were already live (no Dashboard a
   - **Browser (temporary household, deleted):** 27/27 at 390px / 1280px. Checks: lands on Payroll, no Dashboard, Payroll figures, the Advances card layout and solid Give advance, ⋯ More → Repaid sheet, Give advance preselected, the quiet Attendance header with Confirm through today first, a solid Save attendance above the tab bar, the payslip status first with Correct payroll visible, a bell item deep link. No sideways scroll and no clipped buttons.
   - **Emulator:** not rerun; no rules, payroll or ledger code changed.
 
+### 2026-10-17 · Bell read actions: read is not resolved; badge = unread only (c24d882)
+
+- **Panel:** Mark all as read at the top, then NEEDS ATTENTION (Household items by helper), then RECENT (notifications).
+- **Opening:** tapping an item opens it and marks it read.
+- **⋯ per item:** Open / Mark as read / Mark as unread. Notification rows have the same under ⋯ (plus their Open link).
+- **Read is not resolved:** a needs-attention item marked read stays listed as "Read · still needs attention" (grey). New ones are marked "New · needs attention" (amber, bold). An item disappears only when the task is actually done in its tab, for example when the helper confirms the advance. Marking read never confirms a salary or advance, completes attendance, or resolves a correction.
+- **Badge:** the red number = what this person hasn't seen yet: unread notifications plus new needs-attention items. Read items never count. The count beside "Needs attention" is neutral grey.
+- **Server:**
+  - Notifications `unread` adds one back to the bell counter.
+  - `attention` { ids, read } stores per-person seen marks in members/{uid}/inboxState/attention (server-written, own inbox read only, newest 300 kept).
+  - `readAll` also takes the attentionIds shown.
+  - The household summary gives each item a stable id (kind + what it's about) and this person's read flag.
+- **Notifications page:** Mark as read / Mark as unread per row; the same item actions under Needs your attention. Mark all as read says that items still needing action stay.
+- **Tests:**
+  - **Unit:** 1417 pass. UI: badge counts unread only, mark one read / unread, opening marks read, Mark all as read keeps the items, an item leaves only when the summary stops listing it, notification row read / unread. Server: the read flag per person, read ≠ resolved (stays until the helper really confirms), readAll with items, notification read → unread → read counter, bad ids refused.
+  - **Browser at 390px (temporary household, deleted):** 14/14. Panel order, ⋯ Mark as read on screen and tappable, the badge −1 with the item still listed, the read mark survives a reload, Mark as unread brings it back, Mark all as read clears the badge and keeps the items, tapping an item opens its page.
+  - **Desktop run:** shown afterwards for the same Owner, everything was correctly already read. That's why 2 checks expecting "New" failed; it confirms the marks persist.
+
 ## Plan (decisions made from the brief)
 
 ### Stage 1: Distributor
