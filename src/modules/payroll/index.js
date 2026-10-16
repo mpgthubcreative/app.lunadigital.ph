@@ -220,8 +220,8 @@ export function mount(container, session, { data = defaultData, toast = defaultT
             ${mayExport(session, "payroll") ? html`<span class="visually-hidden">${exportHint}</span>${exportButton("payroll")}` : ""}
           </div>
           ${state.error ? emptyState({ title: "Couldn't load", body: state.error }) : state.loading && !state.period?.start ? skeleton(5) : table()}
-          <p class="voided-link"><button type="button" class="btn-linklike" data-act="voided">Voided records</button></p>
-        </section>`
+        </section>
+        <p class="voided-link page-foot"><button type="button" class="btn-linklike" data-act="voided">Voided records ›</button></p>`
     );
     for (const btn of container.querySelectorAll('[data-act="export"]')) btn.classList.add("btn-ghost");
   }
