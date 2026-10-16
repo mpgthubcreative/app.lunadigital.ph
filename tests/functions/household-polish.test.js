@@ -16,6 +16,7 @@ import { createPayrollHandler } from "../../netlify/functions/payroll.js";
 import { createAdvancesHandler } from "../../netlify/functions/advances.js";
 import { createHouseholdSummaryHandler } from "../../netlify/functions/household-summary.js";
 import { createActivateHandler } from "../../netlify/functions/activate.js";
+import { createNotificationsHandler } from "../../netlify/functions/notifications.js";
 import { createBusiness, addMember, ensureAuthUser } from "../../netlify/functions/_lib/provisioning.js";
 import { reconcileOf, advanceRemaining, expectedStatus } from "../../shared/payroll.js";
 import { buildWorld, request } from "../helpers/tenants.js";
@@ -40,7 +41,7 @@ beforeEach(async () => {
 });
 
 const deps = () => ({ getAdmin: async () => world, now: () => clock });
-const HANDLERS = { staff: createHouseholdStaffHandler, attendance: createAttendanceHandler, payroll: createPayrollHandler, advances: createAdvancesHandler };
+const HANDLERS = { staff: createHouseholdStaffHandler, attendance: createAttendanceHandler, payroll: createPayrollHandler, advances: createAdvancesHandler, notifications: createNotificationsHandler };
 async function api(kind, uid, body) {
   const res = await HANDLERS[kind](deps())({ ...request({ uid, businessId: H, method: "POST" }), body: JSON.stringify(body) });
   return { status: res.statusCode, body: JSON.parse(res.body) };
@@ -243,6 +244,56 @@ describe("Bell: what needs attention, one sentence per item, by helper, with dee
     expect(after.map((x) => x.kind)).not.toContain("unpaid");
     // Ana was paid with Oct 14-15 still unmarked: those days are asked for now.
     expect(after.filter((x) => x.staffId === ana).map((x) => x.text)).toContain("2 attendance days of Ana's Oct 1–15 still need to be recorded (salary already paid).");
+  });
+});
+
+describe("Bell read state: read is not resolved", () => {
+  const unreadCount = (uid) => world.db.docs.get(`businesses/${H}/members/${uid}/inboxState/summary`)?.unread ?? 0;
+  const inboxOf = (uid) => [...world.db.docs.entries()].filter(([k]) => k.startsWith(`businesses/${H}/members/${uid}/inbox/`)).map(([k, v]) => ({ id: k.split("/").pop(), ...v }));
+
+  it("an attention item marked read stays listed (read: true) until the helper really confirms; Mark all as read covers the items shown", async () => {
+    const lor = await staff("Loriza Ibanez");
+    const uid = await withLogin(lor);
+    at(OCT(12));
+    const adv = (await api("advances", u.carlo, { action: "give", advance: { staffId: lor, amount: 50000, date: OCT(12), method: "cash" } })).body.advanceId;
+    let item = (await summary()).todos.find((x) => x.kind === "advanceConfirmation");
+    expect(item).toMatchObject({ id: `advanceConfirmation:${adv}`, read: false });
+    expect((await api("notifications", u.carlo, { action: "attention", ids: [item.id], read: true })).status).toBe(200);
+    item = (await summary()).todos.find((x) => x.kind === "advanceConfirmation");
+    expect(item.read).toBe(true); // read, still needs attention
+    // Each person has their own read marks.
+    expect((await summary(u.dad)).todos.find((x) => x.kind === "advanceConfirmation").read).toBe(false);
+    expect((await api("notifications", u.carlo, { action: "attention", ids: [item.id], read: false })).status).toBe(200);
+    expect((await summary()).todos.find((x) => x.kind === "advanceConfirmation").read).toBe(false);
+    expect((await api("notifications", u.carlo, { action: "attention", ids: ["bad id!"], read: true })).status).toBe(400);
+    // Mark all as read: the notifications and the items shown.
+    expect((await api("notifications", u.carlo, { action: "readAll", attentionIds: [item.id] })).status).toBe(200);
+    expect((await summary()).todos.find((x) => x.kind === "advanceConfirmation").read).toBe(true);
+    expect(unreadCount(u.carlo)).toBe(0);
+    // Only the real confirmation makes it go away.
+    const me = await import("../../netlify/functions/me.js");
+    await me.createMeHandler(deps())({ ...request({ uid, businessId: H, method: "POST" }), body: JSON.stringify({ action: "advanceReceived", advanceId: adv }) });
+    const left = (await summary()).todos.filter((x) => x.kind === "advanceConfirmation");
+    expect(docAt(`advances/${adv}`).receipt?.state).toBe("confirmed");
+    expect(left).toEqual([]);
+  });
+
+  it("a notification: read -> unread -> read moves the bell counter by one each time", async () => {
+    const lor = await staff("Loriza Ibanez");
+    const uid = await withLogin(lor);
+    at(OCT(12));
+    await mark(lor, range(1, 12).map(OCT));
+    const pid = (await api("payroll", u.carlo, { action: "release", staffId: lor, periodStart: OCT(1), payment: { method: "cash", prepaidDays: 3 } })).body.payrollId;
+    const me = await import("../../netlify/functions/me.js");
+    await me.createMeHandler(deps())({ ...request({ uid, businessId: H, method: "POST" }), body: JSON.stringify({ action: "received", payrollId: pid }) });
+    const n = inboxOf(u.carlo).find((x) => x.read === false);
+    expect(n).toBeDefined();
+    const before = unreadCount(u.carlo);
+    expect((await api("notifications", u.carlo, { action: "read", notificationId: n.id })).body.unread).toBe(before - 1);
+    expect((await api("notifications", u.carlo, { action: "unread", notificationId: n.id })).body.unread).toBe(before);
+    expect(inboxOf(u.carlo).find((x) => x.id === n.id).read).toBe(false);
+    expect((await api("notifications", u.carlo, { action: "unread", notificationId: n.id })).body.unchanged).toBe(true);
+    expect((await api("notifications", u.carlo, { action: "unread", notificationId: "nope" })).status).toBe(404);
   });
 });
 

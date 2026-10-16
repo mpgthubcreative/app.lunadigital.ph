@@ -36,6 +36,7 @@
 
 import { staffPeriod, onPayroll as isOnPayroll, daysIn, attendanceId, summarizeAttendance, advanceRemaining, plannedFor, scheduleOf, reconcileOf, paidTotal, advanceCapacity } from "../../../shared/payroll.js";
 import { overpaymentLinesFor } from "./payroll.js";
+import { readAttentionState } from "./notifications.js";
 import { businessDate, addDays } from "../../../shared/metrics.js";
 
 const int = (v) => (Number.isSafeInteger(v) ? v : 0);
@@ -49,7 +50,7 @@ const dayText = (d) => `${MONTHS[Number(d.slice(5, 7)) - 1]} ${Number(d.slice(8)
 const periodText = (a, b) => (a.slice(0, 7) === b.slice(0, 7) ? `${dayText(a)}–${Number(b.slice(8))}` : `${dayText(a)} – ${dayText(b)}`);
 const enc = encodeURIComponent;
 
-export async function householdSummary({ db, tenant, business, now = new Date() }) {
+export async function householdSummary({ db, tenant, business, uid = null, now = new Date() }) {
   const today = businessDate(business.timezone, now);
   const staffSnap = await tenant.collection("householdStaff").where("status", "==", "active").get();
   const [pendingReq, requestedAdv, openCorr] = await Promise.all([
@@ -60,7 +61,8 @@ export async function householdSummary({ db, tenant, business, now = new Date() 
   const recent = (day) => Boolean(day) && day >= addDays(today, -31);
   const attention = new Map();
   const todos = [];
-  const todo = (staffId, name, kind, text, href) => todos.push({ staffId, name: name || "Staff", kind, text, href });
+  // id: stable per item (kind + what it's about), for the per-person "read" mark.
+  const todo = (staffId, name, kind, text, href, about = staffId) => todos.push({ id: `${kind}:${about}`.replace(/[^A-Za-z0-9:_-]/g, "_").slice(0, 120), staffId, name: name || "Staff", kind, text, href });
   const bump = (staffId, name, kind, n = 1) => {
     if (!n) return;
     if (!attention.has(staffId)) attention.set(staffId, { staffId, name: name || "Staff", items: {}, total: 0 });
@@ -106,13 +108,13 @@ export async function householdSummary({ db, tenant, business, now = new Date() 
       const payHref = (p) => `/payroll?staff=${enc(d.id)}&period=${p.periodStart}_${p.periodEnd}`;
       for (const p of payrolls) {
         const r = reconcileOf(p, today);
-        if (r?.waiting) todo(d.id, s.name, "unrecordedDays", `${r.unrecorded} attendance day${r.unrecorded === 1 ? "" : "s"} of ${first}'s ${periodText(p.periodStart, p.periodEnd)} still need${r.unrecorded === 1 ? "s" : ""} to be recorded (salary ${p.paymentTiming === "early" ? "paid early" : "already paid"}).`, `/attendance?staff=${enc(d.id)}&period=${p.periodStart}`);
-        if (r?.additionalDue > 0) todo(d.id, s.name, "additionalDue", `${first} earned ${peso(r.additionalDue)} more than was paid for ${periodText(p.periodStart, p.periodEnd)}.`, payHref(p));
-        if (p.dispute?.state === "open") todo(d.id, s.name, "salaryIssue", `${first} reported the ${periodText(p.periodStart, p.periodEnd)} salary as not received.`, payHref(p));
+        if (r?.waiting) todo(d.id, s.name, "unrecordedDays", `${r.unrecorded} attendance day${r.unrecorded === 1 ? "" : "s"} of ${first}'s ${periodText(p.periodStart, p.periodEnd)} still need${r.unrecorded === 1 ? "s" : ""} to be recorded (salary ${p.paymentTiming === "early" ? "paid early" : "already paid"}).`, `/attendance?staff=${enc(d.id)}&period=${p.periodStart}`, p.id);
+        if (r?.additionalDue > 0) todo(d.id, s.name, "additionalDue", `${first} earned ${peso(r.additionalDue)} more than was paid for ${periodText(p.periodStart, p.periodEnd)}.`, payHref(p), p.id);
+        if (p.dispute?.state === "open") todo(d.id, s.name, "salaryIssue", `${first} reported the ${periodText(p.periodStart, p.periodEnd)} salary as not received.`, payHref(p), p.id);
       }
-      if (lastPaid && lastPaid.receiptStatus !== "confirmed" && lastPaid.dispute?.state !== "open" && recent(lastPaid.salary?.paidDate)) todo(d.id, s.name, "salaryConfirmation", `${first} hasn't confirmed the ${periodText(lastPaid.periodStart, lastPaid.periodEnd)} salary yet.`, payHref(lastPaid));
-      for (const a of advances.filter((x) => x.status === "paid" && x.receipt?.state === "awaiting" && recent(x.paidDate))) todo(d.id, s.name, "advanceConfirmation", `${first} hasn't confirmed receiving the ${peso(a.amount)} advance (${dayText(a.paidDate)}).`, `/advances?advance=${enc(a.id)}`);
-      for (const a of released) for (const e of scheduleOf(a).filter((x) => x.state === "not_taken")) todo(d.id, s.name, "notTaken", `A planned ${peso(e.amount)} advance deduction wasn't taken from ${first}'s ${periodText(e.periodStart, e.periodEnd)} salary. It's still owed.`, `/advances?advance=${enc(a.id)}`);
+      if (lastPaid && lastPaid.receiptStatus !== "confirmed" && lastPaid.dispute?.state !== "open" && recent(lastPaid.salary?.paidDate)) todo(d.id, s.name, "salaryConfirmation", `${first} hasn't confirmed the ${periodText(lastPaid.periodStart, lastPaid.periodEnd)} salary yet.`, payHref(lastPaid), lastPaid.id);
+      for (const a of advances.filter((x) => x.status === "paid" && x.receipt?.state === "awaiting" && recent(x.paidDate))) todo(d.id, s.name, "advanceConfirmation", `${first} hasn't confirmed receiving the ${peso(a.amount)} advance (${dayText(a.paidDate)}).`, `/advances?advance=${enc(a.id)}`, a.id);
+      for (const a of released) for (const e of scheduleOf(a).filter((x) => x.state === "not_taken")) todo(d.id, s.name, "notTaken", `A planned ${peso(e.amount)} advance deduction wasn't taken from ${first}'s ${periodText(e.periodStart, e.periodEnd)} salary. It's still owed.`, `/advances?advance=${enc(a.id)}`, `${a.id}_${e.periodStart}`);
       const sum = summarizeAttendance(lineSnaps.filter((x) => x.exists).map((x) => x.data()), { start: period.start, end: days.at(-1) ?? period.start });
       const carried = current ? 0 : overpaymentLinesFor(period.start, s, payrolls, today).reduce((t, l) => t + l.amount, 0);
       const prevBasic = prevOn && !payrolls.some((p) => p.periodStart === prev.start) ? summarizeAttendance(prevSnaps.filter((x) => x.exists).map((x) => x.data()), prev).basePay : 0;
@@ -121,8 +123,8 @@ export async function householdSummary({ db, tenant, business, now = new Date() 
       const paidNow = current?.status === "released";
       const rec = paidNow ? reconcileOf(current, today) : null;
       if (onPayroll.has(d.id)) {
-        for (const p of overdue) todo(d.id, s.name, "unpaid", `${first}'s ${periodText(p.periodStart, p.periodEnd)} salary (${peso(int(p.netPay))}) hasn't been paid yet.`, payHref(p));
-        if (prevNet > 0) todo(d.id, s.name, "unpaid", `${first}'s ${periodText(prev.start, prev.end)} salary (${peso(prevNet)}) hasn't been paid yet.`, payHref({ periodStart: prev.start, periodEnd: prev.end }));
+        for (const p of overdue) todo(d.id, s.name, "unpaid", `${first}'s ${periodText(p.periodStart, p.periodEnd)} salary (${peso(int(p.netPay))}) hasn't been paid yet.`, payHref(p), p.id);
+        if (prevNet > 0) todo(d.id, s.name, "unpaid", `${first}'s ${periodText(prev.start, prev.end)} salary (${peso(prevNet)}) hasn't been paid yet.`, payHref({ periodStart: prev.start, periodEnd: prev.end }), `${d.id}_${prev.start}`);
       }
       const confirmation = paidNow ? (current.receiptStatus === "confirmed" ? { state: "confirmed", at: current.receiptConfirmedAt?.toDate?.()?.toISOString?.() ?? null } : current.dispute?.state === "open" ? { state: "not_received" } : { state: "waiting" }) : null;
       const cap = advanceCapacity(s, advances);
@@ -163,12 +165,12 @@ export async function householdSummary({ db, tenant, business, now = new Date() 
   const firstOf = (n) => (n || "Staff").split(" ")[0];
   for (const d of openCorr.docs) {
     const c = d.data();
-    todo(c.staffId, c.staffName, "correction", `${firstOf(c.staffName)} reported an attendance correction${c.date ? ` for ${dayText(c.date)}` : ""}${c.message ? `: "${String(c.message).slice(0, 80)}"` : ""}.`, `/attendance?staff=${enc(c.staffId)}${c.date ? `&period=${c.date}` : ""}`);
+    todo(c.staffId, c.staffName, "correction", `${firstOf(c.staffName)} reported an attendance correction${c.date ? ` for ${dayText(c.date)}` : ""}${c.message ? `: "${String(c.message).slice(0, 80)}"` : ""}.`, `/attendance?staff=${enc(c.staffId)}${c.date ? `&period=${c.date}` : ""}`, d.id);
   }
   const reqBy = new Map();
   for (const d of pendingReq.docs) reqBy.set(d.data().staffId, [...(reqBy.get(d.data().staffId) || []), d.data()]);
-  for (const [id, list] of reqBy) todo(id, list[0].staffName, "attendanceRequest", `${firstOf(list[0].staffName)} sent ${list.length} attendance day${list.length === 1 ? "" : "s"} to review.`, `/attendance?staff=${enc(id)}`);
-  for (const d of requestedAdv.docs) todo(d.data().staffId, d.data().staffName, "advanceRequest", `${firstOf(d.data().staffName)} asked for a ${peso(d.data().requestedAmount ?? d.data().amount)} advance.`, `/advances?staff=${enc(d.data().staffId)}`);
+  for (const [id, list] of reqBy) todo(id, list[0].staffName, "attendanceRequest", `${firstOf(list[0].staffName)} sent ${list.length} attendance day${list.length === 1 ? "" : "s"} to review.`, `/attendance?staff=${enc(id)}`, `${id}_${list.length}`);
+  for (const d of requestedAdv.docs) todo(d.data().staffId, d.data().staffName, "advanceRequest", `${firstOf(d.data().staffName)} asked for a ${peso(d.data().requestedAmount ?? d.data().amount)} advance.`, `/advances?staff=${enc(d.data().staffId)}`, d.id);
   const toPay = listed.filter((r) => r.payment === "not_paid");
   return {
     today,
@@ -176,7 +178,10 @@ export async function householdSummary({ db, tenant, business, now = new Date() 
     nextCutoff: toPay.length ? toPay.map((r) => r.period.end).sort()[0] : null,
     overdueTotal: listed.reduce((t, r) => t + r.overdue.reduce((x, o) => x + o.netPay, 0), 0),
     pending: { attendance: pendingReq.size, advances: requestedAdv.size, byStaff: [...attention.values()].sort((a, b) => b.total - a.total || a.name.localeCompare(b.name)) },
-    todos: todos.sort((a, b) => a.name.localeCompare(b.name)),
+    todos: await (async () => {
+      const seen = uid ? await readAttentionState({ tenant, uid }) : () => false;
+      return todos.sort((a, b) => a.name.localeCompare(b.name)).map((t) => ({ ...t, read: seen(t.id) }));
+    })(),
     staff: listed,
   };
 }

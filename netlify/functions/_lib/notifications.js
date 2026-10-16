@@ -157,6 +157,51 @@ export async function markRead({ db, tenant, uid, notificationId: id, FieldValue
   });
 }
 
+// Owner-pilot (2026-10-17): back to unread (the Owner wants to come back to
+// it). The bell counter goes up by one; nothing about the event changes.
+export async function markUnread({ db, tenant, uid, notificationId: id, FieldValue }) {
+  if (typeof id !== "string" || !ID.test(id)) throw new NotificationError("invalid-notification", "Invalid notification");
+  const ref = inbox(tenant, uid).doc(id);
+  return db.runTransaction(async (tx) => {
+    const [snap, state] = await Promise.all([tx.get(ref), tx.get(stateRef(tenant, uid))]);
+    if (!snap.exists) throw new NotificationError("not-found", "Notification not found");
+    const unread = state.exists ? state.data().unread || 0 : 0;
+    if (snap.data().read !== true) return { notificationId: id, unread: Math.max(0, unread), unchanged: true };
+    const stamp = FieldValue.serverTimestamp();
+    tx.update(ref, { read: false, readAt: null });
+    const next = unread + 1;
+    tx.set(stateRef(tenant, uid), { unread: next, updatedAt: stamp }, { merge: true });
+    return { notificationId: id, unread: next };
+  });
+}
+
+// Owner-pilot (2026-10-17): READ is not RESOLVED. "Needs attention" items
+// (Household) are worked out from the records each time and disappear only
+// when the task is really done; this only remembers which of them THIS
+// person has already seen (inboxState/attention { read: { [itemId]: bool } },
+// own inbox only, the newest MAX_ATTENTION_IDS kept).
+const ATTENTION_ID = /^[A-Za-z0-9:_-]{1,120}$/;
+const MAX_ATTENTION_IDS = 300;
+export const attentionRef = (tenant, uid) => tenant.member(uid).collection("inboxState").doc("attention");
+export async function readAttentionState({ tenant, uid }) {
+  const snap = await attentionRef(tenant, uid).get();
+  const map = snap.exists && snap.data().read && typeof snap.data().read === "object" ? snap.data().read : {};
+  return (id) => map[id] === true;
+}
+export async function setAttentionRead({ db, tenant, uid, ids, read, FieldValue }) {
+  if (!Array.isArray(ids) || !ids.length || ids.length > 100 || ids.some((x) => typeof x !== "string" || !ATTENTION_ID.test(x))) throw new NotificationError("invalid-notification", "Invalid items");
+  if (typeof read !== "boolean") throw new NotificationError("invalid-notification", "Invalid request");
+  const ref = attentionRef(tenant, uid);
+  return db.runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    const current = snap.exists && snap.data().read && typeof snap.data().read === "object" ? snap.data().read : {};
+    const kept = Object.entries(current).filter(([k, v]) => v === true && !ids.includes(k)).slice(-(MAX_ATTENTION_IDS - ids.length));
+    const next = Object.fromEntries([...kept, ...(read ? ids.map((k) => [k, true]) : [])]);
+    tx.set(ref, { read: next, updatedAt: FieldValue.serverTimestamp() });
+    return { ids, read };
+  });
+}
+
 // Marks every unread notification of this user read, in chunks. Each chunk
 // re-reads the counter, so a notification created meanwhile stays unread
 // and counted; when the last chunk finds fewer than a full page, nothing

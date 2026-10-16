@@ -82,24 +82,98 @@ describe("the bell is where things needing attention live (Household)", () => {
   ];
   const data = () => ({ fetchUnreadCount: vi.fn(async () => 1), fetchRecent: vi.fn(async () => []), markRead: vi.fn(), markAllRead: vi.fn(), listNotifications: vi.fn(async () => ({ rows: [], hasMore: false })) });
 
-  it("count = items needing attention + unread; the drawer lists them by helper with deep links", async () => {
-    const api = vi.fn(async (path) => (path === "household-summary" ? { summary: { todos } } : {}));
+  // Owner-pilot (2026-10-17): the red number = unread only; read is not resolved.
+  const withIds = (read = []) => todos.map((x, i) => ({ ...x, id: `${x.kind}:item${i}`, read: read.includes(i) }));
+  const open = async (slot) => {
+    slot.querySelector('[data-act="bell"]').click();
+    await flush();
+  };
+  const texts = (slot) => [...slot.querySelectorAll(".todo-link")].map((a) => a.textContent.replace("● ", ""));
+
+  it("the badge counts what hasn't been seen (unread notifications + new attention items); items list by helper with deep links", async () => {
+    const api = vi.fn(async (path) => (path === "household-summary" ? { summary: { todos: withIds([2]) } } : {}));
     const slot = document.getElementById("slot");
     const bell = mountBell(slot, home(), { data: data(), api });
     await flush();
     expect(api).toHaveBeenCalledWith("household-summary");
-    expect(slot.querySelector('[data-role="bell-count"]').textContent).toBe("4");
-    expect(slot.querySelector('[data-act="bell"]').getAttribute("aria-label")).toBe("Notifications, 3 need attention, 1 unread");
-    slot.querySelector('[data-act="bell"]').click();
-    await flush();
+    expect(slot.querySelector('[data-role="bell-count"]').textContent).toBe("3"); // 1 unread notification + 2 new items (one already seen)
+    expect(slot.querySelector('[data-act="bell"]').getAttribute("aria-label")).toBe("Notifications, 3 unread");
+    await open(slot);
+    // Structure: Mark all as read at the top, then Needs attention, then Recent.
+    expect(slot.querySelector('.bell-head [data-act="bell-read-all"]').textContent).toBe("Mark all as read");
+    expect([...slot.querySelectorAll(".bell-section")].map((x) => x.textContent.replace(/\s+/g, " ").trim())).toEqual(["Needs attention 3", "Recent"]);
     const group = slot.querySelector('.todo-group[data-staff="staffLoriza01"]');
     expect(group.querySelector(".todo-name").textContent).toBe("Loriza Ibanez");
-    expect([...group.querySelectorAll(".todo-link")].map((a) => [a.textContent, a.getAttribute("href")])).toEqual(todos.map((t) => [t.text, t.href]));
-    const link = group.querySelector(".todo-link");
+    expect(texts(slot)).toEqual(todos.map((x) => x.text));
+    expect([...group.querySelectorAll(".todo-link")].map((a) => a.getAttribute("href"))).toEqual(todos.map((x) => x.href));
+    expect([...slot.querySelectorAll('[data-role="todo-state"]')].map((x) => x.textContent)).toEqual(["New · needs attention", "New · needs attention", "Read · still needs attention"]);
+    bell.stop();
+  });
+
+  it("Mark as read / Mark as unread on an attention item: the badge follows, the item stays (read is not resolved)", async () => {
+    const api = vi.fn(async (path) => (path === "household-summary" ? { summary: { todos: withIds() } } : {}));
+    const slot = document.getElementById("slot");
+    const bell = mountBell(slot, home(), { data: data(), api });
+    await flush();
+    await open(slot);
+    const first = slot.querySelector(".todo-item");
+    expect([...first.querySelectorAll(".menu-item")].map((b) => b.textContent)).toEqual(["Open", "Mark as read"]);
+    first.querySelector('[data-act="todo-read"]').click();
+    await flush();
+    expect(api).toHaveBeenCalledWith("notifications", { method: "POST", body: { action: "attention", ids: ["unrecordedDays:item0"], read: true } });
+    expect(slot.querySelector('[data-role="bell-count"]').textContent).toBe("3"); // 4 -> 3
+    expect(texts(slot)).toHaveLength(3); // still needs attention
+    expect(slot.querySelector('[data-todo="unrecordedDays:item0"] [data-role="todo-state"]').textContent).toBe("Read · still needs attention");
+    slot.querySelector('[data-todo="unrecordedDays:item0"] [data-act="todo-unread"]').click();
+    await flush();
+    expect(api).toHaveBeenCalledWith("notifications", { method: "POST", body: { action: "attention", ids: ["unrecordedDays:item0"], read: false } });
+    expect(slot.querySelector('[data-role="bell-count"]').textContent).toBe("4");
+    bell.stop();
+  });
+
+  it("opening an item marks it read and closes the panel; Mark all as read clears the badge but keeps what still needs action", async () => {
+    let list = withIds();
+    const api = vi.fn(async (path) => (path === "household-summary" ? { summary: { todos: list } } : {}));
+    const d = data();
+    const slot = document.getElementById("slot");
+    const bell = mountBell(slot, home(), { data: d, api });
+    await flush();
+    await open(slot);
+    const link = slot.querySelector('.todo-link[data-id="salaryConfirmation:item1"]');
     link.addEventListener("click", (e) => e.preventDefault());
     link.click();
     await flush();
+    expect(api).toHaveBeenCalledWith("notifications", { method: "POST", body: { action: "attention", ids: ["salaryConfirmation:item1"], read: true } });
     expect(slot.querySelector('[data-role="bell-drawer"]')).toBeNull();
+    await open(slot);
+    slot.querySelector('[data-act="bell-read-all"]').click();
+    await flush();
+    expect(d.markAllRead).toHaveBeenCalledWith(["unrecordedDays:item0", "salaryConfirmation:item1", "advanceConfirmation:item2"]);
+    expect(slot.querySelector('[data-role="bell-count"]')).toBeNull();
+    expect(texts(slot)).toHaveLength(3);
+    // The helper confirms later: the summary stops listing it (that's the only way it goes away).
+    list = withIds([0, 1, 2]).filter((x) => x.kind !== "advanceConfirmation");
+    await bell.refresh();
+    expect(texts(slot)).toHaveLength(2);
+    bell.stop();
+  });
+
+  it("a notification row: Mark as read / Mark as unread under ⋯; the badge counts unread", async () => {
+    const api = vi.fn(async (path) => (path === "household-summary" ? { summary: { todos: [] } } : {}));
+    const d = { ...data(), fetchRecent: vi.fn(async () => [{ id: "n1", type: "salary.receipt_confirmed", category: "payroll", title: "Salary confirmed", message: "Loriza confirmed the Oct 1–15 salary.", read: false, createdAt: new Date() }]), markRead: vi.fn(async () => ({})), markUnread: vi.fn(async () => ({})) };
+    const slot = document.getElementById("slot");
+    const bell = mountBell(slot, home(), { data: d, api });
+    await flush();
+    expect(slot.querySelector('[data-role="bell-count"]').textContent).toBe("1");
+    await open(slot);
+    slot.querySelector('[data-notification="n1"] [data-act="bell-read"]').click();
+    await flush();
+    expect(d.markRead).toHaveBeenCalledWith("n1");
+    expect(slot.querySelector('[data-role="bell-count"]')).toBeNull();
+    slot.querySelector('[data-notification="n1"] [data-act="bell-unread"]').click();
+    await flush();
+    expect(d.markUnread).toHaveBeenCalledWith("n1");
+    expect(slot.querySelector('[data-role="bell-count"]').textContent).toBe("1");
     bell.stop();
   });
 

@@ -11,7 +11,7 @@ import { toast as defaultToast } from "../../components/feedback.js";
 import { NOTIFICATION_CATEGORIES } from "@shared/notifications.js";
 import * as defaultData from "./data.js";
 import { notificationRow, myCategories } from "./view.js";
-import { hasHouseholdTodos, todoList } from "../../app/notification-bell.js";
+import { hasHouseholdTodos, todoList, markAttention } from "../../app/notification-bell.js";
 import { api as defaultApi } from "../../lib/api.js";
 
 const STATUS_TONE = { Unread: "info", Read: "neutral", Resolved: "success" };
@@ -79,7 +79,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
                         <td>${badge(r.status, STATUS_TONE[r.status])}</td>
                         <td class="row-actions">
                           ${r.action ? html`<a class="btn btn-compact" href="${r.action.route}" data-link data-act="open" data-id="${r.id}">${r.action.label}</a>` : html`<span class="stat-hint">No access</span>`}
-                          ${r.unread ? html`<button type="button" class="btn btn-compact" data-act="read" data-id="${r.id}">Mark read</button>` : ""}
+                          ${r.unread ? html`<button type="button" class="btn btn-compact" data-act="read" data-id="${r.id}">Mark as read</button>` : html`<button type="button" class="btn btn-compact btn-ghost" data-act="unread" data-id="${r.id}">Mark as unread</button>`}
                         </td>
                       </tr>`
                     )}</tbody></table></div>
@@ -128,10 +128,23 @@ export function mount(container, session, { data = defaultData, toast = defaultT
       if (row && row.read !== true) data.markRead(row.id).then(onChange, () => {});
       return;
     }
+    if (a === "todo") {
+      // Opening a needs-attention item marks it read (it stays until done).
+      const item = todos.find((x) => x.id === el.dataset.id);
+      if (item && !item.read) markAttention(api, [item.id], true).then(onChange, () => {});
+      return;
+    }
+    if (a === "todo-read" || a === "todo-unread") {
+      el.closest("details")?.removeAttribute("open");
+      if (await act(() => markAttention(api, [el.dataset.id], a === "todo-read"))) load();
+      return;
+    }
     if (a === "read") {
       if (await act(() => data.markRead(el.dataset.id))) load();
+    } else if (a === "unread") {
+      if (await act(() => data.markUnread(el.dataset.id))) load();
     } else if (a === "read-all") {
-      if (await act(() => data.markAllRead(), "All notifications marked as read.")) load();
+      if (await act(() => data.markAllRead(todos.map((x) => x.id)), "All marked as read. Items that still need action stay under Needs your attention.")) load();
     } else if (a === "next" && state.rows.length) {
       state.cursors.push(state.rows.at(-1));
       load();

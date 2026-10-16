@@ -14,7 +14,7 @@ export function createHouseholdSummaryHandler({ getAdmin: loadAdmin, now = () =>
     requireMethod(event, "GET");
     const { db, auth } = await loadAdmin();
     const ctx = await requireTenant(event, { db, auth, permission: "payroll.view" });
-    return respond(200, { success: true, summary: await householdSummary({ db, tenant: ctx.tenant, business: ctx.business, now: now() }) });
+    return respond(200, { success: true, summary: await householdSummary({ db, tenant: ctx.tenant, business: ctx.business, uid: ctx.uid, now: now() }) });
   });
 }
 

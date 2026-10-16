@@ -1,6 +1,10 @@
 // POST /api/notifications   (Phase 13: the caller's OWN inbox only)
 //   { action: "read", notificationId }      mark one read
-//   { action: "readAll" }                   mark every unread one read
+//   { action: "unread", notificationId }    back to unread (Owner-pilot 2026-10-17)
+//   { action: "readAll", attentionIds? }    mark every unread one read (and the
+//                                           Household "needs attention" items shown)
+//   { action: "attention", ids, read }      Household "needs attention" items:
+//                                           seen / not seen (never resolves them)
 //   { action: "preferences", preferences }  { [category]: { inApp: bool } }
 // Needs notifications.view (core Dashboard module) and the plan's in-app
 // notifications. The uid always comes from the verified token, never the
@@ -13,12 +17,14 @@ import { respond, withErrorHandling, requireMethod, parseJsonBody, RequestError 
 import { getAdmin } from "./_lib/firebase-admin.js";
 import { requireTenant } from "./_lib/tenant.js";
 import { only } from "./_lib/inventory-http.js";
-import { markRead, markAllRead, setPreferences } from "./_lib/notifications.js";
+import { markRead, markUnread, markAllRead, setAttentionRead, setPreferences } from "./_lib/notifications.js";
 import { NOTIFICATIONS_PERMISSION, NotificationError, notificationsEnabled } from "../../shared/notifications.js";
 
 const ACTIONS = {
   read: ["action", "notificationId"],
-  readAll: ["action"],
+  unread: ["action", "notificationId"],
+  readAll: ["action", "attentionIds"],
+  attention: ["action", "ids", "read"],
   preferences: ["action", "preferences"],
 };
 
@@ -47,8 +53,15 @@ export function createNotificationsHandler({ getAdmin: loadAdmin }) {
       switch (body.action) {
         case "read":
           return respond(200, { success: true, ...(await markRead({ ...common, notificationId: body.notificationId })) });
-        case "readAll":
-          return respond(200, { success: true, ...(await markAllRead(common)) });
+        case "unread":
+          return respond(200, { success: true, ...(await markUnread({ ...common, notificationId: body.notificationId })) });
+        case "readAll": {
+          const out = await markAllRead(common);
+          if (Array.isArray(body.attentionIds) && body.attentionIds.length) await setAttentionRead({ ...common, ids: body.attentionIds.slice(0, 100), read: true });
+          return respond(200, { success: true, ...out });
+        }
+        case "attention":
+          return respond(200, { success: true, ...(await setAttentionRead({ ...common, ids: body.ids, read: body.read })) });
         default:
           return respond(200, { success: true, ...(await setPreferences({ ...common, preferences: body.preferences })) });
       }

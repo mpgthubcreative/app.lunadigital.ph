@@ -26,5 +26,7 @@ export function listNotifications(businessId, uid, filters = {}, { cursor = null
 }
 
 export const markRead = (notificationId) => api("notifications", { method: "POST", body: { action: "read", notificationId } });
-export const markAllRead = () => api("notifications", { method: "POST", body: { action: "readAll" } });
+export const markUnread = (notificationId) => api("notifications", { method: "POST", body: { action: "unread", notificationId } });
+// attentionIds: the Household "needs attention" items shown (seen, never resolved).
+export const markAllRead = (attentionIds = []) => api("notifications", { method: "POST", body: { action: "readAll", ...(attentionIds.length ? { attentionIds: attentionIds.slice(0, 100) } : {}) } });
 export const savePreferences = (preferences) => api("notifications", { method: "POST", body: { action: "preferences", preferences } });
