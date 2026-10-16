@@ -385,9 +385,11 @@ export function mount(container, session, { data = defaultData, toast = defaultT
       list.removeAttribute("style");
       return;
     }
+    // Below the ⋯ when it fits, else above it, else pinned inside the screen (scrolling).
     const r = d.querySelector("summary").getBoundingClientRect();
-    const up = r.bottom + 240 > innerHeight;
-    list.style.cssText = `position:fixed;left:auto;right:${Math.max(8, innerWidth - r.right)}px;${up ? `top:auto;bottom:${innerHeight - r.top + 4}px` : `top:${r.bottom + 4}px;bottom:auto`}`;
+    list.style.cssText = `position:fixed;left:auto;right:${Math.max(8, innerWidth - r.right)}px;top:${r.bottom + 4}px;bottom:auto;max-height:${innerHeight - 16}px;overflow-y:auto`;
+    const h = list.getBoundingClientRect().height;
+    if (r.bottom + 4 + h > innerHeight - 8) list.style.top = `${Math.max(8, r.top - 4 - h)}px`;
   };
   const onScroll = (event) => {
     if (!event.target.classList?.contains("wl-scroll")) return;
