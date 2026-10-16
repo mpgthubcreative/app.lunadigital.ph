@@ -243,6 +243,7 @@ function householdSummaryView(ctx) {
   const prepaid = sum("prepaid");
   const pending = { ...s.pending, byStaff: (s.pending.byStaff || []).filter((g) => !pick || g.staffId === pick) };
   const one = pick ? rows[0] : null;
+  const overdue = rows.reduce((t, r) => t + (r.overdue || []).reduce((x, o) => x + o.netPay, 0), 0);
   return html`
     <section class="card section money-card" data-section="money">
       <div class="money-head">
@@ -255,7 +256,7 @@ function householdSummaryView(ctx) {
         <div class="money-sub"><dt>Prepaid salary <small>included in salary paid</small></dt><dd data-k="prepaid">${money(prepaid)}</dd></div>
         <div><dt>Advances outstanding</dt><dd data-k="advancesOutstanding">${money(sum("advancesOutstanding"))}</dd></div>
       </dl>
-      ${s.overdueTotal && !pick ? html`<a class="hero-pay-warn" href="/payroll" data-link data-role="overdue">${money(s.overdueTotal)} from ended pay periods is still not paid ›</a>` : ""}
+      ${overdue ? html`<a class="hero-pay-warn" href="/payroll${one ? `?staff=${encodeURIComponent(one.staffId)}` : ""}" data-link data-role="overdue">${money(overdue)} from ended pay periods is still not paid ›</a>` : ""}
       ${canGive ? html`<div class="money-actions"><a class="btn btn-compact" href="/advances?give=1${one ? `&staff=${encodeURIComponent(one.staffId)}` : ""}" data-link data-role="give-advance">+ Give advance</a></div>` : ""}
     </section>
     ${pendingByHelper(pending)}

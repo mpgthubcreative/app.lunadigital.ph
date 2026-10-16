@@ -204,6 +204,20 @@ describe("Dashboard money for this cutoff", () => {
   });
 });
 
+describe("Dashboard: an ended period nobody paid (never saved) is flagged", () => {
+  it("Oct 1-15 worked, not paid, no payroll saved: shown as unpaid from an ended period on Oct 16", async () => {
+    const ana = await staff("Ana");
+    await mark(ana, range(1, 13).map(OCT));
+    at(OCT(16));
+    const s = await summary();
+    expect(s.staff[0].overdue).toEqual([{ payrollId: null, period: { start: OCT(1), end: OCT(15) }, netPay: 13 * W, automatic: true }]);
+    expect(s.overdueTotal).toBe(13 * W);
+    // Paid: no longer flagged.
+    await api("payroll", u.carlo, { action: "release", staffId: ana, periodStart: OCT(1), payment: { method: "cash" } });
+    expect((await summary()).overdueTotal).toBe(0);
+  });
+});
+
 describe("Attendance: Clear a day; usual rest day", () => {
   it("a recorded day goes back to Not marked (unpaid payroll moves, audit kept); upcoming days refused; the normal week proposes Rest Day on the usual day", async () => {
     const lor = await staff("Loriza Ibanez", { restDays: [6, 0] });

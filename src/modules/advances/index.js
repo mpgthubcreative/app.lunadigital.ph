@@ -176,13 +176,14 @@ export function mount(container, session, { data = defaultData, toast = defaultT
         { name: "staffId", label: "Helper", type: "select", value: first.id, options: state.staff.map((s) => ({ value: s.id, label: availableFor(s) !== null ? `${s.name} · ${formatCentavos(availableFor(s))} available` : s.name })) },
         { name: "amount", label: "Amount (₱)", required: true, inputmode: "decimal" },
         { name: "plan", label: "Deduct on", type: "select", value: "next", options: [{ value: "next", label: "Next unpaid payroll" }, { value: "split", label: "Split repayment" }, { value: "none", label: "No payroll deduction" }] },
-        { name: "date", label: "Date given", type: "date", value: today, max: today, more: true },
+        { name: "date", label: "Date given", type: "date", value: today, max: today, more: true, default: true },
         { name: "method", label: "How", type: "select", value: lastMethod(), options: methodOptions(), more: true },
         { name: "reference", label: "Reference (optional)", more: true },
         { name: "proof", label: "Proof (screenshot or PDF, optional)", type: "file", accept: "image/jpeg,image/png,image/webp,application/pdf", more: true },
         { name: "description", label: "Note (optional)", more: true, placeholder: "e.g. Fare home" },
       ],
       submitLabel: "Give advance",
+      moreLabel: "More options",
       onSubmit: async (v) => {
         const s = state.staff.find((x) => x.id === v.staffId);
         const amount = parseCentavos(v.amount);

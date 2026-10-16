@@ -2,7 +2,8 @@
 // value?, options?: [{ value, label }], hint?, required?, disabled?, inputmode?,
 // placeholder?, suggestions?: [text] (typing suggestions, any text allowed),
 // more? (Phase 18.6: goes in a closed "More details (optional)" section,
-// opened when one of its fields already has a value) }].
+// opened when one of its fields already has a value, unless that value is
+// just a smart default: default: true) }]. moreLabel names the section.
 // onSubmit(values) may throw; its message is shown in the dialog and the
 // dialog stays open. Resolves with onSubmit's result, or null if cancelled.
 // All text is escaped by html``.
@@ -31,7 +32,7 @@ function fieldMarkup(f, id) {
   return html`<input class="input" id="${common.id}" name="${common.name}" value="${f.value ?? ""}" ${f.inputmode ? html`inputmode="${f.inputmode}"` : ""} ${f.placeholder ? html`placeholder="${f.placeholder}"` : ""} ${list ? html`list="${list}"` : ""} ${f.disabled ? "disabled" : ""} autocomplete="off" />${list ? html`<datalist id="${list}">${f.suggestions.map((s) => html`<option value="${s}"></option>`)}</datalist>` : ""}`;
 }
 
-export function formDialog({ title, intro = "", fields, submitLabel = "Save", onSubmit }) {
+export function formDialog({ title, intro = "", fields, submitLabel = "Save", onSubmit, moreLabel = "More details (optional)" }) {
   return new Promise((resolve) => {
     const uid = ++counter;
     const backdrop = document.createElement("div");
@@ -43,7 +44,7 @@ export function formDialog({ title, intro = "", fields, submitLabel = "Save", on
               </div>`;
     const main = fields.filter((f) => !f.more);
     const more = fields.filter((f) => f.more);
-    const moreOpen = more.some((f) => f.value !== undefined && f.value !== null && f.value !== "" && f.type !== "select");
+    const moreOpen = more.some((f) => !f.default && f.value !== undefined && f.value !== null && f.value !== "" && f.type !== "select");
     render(
       backdrop,
       html`
@@ -52,7 +53,7 @@ export function formDialog({ title, intro = "", fields, submitLabel = "Save", on
           <div class="modal-body">
             ${intro ? html`<p class="stat-note">${intro}</p>` : ""}
             ${main.map(fieldBlock)}
-            ${more.length ? html`<details class="form-more" ${moreOpen ? "open" : ""}><summary>More details (optional)</summary>${more.map(fieldBlock)}</details>` : ""}
+            ${more.length ? html`<details class="form-more" ${moreOpen ? "open" : ""}><summary>${moreLabel}</summary>${more.map(fieldBlock)}</details>` : ""}
             <p class="form-error" data-role="error" role="alert" hidden></p>
           </div>
           <div class="modal-footer">

@@ -65,10 +65,15 @@ export async function householdSummary({ db, tenant, business, now = new Date() 
       const s = d.data();
       const period = staffPeriod(s, today);
       const days = daysIn(period).filter((x) => x <= today);
-      const [paySnap, advSnap, lineSnaps] = await Promise.all([
+      // Owner-pilot polish: the period just before this one, if it was never
+      // saved (worked out automatically) and nobody paid it yet.
+      const prev = staffPeriod(s, addDays(period.start, -1));
+      const prevOn = isOnPayroll(s, prev);
+      const [paySnap, advSnap, lineSnaps, prevSnaps] = await Promise.all([
         tenant.collection("payrolls").where("staffId", "==", d.id).get(),
         tenant.collection("advances").where("staffId", "==", d.id).get(),
         days.length ? db.getAll(...days.map((x) => tenant.doc("attendance", attendanceId(d.id, x)))) : [],
+        prevOn ? db.getAll(...daysIn(prev).map((x) => tenant.doc("attendance", attendanceId(d.id, x)))) : [],
       ]);
       const payrolls = paySnap.docs.map((p) => ({ id: p.id, ...p.data() }));
       const current = payrolls.find((p) => p.periodStart === period.start) || null;
@@ -87,6 +92,8 @@ export async function householdSummary({ db, tenant, business, now = new Date() 
       bump(d.id, s.name, "unrecordedDays", payrolls.filter((p) => reconcileOf(p, today)?.waiting).length);
       const sum = summarizeAttendance(lineSnaps.filter((x) => x.exists).map((x) => x.data()), { start: period.start, end: days.at(-1) ?? period.start });
       const carried = current ? 0 : overpaymentLinesFor(period.start, s, payrolls, today).reduce((t, l) => t + l.amount, 0);
+      const prevBasic = prevOn && !payrolls.some((p) => p.periodStart === prev.start) ? summarizeAttendance(prevSnaps.filter((x) => x.exists).map((x) => x.data()), prev).basePay : 0;
+      const prevNet = prevBasic ? prevBasic - released.reduce((t, a) => t + plannedFor(a, prev.start), 0) - overpaymentLinesFor(prev.start, s, payrolls, today).reduce((t, l) => t + l.amount, 0) : 0;
       const estimatedNet = current ? int(current.netPay) : sum.basePay - advance - carried;
       const paidNow = current?.status === "released";
       const rec = paidNow ? reconcileOf(current, today) : null;
@@ -103,7 +110,10 @@ export async function householdSummary({ db, tenant, business, now = new Date() 
         estimatedNet,
         advanceToDeduct: advance,
         payment: current?.status === "released" ? (current.ownerPayment === "disputed" ? "disputed" : "paid") : "not_paid",
-        overdue: overdue.map((p) => ({ payrollId: p.id, period: { start: p.periodStart, end: p.periodEnd }, netPay: int(p.netPay) })),
+        overdue: [
+          ...overdue.map((p) => ({ payrollId: p.id, period: { start: p.periodStart, end: p.periodEnd }, netPay: int(p.netPay) })),
+          ...(prevNet > 0 ? [{ payrollId: null, period: { start: prev.start, end: prev.end }, netPay: prevNet, automatic: true }] : []),
+        ],
         lastSalary: lastPaid ? { payrollId: lastPaid.id, period: { start: lastPaid.periodStart, end: lastPaid.periodEnd }, netPay: int(lastPaid.salary?.amount ?? lastPaid.netPay), receipt: lastPaid.receiptStatus === "confirmed" ? "received" : lastPaid.dispute?.state === "open" ? "not_received" : "waiting" } : null,
         hasLogin: Boolean(s.memberUid),
         money: {
