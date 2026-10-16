@@ -189,8 +189,6 @@ export function distributorDashboard(ctx) {
 // total salary to pay, then one row per person (estimated take-home,
 // advance to deduct, this cutoff's payment, last salary received), and what
 // staff sent that's waiting for the Owner.
-const PAY_STATE = { not_paid: ["Not paid", "warning"], paid: ["Paid", "success"], disputed: ["Disputed", "danger"] };
-const LAST_STATE = { received: ["Received", "success"], waiting: ["Not confirmed", "warning"], not_received: ["Not received", "danger"] };
 
 // Owner-pilot simplification batch: what needs the Owner's attention, per
 // helper (only helpers with something): name, how many, and what. A tap
@@ -220,39 +218,58 @@ function pendingByHelper(pending) {
     })}</ul></section>`;
 }
 
+// Owner-pilot polish (2026-10-16): one compact money card for this cutoff
+// (Employee: Everyone or one helper, nothing else to filter), then what
+// needs attention, then one short line per helper. Prepaid salary is shown
+// as part of Salary paid (never added on top).
+const CONFIRM = { confirmed: ["Confirmed", "success"], waiting: ["Not yet confirmed", "warning"], not_received: ["Reported not received", "danger"] };
+function confirmText(r) {
+  const c = r.confirmation;
+  if (!c) return badge("Not paid yet", "neutral");
+  if (c.state === "confirmed") return badge(`Confirmed by ${r.name.split(" ")[0]}${c.at ? ` on ${shortDay(c.at.slice(0, 10))}` : ""}`, "success");
+  return badge(...CONFIRM[c.state]);
+}
+
 function householdSummaryView(ctx) {
   const { currency, summary } = ctx;
   const s = summary.data;
   const money = (c) => formatCentavos(c, currency);
-  const rows = s.staff;
+  const pick = s.staff.some((r) => r.staffId === ctx.hhStaff) ? ctx.hhStaff : "";
+  const rows = s.staff.filter((r) => !pick || r.staffId === pick);
+  const sum = (k) => rows.reduce((t, r) => t + (r.money?.[k] ?? 0), 0);
+  const periods = [...new Set(rows.map((r) => `${r.period.start}_${r.period.end}`))];
+  const periodText = periods.length === 1 ? `${shortDay(rows[0].period.start)}–${shortDay(rows[0].period.end).replace(/^[A-Z][a-z]{2} /, "")}` : "Current cutoffs";
+  const canGive = ctx.session?.member?.permissions?.["advances.manage"] === true;
+  const prepaid = sum("prepaid");
+  const pending = { ...s.pending, byStaff: (s.pending.byStaff || []).filter((g) => !pick || g.staffId === pick) };
+  const one = pick ? rows[0] : null;
   return html`
-    <section class="card hero-pay" data-section="to-pay">
-      <div class="hero-pay-main">
-        <div class="kpi-label">Total salary to pay${s.nextCutoff ? ` · next cutoff ${shortDay(s.nextCutoff)}` : ""}</div>
-        <div class="hero-pay-value" data-role="total-to-pay">${money(s.totalToPay)}</div>
-        <div class="kpi-hint">${plural(rows.filter((r) => r.payment === "not_paid").length, "person", "people")} · estimated take-home, grows as days are marked</div>
+    <section class="card section money-card" data-section="money">
+      <div class="money-head">
+        <h2 class="card-title">This cutoff · <span data-role="cutoff">${periodText}</span></h2>
+        <label class="pick">Employee <select class="select" data-role="hh-staff" aria-label="Employee"><option value="">Everyone</option>${s.staff.map((r) => html`<option value="${r.staffId}" ${r.staffId === pick ? "selected" : ""}>${r.name}</option>`)}</select></label>
       </div>
-      ${s.overdueTotal ? html`<a class="hero-pay-warn" href="/payroll" data-link data-role="overdue">${money(s.overdueTotal)} from ended pay periods is still not paid ›</a>` : ""}
+      <dl class="money-summary" data-role="money-summary">
+        <div><dt>Salary paid</dt><dd data-k="salaryPaid">${money(sum("salaryPaid"))}</dd></div>
+        <div><dt>Still to pay</dt><dd data-k="stillToPay">${money(sum("stillToPay"))}</dd></div>
+        <div class="money-sub"><dt>Prepaid salary <small>included in salary paid</small></dt><dd data-k="prepaid">${money(prepaid)}</dd></div>
+        <div><dt>Advances outstanding</dt><dd data-k="advancesOutstanding">${money(sum("advancesOutstanding"))}</dd></div>
+      </dl>
+      ${s.overdueTotal && !pick ? html`<a class="hero-pay-warn" href="/payroll" data-link data-role="overdue">${money(s.overdueTotal)} from ended pay periods is still not paid ›</a>` : ""}
+      ${canGive ? html`<div class="money-actions"><a class="btn btn-compact" href="/advances?give=1${one ? `&staff=${encodeURIComponent(one.staffId)}` : ""}" data-link data-role="give-advance">+ Give advance</a></div>` : ""}
     </section>
-    ${pendingByHelper(s.pending)}
+    ${pendingByHelper(pending)}
     ${section({
-      title: "This cutoff, per person",
+      title: "This cutoff",
       id: "staff-pay",
       link: { href: "/payroll", label: "Payroll" },
       body: rows.length
-        ? html`<div class="table-wrap"><table class="table table-compact rows" data-role="staff-pay">
-            <thead><tr><th class="m-only"></th><th>Name</th><th>Pay period</th><th class="num">Est. take-home</th><th class="num">Advance to deduct</th><th>Payment</th><th>Last salary</th></tr></thead>
-            <tbody>${rows.map(
-              (r) => html`<tr data-staff="${r.staffId}">
-                ${mobileCell({ title: r.name, sub: `to ${shortDay(r.period.end)}${r.advanceToDeduct ? ` · advance −${money(r.advanceToDeduct)}` : ""} · ${PAY_STATE[r.payment][0]}${r.lastSalary ? ` · last: ${LAST_STATE[r.lastSalary.receipt][0]}` : ""}`, end: money(r.estimatedNet), endSub: r.prepared ? "prepared" : "so far" })}
-                <td class="cell-strong">${r.name}</td>
-                <td>${shortDay(r.period.start)} – ${shortDay(r.period.end)}</td>
-                <td class="num" data-col="net"><strong>${money(r.estimatedNet)}</strong>${r.prepared ? "" : html` <span class="stat-hint">so far</span>`}</td>
-                <td class="num" data-col="advance">${r.advanceToDeduct ? money(r.advanceToDeduct) : "—"}</td>
-                <td data-col="payment">${badge(...PAY_STATE[r.payment])}${r.overdue.length ? html` ${badge(`${r.overdue.length} earlier unpaid`, "danger")}` : ""}</td>
-                <td data-col="last">${r.lastSalary ? badge(...LAST_STATE[r.lastSalary.receipt]) : html`<span class="stat-hint">—</span>`}</td>
-              </tr>`
-            )}</tbody></table></div>`
+        ? html`<ul class="cutoff-list" data-role="staff-pay">${rows.map(
+            (r) => html`<li data-staff="${r.staffId}"><a class="cutoff-row" href="/payroll?staff=${encodeURIComponent(r.staffId)}" data-link>
+              <span class="cutoff-main"><strong>${r.name}</strong><small>${r.confirmation ? `Paid ${money(r.money.salaryPaid)}${r.money.prepaid ? ` · Prepaid ${money(r.money.prepaid)}` : ""}${r.money.stillToPay ? ` · ${money(r.money.stillToPay)} more due` : ""}` : `To pay ${money(r.money?.stillToPay ?? r.estimatedNet)} so far · ends ${shortDay(r.period.end)}`}${r.overdue.length ? ` · ${r.overdue.length} earlier unpaid` : ""}</small></span>
+              <span class="cutoff-end" data-role="confirmation">${confirmText(r)} ›</span>
+            </a></li>`
+          )}</ul>`
         : emptyState({ iconName: "staff", title: "No household staff yet", body: "Add the people you pay on the Household Staff page." }),
     })}
   `;

@@ -1,8 +1,12 @@
 // Attendance (Owner-pilot simplification batch): "What is this helper's
 // attendance for this period?" The Owner records it.
 //   Employee ▾  Period ▾        one helper, one pay period (their own cycle)
-//   one compact row per date with a status dropdown; tick days and mark
-//   them together (Present / Absent / Rest Day / Paid Leave / Unpaid Leave)
+//   Owner-pilot polish (2026-10-16): a calculator-style tap grid. Tap one
+//   or several dates, tap a status (P / A / PL / UL / R, or Clear), Save.
+//   "Fill normal schedule" shows the helper's usual week (Household Staff:
+//   usual rest day) as Expected; "Confirm through today" turns the expected
+//   days up to today into real entries; "Copy previous period" repeats last
+//   period's pattern by weekday. Upcoming days are never recorded early.
 //   the helper's confirmation of the period ("Yanie confirmed this on…")
 //   Needs review (compact, only when there is something): attendance
 //   corrections the helper reported, and any older staff request.
@@ -14,10 +18,10 @@
 
 import { html, render } from "../../lib/html.js";
 import { pageHeader, emptyState, skeleton, badge } from "../../components/ui.js";
-import { toast as defaultToast } from "../../components/feedback.js";
+import { toast as defaultToast, confirmDialog } from "../../components/feedback.js";
 import { formatCentavos, formatDayId } from "../../lib/format.js";
 import { exportButton, bindExport, mayExport, exportHint } from "../../lib/export.js";
-import { ATTENDANCE_STATUSES, businessDate, staffPeriod, staffPeriods, daysIn, weekdayLabel, summarizeAttendance, addDays } from "@shared/index.js";
+import { ATTENDANCE_STATUSES, businessDate, staffPeriod, staffPeriods, daysIn, weekdayLabel, weekdayOf, summarizeAttendance, addDays, expectedStatus } from "@shared/index.js";
 import * as defaultData from "../household/data.js";
 import { formDialog } from "../../components/form-dialog.js";
 
@@ -36,12 +40,12 @@ export function periodsOf(staff, today) {
   return staffPeriods(staff, from, to, 26);
 }
 
-export function mount(container, session, { data = defaultData, toast = defaultToast, now = () => new Date(), exportDeps = {} } = {}) {
+export function mount(container, session, { data = defaultData, toast = defaultToast, now = () => new Date(), exportDeps = {}, confirm = confirmDialog } = {}) {
   const businessId = session.business.id;
   const canEdit = session.member.permissions["attendance.edit"] === true;
   const today = businessDate(session.business.timezone, now());
   const params = new URLSearchParams(typeof location === "undefined" ? "" : location.search);
-  const state = { staffId: ID.test(params.get("staff") || "") ? params.get("staff") : "", periodStart: /^\d{4}-\d{2}-\d{2}$/.test(params.get("period") || "") ? params.get("period") : "", staff: [], lines: [], review: { corrections: [], requests: [], confirmation: null }, selected: new Set(), loading: true, error: null, saving: false };
+  const state = { staffId: ID.test(params.get("staff") || "") ? params.get("staff") : "", periodStart: /^\d{4}-\d{2}-\d{2}$/.test(params.get("period") || "") ? params.get("period") : "", staff: [], lines: [], review: { corrections: [], requests: [], confirmation: null }, selected: new Set(), pending: new Map(), expected: false, loading: true, error: null, saving: false };
   let alive = true;
 
   const person = () => state.staff.find((s) => s.id === state.staffId) || null;
@@ -107,39 +111,86 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     return html`<p class="stat-hint" data-role="leave">Paid Leave ${l.year}: used <strong>${l.used} of ${l.entitled}</strong> day${l.entitled === 1 ? "" : "s"} · ${l.remaining} remaining${l.used > l.entitled ? ` · ${l.used - l.entitled} beyond the allowance` : ""}</p>`;
   }
 
+  // The day as it will be after Save: unsaved change > recorded > nothing.
+  const savedOf = (d) => state.lines.find((l) => l.date === d) || null;
+  const valueOf = (d) => (state.pending.has(d) ? state.pending.get(d) : savedOf(d)?.status ?? null);
+  const shortOf = (st) => (st && st !== "clear" ? ATTENDANCE_STATUSES[st]?.short ?? "?" : "");
+  const visibleDays = (s, p) => daysIn(p).filter((d) => (!s.startDate || d >= s.startDate) && (!s.endDate || d <= s.endDate));
+
   function sheet() {
     const s = person();
     if (!s) return emptyState({ iconName: "staff", title: "No household staff yet", body: "Add the people you pay on the Household Staff page first.", action: html`<a class="btn btn-primary" href="/household-staff" data-link>Add staff</a>` });
     const p = period();
     if (!p) return emptyState({ iconName: "calendar", title: "No pay period", body: `${s.name}'s start date is after today.` });
-    const byDate = new Map(state.lines.map((l) => [l.date, l]));
-    const sum = summarizeAttendance(state.lines, { start: p.start, end: p.end > today ? today : p.end });
-    const days = daysIn(p).filter((d) => (!s.startDate || d >= s.startDate) && (!s.endDate || d <= s.endDate));
+    const days = visibleDays(s, p);
+    const saved = summarizeAttendance(state.lines, { start: p.start, end: p.end > today ? today : p.end });
+    const preview = summarizeAttendance(days.filter((d) => d <= today && valueOf(d) && valueOf(d) !== "clear").map((d) => ({ date: d, status: valueOf(d), dailyWage: savedOf(d)?.dailyWage ?? s.dailyWage })), { start: p.start, end: p.end > today ? today : p.end });
     const n = state.selected.size;
+    const changes = state.pending.size;
     return html`
-      <p class="chart-note" data-role="totals">Present ${sum.present} · Absent ${sum.absent} · Rest Day ${sum.restDay} · Paid Leave ${sum.officialLeave} · Unpaid Leave ${sum.unpaidLeave}${sum.notMarked ? ` · Not marked ${sum.notMarked}` : ""} → <strong>${sum.payableDays} paid days · ${formatCentavos(sum.basePay)}</strong></p>
-      ${confirmationLine(sum)}
+      <p class="chart-note" data-role="totals">Present ${preview.present} · Absent ${preview.absent} · Rest Day ${preview.restDay} · Paid Leave ${preview.officialLeave} · Unpaid Leave ${preview.unpaidLeave}${preview.notMarked ? ` · Not marked ${preview.notMarked}` : ""} → <strong>${preview.payableDays} paid days · ${formatCentavos(preview.basePay)}</strong>${changes ? html` <span class="stat-hint">(with unsaved changes)</span>` : ""}</p>
+      ${confirmationLine(saved)}
       ${leaveLine()}
-      ${canEdit && n
-        ? html`<div class="sheet-bulk" data-role="bulk"><span>${n} selected:</span>${ORDER.map((k) => html`<button type="button" class="btn btn-compact" data-act="bulk" data-status="${k}" ${state.saving ? "disabled" : ""}>${ATTENDANCE_STATUSES[k].label}</button>`)}<button type="button" class="btn btn-compact btn-ghost" data-act="clear">Clear</button></div>`
-        : canEdit
-          ? html`<p class="stat-hint">Tick days to mark several at once.</p>`
-          : ""}
-      <ul class="sheet-list" data-role="owner-sheet">${days.map((d) => {
-        const l = byDate.get(d);
+      ${canEdit
+        ? html`<div class="att-tools" data-role="tools">
+            <button type="button" class="btn btn-compact" data-act="fill" ${state.saving ? "disabled" : ""}>Fill normal schedule</button>
+            <button type="button" class="btn btn-compact" data-act="confirm-today" ${state.saving ? "disabled" : ""}>Confirm through today</button>
+            <button type="button" class="btn btn-compact btn-ghost" data-act="copy-prev" ${state.saving ? "disabled" : ""}>Copy previous period</button>
+          </div>`
+        : ""}
+      <div class="att-grid" data-role="att-grid" role="group" aria-label="${s.name}'s days, ${range(p)}">${days.map((d) => {
         const future = d > today;
-        const types = ORDER;
-        if (future) return html`<li class="sheet-row is-upcoming" data-day="${d}"><span class="sheet-check" aria-hidden="true"></span><span class="sheet-date"><strong>${short(d)}</strong> <small>${weekdayLabel(d)}</small></span><span class="sheet-value"><select class="input sheet-select" data-date="${d}" aria-label="Status on ${short(d)} (upcoming)" disabled><option selected>Upcoming</option></select></span></li>`;
-        return html`<li class="sheet-row${state.selected.has(d) ? " is-selected" : ""}" data-day="${d}">
-          ${canEdit ? html`<label class="sheet-check"><input type="checkbox" data-sel="${d}" ${state.selected.has(d) ? "checked" : ""} aria-label="Select ${short(d)}" /></label>` : html`<span class="sheet-check" aria-hidden="true"></span>`}
-          <span class="sheet-date"><strong>${short(d)}</strong> <small>${weekdayLabel(d)}${l?.source === "staff_request" ? " · sent by helper" : ""}</small></span>
-          <span class="sheet-value"><select class="input sheet-select" data-act="mark" data-date="${d}" aria-label="Status on ${short(d)}" ${!canEdit || state.saving ? "disabled" : ""}>
-            ${!l ? html`<option value="" selected>Not marked</option>` : ""}
-            ${types.map((k) => html`<option value="${k}" ${l?.status === k ? "selected" : ""}>${ATTENDANCE_STATUSES[k].label}</option>`)}
-            ${l && !types.includes(l.status) ? html`<option value="${l.status}" selected>${ATTENDANCE_STATUSES[l.status]?.label ?? l.status}</option>` : ""}
-          </select></span>
-        </li>`;
-      })}</ul>`;
+        const v = valueOf(d);
+        const exp = !v && state.expected ? expectedStatus(s, d) : null;
+        const dirty = state.pending.has(d);
+        const label = future ? (exp ? `Expected ${ATTENDANCE_STATUSES[exp].label}` : "Upcoming") : v && v !== "clear" ? ATTENDANCE_STATUSES[v]?.label : exp ? `Expected ${ATTENDANCE_STATUSES[exp].label}` : "Not marked";
+        return html`<button type="button" class="att-cell${state.selected.has(d) ? " is-selected" : ""}${future ? " is-upcoming" : ""}${exp ? " is-expected" : ""}${dirty ? " is-dirty" : ""}" data-act="cell" data-day="${d}" data-st="${v && v !== "clear" ? v : exp || ""}" aria-pressed="${state.selected.has(d) ? "true" : "false"}" aria-label="${short(d)} ${weekdayLabel(d)}: ${label}" ${future || !canEdit || state.saving ? "disabled" : ""}>
+          <span class="att-day">${Number(d.slice(8))}</span><span class="att-st">${future ? (exp ? `${shortOf(exp)}?` : "·") : v && v !== "clear" ? shortOf(v) : exp ? `${shortOf(exp)}?` : "–"}</span>
+        </button>`;
+      })}</div>
+      ${canEdit
+        ? html`<div class="att-pad" data-role="pad">${ORDER.map((k) => html`<button type="button" class="btn" data-act="apply" data-status="${k}" ${n && !state.saving ? "" : "disabled"}>${ATTENDANCE_STATUSES[k].label}</button>`)}<button type="button" class="btn btn-ghost" data-act="apply" data-status="clear" ${n && !state.saving ? "" : "disabled"}>Clear</button></div>
+          <p class="att-legend" data-role="legend">${n ? `${n} day${n === 1 ? "" : "s"} selected. Tap a status.` : "Tap one or more days, then a status."} P Present · A Absent · PL Paid Leave · UL Unpaid Leave · R Rest Day · ? Expected (not recorded) · • not saved yet</p>`
+        : html`<p class="att-legend" data-role="legend">P Present · A Absent · PL Paid Leave · UL Unpaid Leave · R Rest Day</p>`}
+      ${changes
+        ? html`<div class="att-save" data-role="save-bar"><span><strong>${changes}</strong> change${changes === 1 ? "" : "s"} not saved</span><span><button type="button" class="btn btn-compact btn-ghost" data-act="discard" ${state.saving ? "disabled" : ""}>Discard</button> <button type="button" class="btn btn-primary" data-act="save" ${state.saving ? "disabled" : ""}>${state.saving ? "Saving…" : "Save"}</button></span></div>`
+        : ""}`;
+  }
+
+  // Stage a status for days up to today; "clear" takes a recorded day back
+  // to Not marked (an unsaved change is simply dropped).
+  function stage(daysToSet, status) {
+    for (const d of daysToSet) {
+      if (d > today) continue;
+      const rec = savedOf(d)?.status ?? null;
+      const want = status === "clear" ? (rec ? "clear" : null) : status;
+      if (want === null || want === rec) state.pending.delete(d);
+      else state.pending.set(d, want);
+    }
+  }
+
+  async function copyPrevious() {
+    const s = person();
+    const p = period();
+    if (!s || !p) return;
+    const prev = staffPeriod(s, addDays(p.start, -1));
+    try {
+      const rows = (await data.listAttendance(businessId, { staffId: s.id, from: prev.start, to: prev.end }, { pageSize: 100 })).rows;
+      if (!rows.length) return toast("Nothing recorded in the previous period.", "danger");
+      // The latest recorded status per weekday, applied to unmarked days up to today.
+      const byWeekday = new Map();
+      for (const l of [...rows].sort((a, b) => (a.date < b.date ? -1 : 1))) byWeekday.set(weekdayOf(l.date), l.status);
+      let n = 0;
+      for (const d of visibleDays(s, p)) {
+        if (d > today || valueOf(d) || !byWeekday.has(weekdayOf(d))) continue;
+        stage([d], byWeekday.get(weekdayOf(d)));
+        n += 1;
+      }
+      toast(n ? `${n} day${n === 1 ? "" : "s"} copied. Check them, then Save.` : "No unmarked days to fill.", n ? "success" : "danger");
+    } catch (err) {
+      toast(err.message || "Couldn't load the previous period", "danger");
+    }
+    draw();
   }
 
   function draw() {
@@ -170,7 +221,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
       let r = await data.setAttendanceMany(state.staffId, days);
       const needReason = r.failed.filter((f) => f.code === "reason-required");
       if (needReason.length) {
-        const reason = await formDialog({ title: "Correct what the helper sent?", intro: `${needReason.map((f) => short(f.date)).join(", ")} ${needReason.length === 1 ? "was" : "were"} sent by the helper. Your reason is kept in the history with the before and after.`, fields: [{ name: "reason", label: "Reason", required: true, placeholder: "e.g. She was on leave that day" }], submitLabel: "Save correction", onSubmit: (v) => v.reason.trim() });
+        const reason = await formDialog({ title: "Correct what the helper sent?", intro: `${needReason.map((f) => short(f.date)).join(", ")} ${needReason.length === 1 ? "was" : "were"} sent by the helper. Your reason is kept in the history with the before and after.`, fields: [{ name: "reason", label: "Reason", required: true, placeholder: "e.g. They were on leave that day" }], submitLabel: "Save correction", onSubmit: (v) => v.reason.trim() });
         if (reason) {
           const again = await data.setAttendanceMany(state.staffId, days.filter((d) => needReason.some((f) => f.date === d.date)), reason);
           r = { saved: [...r.saved, ...again.saved], failed: [...r.failed.filter((f) => f.code !== "reason-required"), ...again.failed] };
@@ -200,7 +251,10 @@ export function mount(container, session, { data = defaultData, toast = defaultT
       }
       if (r.failed.length) toast(`${r.failed.length} day${r.failed.length === 1 ? "" : "s"} not saved: ${r.failed[0].error}`, "danger");
       else if (days.length > 1) toast(`${r.saved.length} days saved.`, "success");
+      else toast("Saved.", "success");
       state.selected.clear();
+      state.pending.clear();
+      state.expected = false;
     } catch (err) {
       toast(err.message || "Couldn't save", "danger");
     }
@@ -217,7 +271,10 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     load();
   }
 
-  const choose = (staffId, periodStart) => {
+  const choose = async (staffId, periodStart) => {
+    if (state.pending.size && !(await confirm({ title: "Discard unsaved changes?", body: `${state.pending.size} day${state.pending.size === 1 ? "" : "s"} you changed aren't saved yet.`, confirmLabel: "Discard", danger: true }))) return draw();
+    state.pending.clear();
+    state.expected = false;
     state.staffId = staffId;
     state.periodStart = periodStart || "";
     state.selected.clear();
@@ -229,24 +286,43 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     const el = event.target;
     if (el.dataset.role === "pick-staff") return choose(el.value, "");
     if (el.dataset.role === "pick-period") return choose(state.staffId, el.value);
-    if (el.dataset.sel) {
-      if (el.checked) state.selected.add(el.dataset.sel);
-      else state.selected.delete(el.dataset.sel);
-      return draw();
-    }
-    if (el.dataset.act === "mark" && el.value) return save([{ date: el.dataset.date, status: el.value }]);
     return undefined;
   };
   const onClick = async (event) => {
     const el = event.target.closest("[data-act]");
     if (!el || !container.contains(el)) return;
     const a = el.dataset.act;
-    if (a === "bulk") {
-      const days = [...state.selected].sort().filter((d) => d <= today).map((date) => ({ date, status: el.dataset.status }));
-      if (days.length) save(days);
-    } else if (a === "clear") {
+    if (a === "cell") {
+      const d = el.dataset.day;
+      if (d > today) return;
+      if (state.selected.has(d)) state.selected.delete(d);
+      else state.selected.add(d);
+      draw();
+    } else if (a === "apply") {
+      stage([...state.selected], el.dataset.status);
       state.selected.clear();
       draw();
+    } else if (a === "fill") {
+      state.expected = true;
+      draw();
+    } else if (a === "confirm-today") {
+      const s = person();
+      const p = period();
+      if (!s || !p) return;
+      const todo = visibleDays(s, p).filter((d) => d <= today && !valueOf(d));
+      for (const d of todo) stage([d], expectedStatus(s, d));
+      state.expected = true;
+      toast(todo.length ? `${todo.length} day${todo.length === 1 ? "" : "s"} filled from the normal schedule. Change any exceptions, then Save.` : "Every day up to today is already filled.", "success");
+      draw();
+    } else if (a === "copy-prev") copyPrevious();
+    else if (a === "discard") {
+      state.pending.clear();
+      state.selected.clear();
+      state.expected = false;
+      draw();
+    } else if (a === "save") {
+      const days = [...state.pending.entries()].sort(([x], [y]) => (x < y ? -1 : 1)).map(([date, status]) => ({ date, status }));
+      if (days.length) save(days);
     } else if (a === "resolve") {
       const r = await formDialog({ title: "Mark this report done?", intro: "Fix the attendance first if needed. Your note is kept with the report.", fields: [{ name: "note", label: "Note (optional)", placeholder: "e.g. Changed Oct 8 to Present" }], submitLabel: "Done", onSubmit: (v) => data.resolveCorrection(el.dataset.id, v.note.trim() || null) });
       if (r) load();

@@ -1479,6 +1479,7 @@ a.item:hover {
   flex-direction: column;
   width: min(560px, 100%);
   max-height: calc(100vh - 2 * var(--space-4));
+  max-height: calc(100dvh - 2 * var(--space-4));
   background: var(--surface);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-lg);
@@ -1491,15 +1492,20 @@ a.item:hover {
 .modal-body {
   padding: var(--space-4) var(--space-5);
   overflow-y: auto;
+  overscroll-behavior: contain;
+  min-height: 0;
+  flex: 1 1 auto;
 }
 
 .modal-footer {
   display: flex;
+  flex: none;
   flex-wrap: wrap;
   justify-content: flex-end;
   gap: var(--space-2);
   padding: var(--space-3) var(--space-5);
   border-top: 1px solid var(--border);
+  background: var(--surface);
 }
 
 .modal-backdrop.is-panel {
@@ -1511,6 +1517,8 @@ a.item:hover {
   width: min(560px, 100%);
   max-height: 100vh;
   height: 100vh;
+  max-height: 100dvh;
+  height: 100dvh;
   border-radius: 0;
 }
 
@@ -1524,16 +1532,25 @@ a.item:hover {
     padding: 0;
   }
 
+  /* Owner-pilot polish: sized to the VISIBLE screen (dvh), so the footer
+     buttons stay above Safari / Chrome toolbars and the keyboard; the body
+     scrolls, the footer never does. */
   .modal,
   .modal-backdrop.is-panel > .modal {
     width: 100%;
     max-height: 92vh;
+    max-height: calc(100dvh - 12px);
     height: auto;
     border-radius: 18px 18px 0 0;
   }
 
   .modal-footer {
     padding-bottom: calc(var(--space-3) + env(safe-area-inset-bottom, 0px));
+  }
+
+  .modal-footer .line-menu-list {
+    max-height: 50dvh;
+    overflow-y: auto;
   }
 
   .modal-footer .btn {
@@ -2204,7 +2221,7 @@ tr.is-saving {
 .staff-main {
   max-width: 560px;
   margin: 0 auto;
-  padding: var(--space-4) var(--space-4) var(--space-10);
+  padding: var(--space-4) var(--space-4) calc(var(--space-10) + env(safe-area-inset-bottom, 0px));
   display: flex;
   flex-direction: column;
   gap: var(--space-4);
@@ -2501,6 +2518,233 @@ tr.is-saving {
   display: inline-block;
   margin: 0 0 var(--space-2);
   font-size: var(--text-sm);
+}
+/* Owner-pilot polish: Household Dashboard money card + this cutoff list. */
+.money-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  justify-content: space-between;
+  gap: var(--space-2) var(--space-3);
+  margin-bottom: var(--space-3);
+}
+.money-head .card-title {
+  margin: 0;
+}
+.money-summary {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  margin: 0;
+}
+.money-summary > div {
+  display: contents;
+}
+.money-summary dt,
+.money-summary dd {
+  margin: 0;
+  padding: var(--space-2) 0;
+  border-top: 1px solid var(--border);
+}
+.money-summary > div:first-child dt,
+.money-summary > div:first-child dd {
+  border-top: 0;
+}
+.money-summary dd {
+  font-weight: 700;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.money-summary .money-sub dt,
+.money-summary .money-sub dd {
+  padding-left: var(--space-4);
+  font-weight: 500;
+  color: var(--text-muted);
+  border-top: 0;
+  padding-top: 0;
+}
+.money-summary .money-sub dt small {
+  display: block;
+  font-size: var(--text-xs, 12px);
+}
+.money-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: var(--space-3);
+}
+.cutoff-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.cutoff-list li + li {
+  border-top: 1px solid var(--border);
+}
+.cutoff-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  min-height: 52px;
+  padding: var(--space-2) 0;
+  color: inherit;
+  text-decoration: none;
+}
+.cutoff-main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.cutoff-main small {
+  color: var(--text-muted);
+}
+.cutoff-end {
+  flex: none;
+  white-space: nowrap;
+}
+/* Owner-pilot polish: payslip summary (a few lines, details folded). */
+.pay-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-3);
+  font-size: var(--text-md, 15px);
+}
+.pay-status .badge {
+  font-size: 14px;
+  padding: 4px 10px;
+}
+.slip-total-paid .slip-amt {
+  font-size: 1.1em;
+}
+/* Owner-pilot polish: Attendance tap grid (calculator style). */
+.att-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 6px;
+  margin: var(--space-3) 0;
+}
+@media (min-width: 720px) {
+  .att-grid {
+    grid-template-columns: repeat(8, minmax(0, 1fr));
+  }
+}
+.att-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  min-height: 56px;
+  padding: 4px 2px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.att-cell .att-day {
+  font-weight: 700;
+  font-size: 15px;
+}
+.att-cell .att-st {
+  font-size: 12px;
+  font-weight: 600;
+  min-height: 1.2em;
+}
+.att-cell.is-selected {
+  outline: 3px solid var(--luna-primary);
+  outline-offset: -1px;
+}
+.att-cell[data-st="present"] { background: #e8f5ee; border-color: #9bd3b2; }
+.att-cell[data-st="absent"] { background: #fdecec; border-color: #f1a9a9; }
+.att-cell[data-st="official_leave"] { background: #e8effd; border-color: #a9c0f1; }
+.att-cell[data-st="unpaid_leave"] { background: #fdf3e3; border-color: #f0cf95; }
+.att-cell[data-st="rest_day"] { background: #f1f1f4; border-color: #cfd0d8; }
+.att-cell.is-expected { border-style: dashed; }
+.att-cell.is-upcoming {
+  color: var(--text-muted);
+  background: transparent;
+  border-style: dashed;
+  cursor: default;
+}
+.att-cell.is-off {
+  visibility: hidden;
+}
+.att-cell.is-dirty .att-st::after {
+  content: " •";
+}
+.att-pad {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+@media (min-width: 720px) {
+  .att-pad {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+  }
+}
+.att-pad .btn {
+  min-height: var(--touch, 44px);
+}
+.att-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: var(--space-2) 0;
+}
+.att-legend {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin: var(--space-2) 0 0;
+}
+.att-save {
+  position: sticky;
+  bottom: calc(var(--tabbar-height) + env(safe-area-inset-bottom, 0px) + 8px);
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: var(--shadow-lg);
+}
+@media (min-width: 720px) {
+  .att-save {
+    bottom: var(--space-3);
+  }
+}
+/* Owner-pilot polish: Advances per helper, compact. */
+.adv-summary {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 2px var(--space-3);
+  margin: 0 0 var(--space-2);
+}
+.adv-summary dt,
+.adv-summary dd {
+  margin: 0;
+}
+.adv-summary dd {
+  font-weight: 700;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.adv-result {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 4px var(--space-3);
+  margin: 0;
+}
+.adv-result dd {
+  margin: 0;
+  font-weight: 700;
+  text-align: right;
 }
 /* Staff: cash advance limit. */
 .advance-limit {

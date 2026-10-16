@@ -259,7 +259,21 @@ const money = (v, { field, max }) => {
   return v;
 };
 
-export const STAFF_FIELDS = Object.freeze(["name", "position", "dailyWage", "payCycle", "cutoffs", "advanceLimit", "paidLeaveDays", "phone", "startDate", "endDate", "notes"]);
+export const STAFF_FIELDS = Object.freeze(["name", "position", "dailyWage", "payCycle", "cutoffs", "advanceLimit", "paidLeaveDays", "restDays", "phone", "startDate", "endDate", "notes"]);
+
+// Owner-pilot polish (2026-10-16): the helper's normal week. restDays =
+// weekday numbers (0 = Sunday ... 6 = Saturday) that are usually a Rest
+// Day; every other day is a working day. Not set = Sunday. Attendance uses
+// it only to PROPOSE days ("Fill normal schedule"); nothing is recorded
+// until the Owner confirms, and never ahead of the day.
+export const DEFAULT_REST_DAYS = Object.freeze([0]);
+export const restDaysOf = (staff) => (Array.isArray(staff?.restDays) ? staff.restDays : DEFAULT_REST_DAYS);
+export const expectedStatus = (staff, day) => (restDaysOf(staff).includes(weekdayOf(day)) ? "rest_day" : "present");
+export function validateRestDays(v) {
+  if (v === null || v === undefined) return null;
+  if (!Array.isArray(v) || v.length > 7 || v.some((d) => !Number.isInteger(d) || d < 0 || d > 6) || new Set(v).size !== v.length) throw new PayrollError("invalid-input", "Choose the usual rest days");
+  return [...v].sort();
+}
 
 // Owner-pilot cleanup (2026-10-13): Paid Leave allowance. The Owner sets a
 // household default (days per year, 5 until changed) and, optionally, a
@@ -342,6 +356,7 @@ export function validateStaffInput(input, { partial = false } = {}) {
   }
   if (has("advanceLimit")) out.advanceLimit = validateAdvanceLimit(input.advanceLimit);
   if (has("paidLeaveDays")) out.paidLeaveDays = validatePaidLeaveDays(input.paidLeaveDays);
+  if (has("restDays")) out.restDays = validateRestDays(input.restDays);
   if (has("phone")) out.phone = text(input.phone, { field: "Phone", max: 30 });
   if (has("startDate")) {
     if (input.startDate !== null && input.startDate !== undefined && input.startDate !== "" && !isDayId(input.startDate)) throw new PayrollError("invalid-date", "Invalid start date");

@@ -49,7 +49,7 @@ export function mount(container, session, { fetchDocuments = fetchMetricDocument
     return () => {};
   }
   const start = presets[DEFAULT_PRESET[templateId]] ? DEFAULT_PRESET[templateId] : "today";
-  const state = { preset: start, range: start === "today" ? { from: today, to: today } : { from: presets[start].from, to: presets[start].to }, view: null, seq: 0, lists: null, summary: null };
+  const state = { preset: start, range: start === "today" ? { from: today, to: today } : { from: presets[start].from, to: presets[start].to }, view: null, seq: 0, lists: null, summary: null, hhStaff: "" };
   // Phase 18.6: the Household Dashboard's payroll summary comes from the
   // server (GET /api/household-summary, payroll.view); the layout falls back
   // to the widget lists without it.
@@ -100,7 +100,7 @@ export function mount(container, session, { fetchDocuments = fetchMetricDocument
     const view = state.view;
     const empty = dashboardEmptyState(session.entitlements);
     const nothing = !view.cards.length && !view.lists.length;
-    const body = nothing || !layout ? html`<div data-role="workspace-empty">${card({ body: emptyState({ title: empty.title, body: empty.body }) })}</div>` : layout({ session, view, can, currency, today, periodLabel: periodLabel(), range: state.range, summary: state.summary });
+    const body = nothing || !layout ? html`<div data-role="workspace-empty">${card({ body: emptyState({ title: empty.title, body: empty.body }) })}</div>` : layout({ session, view, can, currency, today, periodLabel: periodLabel(), range: state.range, summary: state.summary, hhStaff: state.hhStaff });
     render(container, html`${header()}<div class="dashboard" data-workspace-layout="${templateId || ""}">${body}</div>`);
     for (const btn of container.querySelectorAll('[data-act="export"]')) btn.classList.add("btn-ghost");
   }
@@ -161,6 +161,12 @@ export function mount(container, session, { fetchDocuments = fetchMetricDocument
       if (!o) return;
       if (el.dataset.act === "payment") inline.onPaymentChoice(o, el.value, el);
       else inline.onFulfillmentChoice(o, el.value, el);
+      return;
+    }
+    // Owner-pilot polish: the Household money card's Employee filter.
+    if (el.dataset.role === "hh-staff") {
+      state.hhStaff = el.value;
+      draw();
       return;
     }
     if (el.name !== "preset") return;

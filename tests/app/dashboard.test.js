@@ -372,28 +372,47 @@ describe("Expenses page (Phase 10)", () => {
   });
 });
 
-describe("Household (Phase 18.6): total salary to pay at the next cutoff, per person", () => {
-  it("shows the server's total, one row per person, and what's waiting for the Owner", async () => {
-    const summary = {
-      today: "2026-12-18",
-      totalToPay: 260000,
-      nextCutoff: "2026-12-31",
-      overdueTotal: 0,
-      pending: { attendance: 2, advances: 1 },
-      staff: [
-        { staffId: "s1", name: "Lito", period: { start: "2026-12-16", end: "2026-12-31" }, prepared: false, estimatedNet: 80000, advanceToDeduct: 40000, payment: "not_paid", overdue: [], lastSalary: null },
-        { staffId: "s2", name: "Maria", period: { start: "2026-12-16", end: "2026-12-31" }, prepared: false, estimatedNet: 180000, advanceToDeduct: 0, payment: "not_paid", overdue: [], lastSalary: { receipt: "waiting", netPay: 600000 } },
-      ],
-    };
+describe("Household (Owner-pilot polish): one money card for this cutoff, Employee filter, compact list", () => {
+  const summary = {
+    today: "2026-10-16",
+    totalToPay: 0,
+    nextCutoff: null,
+    overdueTotal: 0,
+    pending: { attendance: 0, advances: 0, byStaff: [{ staffId: "s1", name: "Loriza Ibanez", items: { salaryConfirmation: 1, advanceConfirmation: 1 }, total: 2 }, { staffId: "s2", name: "Ana", items: { correction: 1 }, total: 1 }] },
+    staff: [
+      { staffId: "s1", name: "Loriza Ibanez", period: { start: "2026-10-01", end: "2026-10-15" }, estimatedNet: 556500, overdue: [], money: { salaryPaid: 556500, prepaid: 82200, stillToPay: 0, advancesOutstanding: 110000, advanceAvailable: 340000 }, confirmation: { state: "waiting" } },
+      { staffId: "s2", name: "Ana", period: { start: "2026-10-01", end: "2026-10-15" }, estimatedNet: 300000, overdue: [], money: { salaryPaid: 0, prepaid: 0, stillToPay: 300000, advancesOutstanding: 0, advanceAvailable: null }, confirmation: null },
+    ],
+  };
+  const fig = () => Object.fromEntries([...container.querySelectorAll('[data-role="money-summary"] dd')].map((dd) => [dd.dataset.k, dd.textContent]));
+
+  it("Everyone: paid / still to pay / prepaid (inside paid, not added) / advances outstanding; attention grouped by helper; one short line each", async () => {
     const api = vi.fn(async (path) => (path === "household-summary" ? { summary } : {}));
     await show(sessionFixture({ workspaceTemplateId: "household-payroll" }), {}, {}, { api });
-    expect(api).toHaveBeenCalledWith("household-summary");
-    expect(container.querySelector('[data-role="total-to-pay"]').textContent).toBe("₱2,600.00");
-    expect(sectionOf("to-pay").textContent).toMatch(/next cutoff Dec 31/);
-    const rows = [...container.querySelectorAll('[data-role="staff-pay"] tbody tr')];
-    expect(rows.map((r) => r.querySelector('[data-col="net"] strong').textContent)).toEqual(["₱800.00", "₱1,800.00"]);
-    expect(rows[0].querySelector('[data-col="advance"]').textContent).toBe("₱400.00");
-    expect(rows[1].querySelector('[data-col="last"]').textContent).toBe("Not confirmed");
+    expect(container.querySelector('[data-role="cutoff"]').textContent).toBe("Oct 1–15");
+    expect(fig()).toEqual({ salaryPaid: "₱5,565.00", stillToPay: "₱3,000.00", prepaid: "₱822.00", advancesOutstanding: "₱1,100.00" });
+    expect(sectionOf("money").textContent).toMatch(/Prepaid salary\s*included in salary paid/);
+    expect([...container.querySelectorAll('[data-role="hh-staff"] option')].map((o) => o.textContent)).toEqual(["Everyone", "Loriza Ibanez", "Ana"]);
+    expect(container.querySelectorAll('[data-role="pending-by-helper"] li')).toHaveLength(2);
+    const rows = [...container.querySelectorAll('[data-role="staff-pay"] li')];
+    expect(rows[0].textContent.replace(/\s+/g, " ")).toMatch(/Loriza Ibanez\s*Paid ₱5,565\.00 · Prepaid ₱822\.00 Not yet confirmed ›/);
+    expect(rows[0].querySelector("a").getAttribute("href")).toBe("/payroll?staff=s1");
+    expect(rows[1].textContent.replace(/\s+/g, " ")).toMatch(/Ana\s*To pay ₱3,000\.00 so far[\s\S]*Not paid yet/);
+    expect(container.querySelector('[data-role="give-advance"]').getAttribute("href")).toBe("/advances?give=1");
+  });
+
+  it("one helper selected: only that helper's numbers, attention items and line; Give advance preselects them", async () => {
+    const api = vi.fn(async (path) => (path === "household-summary" ? { summary: { ...summary, staff: summary.staff.map((s, i) => (i === 0 ? { ...s, confirmation: { state: "confirmed", at: "2026-10-15T03:00:00.000Z" } } : s)) } } : {}));
+    await show(sessionFixture({ workspaceTemplateId: "household-payroll" }), {}, {}, { api });
+    const pick = container.querySelector('[data-role="hh-staff"]');
+    pick.value = "s1";
+    pick.dispatchEvent(new Event("change", { bubbles: true }));
+    await flush();
+    expect(fig()).toEqual({ salaryPaid: "₱5,565.00", stillToPay: "₱0.00", prepaid: "₱822.00", advancesOutstanding: "₱1,100.00" });
+    expect(container.querySelectorAll('[data-role="pending-by-helper"] li')).toHaveLength(1);
+    expect([...container.querySelectorAll('[data-role="staff-pay"] li')]).toHaveLength(1);
+    expect(container.querySelector('[data-role="confirmation"]').textContent).toMatch(/Confirmed by Loriza on Oct 15/);
+    expect(container.querySelector('[data-role="give-advance"]').getAttribute("href")).toBe("/advances?give=1&staff=s1");
   });
 });
 

@@ -12,7 +12,12 @@
 // repayment: a plan never lowers what's owed; only a paid payroll's
 // deduction or a separate repayment does. Requests a helper sent (older
 // flow) still show in a compact list. ?staff=<id> / ?advance=<id> open
-// filtered to that helper.
+// filtered to that helper; ?give=1 opens Give an advance (Dashboard).
+// Owner-pilot polish (2026-10-16): Give an advance = Helper, Amount, Deduct
+// on (Next payroll / Split repayment / No payroll deduction), with what's
+// available shown and checked before sending; date (today), method (last
+// used, else Cash), reference, proof and note under More options. The
+// result shows what's owed now and the next deduction.
 
 import { html, render } from "../../lib/html.js";
 import { pageHeader, emptyState, badge, skeleton } from "../../components/ui.js";
@@ -39,6 +44,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
   const today = businessDate(session.business.timezone, now());
   const params = new URLSearchParams(typeof location === "undefined" ? "" : location.search);
   let fromAdvance = ID.test(params.get("advance") || "") ? params.get("advance") : null;
+  let openGive = params.get("give") === "1" && canManage;
   const state = { staffId: ID.test(params.get("staff") || "") ? params.get("staff") : "", staff: [], rows: [], loading: true, error: null };
   let alive = true;
   const api = (body) => data.advancesApi(body);
@@ -59,6 +65,10 @@ export function mount(container, session, { data = defaultData, toast = defaultT
       }
       state.rows = all;
       state.error = null;
+      if (openGive) {
+        openGive = false;
+        setTimeout(() => give(), 0);
+      }
     } catch (err) {
       console.error("advances: load failed:", err && (err.code || err.message));
       state.error = "Couldn't load advances.";
@@ -79,12 +89,12 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     if (!sum.outstanding && !cap && !state.staffId) return "";
     return html`<div class="owe-card" data-owe="${p.id}">
       <div class="owe-name"><strong>${p.name}</strong>${sum.notTaken ? html` ${badge(`${formatCentavos(sum.notTaken)} not taken`, "warning")}` : ""}</div>
-      <dl class="owe-figures">
-        <dt>Outstanding balance</dt><dd data-role="outstanding">${formatCentavos(sum.outstanding)}</dd>
-        <dt>Next planned deduction</dt><dd>${sum.next ? html`${formatCentavos(sum.next.amount)} <small>${periodText(sum.next)}</small>` : "—"}</dd>
-        <dt>Balance after planned</dt><dd>${formatCentavos(sum.balanceAfterPlanned)}</dd>
-        ${cap ? html`<dt>Limit · available</dt><dd>${formatCentavos(cap.limit)} · <strong>${formatCentavos(cap.available)}</strong></dd>` : ""}
+      <dl class="adv-summary owe-figures">
+        <dt>Outstanding</dt><dd data-role="outstanding">${formatCentavos(sum.outstanding)}</dd>
+        ${cap ? html`<dt>Available</dt><dd data-role="available">${formatCentavos(cap.available)} <small>of ${formatCentavos(cap.limit)}</small></dd>` : ""}
+        <dt>Next deduction</dt><dd data-role="next">${sum.next ? html`${formatCentavos(sum.next.amount)} <small>${periodText(sum.next)}</small>` : "—"}</dd>
       </dl>
+      ${canManage ? html`<button type="button" class="btn btn-compact" data-act="give" data-staff="${p.id}">+ Give advance</button>` : ""}
     </div>`;
   }
 
@@ -144,34 +154,91 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     for (const btn of container.querySelectorAll('[data-act="export"]')) btn.classList.add("btn-ghost");
   }
 
-  async function give() {
+  const METHOD_KEY = "luna.advance.method";
+  const lastMethod = () => {
+    try {
+      const m = localStorage.getItem(METHOD_KEY);
+      return SALARY_METHODS[m] ? m : "cash";
+    } catch {
+      return "cash";
+    }
+  };
+  const availableFor = (s) => (s && Number.isSafeInteger(s.advanceLimit) ? advanceCapacity(s, state.rows.filter((a) => a.staffId === s.id)).available : null);
+
+  async function give(preset = "") {
     if (!state.staff.length) return toast("Add household staff first.", "danger");
-    const limits = state.staff.filter((s) => Number.isSafeInteger(s.advanceLimit)).map((s) => `${s.name}: ${formatCentavos(advanceCapacity(s, state.rows.filter((a) => a.staffId === s.id)).available ?? 0)} available`);
+    const chosen = preset || state.staffId || state.staff[0].id;
+    const first = state.staff.find((s) => s.id === chosen) || state.staff[0];
     const r = await formDialog({
       title: "Give an advance",
-      intro: `It's taken from the next payroll that isn't paid yet; you can change the plan after.${limits.length && !state.staffId ? ` ${limits.join(" · ")}.` : ""}`,
+      intro: state.staff.length === 1 || preset || state.staffId ? (availableFor(first) !== null ? `Available to advance: ${formatCentavos(availableFor(first))}.` : "") : "",
       fields: [
-        { name: "staffId", label: "Helper", type: "select", value: state.staffId || state.staff[0].id, options: state.staff.map((s) => ({ value: s.id, label: s.name })) },
+        { name: "staffId", label: "Helper", type: "select", value: first.id, options: state.staff.map((s) => ({ value: s.id, label: availableFor(s) !== null ? `${s.name} · ${formatCentavos(availableFor(s))} available` : s.name })) },
         { name: "amount", label: "Amount (₱)", required: true, inputmode: "decimal" },
-        { name: "date", label: "Date given", type: "date", value: today, max: today },
-        { name: "method", label: "How", type: "select", value: "cash", options: methodOptions() },
-        { name: "proof", label: "Proof (screenshot or PDF, optional)", type: "file", accept: "image/jpeg,image/png,image/webp,application/pdf" },
-        { name: "description", label: "What for (optional)", more: true, placeholder: "e.g. Fare home" },
-        { name: "installment", label: "Take from each payroll (₱, optional)", more: true, inputmode: "decimal", hint: "Blank = all of it from the next payroll." },
+        { name: "plan", label: "Deduct on", type: "select", value: "next", options: [{ value: "next", label: "Next unpaid payroll" }, { value: "split", label: "Split repayment" }, { value: "none", label: "No payroll deduction" }] },
+        { name: "date", label: "Date given", type: "date", value: today, max: today, more: true },
+        { name: "method", label: "How", type: "select", value: lastMethod(), options: methodOptions(), more: true },
         { name: "reference", label: "Reference (optional)", more: true },
+        { name: "proof", label: "Proof (screenshot or PDF, optional)", type: "file", accept: "image/jpeg,image/png,image/webp,application/pdf", more: true },
+        { name: "description", label: "Note (optional)", more: true, placeholder: "e.g. Fare home" },
       ],
       submitLabel: "Give advance",
       onSubmit: async (v) => {
+        const s = state.staff.find((x) => x.id === v.staffId);
+        const amount = parseCentavos(v.amount);
+        const avail = availableFor(s);
+        if (avail !== null && amount > avail) throw new Error(`Maximum available is ${formatCentavos(avail)}.`);
         const proof = v.proof ? await prepareProof(v.proof, { pdf: true }) : null;
-        const inst = String(v.installment || "").trim() ? parseCentavos(v.installment) : null;
-        return api({ action: "give", advance: { staffId: v.staffId, date: v.date || today, amount: parseCentavos(v.amount), method: v.method, ...(v.description?.trim() ? { description: v.description.trim() } : {}), ...(inst ? { installment: inst } : {}), ...(v.reference?.trim() ? { reference: v.reference.trim() } : {}) }, ...(proof ? { proof } : {}) });
+        const res = await api({ action: "give", advance: { staffId: v.staffId, date: v.date || today, amount, method: v.method, plan: v.plan === "none" || v.plan === "split" ? "none" : "next", ...(v.description?.trim() ? { description: v.description.trim() } : {}), ...(v.reference?.trim() ? { reference: v.reference.trim() } : {}) }, ...(proof ? { proof } : {}) });
+        try {
+          localStorage.setItem(METHOD_KEY, v.method);
+        } catch {
+          /* per-device convenience only */
+        }
+        return { ...res, amount, plan: v.plan, staff: s };
       },
     });
-    if (r) {
-      toast(`Advance given. Deduct ${r.schedule.map((e) => `${formatCentavos(e.amount)} ${periodText(e)}`).join(", ")}.`, "success");
-      load();
+    if (!r) return undefined;
+    // Split: the plan editor for this new advance (the money is already recorded).
+    let schedule = r.schedule;
+    if (r.plan === "split") {
+      const planned = await editPlan({ advance: { id: r.advanceId, amount: r.amount, deductedAmount: 0, repaidAmount: 0, status: "paid", schedule: [] }, staff: r.staff, today, api });
+      if (planned?.schedule) schedule = planned.schedule;
     }
+    await quickResult({ name: r.staffName || r.staff?.name, amount: r.amount, outstanding: r.outstanding, next: (schedule || []).find((e) => e.state === "planned") || null, available: r.available });
+    load();
     return undefined;
+  }
+
+  // The result at a glance (one tap to close).
+  function quickResult({ name, amount, outstanding, next, available }) {
+    return new Promise((resolve) => {
+      const backdrop = document.createElement("div");
+      backdrop.className = "modal-backdrop";
+      document.body.appendChild(backdrop);
+      render(
+        backdrop,
+        html`<div class="modal" role="dialog" aria-modal="true" aria-label="Advance given" data-role="advance-result">
+          <div class="modal-header"><h2 class="card-title">${name}</h2></div>
+          <div class="modal-body">
+            <dl class="adv-result">
+              <dt>Advance given</dt><dd>${formatCentavos(amount)}</dd>
+              <dt>Outstanding</dt><dd data-role="result-outstanding">${formatCentavos(outstanding ?? amount)}</dd>
+              <dt>Next deduction</dt><dd>${next ? html`${formatCentavos(next.amount)} <small>${periodText(next)}</small>` : "None planned"}</dd>
+              ${available !== null && available !== undefined ? html`<dt>Still available</dt><dd>${formatCentavos(available)}</dd>` : ""}
+            </dl>
+            <p class="pay-status">${badge("Waiting for confirmation", "warning")}</p>
+          </div>
+          <div class="modal-footer"><button type="button" class="btn btn-primary" data-x="close">OK</button></div>
+        </div>`
+      );
+      backdrop.addEventListener("click", (event) => {
+        if (event.target === backdrop || event.target.closest('[data-x="close"]')) {
+          backdrop.remove();
+          resolve();
+        }
+      });
+    });
   }
 
   async function details(a) {
@@ -226,7 +293,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     const a = state.rows.find((r) => r.id === el.dataset.id);
     const act = el.dataset.act || el.dataset.x;
     try {
-      if (act === "give") return give();
+      if (act === "give") return give(el.dataset.staff || "");
       if (act === "voided") return showVoided();
       if (!a) return undefined;
       if (act === "details") return details(a);

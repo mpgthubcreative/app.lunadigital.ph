@@ -25,6 +25,9 @@
 // Owner-pilot simplification batch:
 //   { action: "editLine", payrollId, lineId, changes: { amount?, description? } }   payroll.manage (a bonus or a
 //        manual deduction on an unpaid payroll; generated lines change at their source)
+//   { action: "correctPayroll", payrollId, change: { op: "line" | "advance" | "prepaid", ... }, reason }
+//        payroll.release (Owner-pilot polish: a PAID payroll's breakdown, line by
+//        line; the payment record is never changed by it)
 //   { action: "correctPayment", payrollId, correction: { paidDate?, method?, reference?, amount? }, reason }
 //        payroll.release: a paid salary is corrected with a reason, before / after kept, never erased
 //   { action: "period", ..., staffId? }   one helper's periods only
@@ -35,7 +38,7 @@
 
 import { getAdmin } from "./_lib/firebase-admin.js";
 import { payrollActionHandler } from "./_lib/payroll-http.js";
-import { changeOverpayment, payAdditional, voidPayroll, listVoided, editPayrollLine, correctPayment, payrollPeriodView, preparePayroll, prepareEligible, addDeduction, removeDeduction, deferAdvance, deleteDraftPayroll, releaseSalary, newReceiptLink, addAddition, removeAddition, thirteenthMonthSummary, attachSalaryProof, readSalaryProof, resolveSalaryDispute } from "./_lib/payroll.js";
+import { changeOverpayment, payAdditional, voidPayroll, listVoided, editPayrollLine, correctPayment, correctPayroll, payrollPeriodView, preparePayroll, prepareEligible, addDeduction, removeDeduction, deferAdvance, deleteDraftPayroll, releaseSalary, newReceiptLink, addAddition, removeAddition, thirteenthMonthSummary, attachSalaryProof, readSalaryProof, resolveSalaryDispute } from "./_lib/payroll.js";
 
 const M = "payroll.manage";
 const R = "payroll.release";
@@ -58,6 +61,7 @@ export const createPayrollHandler = (deps) =>
       void: { permission: R, fields: ["action", "payrollId", "reason"], run: (c, b) => voidPayroll({ ...c, payrollId: b.payrollId, reason: b.reason }) },
       voided: { permission: "payroll.view", fields: ["action", "staffId"], run: async (c, b) => ({ voided: await listVoided({ tenant: c.tenant, kind: "payroll", staffId: b.staffId ?? null }) }) },
       editLine: { permission: M, fields: ["action", "payrollId", "lineId", "changes"], run: (c, b) => editPayrollLine({ ...c, payrollId: b.payrollId, lineId: b.lineId, changes: b.changes }) },
+      correctPayroll: { permission: R, fields: ["action", "payrollId", "change", "reason"], run: (c, b) => correctPayroll({ ...c, payrollId: b.payrollId, change: b.change, reason: b.reason }) },
       correctPayment: { permission: R, fields: ["action", "payrollId", "correction", "reason"], run: (c, b) => correctPayment({ ...c, payrollId: b.payrollId, correction: b.correction, reason: b.reason }) },
       release: {
         permission: R,

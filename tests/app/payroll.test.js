@@ -59,60 +59,115 @@ function fakeData(extra = {}) {
 const payroll = (o = {}) => ({ id: "staffMaria0001_2026-10-01", staffId: maria.id, staffName: "Maria", periodStart: "2026-10-01", periodEnd: "2026-10-15", dailyWage: 60000, present: 10, officialLeave: 2, absent: 3, notMarked: 0, payableDays: 12, basePay: 720000, deductions: [{ id: "adv-x", type: "advance", advanceId: "adv0000000001", description: "Advance 2026-10-05", amount: 50000 }], deductionsTotal: 50000, netPay: 670000, status: "draft", receiptStatus: "none", history: [], ...o });
 
 describe("Attendance (Owner-pilot simplification): one helper, one pay period", () => {
-  it("Employee + Period only (no By day / By employee); one row per date; totals", async () => {
+  // Owner-pilot polish (2026-10-16): a calculator-style tap grid.
+  const cell = (d) => container.querySelector(`[data-act="cell"][data-day="${d}"]`);
+  const tap = async (...days) => {
+    for (const d of days) cell(d).click();
+    await flush();
+  };
+  const press = async (status) => {
+    container.querySelector(`[data-act="apply"][data-status="${status}"]`).click();
+    await flush();
+  };
+  const choosePeriod = async (start) => {
+    const period = container.querySelector('[data-role="pick-period"]');
+    period.value = start;
+    period.dispatchEvent(new Event("change", { bubbles: true }));
+    await flush();
+  };
+
+  it("Employee + Period only; a tap grid of the period's dates with short status labels and a legend; totals", async () => {
     const data = fakeData();
     mountAttendance(container, home(), { data, now: NOW, toast: () => {} });
     await flush();
     expect(container.querySelector('[data-seg="view"]')).toBeNull();
     expect([...container.querySelectorAll('[data-role="pickers"] select')].map((x) => x.getAttribute("aria-label"))).toEqual(["Employee", "Pay period"]);
     expect(data.listAttendance).toHaveBeenLastCalledWith("demo-distributor-a", { staffId: maria.id, from: "2026-10-16", to: "2026-10-31" }, { pageSize: 100 });
-    expect(container.querySelectorAll('[data-role="owner-sheet"] .sheet-row')).toHaveLength(16);
+    expect(container.querySelectorAll('[data-role="att-grid"] .att-cell')).toHaveLength(16);
     const period = container.querySelector('[data-role="pick-period"]');
     expect(period.selectedOptions[0].textContent).toBe("Oct 16–31 (now)");
     expect(period.options[0].textContent).toBe("Oct 16–31 (now)"); // nothing ahead: upcoming days can't be marked
-    // Upcoming days are shown, not markable.
-    const up = container.querySelector('[data-day="2026-10-17"]');
-    expect(up.classList.contains("is-upcoming")).toBe(true);
-    expect(up.querySelector("select").disabled).toBe(true);
-    expect(up.querySelector("select").textContent).toBe("Upcoming");
-    expect(up.querySelector("[data-sel]")).toBeNull();
-    period.value = "2026-10-01";
-    period.dispatchEvent(new Event("change", { bubbles: true }));
-    await flush();
+    // Upcoming days are shown, not tappable.
+    expect(cell("2026-10-17").disabled).toBe(true);
+    expect(cell("2026-10-17").classList.contains("is-upcoming")).toBe(true);
+    expect(cell("2026-10-16").disabled).toBe(false);
+    expect(container.querySelector('[data-role="legend"]').textContent).toMatch(/P Present · A Absent · PL Paid Leave · UL Unpaid Leave · R Rest Day/);
+    await choosePeriod("2026-10-01");
     expect(data.listAttendance).toHaveBeenLastCalledWith("demo-distributor-a", { staffId: maria.id, from: "2026-10-01", to: "2026-10-15" }, { pageSize: 100 });
+    expect([...container.querySelectorAll(".att-cell .att-st")].map((x) => x.textContent).slice(0, 5)).toEqual(["P", "P", "A", "P", "PL"]);
     expect(container.querySelector('[data-role="totals"]').textContent).toMatch(/Present 10 · Absent 3 · Rest Day 0 · Paid Leave 2 · Unpaid Leave 0 → 12 paid days · ₱7,200\.00/);
   });
 
-  it("a status change saves that day; ticked days are marked together", async () => {
+  it("tap one date -> tap a status; select several -> one status for all; Clear; nothing sent until Save", async () => {
     const data = fakeData();
     mountAttendance(container, home(), { data, now: NOW, toast: () => {} });
     await flush();
-    const sel = container.querySelector('select[data-act="mark"][data-date="2026-10-16"]');
-    sel.value = "absent";
-    sel.dispatchEvent(new Event("change", { bubbles: true }));
+    await choosePeriod("2026-10-01");
+    // One date.
+    await tap("2026-10-03");
+    expect(cell("2026-10-03").classList.contains("is-selected")).toBe(true);
+    await press("present");
+    expect(cell("2026-10-03").querySelector(".att-st").textContent).toBe("P");
+    expect(cell("2026-10-03").classList.contains("is-dirty")).toBe(true);
+    // Several dates, one status.
+    await tap("2026-10-04", "2026-10-11");
+    await press("rest_day");
+    // Clear a recorded day (back to Not marked).
+    await tap("2026-10-13");
+    await press("clear");
+    expect(cell("2026-10-13").querySelector(".att-st").textContent).toBe("–");
+    expect(data.setAttendanceMany).not.toHaveBeenCalled();
+    expect(container.querySelector('[data-role="save-bar"]').textContent).toMatch(/4 changes not saved/);
+    expect(container.querySelector('[data-role="totals"]').textContent).toMatch(/with unsaved changes/);
+    container.querySelector('[data-act="save"]').click();
+    await until(() => data.setAttendanceMany.mock.calls.length === 1);
+    expect(data.setAttendanceMany).toHaveBeenCalledWith(maria.id, [{ date: "2026-10-03", status: "present" }, { date: "2026-10-04", status: "rest_day" }, { date: "2026-10-11", status: "rest_day" }, { date: "2026-10-13", status: "clear" }]);
+  });
+
+  it("Fill normal schedule shows Expected days (upcoming too); Confirm through today stages only days up to today; upcoming never sent", async () => {
+    const empty = { ...maria, restDays: [0] };
+    const data = fakeData({ activeStaff: vi.fn(async () => [empty]), listAttendance: vi.fn(async () => ({ rows: [], hasMore: false })) });
+    mountAttendance(container, home(), { data, now: NOW, toast: () => {} });
     await flush();
+    container.querySelector('[data-act="fill"]').click();
+    await flush();
+    // Oct 17 (Sat) expected Present, Oct 18 (Sun) expected Rest Day: shown, not recorded.
+    expect(cell("2026-10-17").querySelector(".att-st").textContent).toBe("P?");
+    expect(cell("2026-10-18").querySelector(".att-st").textContent).toBe("R?");
+    expect(cell("2026-10-18").getAttribute("aria-label")).toMatch(/Expected Rest Day/);
+    expect(container.querySelector('[data-role="save-bar"]')).toBeNull();
+    container.querySelector('[data-act="confirm-today"]').click();
+    await flush();
+    expect(container.querySelector('[data-role="save-bar"]').textContent).toMatch(/1 change not saved/);
+    container.querySelector('[data-act="save"]').click();
+    await until(() => data.setAttendanceMany.mock.calls.length === 1);
+    expect(data.setAttendanceMany).toHaveBeenCalledWith(maria.id, [{ date: "2026-10-16", status: "present" }]);
+  });
+
+  it("Copy previous period repeats last period's pattern by weekday on unmarked days up to today", async () => {
+    const prev = [{ date: "2026-10-09", status: "absent" }, { date: "2026-10-10", status: "rest_day" }]; // a Friday, a Saturday
+    const listAttendance = vi.fn(async (_b, f) => ({ rows: f.from === "2026-10-01" ? prev.map((x) => ({ ...x, staffId: maria.id, dailyWage: 60000 })) : [], hasMore: false }));
+    const data = fakeData({ listAttendance });
+    mountAttendance(container, home(), { data, now: NOW, toast: () => {} });
+    await flush();
+    container.querySelector('[data-act="copy-prev"]').click();
+    await flush();
+    expect(cell("2026-10-16").querySelector(".att-st").textContent).toBe("A"); // Friday, like Oct 9
+    expect(cell("2026-10-17").querySelector(".att-st").textContent).toBe("·"); // upcoming: untouched
+    container.querySelector('[data-act="save"]').click();
+    await until(() => data.setAttendanceMany.mock.calls.length === 1);
     expect(data.setAttendanceMany).toHaveBeenCalledWith(maria.id, [{ date: "2026-10-16", status: "absent" }]);
-    const period = container.querySelector('[data-role="pick-period"]');
-    period.value = "2026-10-01";
-    period.dispatchEvent(new Event("change", { bubbles: true }));
-    await flush();
-    for (const d of ["2026-10-04", "2026-10-05"]) {
-      const box = container.querySelector(`[data-sel="${d}"]`);
-      box.checked = true;
-      box.dispatchEvent(new Event("change", { bubbles: true }));
-    }
-    container.querySelector('[data-act="bulk"][data-status="rest_day"]').click();
-    await flush();
-    expect(data.setAttendanceMany).toHaveBeenLastCalledWith(maria.id, [{ date: "2026-10-04", status: "rest_day" }, { date: "2026-10-05", status: "rest_day" }]);
   });
 
   it("correcting a day the helper sent asks for a reason, then saves it with the reason", async () => {
     const data = fakeData({ setAttendanceMany: vi.fn(async (_s, days, reason) => (reason ? { saved: days, failed: [] } : { saved: [], failed: days.map((d) => ({ date: d.date, code: "reason-required", error: "Say why" })) })) });
     mountAttendance(container, home(), { data, now: NOW, toast: () => {} });
     await flush();
-    const sel = container.querySelector('select[data-act="mark"][data-date="2026-10-16"]');
-    sel.value = "absent";
-    sel.dispatchEvent(new Event("change", { bubbles: true }));
+    container.querySelector('[data-act="cell"][data-day="2026-10-16"]').click();
+    await flush();
+    container.querySelector('[data-act="apply"][data-status="absent"]').click();
+    await flush();
+    container.querySelector('[data-act="save"]').click();
     await until(() => lastForm());
     const f = lastForm();
     f.elements.reason.value = "She was on leave";
@@ -165,8 +220,9 @@ describe("Payroll", () => {
     await flush();
     const view = document.querySelector('[data-role="payroll-view"]');
     const text = (sel) => [...view.querySelectorAll(`${sel} > li`)].map((li) => [...li.querySelectorAll(".slip-what, .slip-amt")].map((x) => x.childNodes[0].textContent.trim()).join(" "));
-    expect(text('[data-role="earnings"]')).toEqual(["Basic pay ₱7,200.00", "Christmas ₱1,000.00"]);
-    expect(text('[data-role="deductions"]')).toEqual(["Advance 2026-10-05 − ₱500.00", "Broken plate − ₱100.00"]);
+    // Owner-pilot polish: one short breakdown (earnings and deductions together).
+    expect(text('[data-role="summary"]')).toEqual(["Basic pay ₱7,200.00", "Christmas ₱1,000.00", "Advance deduction − ₱500.00", "Broken plate − ₱100.00"]);
+    expect(view.querySelector('[data-role="pay-status"]').textContent).toMatch(/Not paid yet/);
     expect(view.querySelector('[data-role="net"]').textContent).toBe("₱7,700.00");
     // Generated lines are protected: basic pay -> View calculation; advance -> plan actions.
     expect([...view.querySelectorAll('[data-line="basic"] button')].map((b) => b.textContent)).toEqual(["View calculation"]);
@@ -233,7 +289,7 @@ describe("Payroll", () => {
     container.querySelector('[data-act="view"]').click();
     await flush();
     const line = document.querySelector('[data-not-taken="adv0000000001"]');
-    expect(line.textContent).toMatch(/Scheduled deduction not taken[\s\S]*still owed; the salary paid stays as it was[\s\S]*₱600\.00/);
+    expect(line.textContent).toMatch(/Scheduled deduction not taken[\s\S]*still owed[\s\S]*₱600\.00/);
     expect([...line.querySelectorAll(".menu-item")].map((b) => b.textContent)).toEqual(["Move to next payroll", "Mark repaid separately", "Edit repayment plan"]);
     expect(document.querySelector('[data-role="payment"]').textContent).toMatch(/₱7,200\.00 on Oct 12/);
     line.querySelector('[data-x="nt-move"]').click();
@@ -280,19 +336,51 @@ describe("Payroll", () => {
 describe("Advances", () => {
   it("Give an advance: one step (released now) with the method; the summary shows what's owed and planned", async () => {
     const owed = { id: "adv0000000009", staffId: maria.id, staffName: "Maria", date: "2026-10-02", paidDate: "2026-10-02", amount: 110000, deductedAmount: 0, status: "paid", receipt: { state: "awaiting" }, schedule: [{ id: "a", periodStart: "2026-10-16", periodEnd: "2026-10-31", amount: 60000, state: "planned" }, { id: "b", periodStart: "2026-11-01", periodEnd: "2026-11-15", amount: 50000, state: "planned" }] };
-    const data = fakeData({ listAdvances: vi.fn(async () => ({ rows: [owed], hasMore: false })), advancesApi: vi.fn(async () => ({ advanceId: "x", schedule: [{ periodStart: "2026-10-16", periodEnd: "2026-10-31", amount: 200000 }] })) });
+    const data = fakeData({ listAdvances: vi.fn(async () => ({ rows: [owed], hasMore: false })), advancesApi: vi.fn(async () => ({ advanceId: "x", schedule: [{ periodStart: "2026-10-16", periodEnd: "2026-10-31", amount: 200000, state: "planned" }], outstanding: 310000, available: null })) });
     mountAdvances(container, home(), { data, now: NOW, toast: () => {} });
     await flush();
     const card = container.querySelector(`[data-owe="${maria.id}"]`).textContent.replace(/\s+/g, " ");
-    expect(card).toMatch(/Outstanding balance\s*₱1,100\.00\s*Next planned deduction\s*₱600\.00\s*Oct 16–31\s*Balance after planned\s*₱0\.00/);
+    expect(card).toMatch(/Outstanding\s*₱1,100\.00\s*Next deduction\s*₱600\.00\s*Oct 16–31/);
     expect(container.querySelector('[data-advance="adv0000000009"]').textContent).toMatch(/₱1,100\.00 owed · ₱600\.00 Oct 16–31 · ₱500\.00 Nov 1–15[\s\S]*Not confirmed/);
+    // Owner-pilot polish: Helper, Amount, Deduct on; the rest under More options.
     container.querySelector('[data-act="give"]').click();
     const f = lastForm();
+    expect([...f.querySelectorAll(".field label")].slice(0, 3).map((l) => l.textContent)).toEqual(["Helper", "Amount (₱) *", "Deduct on"]);
+    expect([...f.elements.plan.options].map((o) => o.textContent)).toEqual(["Next unpaid payroll", "Split repayment", "No payroll deduction"]);
+    expect(f.elements.method.closest("details")).not.toBeNull(); // More options
     f.elements.amount.value = "2000";
     f.elements.method.value = "gcash";
     submit(f);
     await flush();
-    expect(data.advancesApi).toHaveBeenCalledWith({ action: "give", advance: { staffId: maria.id, date: "2026-10-16", amount: 200000, method: "gcash" } });
+    expect(data.advancesApi).toHaveBeenCalledWith({ action: "give", advance: { staffId: maria.id, date: "2026-10-16", amount: 200000, method: "gcash", plan: "next" } });
+    // The quick result.
+    const res = document.querySelector('[data-role="advance-result"]');
+    expect(res.textContent.replace(/\s+/g, " ")).toMatch(/Advance given\s*₱2,000\.00[\s\S]*Next deduction\s*₱2,000\.00\s*Oct 16–31[\s\S]*Waiting for confirmation/);
+  });
+
+  it("Give an advance: the limit is shown and checked before sending; No payroll deduction; ?give=1&staff opens it preselected", async () => {
+    localStorage.clear(); // the last-used method is remembered per device
+    const limited = { ...maria, advanceLimit: 300000 };
+    const owed = { id: "adv0000000009", staffId: maria.id, staffName: "Maria", date: "2026-10-02", paidDate: "2026-10-02", amount: 100000, deductedAmount: 0, status: "paid", schedule: [] };
+    const data = fakeData({ activeStaff: vi.fn(async () => [limited]), listAdvances: vi.fn(async () => ({ rows: [owed], hasMore: false })), advancesApi: vi.fn(async () => ({ advanceId: "x", schedule: [], outstanding: 150000, available: 150000 })) });
+    window.history.replaceState({}, "", `/advances?give=1&staff=${maria.id}`);
+    mountAdvances(container, home(), { data, now: NOW, toast: () => {} });
+    await until(() => lastForm()?.elements.plan);
+    const f = lastForm();
+    expect(f.closest(".modal-backdrop").textContent).toMatch(/Available to advance: ₱2,000\.00/);
+    expect(f.elements.staffId.value).toBe(maria.id);
+    f.elements.amount.value = "2500";
+    submit(f);
+    await flush();
+    expect(f.closest(".modal-backdrop").textContent).toMatch(/Maximum available is ₱2,000\.00\./);
+    expect(data.advancesApi).not.toHaveBeenCalled();
+    f.elements.amount.value = "500";
+    f.elements.plan.value = "none";
+    submit(f);
+    await flush();
+    expect(data.advancesApi).toHaveBeenCalledWith({ action: "give", advance: { staffId: maria.id, date: "2026-10-16", amount: 50000, method: "cash", plan: "none" } });
+    expect(document.querySelector('[data-role="advance-result"]').textContent).toMatch(/None planned/);
+    window.history.replaceState({}, "", "/");
   });
 
   it("⋯ Edit repayment plan sends the plan; Record a repayment sends the amount (the debt only drops by repayment)", async () => {
@@ -330,7 +418,7 @@ describe("Household Staff", () => {
     form.elements.payCycle.value = "weekly";
     submit(form);
     await flush();
-    expect(data.staffApi).toHaveBeenCalledWith({ action: "create", staff: { name: "Lito", position: null, dailyWage: 65050, payCycle: "weekly", cutoffs: null, advanceLimit: null, paidLeaveDays: null, phone: null, startDate: null, endDate: null, notes: null } });
+    expect(data.staffApi).toHaveBeenCalledWith({ action: "create", staff: { name: "Lito", position: null, dailyWage: 65050, payCycle: "weekly", cutoffs: null, advanceLimit: null, paidLeaveDays: null, restDays: [0], phone: null, startDate: null, endDate: null, notes: null } });
   });
 
   it("Owner-pilot batch: custom cutoffs (14 and 29) and a ₱5,000 advance limit", async () => {
@@ -511,7 +599,12 @@ describe("Payroll: automatic pay periods (Owner-pilot batch)", () => {
     container.querySelector('[data-act="view"]').click();
     await flush();
     const fig = [...document.querySelectorAll('[data-role="early"] dt')].map((dt) => `${dt.textContent.replace(/\s+/g, " ").trim()}: ${dt.nextElementSibling.textContent}`);
-    expect(fig).toEqual(["Earned through Oct 11: ₱6,100.00", "Prepaid salary Oct 12: ₱600.00", "Total salary paid Oct 11: ₱6,700.00", "Final salary: ₱7,300.00"]);
+    // Owner-pilot polish: Basic pay (earned when paid) − advance + prepaid = total paid; then paid vs final.
+    const slip = [...document.querySelectorAll('[data-role="summary"] > li')].map((li) => [...li.querySelectorAll(".slip-what, .slip-amt")].map((x) => x.childNodes[0].textContent.trim()).join(" "));
+    expect(slip).toEqual(["Basic pay ₱6,600.00", "Advance deduction − ₱500.00", "Prepaid salary Oct 12 ₱600.00"]);
+    expect(document.querySelector('[data-role="net"]').textContent).toBe("₱6,700.00");
+    expect(document.querySelector('[data-role="pay-status"]').textContent).toMatch(/Not yet confirmed/);
+    expect(fig).toEqual(["Actually paid: ₱6,700.00", "Final salary: ₱7,300.00"]);
     expect(document.querySelector('[data-role="reconcile"]').textContent).toMatch(/Additional salary due\s*₱600\.00 more was earned than paid/);
     document.querySelector('[data-x="pay-additional"]').click();
     const f = lastForm();
@@ -555,7 +648,7 @@ describe("Owner-pilot change: ⋯ Delete payroll / Void payroll / Delete or Void
     await flush();
     const items = (id) => [...container.querySelectorAll(`tr[data-payroll="${id}"] .line-menu-list > *`)].map((x) => (x.classList.contains("menu-sep") ? "—" : x.textContent));
     expect(items(draft.id)).toEqual(["View details", "—", "Delete payroll"]);
-    expect(items(paid.id)).toEqual(["View details", "Correct payment", "—", "Void payroll"]);
+    expect(items(paid.id)).toEqual(["View details", "Correct payroll", "Correct payment", "—", "Void payroll"]);
     // Owner-pilot cleanup: always visible; nothing saved = it explains.
     expect(items(auto.id)).toEqual(["View details", "—", "Delete payroll"]);
     // Delete: a plain confirmation, then deleteDraft.
@@ -658,9 +751,11 @@ describe("Owner-pilot cleanup: payroll eligibility, Delete / Correct from ⋯, P
     await flush();
     expect(container.querySelector('[data-role="leave"]').textContent.replace(/\s+/g, " ")).toMatch(/Paid Leave 2026: used 5 of 5 days · 0 remaining/);
     const mark = async () => {
-      const sel = container.querySelector('select[data-act="mark"][data-date="2026-10-16"]');
-      sel.value = "official_leave";
-      sel.dispatchEvent(new Event("change", { bubbles: true }));
+      container.querySelector('[data-act="cell"][data-day="2026-10-16"]').click();
+      await flush();
+      container.querySelector('[data-act="apply"][data-status="official_leave"]').click();
+      await flush();
+      container.querySelector('[data-act="save"]').click();
       await until(() => lastForm()?.elements.choice);
       return lastForm();
     };

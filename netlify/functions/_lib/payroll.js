@@ -150,7 +150,7 @@ export async function updateStaff({ db, tenant, FieldValue, staffId, changes, ac
     }
     const limitText = (v) => (Number.isSafeInteger(v) ? peso(v) : "no limit");
     const leaveText = (v) => (Number.isSafeInteger(v) ? `${v} days a year` : "household default");
-    const labels = changed.map((k) => (k === "dailyWage" ? `Daily wage changed ${peso(current.dailyWage)} → ${peso(data.dailyWage)}` : k === "notes" ? "Notes updated" : k === "advanceLimit" ? `Advance limit ${limitText(current.advanceLimit)} → ${limitText(data.advanceLimit)}` : k === "paidLeaveDays" ? `Paid Leave allowance ${leaveText(current.paidLeaveDays)} → ${leaveText(data.paidLeaveDays)}` : k === "cutoffs" || k === "payCycle" ? `Pay cycle: ${cycleLabel({ payCycle: cycle, cutoffs: data.cutoffs ?? current.cutoffs ?? null })}` : `${k} changed`)).filter((l, i, all) => all.indexOf(l) === i);
+    const labels = changed.map((k) => (k === "dailyWage" ? `Daily wage changed ${peso(current.dailyWage)} → ${peso(data.dailyWage)}` : k === "notes" ? "Notes updated" : k === "advanceLimit" ? `Advance limit ${limitText(current.advanceLimit)} → ${limitText(data.advanceLimit)}` : k === "paidLeaveDays" ? `Paid Leave allowance ${leaveText(current.paidLeaveDays)} → ${leaveText(data.paidLeaveDays)}` : k === "restDays" ? "Usual rest day changed" : k === "cutoffs" || k === "payCycle" ? `Pay cycle: ${cycleLabel({ payCycle: cycle, cutoffs: data.cutoffs ?? current.cutoffs ?? null })}` : `${k} changed`)).filter((l, i, all) => all.indexOf(l) === i);
     tx.update(ref, { ...Object.fromEntries(changed.map((k) => [k, data[k]])), ...(changed.includes("name") ? { nameLower: lower(data.name) } : {}), history: append(current.history, entry(actor, labels.join(" · "))), revision: (current.revision || 1) + 1, updatedBy: actor, updatedAt: FieldValue.serverTimestamp() });
     return { staffId };
   }, TX_OPTIONS);
@@ -208,6 +208,7 @@ export async function deleteStaff({ db, tenant, FieldValue, staffId, actor }) {
 // after, who and when. A paid payroll's days stay locked (as before).
 export async function setAttendance({ db, tenant, FieldValue, business, input, actor, now = new Date() }) {
   const today = businessDate(business.timezone, now);
+  if (input && typeof input === "object" && input.status === "clear") return clearAttendance({ db, tenant, FieldValue, today, input, actor });
   const { leaveOverride: overrideInput, ...rest } = input && typeof input === "object" ? input : {};
   const { staffId, date, status, note, reason } = validateAttendanceInput(rest, { today });
   const leaveOverride = overrideReason(overrideInput);
@@ -217,6 +218,23 @@ export async function setAttendance({ db, tenant, FieldValue, business, input, a
     const leave = await paidLeaveGate(tx, { tenant, staffId, staff: plan.staff, date, before: plan.before, status, override: leaveOverride });
     leave.commit({ FieldValue });
     return plan.commit({ FieldValue, status, note, actor, reason, leaveOverride: leave.override });
+  }, TX_OPTIONS);
+}
+
+// Owner-pilot polish (2026-10-16): "Clear" a recorded day (back to Not
+// marked). Same locks as any change (a paid period stays locked; a day the
+// helper sent needs a reason); an unpaid payroll's counts move with it; the
+// audit log keeps what the day was.
+async function clearAttendance({ db, tenant, FieldValue, today, input, actor }) {
+  const { staffId, date, reason } = input;
+  if (!isValidStaffId(staffId)) throw new PayrollError("invalid-staff", "Choose a staff member");
+  if (!isDayId(date) || date > today) throw new PayrollError("invalid-date", "Invalid date");
+  const why = typeof reason === "string" && reason.trim() ? reason.trim().replace(/\s+/g, " ").slice(0, 200) : null;
+  return db.runTransaction(async (tx) => {
+    const plan = await prepareAttendanceWrite(tx, { tenant, staffId, date, today });
+    if (!plan.before) return { staffId, date, status: null, unchanged: true };
+    if (plan.fromStaff && !why) throw new PayrollError("reason-required", "Say why you're correcting what the employee sent");
+    return plan.clear({ FieldValue, actor, reason: why });
   }, TX_OPTIONS);
 }
 
@@ -305,6 +323,18 @@ async function prepareAttendanceWrite(tx, { tenant, staffId, date, today = null 
     before,
     // The day came from the employee's own request (approved by the Owner).
     fromStaff: Boolean(before && (before.source === "staff_request" || (before.history || []).some((h) => /request, approved/.test(h.label || "")))),
+    clear({ FieldValue, actor, reason = null }) {
+      const stamp = FieldValue.serverTimestamp();
+      tx.delete(lineRef);
+      if (payroll) {
+        const next = applyLineChange(payroll, before, null);
+        const changes = { ...next, ...payTotals(payroll, { basePay: next.basePay }) };
+        tx.update(pRef, { ...changes, revision: (payroll.revision || 1) + 1, updatedAt: stamp });
+        if (others) refreshOverpaymentLines(tx, tenant, staff, others.map((x) => (x.id === pRef.id ? { ...x, ...changes } : x)), today, FieldValue);
+      }
+      tx.set(tenant.collection("auditLog").doc(), { type: "attendance.cleared", staffId, staffName: staff.name, date, before: { status: before.status, note: before.note ?? null, source: before.source ?? null }, reason, actor, at: stamp });
+      return { staffId, date, status: null, cleared: true };
+    },
     commit({ FieldValue, status, note, actor, via = null, reason = null, leaveOverride = null }) {
     if (before && before.status === status && (before.note ?? null) === note) return { staffId, date, status, unchanged: true };
     const overrideNow = leaveOverride && !(before?.status === PAID_LEAVE_STATUS) ? leaveOverride : null;
@@ -921,7 +951,7 @@ async function releaseOnce({ db, tenant, FieldValue, business, today, data, payr
       deductionsTotal: p.deductionsTotal,
       netPay: p.netPay,
       grossPay: p.grossPay,
-      salary: { amount: total, earned: p.netPay, prepaid, method: data.method, reference: data.reference, paidDate: data.paidDate, timing, releasedBy: actor, releasedAt: stamp, ...(stored ? { proof: stored } : {}) },
+      salary: { amount: total, earned: p.netPay, prepaid, atPayment: { basePay: p.basePay ?? 0, additionsTotal: p.additionsTotal ?? 0, deductionsTotal: p.deductionsTotal ?? 0, payableDays: p.payableDays ?? 0 }, method: data.method, reference: data.reference, paidDate: data.paidDate, timing, releasedBy: actor, releasedAt: stamp, ...(stored ? { proof: stored } : {}) },
       receiptStatus: "awaiting",
       receiptLinkHash: link.hash,
       receiptLinkExpiresAt: link.expiresAt,
@@ -1666,7 +1696,10 @@ async function periodRow({ db, tenant, s, period, today }) {
 // unpaid payroll. The helper later confirms receiving it.
 export async function giveAdvance({ db, bucket = null, tenant, FieldValue, business, input, proof = null, actor, now = new Date() }) {
   if (!input || typeof input !== "object" || Array.isArray(input)) throw new PayrollError("invalid-input", "Invalid advance");
-  const { method, reference, ...rest } = input;
+  // Owner-pilot polish: plan "next" (default: the next unpaid payroll) or
+  // "none" (no payroll deduction: repaid separately, or planned later).
+  const { method, reference, plan = "next", ...rest } = input;
+  if (!["next", "none"].includes(plan)) throw new PayrollError("invalid-input", "Choose how it's repaid");
   const today = businessDate(business.timezone, now);
   const data = validateAdvanceInput(rest, { today });
   const release = validateAdvanceRelease({ paidDate: data.date, ...(method !== undefined ? { method } : {}), ...(reference !== undefined ? { reference } : {}) }, { today });
@@ -1682,15 +1715,17 @@ export async function giveAdvance({ db, bucket = null, tenant, FieldValue, busin
       const all = (await tx.get(tenant.collection("advances").where("staffId", "==", data.staffId))).docs.map((d) => ({ id: d.id, ...d.data() }));
       const file = stored ? await prepareStorageFinalize(tx, { tenant, objectId: stored.objectId }) : null;
       const base = { id: ref.id, ...data, status: "paid", paidDate: release.paidDate, deductedAmount: 0 };
-      const schedule = defaultSchedule(staff, payrolls, base, release.paidDate);
+      const schedule = plan === "none" ? [] : defaultSchedule(staff, payrolls, base, release.paidDate);
       const stamp = FieldValue.serverTimestamp();
       file?.commit({ FieldValue });
-      tx.create(ref, { schemaVersion: PAYROLL_SCHEMA_VERSION, ...data, staffName: staff.name, status: "paid", requestedAmount: null, ...release, paidBy: actor, schedule, receipt: { state: "awaiting" }, ...(stored ? { proof: stored } : {}), deductionPayrollId: null, deducted: false, deductedAmount: 0, repaidAmount: 0, repayments: [], deductionLog: [], skipPayrollIds: [], history: [entry(actor, `Given ${peso(data.amount)} on ${release.paidDate} via ${SALARY_METHODS[release.method].label}${release.reference ? ` · Ref ${release.reference}` : ""} · deduct ${schedule.map((e) => `${peso(e.amount)} ${periodName(e)}`).join(", ")}`)], revision: 1, createdBy: actor, createdAt: stamp, updatedBy: actor, updatedAt: stamp });
+      tx.create(ref, { schemaVersion: PAYROLL_SCHEMA_VERSION, ...data, staffName: staff.name, status: "paid", requestedAmount: null, ...release, paidBy: actor, schedule, receipt: { state: "awaiting" }, ...(stored ? { proof: stored } : {}), deductionPayrollId: null, deducted: false, deductedAmount: 0, repaidAmount: 0, repayments: [], deductionLog: [], skipPayrollIds: [], history: [entry(actor, `Given ${peso(data.amount)} on ${release.paidDate} via ${SALARY_METHODS[release.method].label}${release.reference ? ` · Ref ${release.reference}` : ""} · ${schedule.length ? `deduct ${schedule.map((e) => `${peso(e.amount)} ${periodName(e)}`).join(", ")}` : "no payroll deduction planned"}`)], revision: 1, createdBy: actor, createdAt: stamp, updatedBy: actor, updatedAt: stamp });
       const periods = new Set(schedule.map((e) => e.periodStart));
       const advancesAfter = [...all, { ...base, schedule }];
       for (const p of payrolls) if (p.status === "draft" && periods.has(p.periodStart)) syncDraftLines(tx, tenant, p, advancesAfter, FieldValue);
       tx.update(staffRef(tenant, data.staffId), { payrollTouchedAt: stamp, advanceTouchedAt: stamp });
-      return { advanceId: ref.id, status: "paid", schedule };
+      // Owner-pilot polish: the quick result (what's owed now, room left).
+      const cap = advanceCapacity(staff, [...all, { ...base, schedule }]);
+      return { advanceId: ref.id, status: "paid", schedule, outstanding: cap.outstanding, available: cap.available, staffName: staff.name };
     }, TX_OPTIONS);
   } catch (err) {
     if (stored) await undoSalaryProof({ db, bucket, tenant, FieldValue, stored });
@@ -1757,6 +1792,136 @@ export async function editPayrollLine({ db, tenant, FieldValue, payrollId, lineI
   }, TX_OPTIONS);
 }
 const MAX_ADVANCE_GUARD = 100_000_000;
+
+// ---- Owner-pilot polish (2026-10-16): Correct payroll ----
+// A PAID payroll's breakdown (the entitlement) is corrected line by line;
+// the payment itself (money actually given) is never touched here: only
+// Correct payment changes that. After a correction the final salary vs the
+// amount paid settles as usual (salary overpayment carried to the next
+// unpaid payroll, or additional salary due). Every change needs a reason
+// and keeps before / after, who and when.
+//   { op: "line", lineId, amount?, description?, remove? }   bonus / 13th / manual deduction
+//   { op: "advance", advanceId, amount }   an advance deduction (0 = take it off);
+//        a lower amount leaves the rest owed ("not taken" for this period:
+//        Move to next payroll / Mark repaid); the advance itself stays
+//   { op: "prepaid", days }   how many upcoming days the early payment covered
+//        (the total paid stays; earned = paid - prepaid)
+// Basic pay is never typed: it follows attendance (correct the days there).
+export async function correctPayroll({ db, tenant, FieldValue, business = null, payrollId, change, reason, actor, now = new Date() }) {
+  const why = typeof reason === "string" ? reason.trim().replace(/\s+/g, " ").slice(0, 200) : "";
+  if (why.length < 3) throw new PayrollError("reason-required", "Say why you're correcting this payroll");
+  if (!change || typeof change !== "object" || Array.isArray(change) || !["line", "advance", "prepaid"].includes(change.op)) throw new PayrollError("invalid-input", "Invalid correction");
+  const allowed = { line: ["op", "lineId", "amount", "description", "remove"], advance: ["op", "advanceId", "amount"], prepaid: ["op", "days"] }[change.op];
+  if (Object.keys(change).some((k) => !allowed.includes(k))) throw new PayrollError("invalid-input", "Invalid correction");
+  const today = businessDate(business?.timezone || "Asia/Manila", now);
+  const ref = payrollRef(tenant, payrollId);
+  return db.runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    if (!snap.exists) throw new PayrollError("not-found", "Payroll not found");
+    const p = snap.data();
+    if (p.status !== "released" || !p.salary) throw new PayrollError("payroll-unpaid", "This payroll isn't paid yet: change its lines directly");
+    const staffDoc = await loadStaff(tx, tenant, p.staffId);
+    const everything = await staffPayrolls(tx, tenant, p.staffId);
+    const aRef = change.op === "advance" && typeof change.advanceId === "string" && /^[A-Za-z0-9]{8,40}$/.test(change.advanceId) ? tenant.doc("advances", change.advanceId) : null;
+    const aSnap = aRef ? await tx.get(aRef) : null;
+    const stamp = FieldValue.serverTimestamp();
+    const by = actor ? { uid: actor.uid, name: actor.name ?? null } : null;
+    let patch = {};
+    let label = "";
+    let detail = {};
+    if (change.op === "line") {
+      const addIdx = (p.additions || []).findIndex((x) => x.id === change.lineId);
+      const dedIdx = (p.deductions || []).findIndex((x) => x.id === change.lineId);
+      const isAdd = addIdx >= 0;
+      if (!isAdd && dedIdx < 0) throw new PayrollError("not-found", "Line not found");
+      const before = isAdd ? p.additions[addIdx] : p.deductions[dedIdx];
+      if (isAdd ? before.type !== "bonus" && before.type !== "thirteenth" : before.type !== "manual") throw new PayrollError("generated-line", "Correct this line with its own action");
+      if (change.remove !== undefined && change.remove !== true) throw new PayrollError("invalid-input", "Invalid correction");
+      let after = null;
+      if (!change.remove) {
+        if (change.amount !== undefined && (!Number.isSafeInteger(change.amount) || change.amount <= 0 || change.amount > MAX_ADVANCE_GUARD)) throw new PayrollError("invalid-amount", "The amount must be more than ₱0");
+        const description = change.description === undefined ? before.description : typeof change.description === "string" ? change.description.trim().replace(/\s+/g, " ").slice(0, 120) : "";
+        if (!description) throw new PayrollError("invalid-input", "Description is required");
+        after = { ...before, amount: change.amount ?? before.amount, description };
+        if (after.amount === before.amount && after.description === before.description) return { payrollId, unchanged: true };
+      }
+      const list = (isAdd ? p.additions : p.deductions).flatMap((x) => (x.id === before.id ? (after ? [after] : []) : [x]));
+      const kind = isAdd ? (before.type === "thirteenth" ? "13th month pay" : "Bonus") : "Deduction";
+      if (isAdd) patch = { additions: list, ...payTotals(p, { additionsTotal: list.reduce((t, x) => t + x.amount, 0) }) };
+      else {
+        const total = deductionsTotal(list);
+        patch = { deductions: list, deductionsTotal: total, ...payTotals(p, { deductionsTotal: total }) };
+      }
+      label = after ? `${kind} corrected ${peso(before.amount)} → ${peso(after.amount)}${after.description !== before.description ? ` (${before.description} → ${after.description})` : ` (${after.description})`}` : `${kind} removed: ${before.description} ${peso(before.amount)}`;
+      detail = { lineId: before.id, before: { amount: before.amount, description: before.description }, after: after ? { amount: after.amount, description: after.description } : null };
+    } else if (change.op === "advance") {
+      if (!Number.isSafeInteger(change.amount) || change.amount < 0) throw new PayrollError("invalid-amount", "Enter the amount deducted (₱0 to take it off)");
+      const idx = (p.deductions || []).findIndex((d) => d.type === "advance" && d.advanceId === change.advanceId);
+      if (idx < 0 || !aSnap?.exists) throw new PayrollError("not-found", "That advance isn't deducted on this payroll");
+      const a = { id: aSnap.id, ...aSnap.data() };
+      const was = p.deductions[idx].amount;
+      const delta = change.amount - was;
+      if (!delta) return { payrollId, unchanged: true };
+      if (delta > advanceRemaining(a)) throw new PayrollError("invalid-amount", `Only ${peso(advanceRemaining(a))} more is owed on this advance`);
+      const deductedAmount = (Number.isSafeInteger(a.deductedAmount) ? a.deductedAmount : 0) + delta;
+      const period = { start: p.periodStart, end: p.periodEnd };
+      // This payroll's applied entry and its "not taken" one move with it.
+      const sched = scheduleOf(a);
+      const applied = sched.filter((e) => e.state === "applied" && e.payrollId === payrollId);
+      const missed = sched.filter((e) => e.state === "not_taken" && e.payrollId === payrollId);
+      const missedTotal = Math.max(0, missed.reduce((t, e) => t + e.amount, 0) - Math.max(0, delta)) + Math.max(0, -delta);
+      const owedAfter = advanceRemaining({ ...a, deductedAmount });
+      const leftHere = Math.min(missedTotal, owedAfter);
+      let schedule = [
+        ...sched.filter((e) => !applied.includes(e) && !missed.includes(e)),
+        ...(change.amount ? [newEntry(period, change.amount, "applied", { payrollId })] : []),
+        ...(leftHere ? [newEntry(period, leftHere, "not_taken", { payrollId })] : []),
+      ];
+      // A higher deduction leaves less owed: later plans never exceed it.
+      let excess = schedule.filter((e) => e.state === "planned" || e.state === "not_taken").reduce((s, e) => s + e.amount, 0) - owedAfter;
+      if (excess > 0) {
+        const order = [...schedule.keys()].filter((i) => schedule[i].state === "planned" || schedule[i].state === "not_taken").sort((x, y) => (schedule[x].periodStart < schedule[y].periodStart ? 1 : -1));
+        for (const i of order) {
+          if (excess <= 0) break;
+          const cut = Math.min(excess, schedule[i].amount);
+          schedule[i] = { ...schedule[i], amount: schedule[i].amount - cut };
+          excess -= cut;
+        }
+        schedule = schedule.filter((e) => e.amount > 0);
+      }
+      const done = owedAfter === 0;
+      tx.update(aRef, { deductedAmount, deducted: done, schedule, deductionLog: [...(Array.isArray(a.deductionLog) ? a.deductionLog : []), { payrollId, amount: delta, periodEnd: p.periodEnd, corrected: true }].slice(-100), history: append(a.history, entry(actor, `Deduction on the ${p.periodStart} to ${p.periodEnd} payroll corrected ${peso(was)} → ${peso(change.amount)} · ${done ? "fully repaid" : `${peso(owedAfter)} left`} · Reason: ${why}`)), updatedAt: stamp });
+      const deductions = p.deductions.flatMap((d, i) => (i === idx ? (change.amount ? [{ ...d, amount: change.amount }] : []) : [d]));
+      const total = deductionsTotal(deductions);
+      patch = { deductions, deductionsTotal: total, ...payTotals(p, { deductionsTotal: total }) };
+      label = change.amount ? `Advance deduction corrected ${peso(was)} → ${peso(change.amount)} (${p.deductions[idx].description})` : `Advance deduction taken off: ${p.deductions[idx].description} ${peso(was)} (still owed)`;
+      detail = { advanceId: a.id, before: { amount: was }, after: { amount: change.amount } };
+    } else {
+      if (!Number.isSafeInteger(change.days) || change.days < 0) throw new PayrollError("invalid-input", "Choose the number of prepaid days");
+      const s = p.salary;
+      const first = addDays(s.paidDate, 1);
+      const left = first <= p.periodEnd ? daysIn({ start: first, end: p.periodEnd }).length : 0;
+      if (change.days > left) throw new PayrollError("invalid-input", `Only ${left} day${left === 1 ? "" : "s"} of the period came after the payment`);
+      const wage = Number.isSafeInteger(p.dailyWage) ? p.dailyWage : 0;
+      const amount = change.days * wage;
+      if (amount > s.amount) throw new PayrollError("invalid-amount", "Prepaid salary can't be more than the amount paid");
+      const before = s.prepaid ? { days: s.prepaid.days, amount: s.prepaid.amount } : { days: 0, amount: 0 };
+      if (before.days === change.days && before.amount === amount) return { payrollId, unchanged: true };
+      const prepaid = change.days ? { days: change.days, from: first, to: addDays(first, change.days - 1), amount } : null;
+      const history = [...(Array.isArray(s.prepaidCorrections) ? s.prepaidCorrections : []), { before, after: { days: change.days, amount }, reason: why, by, at: new Date() }].slice(-20);
+      patch = { "salary.prepaid": prepaid, "salary.earned": s.amount - amount, "salary.prepaidCorrections": history };
+      label = `Prepaid salary corrected ${before.days} day${before.days === 1 ? "" : "s"} ${peso(before.amount)} → ${change.days} day${change.days === 1 ? "" : "s"} ${peso(amount)} (total paid ${peso(s.amount)} unchanged)`;
+      detail = { before, after: { days: change.days, amount } };
+    }
+    const corrections = [...(Array.isArray(p.corrections) ? p.corrections : []), { op: change.op, ...detail, reason: why, by, at: new Date() }].slice(-50);
+    tx.update(ref, { ...patch, corrections, history: append(p.history, entry(actor, `Payroll corrected: ${label} · Reason: ${why}`, { correction: change.op })), revision: (p.revision || 1) + 1, updatedBy: actor, updatedAt: stamp });
+    // The final salary moved: the overpayment carried to the next unpaid payroll follows.
+    const merged = { ...p, ...Object.fromEntries(Object.entries(patch).filter(([k]) => !k.includes("."))) };
+    refreshOverpaymentLines(tx, tenant, staffDoc, everything.map((x) => (x.id === payrollId ? { ...x, ...merged, id: payrollId } : x)), today, FieldValue);
+    tx.update(staffRef(tenant, p.staffId), { payrollTouchedAt: stamp, advanceTouchedAt: stamp });
+    return { payrollId, corrected: change.op, netPay: merged.netPay };
+  }, TX_OPTIONS);
+}
 
 // A PAID salary is never edited in place: a correction keeps the original
 // payment and records what changed, why, who and when (before / after).

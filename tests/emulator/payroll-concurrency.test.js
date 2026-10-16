@@ -352,3 +352,36 @@ describe("Remove user racing Restore access and itself", () => {
     expect((await db.collection("users").doc(uid).get()).data().businessIds).not.toContain(w.c.business.id);
   });
 });
+
+// Owner-pilot polish (2026-10-16): Correct payroll racing the advance's own
+// changes and a repeated correction: the advance's books stay whole and the
+// paid salary record never changes.
+describe("Correct payroll racing repayments and itself", () => {
+  it("the advance deduction corrected twice at once while the advance is repaid: deducted + repaid never exceed the advance; the payment untouched", async () => {
+    const w = await world();
+    for (const d of daysIn({ start: "2026-10-01", end: "2026-10-05" })) await pay.setAttendance({ ...w.c, input: { staffId: w.staffId, date: d, status: "present" } });
+    const { advanceId } = await pay.createAdvance({ ...w.c, input: { staffId: w.staffId, date: "2026-10-02", amount: 100000 } });
+    await pay.markAdvancePaid({ ...w.c, advanceId, release: { paidDate: "2026-10-02" } });
+    await pay.setAdvanceSchedule({ ...w.c, advanceId, schedule: [{ periodStart: "2026-10-01", amount: 40000 }] });
+    const { payrollId } = await pay.preparePayroll({ ...w.c, staffId: w.staffId, periodStart: "2026-10-01" });
+    await pay.releaseSalary({ ...w.c, payrollId, release: { method: "cash" } });
+    const paidBefore = (await w.tenant.doc("payrolls", payrollId).get()).data().salary.amount;
+    const r = await Promise.allSettled([
+      pay.correctPayroll({ ...w.c, payrollId, change: { op: "advance", advanceId, amount: 10000 }, reason: "Typed wrong" }),
+      pay.correctPayroll({ ...w.c, payrollId, change: { op: "advance", advanceId, amount: 90000 }, reason: "Typed wrong" }),
+      pay.recordAdvanceRepayment({ ...w.c, advanceId, repayment: { amount: 50000, method: "cash" } }),
+      pay.recordAdvanceRepayment({ ...w.c, advanceId, repayment: { amount: 50000, method: "cash" } }),
+    ]);
+    expectExplicit(r, ["over-owed", "invalid-amount", "invalid-input"]);
+    const a = (await w.tenant.doc("advances", advanceId).get()).data();
+    const p = (await w.tenant.doc("payrolls", payrollId).get()).data();
+    expect(a.deductedAmount + (a.repaidAmount || 0)).toBeLessThanOrEqual(a.amount);
+    expect(a.deductedAmount).toBeGreaterThanOrEqual(0);
+    // The payroll's advance line and the advance's applied entry agree.
+    const line = (p.deductions || []).find((d) => d.type === "advance")?.amount ?? 0;
+    expect((a.schedule || []).filter((e) => e.state === "applied" && e.payrollId === payrollId).reduce((t, e) => t + e.amount, 0)).toBe(line);
+    expect(a.deductedAmount).toBe(line);
+    expect(p.netPay).toBe(p.basePay + (p.additionsTotal || 0) - p.deductionsTotal);
+    expect(p.salary.amount).toBe(paidBefore);
+  });
+});

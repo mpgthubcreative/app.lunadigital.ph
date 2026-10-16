@@ -23,7 +23,19 @@
 // advance not confirmed by them yet, a salary reported not received,
 // deductions not taken, and any staff request still waiting.
 
-import { staffPeriod, onPayroll as isOnPayroll, daysIn, attendanceId, summarizeAttendance, advanceRemaining, plannedFor, scheduleOf, reconcileOf } from "../../../shared/payroll.js";
+// Owner-pilot polish (2026-10-16): each row also carries this cutoff's money
+// for the Dashboard's one summary card (Employee filter on the screen):
+//   salaryPaid    money actually paid for this cutoff (incl. additional payments)
+//   prepaid       the part of salaryPaid that covered upcoming days (INSIDE it)
+//   stillToPay    not paid yet: the payroll's take-home so far (the same
+//                 figure as Payroll); paid: any additional salary due
+//   advancesOutstanding   cash advances given and not repaid yet (plans don't
+//                 lower it; salary overpayments aren't cash advances)
+//   confirmation  this cutoff's salary: confirmed (with the date) / waiting / not received
+// Voided payrolls / advances live in their own collections: never counted.
+
+import { staffPeriod, onPayroll as isOnPayroll, daysIn, attendanceId, summarizeAttendance, advanceRemaining, plannedFor, scheduleOf, reconcileOf, paidTotal, advanceCapacity } from "../../../shared/payroll.js";
+import { overpaymentLinesFor } from "./payroll.js";
 import { businessDate, addDays } from "../../../shared/metrics.js";
 
 const int = (v) => (Number.isSafeInteger(v) ? v : 0);
@@ -74,7 +86,12 @@ export async function householdSummary({ db, tenant, business, now = new Date() 
       bump(d.id, s.name, "additionalDue", payrolls.filter((p) => reconcileOf(p, today)?.additionalDue > 0).length);
       bump(d.id, s.name, "unrecordedDays", payrolls.filter((p) => reconcileOf(p, today)?.waiting).length);
       const sum = summarizeAttendance(lineSnaps.filter((x) => x.exists).map((x) => x.data()), { start: period.start, end: days.at(-1) ?? period.start });
-      const estimatedNet = current ? int(current.netPay) : sum.basePay - advance;
+      const carried = current ? 0 : overpaymentLinesFor(period.start, s, payrolls, today).reduce((t, l) => t + l.amount, 0);
+      const estimatedNet = current ? int(current.netPay) : sum.basePay - advance - carried;
+      const paidNow = current?.status === "released";
+      const rec = paidNow ? reconcileOf(current, today) : null;
+      const confirmation = paidNow ? (current.receiptStatus === "confirmed" ? { state: "confirmed", at: current.receiptConfirmedAt?.toDate?.()?.toISOString?.() ?? null } : current.dispute?.state === "open" ? { state: "not_received" } : { state: "waiting" }) : null;
+      const cap = advanceCapacity(s, advances);
       if (!onPayroll.has(d.id)) return null;
       return {
         staffId: d.id,
@@ -89,6 +106,16 @@ export async function householdSummary({ db, tenant, business, now = new Date() 
         overdue: overdue.map((p) => ({ payrollId: p.id, period: { start: p.periodStart, end: p.periodEnd }, netPay: int(p.netPay) })),
         lastSalary: lastPaid ? { payrollId: lastPaid.id, period: { start: lastPaid.periodStart, end: lastPaid.periodEnd }, netPay: int(lastPaid.salary?.amount ?? lastPaid.netPay), receipt: lastPaid.receiptStatus === "confirmed" ? "received" : lastPaid.dispute?.state === "open" ? "not_received" : "waiting" } : null,
         hasLogin: Boolean(s.memberUid),
+        money: {
+          salaryPaid: paidNow ? paidTotal(current) : 0,
+          prepaid: paidNow ? int(current.salary?.prepaid?.amount) : 0,
+          prepaidRange: paidNow && current.salary?.prepaid ? { from: current.salary.prepaid.from, to: current.salary.prepaid.to } : null,
+          paidDate: paidNow ? current.salary?.paidDate ?? null : null,
+          stillToPay: paidNow ? int(rec?.additionalDue) : Math.max(0, estimatedNet),
+          advancesOutstanding: advances.filter((a) => a.status === "paid").reduce((t, a) => t + advanceRemaining(a), 0),
+          advanceAvailable: cap.available ?? null,
+        },
+        confirmation,
       };
     })
   );

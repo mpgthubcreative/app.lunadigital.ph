@@ -21,6 +21,7 @@ import * as defaultData from "./data.js";
 
 const cycleOptions = Object.entries(PAY_CYCLES).map(([value, c]) => ({ value, label: c.label }));
 const centsText = (c) => (c ? String(c / 100) : "");
+const REST_OPTIONS = [["0", "Sunday"], ["1", "Monday"], ["2", "Tuesday"], ["3", "Wednesday"], ["4", "Thursday"], ["5", "Friday"], ["6", "Saturday"], ["0,6", "Saturday and Sunday"], ["none", "No usual rest day"]].map(([value, label]) => ({ value, label }));
 
 function staffFields(s = {}, leaveDefault = null) {
   return [
@@ -33,6 +34,8 @@ function staffFields(s = {}, leaveDefault = null) {
     { name: "advanceLimit", label: "Cash advance limit (₱)", value: Number.isSafeInteger(s.advanceLimit) ? String(s.advanceLimit / 100) : "", inputmode: "decimal", placeholder: "No limit", hint: "The most they can owe at once. Blank = no limit; 0 = no advances." },
     // Owner-pilot cleanup: blank = the household's Paid Leave allowance.
     { name: "paidLeaveDays", label: "Paid Leave days a year", value: Number.isSafeInteger(s.paidLeaveDays) ? String(s.paidLeaveDays) : "", inputmode: "numeric", placeholder: leaveDefault === null ? "Household default" : `Household default (${leaveDefault})`, hint: "Only if this helper gets a different number. Counted per calendar year." },
+    // Owner-pilot polish: the normal week ("Fill normal schedule" on Attendance).
+    { name: "restDays", label: "Usual rest day", type: "select", value: (Array.isArray(s.restDays) ? s.restDays : [0]).join(",") || "none", options: REST_OPTIONS, hint: "Other days are working days. Attendance can fill the normal week for you; nothing is recorded until you confirm." },
     { name: "phone", label: "Phone", value: s.phone ?? "", inputmode: "tel" },
     { name: "startDate", label: "Start date", type: "date", value: s.startDate ?? "", hint: "Payroll includes them from this date." },
     { name: "endDate", label: "End date (if they've left)", type: "date", value: s.endDate ?? "", hint: "No payroll after this date; their history stays." },
@@ -50,7 +53,8 @@ export function parseCutoffs(text) {
 }
 
 function toInput(v) {
-  const out = { ...v, dailyWage: parseCentavos(v.dailyWage), cutoffs: v.payCycle === "semi_monthly" ? parseCutoffs(v.cutoffs) : null, advanceLimit: String(v.advanceLimit ?? "").trim() === "" ? null : parseCentavos(v.advanceLimit), paidLeaveDays: String(v.paidLeaveDays ?? "").trim() === "" ? null : Number(String(v.paidLeaveDays).trim()) };
+  const out = { ...v, dailyWage: parseCentavos(v.dailyWage), cutoffs: v.payCycle === "semi_monthly" ? parseCutoffs(v.cutoffs) : null, advanceLimit: String(v.advanceLimit ?? "").trim() === "" ? null : parseCentavos(v.advanceLimit), paidLeaveDays: String(v.paidLeaveDays ?? "").trim() === "" ? null : Number(String(v.paidLeaveDays).trim()), restDays: v.restDays === undefined ? undefined : v.restDays === "none" ? [] : String(v.restDays).split(",").map(Number) };
+  if (out.restDays === undefined) delete out.restDays;
   if (out.paidLeaveDays !== null && !(Number.isInteger(out.paidLeaveDays) && out.paidLeaveDays >= 0)) throw new Error("Paid Leave days must be a whole number (blank = household default)");
   if (out.cutoffs && out.cutoffs[0] === 15 && out.cutoffs[1] === 31) out.cutoffs = null;
   if (out.advanceLimit !== null && !(out.advanceLimit >= 0)) throw new Error("The advance limit must be ₱0 or more (blank = no limit)");

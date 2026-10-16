@@ -104,7 +104,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
   // saved, so Delete explains that instead of doing nothing.
   const rowMenu = (p) => html`<details class="line-menu"><summary class="btn btn-compact btn-ghost" aria-label="Actions for ${p.staffName}'s payroll">⋯</summary><div class="line-menu-list" role="menu">
       <button type="button" class="menu-item" role="menuitem" data-act="view" data-id="${p.id}">View details</button>
-      ${canRelease && p.status === "released" && p.salary ? html`<button type="button" class="menu-item" role="menuitem" data-act="correct-payment" data-id="${p.id}">Correct payment</button>` : ""}
+      ${canRelease && p.status === "released" && p.salary ? html`<button type="button" class="menu-item" role="menuitem" data-act="correct-payroll" data-id="${p.id}">Correct payroll</button><button type="button" class="menu-item" role="menuitem" data-act="correct-payment" data-id="${p.id}">Correct payment</button>` : ""}
       ${canManage && p.status === "draft" ? html`<div class="menu-sep" role="separator"></div><button type="button" class="menu-item is-danger" role="menuitem" data-act="delete-payroll" data-id="${p.id}">Delete payroll</button>` : ""}
       ${canRelease && p.status === "released" ? html`<div class="menu-sep" role="separator"></div><button type="button" class="menu-item is-danger" role="menuitem" data-act="void-payroll" data-id="${p.id}">Void payroll</button>` : ""}
     </div></details>`;
@@ -223,6 +223,8 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     let link = null; // shown once after paying / a new link
     let thm = null; // this year's 13th month: earned / given / left
     let calc = false; // "View calculation" open
+    let correcting = false; // Owner-pilot polish: Correct payroll mode (paid)
+    let detailsOpen = false;
     const staffRec = () => state.staff.find((s) => s.id === p?.staffId) || { payCycle: p?.payCycle || "semi_monthly" };
     const close = () => {
       backdrop.remove();
@@ -268,76 +270,113 @@ export function mount(container, session, { data = defaultData, toast = defaultT
         return null;
       }
     };
-    // Paid early: earned + prepaid = paid; final salary; the difference.
+    // After payment: what was actually paid vs the final salary (attendance
+    // completed, or a Correct payroll), and what Luna does with a difference.
     const reconcileBlock = (q) => {
-      const s = q.salary;
       const r = q.reconcile;
-      const parts = html`<dl class="owe-figures" data-role="early">
-          <dt>Earned through ${short(s.paidDate)}</dt><dd>${formatCentavos(s.earned ?? s.amount)}</dd>
-          ${s.prepaid ? html`<dt>Prepaid salary ${range(s.prepaid.from, s.prepaid.to)}</dt><dd>${formatCentavos(s.prepaid.amount)}</dd>` : ""}
-          <dt><strong>Total salary paid</strong> <small>${short(s.paidDate)}</small></dt><dd><strong>${formatCentavos(s.amount)}</strong></dd>
-          ${(s.additional || []).map((a) => html`<dt>Additional payment <small>${short(a.paidDate)}</small></dt><dd>${formatCentavos(a.amount)}</dd>`)}
-          <dt>Final salary${r && r.ended ? "" : " so far"}</dt><dd>${formatCentavos(q.netPay)}</dd>
-        </dl>`;
+      const corrected = (q.corrections || []).length > 0;
+      const parts =
+        r.ended && !r.waiting && r.diff
+          ? html`<dl class="owe-figures" data-role="early">
+              <dt>Actually paid</dt><dd>${formatCentavos(r.paid)}</dd>
+              <dt>${corrected ? "Corrected entitlement" : "Final salary"}</dt><dd>${formatCentavos(r.final)}</dd>
+            </dl>`
+          : "";
       let status = "";
-      if (!r || !r.ended) status = html`<p class="stat-hint" data-role="reconcile">${badge("Paid early", "info")} The period ends ${short(q.periodEnd)}. Record the remaining days as they happen; Luna settles the difference after that.</p>`;
+      if (!r.ended) status = html`<p class="stat-hint" data-role="reconcile">${badge("Paid early", "info")} The period ends ${short(q.periodEnd)}. Record the remaining days as they happen; Luna settles the difference after that.</p>`;
       else if (r.waiting) status = html`<p class="stat-hint" data-role="reconcile">${badge("Waiting for attendance", "warning")} Record the remaining ${r.unrecorded} day${r.unrecorded === 1 ? "" : "s"} on Attendance to settle the difference.</p>`;
-      else if (r.settled || (r.overpaid && !r.outstanding)) status = html`<p class="stat-hint" data-role="reconcile">${badge("Settled", "success")} ${r.overpaid ? `The ${formatCentavos(r.overpaid)} paid early but not earned is settled.` : "Everything paid early was earned."}</p>`;
-      else if (r.outstanding) status = html`<div class="reconcile-row" data-role="reconcile"><p class="stat-hint">${badge("Salary overpayment", "warning")} <strong>${formatCentavos(r.outstanding)}</strong> paid early was not earned.${r.carriedTo?.length ? ` It comes off ${r.carriedTo.map((t) => range(t.periodStart, t.periodEnd)).join(", ")}.` : ""} It isn't a cash advance.</p>${canRelease ? lineMenu("Salary overpayment actions", [{ x: "ovp-keep", label: "Keep on next payroll", data: { id: q.id } }, { x: "ovp-move", label: "Move to another payroll", data: { id: q.id } }, { x: "ovp-repay", label: "Mark repaid separately", data: { id: q.id, amount: r.outstanding } }, { x: "ovp-waive", label: "Waive", data: { id: q.id, amount: r.outstanding }, sep: true }]) : ""}</div>`;
+      else if (r.settled || (r.overpaid && !r.outstanding)) status = html`<p class="stat-hint" data-role="reconcile">${badge("Settled", "success")} ${r.overpaid ? `The ${formatCentavos(r.overpaid)} paid but not earned is settled.` : "Everything paid was earned."}</p>`;
+      else if (r.outstanding) status = html`<div class="reconcile-row" data-role="reconcile"><p class="stat-hint">${badge("Salary overpayment", "warning")} <strong>${formatCentavos(r.outstanding)}</strong> paid but not earned.${r.carriedTo?.length ? ` It comes off ${r.carriedTo.map((t) => range(t.periodStart, t.periodEnd)).join(", ")}.` : ""} It isn't a cash advance.</p>${canRelease ? lineMenu("Salary overpayment actions", [{ x: "ovp-keep", label: "Keep on next payroll", data: { id: q.id } }, { x: "ovp-move", label: "Move to another payroll", data: { id: q.id } }, { x: "ovp-repay", label: "Mark repaid separately", data: { id: q.id, amount: r.outstanding } }, { x: "ovp-waive", label: "Waive", data: { id: q.id, amount: r.outstanding }, sep: true }]) : ""}</div>`;
       else if (r.additionalDue) status = html`<div class="reconcile-row" data-role="reconcile"><p class="stat-hint">${badge("Additional salary due", "warning")} <strong>${formatCentavos(r.additionalDue)}</strong> more was earned than paid.</p>${canRelease ? html`<button type="button" class="btn btn-compact btn-primary" data-x="pay-additional">Record additional payment</button>` : ""}</div>`;
       return html`${parts}${status}`;
     };
     const advanceOf = async (advanceId) => (await data.listAdvances(businessId, { staffId: p.staffId }, { pageSize: 100 })).rows.find((a) => a.id === advanceId);
 
+    // Owner-pilot polish (2026-10-16): the payslip reads in a few seconds.
+    // Default: confirmation status, then Basic pay, each bonus / deduction,
+    // the prepaid salary (paid early for upcoming days), and the total.
+    // Calculation, payment details and history fold under "View details".
+    // "Correct payroll" (paid only) puts a ⋯ on each line that can be wrong.
+    const firstName = (n) => String(n || "").split(" ")[0];
+    const statusLine = (q) => {
+      if (q.status !== "released") return badge(q.automatic ? "Not paid yet · worked out automatically" : "Not paid yet", "neutral");
+      if (q.receiptStatus === "confirmed") return badge(`Confirmed by ${firstName(q.staffName)}${q.receiptConfirmedAt ? ` on ${short(String(q.receiptConfirmedAt).slice(0, 10))}` : ""}`, "success");
+      if (q.dispute?.state === "open") return badge("Reported not received", "danger");
+      return badge("Not yet confirmed", "warning");
+    };
+    // Basic pay as it was when the salary was paid (early: earned so far).
+    const basicShown = (q) => {
+      if (q.status !== "released" || !q.salary) return q.basePay;
+      if (q.salary.atPayment) return q.salary.atPayment.basePay;
+      if (q.paymentTiming === "early") return (q.salary.earned ?? q.salary.amount) + (q.deductionsTotal || 0) - (q.additionsTotal || 0);
+      return q.basePay;
+    };
+    const fixMenu = (label, items) => (correcting && canRelease ? lineMenu(label, items) : "");
+
     const paint = () => {
       if (!p) return render(backdrop, html`<div class="modal"><div class="modal-body">${emptyState({ title: "Payroll not found" })}</div><div class="modal-footer"><button type="button" class="btn" data-x="close">Close</button></div></div>`);
       const draft = p.status === "draft";
-      const gap = earlyGap(p);
+      const paid = p.status === "released" && p.salary;
       const attendanceHref = `/attendance?staff=${encodeURIComponent(p.staffId)}&period=${p.periodStart}`;
+      const prepaid = paid ? p.salary.prepaid : null;
+      const totalPaid = paid ? paidTotal(p) : 0;
+      const r = p.reconcile;
+      const advMenu = (d) =>
+        draft && canAdvances
+          ? lineMenu(`Actions for ${d.description}`, [{ x: "adv-view", label: "View advance", data: { id: d.advanceId } }, { x: "adv-amount", label: "Edit amount", data: { id: d.advanceId } }, { x: "adv-move", label: "Move to another payroll", data: { id: d.advanceId } }, { x: "adv-off", label: "Remove from this payroll", danger: true, data: { id: d.advanceId } }])
+          : correcting
+            ? fixMenu(`Correct ${d.description}`, [{ x: "fix-adv", label: "Correct amount", data: { id: d.advanceId, amount: d.amount } }, { x: "adv-view", label: "View advance", data: { id: d.advanceId } }, { x: "fix-adv-off", label: "Remove from this payroll", danger: true, data: { id: d.advanceId, amount: d.amount } }])
+            : "";
+      const manualMenu = (line, kind) =>
+        draft && canManage
+          ? lineMenu(`Actions for ${line.description}`, kind === "thirteenth" ? [{ x: "remove-add", label: "Remove", danger: true, data: { id: line.id } }] : [{ x: "edit-line", label: "Edit", data: { id: line.id, kind } }, { x: kind === "bonus" ? "remove-add" : "remove", label: "Delete", danger: true, data: { id: line.id } }])
+          : fixMenu(`Correct ${line.description}`, [...(kind === "thirteenth" ? [] : [{ x: "fix-line", label: "Edit amount or label", data: { id: line.id, kind } }]), { x: "fix-remove", label: "Remove", danger: true, data: { id: line.id, kind } }]);
       render(
         backdrop,
         html`<div class="modal modal-wide" role="dialog" aria-modal="true" aria-label="Payroll" data-role="payroll-view">
           <div class="modal-header"><h2 class="card-title">${p.staffName} · ${rowPeriod(p)}</h2></div>
           <div class="modal-body">
-            ${p.automatic ? html`<p class="chart-note" data-role="automatic">Worked out automatically from attendance and advances.${today <= p.periodEnd ? ` The period is still ongoing (ends ${short(p.periodEnd)}).` : ""}</p>` : ""}
-            ${gap ? reconcileBlock(p) : ""}
-            <h3 class="slip-head">Earnings</h3>
-            <ul class="slip" data-role="earnings">
-              <li data-line="basic"><span class="slip-what">Basic pay<small>${p.payableDays} paid days × ${formatCentavos(p.dailyWage)}</small></span><span class="slip-amt">${formatCentavos(p.basePay)}</span><span class="slip-act"><button type="button" class="btn btn-compact btn-ghost" data-x="calc">${calc ? "Hide" : "View calculation"}</button></span></li>
-              ${calc ? html`<li class="slip-calc" data-role="calc"><span>${p.present} Present + ${p.officialLeave} Paid Leave = ${p.payableDays} paid days × ${formatCentavos(p.dailyWage)} = ${formatCentavos(p.basePay)}. Not paid: ${p.absent} Absent, ${p.unpaidLeave || 0} Unpaid Leave, ${p.restDay || 0} Rest Day${p.notMarked ? `, ${p.notMarked} not marked` : ""}. <a href="${attendanceHref}" data-link data-x="goto">View attendance</a></span></li>` : ""}
-              ${(p.additions || []).map((a) => html`<li data-addition="${a.id}"><span class="slip-what">${a.type === "thirteenth" ? `13th month pay ${a.year}` : a.description}<small>${a.type === "thirteenth" ? "1/12 of the year's basic pay" : "Bonus you added"}</small></span><span class="slip-amt">${formatCentavos(a.amount)}</span><span class="slip-act">${draft && canManage ? lineMenu(`Actions for ${a.description}`, a.type === "bonus" ? [{ x: "edit-line", label: "Edit", data: { id: a.id, kind: "bonus" } }, { x: "remove-add", label: "Delete", danger: true, data: { id: a.id } }] : [{ x: "remove-add", label: "Remove", danger: true, data: { id: a.id } }]) : ""}</span></li>`)}
-            </ul>
-            <h3 class="slip-head">Deductions</h3>
-            <ul class="slip" data-role="deductions">
-              ${!(p.deductions || []).length && !(p.notTaken || []).length ? html`<li class="slip-none"><span class="stat-hint">None.</span></li>` : ""}
+            <p class="pay-status" data-role="pay-status">${statusLine(p)}${paid ? html`<span class="stat-hint">${p.paymentTiming === "early" ? "Paid early" : "Paid"} ${short(p.salary.paidDate)} · ${SALARY_METHODS[p.salary.method]?.label ?? ""}</span>` : ""}</p>
+            ${correcting ? html`<p class="chart-note" data-role="correcting">${badge("Correcting", "info")} Tap ⋯ on the line that's wrong. The payment itself (${formatCentavos(totalPaid)}) stays as it was; Luna settles any difference. Basic pay follows attendance: <a href="${attendanceHref}" data-link data-x="goto">correct the days</a>.</p>` : ""}
+            <ul class="slip" data-role="summary">
+              <li data-line="basic"><span class="slip-what">Basic pay<small>${paid && p.paymentTiming === "early" ? `Earned through ${short(p.salary.paidDate)}` : `${p.payableDays} paid days × ${formatCentavos(p.dailyWage)}`}</small></span><span class="slip-amt">${formatCentavos(basicShown(p))}</span><span class="slip-act"><button type="button" class="btn btn-compact btn-ghost" data-x="calc">${calc ? "Hide" : "View calculation"}</button></span></li>
+              ${calc ? html`<li class="slip-calc" data-role="calc"><span>${p.present} Present + ${p.officialLeave} Paid Leave = ${p.payableDays} paid days × ${formatCentavos(p.dailyWage)} = ${formatCentavos(p.basePay)}${paid && basicShown(p) !== p.basePay ? ` (${formatCentavos(basicShown(p))} when paid)` : ""}. Not paid: ${p.absent} Absent, ${p.unpaidLeave || 0} Unpaid Leave, ${p.restDay || 0} Rest Day${p.notMarked ? `, ${p.notMarked} not marked` : ""}. <a href="${attendanceHref}" data-link data-x="goto">View attendance</a></span></li>` : ""}
+              ${(p.additions || []).map((a) => html`<li data-addition="${a.id}"><span class="slip-what">${a.type === "thirteenth" ? `13th month pay ${a.year}` : a.description}<small>${a.type === "thirteenth" ? "1/12 of the year's basic pay" : "Bonus"}</small></span><span class="slip-amt">${formatCentavos(a.amount)}</span><span class="slip-act">${manualMenu(a, a.type === "thirteenth" ? "thirteenth" : "bonus")}</span></li>`)}
               ${(p.deductions || []).map((d) =>
                 d.type === "overpayment"
-                  ? html`<li data-deduction="${d.id}" data-overpayment="${d.sourcePayrollId}"><span class="slip-what">Previous salary overpayment<small>From ${range(d.sourcePeriod.start, d.sourcePeriod.end)} · salary paid early, not all earned</small></span><span class="slip-amt">− ${formatCentavos(d.amount)}</span><span class="slip-act">${canRelease ? lineMenu("Actions for the previous salary overpayment", [{ x: "ovp-source", label: "View source", data: { id: d.sourcePayrollId } }, { x: "ovp-move", label: "Move to another payroll", data: { id: d.sourcePayrollId } }, { x: "ovp-repay", label: "Mark repaid separately", data: { id: d.sourcePayrollId, amount: d.amount } }, { x: "ovp-waive", label: "Waive", data: { id: d.sourcePayrollId, amount: d.amount }, sep: true }]) : ""}</span></li>`
+                  ? html`<li data-deduction="${d.id}" data-overpayment="${d.sourcePayrollId}"><span class="slip-what">Previous salary overpayment<small>From ${range(d.sourcePeriod.start, d.sourcePeriod.end)}</small></span><span class="slip-amt">− ${formatCentavos(d.amount)}</span><span class="slip-act">${canRelease ? lineMenu("Actions for the previous salary overpayment", [{ x: "ovp-source", label: "View source", data: { id: d.sourcePayrollId } }, { x: "ovp-move", label: "Move to another payroll", data: { id: d.sourcePayrollId } }, { x: "ovp-repay", label: "Mark repaid separately", data: { id: d.sourcePayrollId, amount: d.amount } }, { x: "ovp-waive", label: "Waive", data: { id: d.sourcePayrollId, amount: d.amount }, sep: true }]) : ""}</span></li>`
                   : d.type === "advance"
-                  ? html`<li data-deduction="${d.id}" data-advance="${d.advanceId}"><span class="slip-what">${d.description}<small>Cash advance · repayment plan</small></span><span class="slip-amt">− ${formatCentavos(d.amount)}</span><span class="slip-act">${draft && canAdvances ? lineMenu(`Actions for ${d.description}`, [{ x: "adv-view", label: "View advance", data: { id: d.advanceId } }, { x: "adv-amount", label: "Edit amount", data: { id: d.advanceId } }, { x: "adv-move", label: "Move to another payroll", data: { id: d.advanceId } }, { x: "adv-off", label: "Remove from this payroll", danger: true, data: { id: d.advanceId } }]) : html`<button type="button" class="btn btn-compact btn-ghost" data-x="adv-view" data-id="${d.advanceId}">View advance</button>`}</span></li>`
-                  : html`<li data-deduction="${d.id}"><span class="slip-what">${d.description}<small>Deduction you added</small></span><span class="slip-amt">− ${formatCentavos(d.amount)}</span><span class="slip-act">${draft && canManage ? lineMenu(`Actions for ${d.description}`, [{ x: "edit-line", label: "Edit", data: { id: d.id, kind: "deduction" } }, { x: "remove", label: "Delete", danger: true, data: { id: d.id } }]) : ""}</span></li>`
+                    ? html`<li data-deduction="${d.id}" data-advance="${d.advanceId}"><span class="slip-what">Advance deduction<small>${d.description.replace(/^Advance /, "Advance of ")}</small></span><span class="slip-amt">− ${formatCentavos(d.amount)}</span><span class="slip-act">${advMenu(d)}</span></li>`
+                    : html`<li data-deduction="${d.id}"><span class="slip-what">${d.description}<small>Deduction</small></span><span class="slip-amt">− ${formatCentavos(d.amount)}</span><span class="slip-act">${manualMenu(d, "deduction")}</span></li>`
               )}
-              ${(p.notTaken || []).map((n) => html`<li class="slip-missed" data-not-taken="${n.advanceId}"><span class="slip-what">Scheduled deduction not taken<small>${n.description} · still owed${p.status === "released" ? "; the salary paid stays as it was" : ""}</small></span><span class="slip-amt">${formatCentavos(n.amount)}</span><span class="slip-act">${canAdvances ? lineMenu("Actions for the deduction not taken", [{ x: "nt-move", label: "Move to next payroll", data: { id: n.advanceId } }, { x: "nt-repaid", label: "Mark repaid separately", data: { id: n.advanceId, amount: n.amount } }, { x: "adv-view", label: "Edit repayment plan", data: { id: n.advanceId } }]) : ""}</span></li>`)}
+              ${(p.notTaken || []).map((n) => html`<li class="slip-missed" data-not-taken="${n.advanceId}"><span class="slip-what">Scheduled deduction not taken<small>${n.description} · still owed</small></span><span class="slip-amt">${formatCentavos(n.amount)}</span><span class="slip-act">${canAdvances ? lineMenu("Actions for the deduction not taken", [{ x: "nt-move", label: "Move to next payroll", data: { id: n.advanceId } }, { x: "nt-repaid", label: "Mark repaid separately", data: { id: n.advanceId, amount: n.amount } }, { x: "adv-view", label: "Edit repayment plan", data: { id: n.advanceId } }]) : ""}</span></li>`)}
+              ${prepaid || (correcting && paid && p.paymentTiming === "early") ? html`<li data-line="prepaid"><span class="slip-what">Prepaid salary${prepaid ? ` ${range(prepaid.from, prepaid.to)}` : ""}<small>Paid early for upcoming days · not a cash advance</small></span><span class="slip-amt">${formatCentavos(prepaid?.amount ?? 0)}</span><span class="slip-act">${fixMenu("Correct the prepaid salary", [{ x: "fix-prepaid", label: "Correct prepaid salary", data: { id: p.id, amount: prepaid?.days ?? 0 } }])}</span></li>` : ""}
             </ul>
-            <ul class="slip slip-total"><li><span class="slip-what"><strong>Net pay (take-home)</strong></span><span class="slip-amt"><strong data-role="net">${formatCentavos(p.netPay)}</strong></span><span class="slip-act"></span></li></ul>
-            ${thm && thm.remaining > 0 ? html`<p class="stat-hint" data-role="thirteenth">13th month ${thm.year}: ${formatCentavos(thm.remaining)} left to give (1/12 of ${formatCentavos(thm.basicPay)} basic pay, minus ${formatCentavos(thm.onPayrolls)} given).</p>` : ""}
-            <dl class="dl dl-compact">
-              <dt>Payment</dt><dd data-role="payment">${paymentState(p)[0]}${p.salary ? ` · ${formatCentavos(p.salary.amount)} on ${short(p.salary.paidDate)} by ${SALARY_METHODS[p.salary.method]?.label}${p.salary.reference ? ` · Ref ${p.salary.reference}` : ""}` : ""}${p.salary?.proof ? html` · <button type="button" class="btn-linklike" data-x="view-proof">See proof</button>` : ""}</dd>
-              <dt>Received by the helper</dt><dd data-role="receipt">${receivedState(p)[0]}${p.receiptConfirmedVia === "staff-account" ? " (from their Luna account)" : p.receiptConfirmedVia === "employee-link" ? " (from the link)" : ""}</dd>
-              ${p.dispute?.state === "open" ? html`<dt>Reported</dt><dd class="text-danger">Not received${p.dispute.note ? `: "${p.dispute.note}"` : ""}</dd>` : ""}
-            </dl>
+            <ul class="slip slip-total slip-total-paid"><li><span class="slip-what"><strong>${paid ? "Total paid" : "To pay"}</strong></span><span class="slip-amt"><strong data-role="net">${formatCentavos(paid ? totalPaid : p.netPay)}</strong></span><span class="slip-act"></span></li></ul>
+            ${paid && r && (r.overpaid || r.additionalDue || r.waiting || !r.ended || r.diff) ? reconcileBlock(p) : ""}
+            ${p.dispute?.state === "open" ? html`<p class="text-danger" data-role="dispute">Reported not received${p.dispute.note ? `: "${p.dispute.note}"` : ""}</p>` : ""}
             ${link
               ? html`<div class="card section" data-role="receipt-link"><strong>Send this link to ${p.staffName}</strong>
                   <p class="stat-hint">If they don't use Luna, they tap it to confirm they received ${formatCentavos(p.salary?.amount ?? p.netPay)}. It works once and expires in 14 days.</p>
-                  <input class="input" readonly value="${link}" data-role="link-text" />
+                  <input class="input" readonly value="${link}" data-role="link-text" aria-label="Receipt link" />
                   <button type="button" class="btn btn-compact" data-x="copy">Copy link</button></div>`
               : ""}
-            ${(p.history || []).length ? html`<details class="form-more"><summary>History</summary><ul class="list activity">${p.history.map((h) => html`<li>${h.label}${h.actor ? ` · ${h.actor.name}` : h.via === "employee-link" ? " · by the helper, via the secure link" : ""}</li>`)}</ul></details>` : ""}
+            <details class="form-more" data-role="details" ${detailsOpen ? "open" : ""}><summary data-x="details">View details</summary>
+              ${p.automatic ? html`<p class="chart-note" data-role="automatic">Worked out automatically from attendance and advances.${today <= p.periodEnd ? ` The period is still ongoing (ends ${short(p.periodEnd)}).` : ""}</p>` : ""}
+              <dl class="dl dl-compact">
+                <dt>Final salary${today > p.periodEnd ? "" : " so far"}</dt><dd data-role="final">${formatCentavos(p.netPay)}</dd>
+                <dt>Payment</dt><dd data-role="payment">${paymentState(p)[0]}${p.salary ? ` · ${formatCentavos(p.salary.amount)} on ${short(p.salary.paidDate)} by ${SALARY_METHODS[p.salary.method]?.label}${p.salary.reference ? ` · Ref ${p.salary.reference}` : ""}` : ""}${p.salary?.proof ? html` · <button type="button" class="btn-linklike" data-x="view-proof">See proof</button>` : ""}</dd>
+                <dt>Received by the helper</dt><dd data-role="receipt">${receivedState(p)[0]}${p.receiptConfirmedVia === "staff-account" ? " (from their Luna account)" : p.receiptConfirmedVia === "employee-link" ? " (from the link)" : ""}</dd>
+              </dl>
+              ${thm && thm.remaining > 0 ? html`<p class="stat-hint" data-role="thirteenth">13th month ${thm.year}: ${formatCentavos(thm.remaining)} left to give (1/12 of ${formatCentavos(thm.basicPay)} basic pay, minus ${formatCentavos(thm.onPayrolls)} given).</p>` : ""}
+              ${(p.history || []).length ? html`<h3 class="slip-head">History</h3><ul class="list activity" data-role="history">${p.history.map((h) => html`<li>${h.label}${h.actor ? ` · ${h.actor.name}` : h.via === "employee-link" ? " · by the helper, via the secure link" : ""}</li>`)}</ul>` : ""}
+            </details>
           </div>
           <div class="modal-footer">
             ${draft && canManage ? html`<details class="line-menu line-menu-up"><summary class="btn">Add ▾</summary><div class="line-menu-list" role="menu"><button type="button" class="menu-item" data-x="add-bonus">Bonus</button><button type="button" class="menu-item" data-x="add">Other deduction</button><button type="button" class="menu-item" data-x="add-13th">13th month pay</button>${p.automatic ? "" : html`<div class="menu-sep" role="separator"></div><button type="button" class="menu-item is-danger" data-x="delete">Delete payroll</button>`}</div></details>` : ""}
             ${draft && canRelease ? html`<button type="button" class="btn btn-primary" data-x="release">Pay salary</button>` : ""}
-            ${!draft && canRelease ? html`<details class="line-menu line-menu-up"><summary class="btn">More ▾</summary><div class="line-menu-list" role="menu">${!p.salary?.proof ? html`<button type="button" class="menu-item" data-x="add-proof">Add payment proof</button>` : ""}<button type="button" class="menu-item" data-x="correct">Correct payment</button>${p.receiptStatus === "awaiting" ? html`<button type="button" class="menu-item" data-x="newlink">New receipt link</button>` : ""}${p.dispute?.state === "open" ? html`<button type="button" class="menu-item" data-x="resolve">Answer "not received"</button>` : ""}<div class="menu-sep" role="separator"></div><button type="button" class="menu-item is-danger" data-x="void">Void payroll</button></div></details>` : ""}
+            ${correcting ? html`<button type="button" class="btn btn-primary" data-x="done-correcting">Done</button>` : ""}
+            ${!draft && canRelease && !correcting ? html`<details class="line-menu line-menu-up"><summary class="btn">More ▾</summary><div class="line-menu-list" role="menu"><button type="button" class="menu-item" data-x="correct-payroll">Correct payroll</button><button type="button" class="menu-item" data-x="correct">Correct payment</button>${!p.salary?.proof ? html`<button type="button" class="menu-item" data-x="add-proof">Add payment proof</button>` : ""}${p.receiptStatus === "awaiting" ? html`<button type="button" class="menu-item" data-x="newlink">New receipt link</button>` : ""}${p.dispute?.state === "open" ? html`<button type="button" class="menu-item" data-x="resolve">Answer "not received"</button>` : ""}<div class="menu-sep" role="separator"></div><button type="button" class="menu-item is-danger" data-x="void">Void payroll</button></div></details>` : ""}
             <button type="button" class="btn" data-x="close">Close</button>
           </div>
         </div>`
@@ -367,6 +406,49 @@ export function mount(container, session, { data = defaultData, toast = defaultT
         if (await confirmDialog({ title: "Delete this deduction?", body: "The take-home goes up by that amount. The change is kept in the payroll history.", confirmLabel: "Delete", danger: true })) run(() => data.payrollApi({ action: "removeDeduction", payrollId, deductionId: el.dataset.id }), "Deduction deleted.");
       } else if (x === "remove-add") {
         if (await confirmDialog({ title: "Remove this from the payroll?", body: "The take-home goes down by that amount. The change is kept in the payroll history.", confirmLabel: "Remove", danger: true })) run(() => data.payrollApi({ action: "removeAddition", payrollId, additionId: el.dataset.id }), "Removed.");
+      } else if (x === "details") {
+        event.preventDefault();
+        detailsOpen = !detailsOpen;
+        paint();
+      } else if (x === "correct-payroll") {
+        correcting = true;
+        paint();
+      } else if (x === "done-correcting") {
+        correcting = false;
+        paint();
+      } else if (x === "fix-line" || x === "fix-remove" || x === "fix-adv" || x === "fix-adv-off" || x === "fix-prepaid") {
+        const reasonField = { name: "reason", label: "Reason", required: true, placeholder: "e.g. I typed the wrong amount" };
+        const send = (change, reason) => data.payrollApi({ action: "correctPayroll", payrollId, change, reason: reason.trim() });
+        let r = null;
+        if (x === "fix-line" || x === "fix-remove") {
+          const line = el.dataset.kind === "deduction" ? (p.deductions || []).find((d) => d.id === el.dataset.id) : (p.additions || []).find((a) => a.id === el.dataset.id);
+          if (!line) return undefined;
+          r =
+            x === "fix-line"
+              ? await formDialog({ title: `Correct ${line.description}`, intro: "The payment stays as it was. Luna settles any difference (salary overpayment or additional salary due).", fields: [{ name: "description", label: "Label", value: line.description, required: true }, { name: "amount", label: "Amount (₱)", value: String(line.amount / 100), required: true, inputmode: "decimal" }, reasonField], submitLabel: "Save correction", onSubmit: (v) => send({ op: "line", lineId: line.id, amount: parseCentavos(v.amount), description: v.description.trim() }, v.reason) })
+              : await formDialog({ title: `Remove ${line.description}?`, intro: `${formatCentavos(line.amount)} comes off this payroll's breakdown. The payment stays as it was.`, fields: [reasonField], submitLabel: "Remove", onSubmit: (v) => send({ op: "line", lineId: line.id, remove: true }, v.reason) });
+        } else if (x === "fix-adv" || x === "fix-adv-off") {
+          const d = (p.deductions || []).find((q) => q.type === "advance" && q.advanceId === el.dataset.id);
+          if (!d) return undefined;
+          r =
+            x === "fix-adv"
+              ? await formDialog({ title: "Correct the advance deduction", intro: `Deducted now: ${formatCentavos(d.amount)}. A lower amount leaves the rest owed (it shows as "not taken": move it to the next payroll or record a repayment). The advance itself stays.`, fields: [{ name: "amount", label: "Correct amount (₱)", value: String(d.amount / 100), required: true, inputmode: "decimal" }, reasonField], submitLabel: "Save correction", onSubmit: (v) => send({ op: "advance", advanceId: d.advanceId, amount: parseCentavos(v.amount) }, v.reason) })
+              : await formDialog({ title: "Remove this advance deduction?", intro: `${formatCentavos(d.amount)} is owed again on the advance (nothing is deleted). The payment stays as it was.`, fields: [reasonField], submitLabel: "Remove", onSubmit: (v) => send({ op: "advance", advanceId: d.advanceId, amount: 0 }, v.reason) });
+        } else {
+          const first = addDays(p.salary.paidDate, 1);
+          const left = first <= p.periodEnd ? daysIn({ start: first, end: p.periodEnd }) : [];
+          r = await formDialog({
+            title: "Correct prepaid salary",
+            intro: `The total paid (${formatCentavos(paidTotal(p))}) stays as it was; this says which part was for upcoming days. The original and your reason are kept.`,
+            fields: [{ name: "days", label: "Prepaid days", type: "select", value: String(p.salary.prepaid?.days ?? 0), options: [{ value: "0", label: "None" }, ...left.map((d, i) => ({ value: String(i + 1), label: `${i + 1} day${i ? "s" : ""} (${range(left[0], d)}): ${formatCentavos((i + 1) * (p.dailyWage || 0))}` }))] }, reasonField],
+            submitLabel: "Save correction",
+            onSubmit: (v) => send({ op: "prepaid", days: Number(v.days) }, v.reason),
+          });
+        }
+        if (r) {
+          toast(r.unchanged ? "Nothing changed." : "Payroll corrected; the payment stays as it was.", "success");
+          refresh();
+        }
       } else if (x === "edit-line") {
         const line = el.dataset.kind === "bonus" ? (p.additions || []).find((a) => a.id === el.dataset.id) : (p.deductions || []).find((d) => d.id === el.dataset.id);
         if (!line) return undefined;
@@ -549,6 +631,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     const p = state.rows.find((r) => r.id === el.dataset.id);
     if (el.dataset.act === "view") openView(el.dataset.id);
     else if (el.dataset.act === "correct-payment") openView(el.dataset.id, "correct");
+    else if (el.dataset.act === "correct-payroll") openView(el.dataset.id, "correct-payroll");
     else if (el.dataset.act === "delete-payroll" && p) deletePayroll(p).then((ok) => ok && load());
     else if (el.dataset.act === "void-payroll" && p) voidPaid(p).then((ok) => ok && load());
     else if (el.dataset.act === "voided") showVoided();
