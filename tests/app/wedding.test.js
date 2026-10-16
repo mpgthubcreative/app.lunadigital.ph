@@ -524,6 +524,8 @@ describe("the bell in a wedding (Owner-pilot Bridal UX): Needs attention, Money 
     slot.querySelector('[data-act="bell"]').click();
     await flush();
     expect([...slot.querySelectorAll(".todo-name")].map((x) => x.textContent)).toEqual(["Money", "Tasks"]);
+    // Opening re-asks (a task done a moment ago leaves the list).
+    expect(api.mock.calls.filter(([p]) => p === "wedding-attention")).toHaveLength(2);
     expect([...slot.querySelectorAll('[data-role="todo-state"]')].map((x) => x.textContent)).toEqual(["New · needs attention", "Read · still needs attention"]);
     bell.stop();
     // Staff (no payments / tasks view) never ask.

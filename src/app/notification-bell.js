@@ -151,7 +151,11 @@ export function mountBell(slot, session, { data = null, now = () => new Date(), 
     const a = el.dataset.act;
     if (a === "bell") {
       state.open = !state.open;
-      if (state.open) loadRecent();
+      // Opening also re-asks what needs attention: a task just done leaves.
+      if (state.open) {
+        loadRecent();
+        if (withTodos) refresh();
+      }
       else draw();
     } else if (a === "bell-read-all") {
       try {

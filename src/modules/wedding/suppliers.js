@@ -190,7 +190,9 @@ export function mount(container, session, { data = defaultData, toast = defaultT
         ${state.error
           ? html`<section class="card">${emptyState({ title: "Couldn't load", body: state.error })}</section>`
           : html`
-            ${seesBudget
+            ${seesBudget && state.loading
+              ? html`<div class="wl-sum" data-role="money-summary-loading">${skeleton(2)}</div>`
+              : seesBudget
               ? html`<dl class="wl-sum" data-role="money-summary">
                   <dt>Wedding budget</dt><dd data-k="budget">${sum.budget === null ? html`<a href="/budget" data-link>Set budget</a>` : html`<a href="/budget" data-link class="wl-quiet-link">${money(sum.budget)}</a>`}</dd>
                   <dt>Paid / Spent</dt><dd data-k="spent">${money(sum.spent)}</dd>
