@@ -53,7 +53,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     render(
       container,
       html`
-        ${pageHeader({ title: "Notifications", subtitle: "What happened, and what needs your attention.", actions: html`<button type="button" class="btn" data-act="read-all">Mark all as read</button>` })}
+        ${pageHeader({ title: "Notifications", actions: html`<button type="button" class="btn" data-act="read-all">Mark all as read</button>` })}
         ${withTodos
           ? html`<section class="section card" data-section="todos"><h2 class="card-title">Needs your attention${todos.length ? ` (${todos.length})` : ""}</h2>${todos.length ? todoList(todos, { onClickAct: "todo" }) : html`<p class="stat-hint" data-role="todos-empty">Nothing needs your attention right now.</p>`}</section>`
           : ""}

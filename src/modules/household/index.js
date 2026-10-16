@@ -96,7 +96,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     render(
       container,
       html`
-        ${pageHeader({ title: "Household Staff", subtitle: "The people you pay: their daily wage and pay cycle drive attendance and payroll.", actions: canManage ? html`<button type="button" class="btn btn-primary" data-act="new">+ Add staff</button>` : "" })}
+        ${pageHeader({ title: "Household Staff", actions: canManage ? html`<button type="button" class="btn btn-primary" data-act="new">+ Add staff</button>` : "" })}
         ${canManage && state.settings ? html`<p class="chart-note" data-role="leave-default">Paid Leave allowance: <strong>${state.settings.paidLeaveDays} day${state.settings.paidLeaveDays === 1 ? "" : "s"} a year</strong> per helper (Jan–Dec). <button type="button" class="btn btn-compact btn-ghost" data-act="leave-default">Change</button></p>` : ""}
         ${filterBar({
           fields: [{ name: "status", label: "Status", type: "select", primary: true, def: "active", options: Object.entries(STAFF_STATUSES).map(([k, x]) => [k, x.label]), value: state.status }],

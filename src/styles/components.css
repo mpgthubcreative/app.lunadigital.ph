@@ -2767,6 +2767,99 @@ tr.is-saving {
     bottom: var(--space-3);
   }
 }
+/* Owner-pilot UX (2026-10-17): Payroll home summary. */
+.pay-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2) var(--space-4);
+  margin: var(--space-2) 0 var(--space-3);
+}
+.pay-summary-state {
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+}
+.pay-figures {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-5);
+  margin: 0;
+}
+.pay-figures dt {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.pay-figures dt small {
+  font-size: 11px;
+}
+.pay-figures dd {
+  margin: 0;
+  font-size: 1.15rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+/* Owner-pilot UX (2026-10-17): Attendance summary line + folded details. */
+.att-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  margin: var(--space-2) 0 var(--space-1);
+}
+.att-paid strong {
+  font-size: 1.05rem;
+}
+.att-more {
+  margin: 0 0 var(--space-2);
+}
+.att-more > summary {
+  color: var(--luna-primary);
+  font-weight: 600;
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+.att-more[open] > summary {
+  margin-bottom: var(--space-1);
+}
+.att-tools .btn-primary {
+  min-width: 12rem;
+}
+/* Owner-pilot UX (2026-10-17): Advances = one card per helper. */
+.adv-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+}
+.adv-card-head .card-title {
+  margin: 0;
+}
+.adv-card .adv-summary dd {
+  font-size: 1.05rem;
+}
+.adv-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin: var(--space-3) 0 var(--space-2);
+}
+.adv-card .adv-list {
+  border-top: 1px solid var(--border);
+  margin-top: var(--space-2);
+}
+.page-pickers {
+  margin: 0 0 var(--space-3);
+}
+.page-foot {
+  margin: var(--space-4) 0 0;
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border);
+  text-align: left;
+}
 /* Owner-pilot polish: Advances per helper, compact. */
 .adv-summary {
   display: grid;

@@ -340,8 +340,15 @@ describe("Advances", () => {
     mountAdvances(container, home(), { data, now: NOW, toast: () => {} });
     await flush();
     const card = container.querySelector(`[data-owe="${maria.id}"]`).textContent.replace(/\s+/g, " ");
-    expect(card).toMatch(/Outstanding\s*₱1,100\.00\s*Next deduction\s*₱600\.00\s*Oct 16–31/);
-    expect(container.querySelector('[data-advance="adv0000000009"]').textContent).toMatch(/₱1,100\.00 owed · ₱600\.00 Oct 16–31 · ₱500\.00 Nov 1–15[\s\S]*Not confirmed/);
+    expect(card).toMatch(/Outstanding\s*₱1,100\.00\s*Next deduction\s*₱600\.00\s*· Oct 16–31/);
+    expect(container.querySelector('[data-advance="adv0000000009"]').textContent.replace(/\s+/g, " ")).toMatch(/₱1,100\.00 · Oct 2[\s\S]*₱1,100\.00 owed · Deduct ₱600\.00 Oct 16–31 · ₱500\.00 Nov 1–15[\s\S]*Not confirmed/);
+    // Owner-pilot UX: the helper card is the working area (advances inside it), no "Open advances"; Voided records outside.
+    const owe = container.querySelector(`[data-owe="${maria.id}"]`);
+    expect(owe.querySelector('[data-advance="adv0000000009"]')).not.toBeNull();
+    expect(container.textContent).not.toMatch(/Open advances/);
+    expect([...owe.querySelectorAll(".adv-card-actions > .btn, .adv-card-actions > details > summary")].map((b) => b.textContent.trim())).toEqual(["Give advance", "⋯ More"]);
+    expect(container.querySelector('[data-act="voided"]').closest("[data-owe]")).toBeNull();
+    expect(container.querySelector('[data-act="voided"]').closest(".card")).toBeNull();
     // Owner-pilot polish: Helper, Amount, Deduct on; the rest under More options.
     container.querySelector('[data-act="give"]').click();
     const f = lastForm();
@@ -716,7 +723,18 @@ describe("Owner-pilot cleanup: payroll eligibility, Delete / Correct from ⋯, P
     await flush();
     expect([...container.querySelectorAll('[data-role="pick-staff"] option')].map((o) => o.textContent)).toEqual(["Everyone", "Loriza Ibanez"]);
     expect([...container.querySelectorAll("tr[data-payroll] td.cell-strong")].map((td) => td.textContent.trim())).toEqual(["Loriza Ibanez"]);
-    expect(container.querySelector('[data-role="period-state"]').textContent).toMatch(/₱4,932\.00 still to pay/);
+    expect(container.querySelector('[data-k="toPay"]').textContent).toBe("₱4,932.00");
+  });
+
+  it("Payroll home: the period's Paid / Still to pay / Prepaid (part of paid) at a glance", async () => {
+    const early = payroll({ status: "released", paymentTiming: "early", ownerPayment: "paid", receiptStatus: "awaiting", netPay: 610000, salary: { amount: 670000, earned: 610000, prepaid: { days: 1, from: "2026-10-12", to: "2026-10-12", amount: 60000 }, paidDate: "2026-10-11", method: "cash", timing: "early" } });
+    const other = payroll({ id: "staffAna000001_2026-10-01", staffId: "staffAna000001", staffName: "Ana", automatic: true, netPay: 300000, deductions: [], deductionsTotal: 0 });
+    const data = fakeData({ payrollApi: vi.fn(async (b) => (b.action === "period" ? periodView([early, other]) : {})) });
+    mountPayroll(container, home(), { data, now: NOW, toast: () => {} });
+    await flush();
+    const fig = Object.fromEntries([...container.querySelectorAll('[data-role="pay-figures"] dd')].map((dd) => [dd.dataset.k, dd.textContent]));
+    expect(fig).toEqual({ paid: "₱6,700.00", toPay: "₱3,000.00", prepaid: "₱600.00" });
+    expect(container.querySelector('[data-role="pay-figures"]').textContent).toMatch(/Prepaid\s*\(in paid\)/);
   });
 
   it("an automatic (unsaved) payroll: ⋯ Delete payroll explains there's nothing saved and changes nothing", async () => {

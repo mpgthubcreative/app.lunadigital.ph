@@ -104,6 +104,16 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     return html`<p class="stat-hint" data-role="confirmation">${same ? badge("Confirmed", "success") : badge("Changed since", "warning")} ${s.name} confirmed this attendance${c.confirmedAt ? ` on ${short(c.confirmedAt.slice(0, 10))}` : ""}${same ? "." : "; days changed after that."}</p>`;
   }
 
+  // The helper's confirmation of this period, as one chip.
+  function confirmationChip(sum) {
+    const c = state.review.confirmation;
+    const s = person();
+    if (!s || !s.memberUid) return "";
+    if (!c) return html`<span data-role="confirmation-chip">${badge("Not confirmed", "warning")}</span>`;
+    const same = ["present", "absent", "officialLeave", "unpaidLeave", "restDay", "notMarked"].every((k) => (c.counts?.[k] ?? 0) === sum[k]);
+    return html`<span data-role="confirmation-chip">${same ? badge(`Confirmed${c.confirmedAt ? ` ${short(c.confirmedAt.slice(0, 10))}` : ""}`, "success") : badge("Changed since confirmed", "warning")}</span>`;
+  }
+
   // Owner-pilot cleanup: Paid Leave this calendar year.
   function leaveLine() {
     const l = state.review.leave;
@@ -127,14 +137,24 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     const preview = summarizeAttendance(days.filter((d) => d <= today && valueOf(d) && valueOf(d) !== "clear").map((d) => ({ date: d, status: valueOf(d), dailyWage: savedOf(d)?.dailyWage ?? s.dailyWage })), { start: p.start, end: p.end > today ? today : p.end });
     const n = state.selected.size;
     const changes = state.pending.size;
+    // Owner-pilot UX (2026-10-17): one quiet summary line (paid days, the
+    // helper's confirmation as a chip); the breakdown, the confirmation
+    // sentence and Paid Leave fold under Details.
+    const open = days.some((d) => d <= today && !valueOf(d));
     return html`
-      <p class="chart-note" data-role="totals">Present ${preview.present} · Absent ${preview.absent} · Rest Day ${preview.restDay} · Paid Leave ${preview.officialLeave} · Unpaid Leave ${preview.unpaidLeave}${preview.notMarked ? ` · Not marked ${preview.notMarked}` : ""} → <strong>${preview.payableDays} paid days · ${formatCentavos(preview.basePay)}</strong>${changes ? html` <span class="stat-hint">(with unsaved changes)</span>` : ""}</p>
-      ${confirmationLine(saved)}
-      ${leaveLine()}
+      <div class="att-head" data-role="att-head">
+        <span class="att-paid" data-role="att-paid"><strong>${preview.payableDays} paid day${preview.payableDays === 1 ? "" : "s"} · ${formatCentavos(preview.basePay)}</strong>${changes ? html` <span class="stat-hint">unsaved</span>` : ""}</span>
+        ${confirmationChip(saved)}
+      </div>
+      <details class="att-more" data-role="att-details"><summary>Details</summary>
+        <p class="stat-hint" data-role="totals">Present ${preview.present} · Absent ${preview.absent} · Rest Day ${preview.restDay} · Paid Leave ${preview.officialLeave} · Unpaid Leave ${preview.unpaidLeave}${preview.notMarked ? ` · Not marked ${preview.notMarked}` : ""} → ${preview.payableDays} paid days · ${formatCentavos(preview.basePay)}${changes ? " (with unsaved changes)" : ""}</p>
+        ${confirmationLine(saved)}
+        ${leaveLine()}
+      </details>
       ${canEdit
         ? html`<div class="att-tools" data-role="tools">
-            <button type="button" class="btn btn-compact" data-act="fill" ${state.saving ? "disabled" : ""}>Fill normal schedule</button>
-            <button type="button" class="btn btn-compact${!changes && days.some((d) => d <= today && !valueOf(d)) ? " btn-primary" : ""}" data-act="confirm-today" ${state.saving ? "disabled" : ""}>Confirm through today</button>
+            <button type="button" class="btn${open && !changes ? " btn-primary" : ""}" data-act="confirm-today" ${state.saving ? "disabled" : ""}>Confirm through today</button>
+            <button type="button" class="btn btn-compact btn-ghost" data-act="fill" ${state.saving ? "disabled" : ""}>Fill normal schedule</button>
             <button type="button" class="btn btn-compact btn-ghost" data-act="copy-prev" ${state.saving ? "disabled" : ""}>Copy previous period</button>
           </div>`
         : ""}
@@ -150,7 +170,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
       })}</div>
       ${canEdit
         ? html`<div class="att-pad" data-role="pad">${ORDER.map((k) => html`<button type="button" class="btn" data-act="apply" data-status="${k}" ${n && !state.saving ? "" : "disabled"}>${ATTENDANCE_STATUSES[k].label}</button>`)}<button type="button" class="btn btn-ghost" data-act="apply" data-status="clear" ${n && !state.saving ? "" : "disabled"}>Clear</button></div>
-          <p class="att-legend" data-role="legend">${n ? `${n} day${n === 1 ? "" : "s"} selected. Tap a status.` : "Tap one or more days, then a status."} P Present · A Absent · PL Paid Leave · UL Unpaid Leave · R Rest Day · ? Expected (not recorded) · • not saved yet</p>`
+          <p class="att-legend" data-role="legend">${n ? html`<strong>${n} selected</strong> · ` : ""}P Present · A Absent · PL Paid Leave · UL Unpaid Leave · R Rest Day · ? Expected</p>`
         : html`<p class="att-legend" data-role="legend">P Present · A Absent · PL Paid Leave · UL Unpaid Leave · R Rest Day</p>`}
       ${changes
         ? html`<div class="att-save" data-role="save-bar"><span><strong>${changes}</strong> change${changes === 1 ? "" : "s"} not saved</span><span><button type="button" class="btn btn-compact btn-ghost" data-act="discard" ${state.saving ? "disabled" : ""}>Discard</button> <button type="button" class="btn btn-primary" data-act="save" ${state.saving ? "disabled" : ""}>${state.saving ? "Saving…" : "Save attendance"}</button></span></div>`
@@ -199,7 +219,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     render(
       container,
       html`
-        ${pageHeader({ title: "Attendance", subtitle: "Choose a helper and a pay period. Present and Paid Leave are paid; Absent, Unpaid Leave and Rest Day aren't." })}
+        ${pageHeader({ title: "Attendance" })}
         ${needsReview()}
         <section class="card section">
           <div class="pick-row" data-role="pickers">

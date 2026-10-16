@@ -172,7 +172,18 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     const mixed = state.period.mixed === true;
     const rows = state.rows;
     const toPay = rows.filter((p) => p.status !== "released").reduce((t, p) => t + Math.max(0, p.netPay), 0);
-    return html`<p class="chart-note" data-role="period-state">${mixed ? html`${badge("In progress", "info")} Each helper's own current pay period.` : state.period.state === "in_progress" ? html`${badge("In progress", "info")} Ends ${short(state.period.end)}. Updates as you record attendance and advances.` : html`${badge("Ended", "neutral")} ${short(state.period.start)} to ${short(state.period.end)}.`}${toPay ? html` · <strong>${formatCentavos(toPay)}</strong> still to pay` : ""}</p>
+    // Owner-pilot UX (2026-10-17): Payroll is home: the period's status and
+    // the three figures that matter (prepaid is part of what was paid).
+    const paid = rows.filter((p) => p.status === "released").reduce((t, p) => t + paidTotal(p), 0);
+    const prepaid = rows.filter((p) => p.status === "released").reduce((t, p) => t + (p.salary?.prepaid?.amount || 0), 0);
+    return html`<div class="pay-summary" data-role="period-state">
+        <span class="pay-summary-state">${mixed ? html`${badge("In progress", "info")} Each helper's own period` : state.period.state === "in_progress" ? html`${badge("In progress", "info")} Ends ${short(state.period.end)}` : html`${badge("Ended", "neutral")} ${short(state.period.start)} to ${short(state.period.end)}`}</span>
+        <dl class="pay-figures" data-role="pay-figures">
+          <div><dt>Paid</dt><dd data-k="paid">${formatCentavos(paid)}</dd></div>
+          <div><dt>Still to pay</dt><dd data-k="toPay">${formatCentavos(toPay)}</dd></div>
+          ${prepaid ? html`<div><dt>Prepaid <small>(in paid)</small></dt><dd data-k="prepaid">${formatCentavos(prepaid)}</dd></div>` : ""}
+        </dl>
+      </div>
       ${!rows.length
         ? emptyState({ iconName: "staff", title: "Nobody on payroll for this period", body: "Payroll follows each helper's start date, end date and pay cycle on Household Staff." })
         : html`<div class="table-wrap"><table class="table table-compact rows" data-role="period-payrolls">
@@ -201,7 +212,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     render(
       container,
       html`
-        ${pageHeader({ title: "Payroll", subtitle: "What to pay each helper for a pay period. It updates by itself from attendance and advances." })}
+        ${pageHeader({ title: "Payroll" })}
         <section class="card section" data-section="period">
           <div class="pick-row" data-role="pickers">
             <label class="pick">Employee <select class="select" data-role="pick-staff" aria-label="Employee"><option value="">Everyone</option>${names.map((x) => html`<option value="${x.id}" ${x.id === state.staffId ? "selected" : ""}>${x.name}</option>`)}</select></label>

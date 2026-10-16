@@ -83,25 +83,36 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     return ids.map((id) => ({ id, staff: state.staff.find((s) => s.id === id), name: state.staff.find((s) => s.id === id)?.name ?? state.rows.find((a) => a.staffId === id)?.staffName ?? "Staff", advances: state.rows.filter((a) => a.staffId === id) }));
   };
 
-  function summaryCard(p) {
+  // Owner-pilot UX (2026-10-17): one card per helper is the whole working
+  // area: name, Outstanding / Available / Next deduction, [Give advance]
+  // [⋯ More], then that helper's current advances right under it (no
+  // separate "Open advances" section). Repaid ones are behind ⋯ More;
+  // Voided records sit at the very bottom of the page.
+  function helperCard(p) {
     const sum = advanceSummary(p.advances);
     const cap = p.staff && Number.isSafeInteger(p.staff.advanceLimit) ? advanceCapacity(p.staff, p.advances) : null;
-    if (!sum.outstanding && !cap && !state.staffId) return "";
-    return html`<div class="owe-card" data-owe="${p.id}">
-      <div class="owe-name"><strong>${p.name}</strong>${sum.notTaken ? html` ${badge(`${formatCentavos(sum.notTaken)} not taken`, "warning")}` : ""}</div>
-      <dl class="adv-summary owe-figures">
+    const open = p.advances.filter((a) => a.status === "not_yet_paid" || (a.status === "paid" && advanceRemaining(a) > 0));
+    const done = p.advances.filter((a) => a.status === "paid" && advanceRemaining(a) === 0);
+    const more = [{ x: "repaid", label: `Repaid advances (${done.length})` }];
+    return html`<section class="card section adv-card" data-owe="${p.id}">
+      <div class="adv-card-head"><h2 class="card-title">${p.name}</h2>${sum.notTaken ? badge(`${formatCentavos(sum.notTaken)} not taken`, "warning") : ""}</div>
+      <dl class="adv-summary">
         <dt>Outstanding</dt><dd data-role="outstanding">${formatCentavos(sum.outstanding)}</dd>
-        ${cap ? html`<dt>Available</dt><dd data-role="available">${formatCentavos(cap.available)} <small>of ${formatCentavos(cap.limit)}</small></dd>` : ""}
-        <dt>Next deduction</dt><dd data-role="next">${sum.next ? html`${formatCentavos(sum.next.amount)} <small>${periodText(sum.next)}</small>` : "—"}</dd>
+        ${cap ? html`<dt>Available</dt><dd data-role="available">${formatCentavos(cap.available)}</dd>` : ""}
+        <dt>Next deduction</dt><dd data-role="next">${sum.next ? html`${formatCentavos(sum.next.amount)} <small>· ${periodText(sum.next)}</small>` : "—"}</dd>
       </dl>
-      ${canManage ? html`<button type="button" class="btn btn-compact" data-act="give" data-staff="${p.id}">+ Give advance</button>` : ""}
-    </div>`;
+      <div class="adv-card-actions">
+        ${canManage && p.staff ? html`<button type="button" class="btn btn-primary" data-act="give" data-staff="${p.id}">Give advance</button>` : ""}
+        <details class="line-menu"><summary class="btn" aria-label="More for ${p.name}">⋯ More</summary><div class="line-menu-list" role="menu">${more.map((i) => html`<button type="button" class="menu-item" role="menuitem" data-act="${i.x}" data-staff="${p.id}">${i.label}</button>`)}</div></details>
+      </div>
+      ${open.length ? html`<ul class="adv-list" data-role="advances">${open.map(advanceRow)}</ul>` : html`<p class="stat-hint" data-role="none-owed">Nothing owed.</p>`}
+    </section>`;
   }
 
   function advanceRow(a) {
     const owed = advanceRemaining(a);
     const repaid = a.status === "paid" && owed === 0;
-    const state_ = a.status === "paid" ? (repaid ? badge("Repaid", "success") : a.receipt?.state === "confirmed" ? badge("Received", "success") : badge("Not confirmed", "warning")) : badge(ADVANCE_STATUSES[a.status]?.label ?? a.status, a.status === "requested" ? "warning" : "neutral");
+    const state_ = a.status === "paid" ? (repaid ? badge("Repaid", "success") : a.receipt?.state === "confirmed" ? badge("Confirmed", "success") : badge("Not confirmed", "warning")) : badge(ADVANCE_STATUSES[a.status]?.label ?? a.status, a.status === "requested" ? "warning" : "neutral");
     const items = [{ x: "details", label: "Details" }];
     if (canManage && a.status === "paid" && owed > 0) items.push({ x: "plan", label: "Edit repayment plan" }, { x: "repay", label: "Record a repayment" });
     if (a.status === "paid" && a.proof) items.push({ x: "proof", label: "View proof" });
@@ -110,22 +121,42 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     // Destructive last: delete (money never given) or void (given).
     if (canManage && a.status === "paid") items.push({ x: "void", label: "Delete / Void advance", danger: true, sep: true });
     if (canManage && a.status !== "paid") items.push({ x: "delete", label: "Delete advance", danger: true, sep: true });
+    const plan = (a.schedule || []).filter((e) => e.state === "planned");
     return html`<li class="adv-row" data-advance="${a.id}">
-      <div class="adv-main"><strong>${formatCentavos(a.amount)}</strong> ${state.staffId ? "" : html`· ${a.staffName} `}<small>${short(a.paidDate || a.date)}${a.description ? ` · ${a.description}` : ""}</small>
-        <small>${a.status === "paid" ? (repaid ? "Fully repaid" : html`<strong>${formatCentavos(owed)} owed</strong> · ${planText(a)}`) : a.status === "not_yet_paid" ? "Approved, not given yet" : a.status === "requested" ? "Asked by the helper" : "Not approved"}</small></div>
+      <div class="adv-main"><strong>${formatCentavos(a.amount)} · ${short(a.paidDate || a.date)}</strong>
+        <small>${a.status === "paid" ? (repaid ? "Fully repaid" : html`${formatCentavos(owed)} owed · ${plan.length ? `Deduct ${plan.map((e) => `${formatCentavos(e.amount)} ${periodText(e)}`).join(" · ")}` : "No deduction planned"}`) : a.status === "not_yet_paid" ? "Approved, not given yet" : a.status === "requested" ? "Asked by the helper" : "Not approved"}${a.description ? ` · ${a.description}` : ""}</small></div>
       <div class="adv-end">${state_}<details class="line-menu"><summary class="btn btn-compact btn-ghost" aria-label="Actions for the ${formatCentavos(a.amount)} advance">⋯</summary><div class="line-menu-list" role="menu">${items.map((i) => html`${i.sep ? html`<div class="menu-sep" role="separator"></div>` : ""}<button type="button" class="menu-item${i.danger ? " is-danger" : ""}" role="menuitem" data-x="${i.x}" data-id="${a.id}">${i.label}</button>`)}</div></details></div>
     </li>`;
+  }
+
+  // ⋯ More -> Repaid advances (history, read-only list with each row's ⋯).
+  function showRepaid(staffId) {
+    const p = people().find((x) => x.id === staffId);
+    const done = (p?.advances || []).filter((a) => a.status === "paid" && advanceRemaining(a) === 0);
+    const backdrop = document.createElement("div");
+    backdrop.className = "modal-backdrop is-panel";
+    document.body.appendChild(backdrop);
+    render(backdrop, html`<div class="modal" role="dialog" aria-modal="true" aria-label="Repaid advances" data-role="repaid"><div class="modal-header"><h2 class="card-title">${p?.name ?? ""} · Repaid advances</h2></div><div class="modal-body">${done.length ? html`<ul class="adv-list" data-role="advances-repaid">${done.map(advanceRow)}</ul>` : html`<p class="stat-hint">None yet.</p>`}</div><div class="modal-footer"><button type="button" class="btn" data-x="close">Close</button></div></div>`);
+    backdrop.addEventListener("click", (e) => {
+      if (e.target === backdrop || e.target.closest('[data-x="close"]')) return backdrop.remove();
+      const el = e.target.closest("[data-x]");
+      const a = el && done.find((x) => x.id === el.dataset.id);
+      if (!a) return undefined;
+      el.closest("details")?.removeAttribute("open");
+      if (el.dataset.x === "proof") viewProof({ title: `Advance proof · ${a.staffName}`, load: async () => (await api({ action: "proof", advanceId: a.id })).proof });
+      else details(a);
+      return undefined;
+    });
   }
 
   function draw() {
     if (!alive) return;
     const requests = state.rows.filter((a) => a.status === "requested");
-    const open = state.rows.filter((a) => a.status === "not_yet_paid" || (a.status === "paid" && advanceRemaining(a) > 0));
-    const done = state.rows.filter((a) => a.status === "paid" && advanceRemaining(a) === 0);
+    const list = people();
     render(
       container,
       html`
-        ${pageHeader({ title: "Advances", subtitle: "What each helper owes, and when it will be taken from salary.", actions: canManage ? html`<button type="button" class="btn btn-primary" data-act="give">Give an advance</button>` : "" })}
+        ${pageHeader({ title: "Advances" })}
         ${canManage && requests.length
           ? html`<section class="card section" data-section="requests"><h2 class="card-title">Asked by your helpers (${requests.length})</h2>
               <ul class="request-list" data-role="advance-requests">${requests.map(
@@ -133,23 +164,18 @@ export function mount(container, session, { data = defaultData, toast = defaultT
                   <div class="request-actions"><button type="button" class="btn btn-compact" data-act="reject" data-id="${a.id}">Reject</button><button type="button" class="btn btn-compact btn-primary" data-act="approve" data-id="${a.id}">Approve</button></div></li>`
               )}</ul></section>`
           : ""}
-        <section class="card section" data-section="owed">
-          <div class="pick-row" data-role="pickers">
-            <label class="pick">Employee <select class="select" data-role="pick-staff" aria-label="Employee"><option value="">Everyone</option>${state.staff.map((x) => html`<option value="${x.id}" ${x.id === state.staffId ? "selected" : ""}>${x.name}</option>`)}</select></label>
-            ${mayExport(session, "advances") ? html`<span class="visually-hidden">${exportHint}</span>${exportButton("advances")}` : ""}
-          </div>
-          ${state.error
-            ? emptyState({ title: "Couldn't load", body: state.error })
-            : state.loading && !state.rows.length
-              ? skeleton(4)
-              : html`<div class="owe-cards" data-role="summaries">${people().map(summaryCard)}</div>
-                ${!open.length && !done.length
-                  ? emptyState({ iconName: "advance", title: "No advances", body: "Advances you give appear here with what's still owed." })
-                  : html`<h3 class="slip-head">Open advances</h3>
-                    ${open.length ? html`<ul class="adv-list" data-role="advances">${open.map(advanceRow)}</ul>` : html`<p class="stat-hint">Nothing owed right now.</p>`}
-                    ${done.length ? html`<details class="form-more"><summary>Repaid (${done.length})</summary><ul class="adv-list" data-role="advances-repaid">${done.map(advanceRow)}</ul></details>` : ""}`}
-                <p class="voided-link"><button type="button" class="btn-linklike" data-act="voided">Voided records</button></p>`}
-        </section>`
+        <div class="pick-row page-pickers" data-role="pickers">
+          <label class="pick">Employee <select class="select" data-role="pick-staff" aria-label="Employee"><option value="">Everyone</option>${state.staff.map((x) => html`<option value="${x.id}" ${x.id === state.staffId ? "selected" : ""}>${x.name}</option>`)}</select></label>
+          ${mayExport(session, "advances") ? html`<span class="visually-hidden">${exportHint}</span>${exportButton("advances")}` : ""}
+        </div>
+        ${state.error
+          ? html`<section class="card section">${emptyState({ title: "Couldn't load", body: state.error })}</section>`
+          : state.loading && !state.rows.length
+            ? html`<section class="card section">${skeleton(4)}</section>`
+            : list.length
+              ? html`<div data-role="summaries">${list.map(helperCard)}</div>`
+              : html`<section class="card section">${emptyState({ iconName: "advance", title: "No household staff yet", body: "Add the people you pay on the Household Staff page." })}</section>`}
+        <p class="voided-link page-foot"><button type="button" class="btn-linklike" data-act="voided">Voided records ›</button></p>`
     );
     for (const btn of container.querySelectorAll('[data-act="export"]')) btn.classList.add("btn-ghost");
   }
@@ -296,6 +322,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     try {
       if (act === "give") return give(el.dataset.staff || "");
       if (act === "voided") return showVoided();
+      if (act === "repaid") return showRepaid(el.dataset.staff);
       if (!a) return undefined;
       if (act === "details") return details(a);
       if (act === "plan") {

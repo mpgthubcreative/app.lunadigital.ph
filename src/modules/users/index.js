@@ -54,7 +54,7 @@ export function mount(container, session, { api = defaultApi, toast = defaultToa
     render(
       container,
       html`
-        ${pageHeader({ title: "Users", subtitle: "Who can use Luna for this business.", actions: state.canManage ? html`<button type="button" class="btn btn-primary" data-act="add">+ Add member</button>` : "" })}
+        ${pageHeader({ title: "Users", subtitle: "Who can sign in to Luna.", actions: state.canManage ? html`<button type="button" class="btn btn-primary" data-act="add">+ Add member</button>` : "" })}
         <section class="card">
           ${state.error
             ? emptyState({ title: "Couldn't load", body: state.error })
