@@ -112,7 +112,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     canManage
       ? html`<select class="select select-chip wl-status" data-role="rsvp" data-id="${g.id}" data-tone="${RSVP_TONE[g.rsvp] || ""}" aria-label="RSVP for ${g.name}">${Object.keys(RSVP_STATUSES).map((k) => html`<option value="${k}" ${k === g.rsvp ? "selected" : ""}>${RSVP_WORDS[k]}</option>`)}</select>`
       : html`<span class="wl-chip" data-tone="${RSVP_TONE[g.rsvp] || ""}">${RSVP_WORDS[g.rsvp] ?? g.rsvp}</span>`;
-  const seats = (g) => html`<span class="wl-seats" data-role="seats" aria-label="${seatsText(g)} seats">${seatsText(g)}</span>`;
+  const seats = (g, text = seatsText(g)) => html`<span class="wl-seats" data-role="seats" aria-label="${text} seats">${text}</span>`;
   const guestMenu = (g) =>
     menu(`More for ${g.name}`, [
       ...(canManage && g.rsvp === "attending" && g.partySize > 1 ? [{ act: "count", id: g.id, label: "Change number attending" }] : []),
@@ -144,11 +144,11 @@ export function mount(container, session, { data = defaultData, toast = defaultT
   function seatingView() {
     const plan = seatingPlan(state.rows, state.seating);
     const seatRow = (g, table) =>
-      html`<li class="wl-row wl-guest" data-guest="${g.id}"><button type="button" class="wl-main" data-act="view" data-id="${g.id}"><span class="wl-name">${g.name}</span></button>${seats(g)}${menu(`Seating for ${g.name}`, canManage ? (table ? [{ act: "seat", id: g.id, label: "Move to another table" }, { act: "unseat", id: g.id, label: "Unassign" }] : [{ act: "seat", id: g.id, label: "Assign to a table" }]) : [{ act: "view", id: g.id, label: "Details & history" }])}</li>`;
+      html`<li class="wl-row wl-guest" data-guest="${g.id}"><button type="button" class="wl-main" data-act="view" data-id="${g.id}"><span class="wl-name">${g.name}</span></button>${seats(g, String(g.confirmed))}${menu(`Seating for ${g.name}`, canManage ? (table ? [{ act: "seat", id: g.id, label: "Move to another table" }, { act: "unseat", id: g.id, label: "Unassign" }] : [{ act: "seat", id: g.id, label: "Assign to a table" }]) : [{ act: "view", id: g.id, label: "Details & history" }])}</li>`;
     return html`
       <p class="wl-count" data-role="seating-summary">${fmt(plan.attendingSeats)} attending · ${fmt(plan.seatedSeats)} seated · <strong class="${plan.unassignedSeats ? "is-warn" : ""}">${fmt(plan.unassignedSeats)} unassigned</strong></p>
       <section class="wl-section" data-group="unassigned">
-        <h2 class="wl-group-title">Unassigned <span>${fmt(plan.unassignedSeats)}</span></h2>
+        <h2 class="wl-group-title">Unassigned <span>${fmt(plan.unassignedSeats)} seat${plan.unassignedSeats === 1 ? "" : "s"}</span></h2>
         ${plan.unassigned.length ? html`<ul class="wl-list" data-role="unassigned">${plan.unassigned.map((g) => seatRow(g, null))}</ul>` : html`<p class="stat-hint wl-none">${plan.attendingSeats ? "Everyone attending has a table." : "Guests appear here once they're attending."}</p>`}
       </section>
       ${plan.tables.length

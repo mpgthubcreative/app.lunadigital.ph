@@ -165,7 +165,8 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     const list = upcomingOf(s);
     const late = list.some((p) => p.dueDate < today());
     const due = bal > 0 ? `${money(bal)} due` : "";
-    const sub = [PAID_STATES[st], late ? "payment overdue" : "", due].filter(Boolean).join(" · ");
+    // Phone sub-line: status (or Overdue) · amount due, whole pesos when exact.
+    const sub = [late ? "Overdue" : PAID_STATES[st], due.replace(/\.00 due$/, " due")].filter(Boolean).join(" · ");
     const payable = s.status === "active" && canPay && (list.length > 0 || bal > 0);
     return html`<li class="wl-row wl-supplier" data-supplier="${s.id}" data-state="${st}">
       <button type="button" class="wl-main" data-act="view" data-id="${s.id}"><span class="wl-name">${s.name}</span><span class="wl-sub m-only-inline" data-role="sub">${sub}</span></button>

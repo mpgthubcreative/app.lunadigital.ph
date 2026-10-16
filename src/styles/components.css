@@ -3583,3 +3583,9 @@ tr.is-saving {
   .wl-guest-tools .seg-btn { min-height: 36px; padding: 0 var(--space-4); }
   .wl-sum { padding: var(--space-2) var(--space-3); }
 }
+@media (max-width: 719px) {
+  /* Status chips stay narrow so names keep the room. */
+  .select.select-chip.wl-status { max-width: 6.9rem; padding: 0 22px 0 10px; font-size: var(--text-xs); }
+  .wl-row { gap: 6px; }
+  .wl-due { min-width: 3.1em; }
+}
