@@ -76,7 +76,9 @@ export function mount(container, session, { data = defaultData, toast = defaultT
   const businessId = session.business.id;
   const today = businessDate(session.business.timezone, now());
   const fromUrl = new URLSearchParams(typeof location === "undefined" ? "" : location.search).get("staff") || "";
-  const state = { staffId: ID.test(fromUrl) ? fromUrl : "", staff: [], people: null, loading: true, error: null, periods: [], period: null, rows: [] };
+  // ?period=<start>_<end> (bell links) opens that pay period.
+  const periodParam = /^(\d{4}-\d{2}-\d{2})_(\d{4}-\d{2}-\d{2})$/.exec(new URLSearchParams(typeof location === "undefined" ? "" : location.search).get("period") || "");
+  const state = { staffId: ID.test(fromUrl) ? fromUrl : "", staff: [], people: null, loading: true, error: null, periods: [], period: periodParam ? { start: periodParam[1], end: periodParam[2] } : null, rows: [] };
   let alive = true;
 
   const periodQuery = () => (state.period && !state.period.mixed && !state.period.current ? { period: { start: state.period.start, end: state.period.end } } : state.period ? { period: { current: true } } : {});
@@ -185,7 +187,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
               <td class="num"><strong>${formatCentavos(p.netPay)}</strong>${gap && gap.diff ? html`<span class="cell-sub">paid ${formatCentavos(gap.paid)}</span>` : ""}</td>
               <td data-col="payment">${badge(...paymentState(p))}</td>
               <td data-col="received">${badge(...receivedState(p))}</td>
-              <td class="row-actions" data-m="more"><span class="visually-hidden">${openButton(p.id, `Open payroll of ${p.staffName}`, { act: "view" })}</span>${rowMenu(p)}</td>
+              <td class="row-actions" data-m="more"><span class="visually-hidden">${openButton(p.id, `Open payroll of ${p.staffName}`, { act: "view" })}</span>${canRelease && p.status === "draft" && p.netPay > 0 ? html`<button type="button" class="btn btn-compact btn-primary row-pay" data-act="pay" data-id="${p.id}" aria-label="Pay ${p.staffName}">Pay</button>` : ""}${rowMenu(p)}</td>
             </tr>`;
           })}</tbody></table></div>`}`;
   }
@@ -376,6 +378,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
             ${draft && canManage ? html`<details class="line-menu line-menu-up"><summary class="btn">Add ▾</summary><div class="line-menu-list" role="menu"><button type="button" class="menu-item" data-x="add-bonus">Bonus</button><button type="button" class="menu-item" data-x="add">Other deduction</button><button type="button" class="menu-item" data-x="add-13th">13th month pay</button>${p.automatic ? "" : html`<div class="menu-sep" role="separator"></div><button type="button" class="menu-item is-danger" data-x="delete">Delete payroll</button>`}</div></details>` : ""}
             ${draft && canRelease ? html`<button type="button" class="btn btn-primary" data-x="release">Pay salary</button>` : ""}
             ${correcting ? html`<button type="button" class="btn btn-primary" data-x="done-correcting">Done</button>` : ""}
+            ${!draft && canRelease && !correcting ? html`<button type="button" class="btn" data-x="correct-payroll" data-role="correct-payroll-btn">Correct payroll</button>` : ""}
             ${!draft && canRelease && !correcting ? html`<details class="line-menu line-menu-up"><summary class="btn">More ▾</summary><div class="line-menu-list" role="menu"><button type="button" class="menu-item" data-x="correct-payroll">Correct payroll</button><button type="button" class="menu-item" data-x="correct">Correct payment</button>${!p.salary?.proof ? html`<button type="button" class="menu-item" data-x="add-proof">Add payment proof</button>` : ""}${p.receiptStatus === "awaiting" ? html`<button type="button" class="menu-item" data-x="newlink">New receipt link</button>` : ""}${p.dispute?.state === "open" ? html`<button type="button" class="menu-item" data-x="resolve">Answer "not received"</button>` : ""}<div class="menu-sep" role="separator"></div><button type="button" class="menu-item is-danger" data-x="void">Void payroll</button></div></details>` : ""}
             <button type="button" class="btn" data-x="close">Close</button>
           </div>
@@ -632,6 +635,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     if (el.dataset.act === "view") openView(el.dataset.id);
     else if (el.dataset.act === "correct-payment") openView(el.dataset.id, "correct");
     else if (el.dataset.act === "correct-payroll") openView(el.dataset.id, "correct-payroll");
+    else if (el.dataset.act === "pay") openView(el.dataset.id, "release");
     else if (el.dataset.act === "delete-payroll" && p) deletePayroll(p).then((ok) => ok && load());
     else if (el.dataset.act === "void-payroll" && p) voidPaid(p).then((ok) => ok && load());
     else if (el.dataset.act === "voided") showVoided();

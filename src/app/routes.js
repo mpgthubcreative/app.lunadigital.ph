@@ -7,7 +7,7 @@
 // requireTenant() on the server, so a tampered session or URL reveals
 // nothing; this just keeps the screen honest.
 
-import { resolveNavigation, canUseModule, canUseNotifications, terminologyLabels } from "@shared/index.js";
+import { resolveNavigation, canUseModule, canUseNotifications, terminologyLabels, getWorkspaceTemplate, snapshotWorkspaceTemplateId } from "@shared/index.js";
 import { html, render } from "../lib/html.js";
 import { pageHeader, card, emptyState } from "../components/ui.js";
 
@@ -27,6 +27,11 @@ export function buildRoutes(session) {
   const routes = resolveNavigation(accessOf(session)).map((mod) => ({ path: mod.path, label: labels[mod.id] ?? mod.label, moduleId: mod.id }));
   if (canUseNotifications(accessOf(session))) routes.push({ ...NOTIFICATIONS_ROUTE });
   if (canSeeSubscription(session)) routes.push({ ...SUBSCRIPTION_ROUTE });
+  // Owner-pilot UX: a workspace whose home isn't the Dashboard (Household:
+  // Payroll) sends "/" (sign-in, old links) there.
+  const home = getWorkspaceTemplate(snapshotWorkspaceTemplateId(session.entitlements))?.home;
+  const target = home && routes.find((r) => r.moduleId === home);
+  if (target && !routes.some((r) => r.path === "/")) routes.push({ path: "/", redirect: target.path, label: target.label, moduleId: target.moduleId });
   return routes;
 }
 

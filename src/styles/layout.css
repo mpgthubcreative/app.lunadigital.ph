@@ -654,6 +654,53 @@
   border-top: 1px solid var(--border);
   font-size: var(--text-sm);
 }
+/* Owner-pilot UX: Household "Needs your attention" in the bell / Notifications. */
+.bell-todos {
+  border-bottom: 1px solid var(--border);
+  padding-bottom: var(--space-2);
+  margin-bottom: var(--space-2);
+}
+.bell-count-inline {
+  min-width: 22px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--danger);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  text-align: center;
+}
+.todo-groups {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: 0 var(--space-3);
+}
+.todo-name {
+  font-weight: 700;
+  margin-bottom: 2px;
+}
+.todo-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.todo-link {
+  display: block;
+  min-height: 40px;
+  padding: 8px 10px;
+  margin: 2px 0;
+  border-radius: 8px;
+  background: var(--warning-bg);
+  color: var(--text);
+  text-decoration: none;
+  line-height: 1.35;
+}
+.todo-link:hover,
+.todo-link:focus-visible {
+  outline: 2px solid var(--luna-primary);
+  outline-offset: 1px;
+}
 .bell-list {
   list-style: none;
   margin: 0;

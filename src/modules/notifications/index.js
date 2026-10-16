@@ -11,12 +11,17 @@ import { toast as defaultToast } from "../../components/feedback.js";
 import { NOTIFICATION_CATEGORIES } from "@shared/notifications.js";
 import * as defaultData from "./data.js";
 import { notificationRow, myCategories } from "./view.js";
+import { hasHouseholdTodos, todoList } from "../../app/notification-bell.js";
+import { api as defaultApi } from "../../lib/api.js";
 
 const STATUS_TONE = { Unread: "info", Read: "neutral", Resolved: "success" };
 
 // options.data / toast / now / onChange are injectable for tests;
 // onChange() lets the shell refresh the bell after a read.
-export function mount(container, session, { data = defaultData, toast = defaultToast, now = () => new Date(), onChange = () => window.dispatchEvent(new CustomEvent("luna:notifications")) } = {}) {
+export function mount(container, session, { data = defaultData, toast = defaultToast, now = () => new Date(), onChange = () => window.dispatchEvent(new CustomEvent("luna:notifications")), api = defaultApi } = {}) {
+  // Owner-pilot UX: Household "Needs your attention" first (from the records).
+  const withTodos = hasHouseholdTodos(session);
+  let todos = [];
   const businessId = session.business.id;
   const uid = session.user.uid;
   const categories = myCategories(session);
@@ -27,6 +32,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
   async function load() {
     state.loading = true;
     draw();
+    if (withTodos) todos = await api("household-summary").then((r) => r.summary?.todos || [], () => todos);
     try {
       const page = await data.listNotifications(businessId, uid, { unread: state.unread, category: state.category }, { cursor: state.cursors.at(-1) || null });
       state.rows = page.rows;
@@ -48,6 +54,9 @@ export function mount(container, session, { data = defaultData, toast = defaultT
       container,
       html`
         ${pageHeader({ title: "Notifications", subtitle: "What happened, and what needs your attention.", actions: html`<button type="button" class="btn" data-act="read-all">Mark all as read</button>` })}
+        ${withTodos
+          ? html`<section class="section card" data-section="todos"><h2 class="card-title">Needs your attention${todos.length ? ` (${todos.length})` : ""}</h2>${todos.length ? todoList(todos, { onClickAct: "todo" }) : html`<p class="stat-hint" data-role="todos-empty">Nothing needs your attention right now.</p>`}</section>`
+          : ""}
         <form class="section card filters filters-inline" data-role="filters">
           <select class="select" name="show" aria-label="Show">${opt("all", "All", state.unread ? "unread" : "all")}${opt("unread", "Unread", state.unread ? "unread" : "all")}</select>
           <select class="select" name="category" aria-label="Category">${opt("", "All categories", state.category)}${categories.map((c) => opt(c, NOTIFICATION_CATEGORIES[c].label, state.category))}</select>

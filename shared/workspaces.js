@@ -15,7 +15,13 @@
 //                  override) — see computeEntitlements.
 //   navigation     module ids in display order
 //   mobileTabs     (Phase 18.5) up to three navigation ids for the phone tab
-//                  bar, after Dashboard (display only)
+//                  bar, after Dashboard (display only); up to four when the
+//                  template has no Dashboard in its navigation
+//   navHidden      (Owner-pilot UX) allowed modules kept OUT of the
+//                  navigation (still entitled, can come back): Household
+//                  hides the Dashboard
+//   home           (Owner-pilot UX) the module "/" opens when the Dashboard
+//                  is hidden (Household: payroll)
 //   dashboard      widget ids (shared/dashboard.js) in display order, and
 //                  the empty state shown when none apply yet
 //   labels         plain-text display names by module id; ids, permission
@@ -109,8 +115,13 @@ const TEMPLATES = [
     description: "Pay household staff, record what was released and get each payment confirmed by the person who received it.",
     status: "live",
     modules: [...CORE, "household", "attendance", "payroll", "advances"],
-    navigation: ["dashboard", "attendance", "payroll", "advances", "household", "users", "settings"],
-    mobileTabs: ["attendance", "payroll", "advances"],
+    // Owner-pilot UX (2026-10-17): no Dashboard in Household. Payroll is the
+    // home page ("/" opens it); what needs attention lives in the bell. The
+    // dashboard module itself stays (core) so it can come back.
+    navigation: ["payroll", "attendance", "advances", "household", "users", "settings"],
+    mobileTabs: ["payroll", "attendance", "advances", "household"],
+    navHidden: ["dashboard"],
+    home: "payroll",
     dashboard: {
       widgets: ["activeStaff", "attendanceToday", "payrollsToRelease", "awaitingReceipt", "advancesNotPaid", "advancesToDeduct"],
       empty: { title: "Your payroll workspace is ready", body: "Add your household staff to start marking attendance." },
@@ -237,7 +248,7 @@ export function validateWorkspaceTemplate(t, { moduleIds, coreModuleIds, availab
   const problems = [];
   const isObj = (v) => Boolean(v) && typeof v === "object" && !Array.isArray(v);
   if (!isObj(t)) return ["template must be an object"];
-  const allowedKeys = ["id", "version", "upgradingFrom", "name", "description", "status", "modules", "navigation", "mobileTabs", "dashboard", "labels", "settings", "plannedModules"];
+  const allowedKeys = ["id", "version", "upgradingFrom", "name", "description", "status", "modules", "navigation", "mobileTabs", "navHidden", "home", "dashboard", "labels", "settings", "plannedModules"];
   for (const k of Object.keys(t)) if (!allowedKeys.includes(k)) problems.push(`unknown key ${k}`);
   if (typeof t.id !== "string" || !WORKSPACE_TEMPLATE_ID_PATTERN.test(t.id)) problems.push("invalid id");
   if (!Number.isSafeInteger(t.version) || t.version < 1) problems.push("version must be a positive integer");
@@ -256,11 +267,18 @@ export function validateWorkspaceTemplate(t, { moduleIds, coreModuleIds, availab
   const nav = Array.isArray(t.navigation) ? t.navigation : [];
   if (!Array.isArray(t.navigation) || new Set(nav).size !== nav.length) problems.push("navigation must be a list without duplicates");
   for (const m of nav) if (!mods.includes(m)) problems.push(`navigation ${m} isn't an allowed module`);
-  for (const m of mods) if (!nav.includes(m)) problems.push(`allowed module ${m} has no navigation position`);
-  // Phase 18.5: up to three phone tabs (after Dashboard), from the navigation.
+  const hidden = t.navHidden === undefined ? [] : Array.isArray(t.navHidden) ? t.navHidden : null;
+  if (!hidden || new Set(hidden).size !== hidden.length) problems.push("navHidden must be a list without duplicates");
+  for (const m of hidden || []) if (!mods.includes(m) || nav.includes(m)) problems.push(`navHidden ${m} must be an allowed module that isn't in the navigation`);
+  for (const m of mods) if (!nav.includes(m) && !(hidden || []).includes(m)) problems.push(`allowed module ${m} has no navigation position`);
+  if (t.home !== undefined && (!nav.includes(t.home) || t.home === "dashboard")) problems.push("home must be a navigation module");
+  if (t.home === undefined && !nav.includes("dashboard")) problems.push("a template without the Dashboard in its navigation needs a home module");
+  // Phase 18.5: up to three phone tabs (after Dashboard), from the navigation;
+  // four when there's no Dashboard tab.
   if (t.mobileTabs !== undefined) {
     const tabs = Array.isArray(t.mobileTabs) ? t.mobileTabs : null;
-    if (!tabs || tabs.length > 3 || new Set(tabs).size !== tabs.length) problems.push("mobileTabs must be up to three distinct module ids");
+    const room = nav.includes("dashboard") ? 3 : 4;
+    if (!tabs || tabs.length > room || new Set(tabs).size !== tabs.length) problems.push(`mobileTabs must be up to ${room === 3 ? "three" : "four"} distinct module ids`);
     else for (const m of tabs) if (!nav.includes(m) || m === "dashboard") problems.push(`mobileTabs ${m} isn't a navigation module`);
   }
 

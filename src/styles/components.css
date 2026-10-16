@@ -2519,6 +2519,54 @@ tr.is-saving {
   margin: 0 0 var(--space-2);
   font-size: var(--text-sm);
 }
+/* Owner-pilot UX (2026-10-17): Household buttons you can't miss. The main
+   action of a screen is a solid, bold button; secondary ones stay quiet;
+   disabled looks disabled (grey, not just faded); comfortable tap targets
+   and spacing on phones. Household only ([data-workspace]). */
+[data-workspace="household-payroll"] .btn-primary,
+.modal-backdrop .btn-primary {
+  font-weight: 700;
+  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.12), 0 0 0 1px rgba(66, 85, 212, 0.25);
+}
+[data-workspace="household-payroll"] .btn:disabled,
+[data-workspace="household-payroll"] .btn[disabled] {
+  opacity: 1;
+  background: var(--surface-sunken);
+  border-color: var(--border);
+  color: var(--text-faint);
+  box-shadow: none;
+}
+[data-workspace="household-payroll"] .btn-ghost {
+  color: var(--text);
+  text-decoration: underline;
+  text-decoration-color: var(--border-strong);
+  text-underline-offset: 3px;
+}
+[data-workspace="household-payroll"] .form-more > summary,
+.modal-backdrop .form-more > summary {
+  color: var(--luna-primary);
+  font-weight: 600;
+}
+@media (max-width: 719px) {
+  [data-workspace="household-payroll"] .btn,
+  .modal-backdrop .modal-footer .btn {
+    min-height: 44px;
+  }
+  [data-workspace="household-payroll"] .btn-compact {
+    min-height: 40px;
+    padding: 0 var(--space-3);
+  }
+  .modal-footer {
+    gap: var(--space-3);
+  }
+  [data-workspace="household-payroll"] .page-header .btn-primary {
+    min-height: 44px;
+    padding: 0 var(--space-5);
+  }
+}
+.row-pay {
+  margin-right: var(--space-2);
+}
 /* Owner-pilot polish: Household Dashboard money card + this cutoff list. */
 .money-head {
   display: flex;

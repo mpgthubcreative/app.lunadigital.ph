@@ -17,6 +17,11 @@ export function createRouter({ routes, onRoute, notFound, base = "" }) {
   function resolve() {
     const path = stripBase(window.location.pathname);
     const route = table.get(path);
+    // Owner-pilot UX: an alias ("/" -> the workspace's home page).
+    if (route?.redirect) {
+      window.history.replaceState({}, "", base + route.redirect + window.location.search);
+      return resolve();
+    }
     if (route) onRoute(route);
     else notFound(path);
   }

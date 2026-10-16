@@ -134,7 +134,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
       ${canEdit
         ? html`<div class="att-tools" data-role="tools">
             <button type="button" class="btn btn-compact" data-act="fill" ${state.saving ? "disabled" : ""}>Fill normal schedule</button>
-            <button type="button" class="btn btn-compact" data-act="confirm-today" ${state.saving ? "disabled" : ""}>Confirm through today</button>
+            <button type="button" class="btn btn-compact${!changes && days.some((d) => d <= today && !valueOf(d)) ? " btn-primary" : ""}" data-act="confirm-today" ${state.saving ? "disabled" : ""}>Confirm through today</button>
             <button type="button" class="btn btn-compact btn-ghost" data-act="copy-prev" ${state.saving ? "disabled" : ""}>Copy previous period</button>
           </div>`
         : ""}
@@ -153,7 +153,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
           <p class="att-legend" data-role="legend">${n ? `${n} day${n === 1 ? "" : "s"} selected. Tap a status.` : "Tap one or more days, then a status."} P Present · A Absent · PL Paid Leave · UL Unpaid Leave · R Rest Day · ? Expected (not recorded) · • not saved yet</p>`
         : html`<p class="att-legend" data-role="legend">P Present · A Absent · PL Paid Leave · UL Unpaid Leave · R Rest Day</p>`}
       ${changes
-        ? html`<div class="att-save" data-role="save-bar"><span><strong>${changes}</strong> change${changes === 1 ? "" : "s"} not saved</span><span><button type="button" class="btn btn-compact btn-ghost" data-act="discard" ${state.saving ? "disabled" : ""}>Discard</button> <button type="button" class="btn btn-primary" data-act="save" ${state.saving ? "disabled" : ""}>${state.saving ? "Saving…" : "Save"}</button></span></div>`
+        ? html`<div class="att-save" data-role="save-bar"><span><strong>${changes}</strong> change${changes === 1 ? "" : "s"} not saved</span><span><button type="button" class="btn btn-compact btn-ghost" data-act="discard" ${state.saving ? "disabled" : ""}>Discard</button> <button type="button" class="btn btn-primary" data-act="save" ${state.saving ? "disabled" : ""}>${state.saving ? "Saving…" : "Save attendance"}</button></span></div>`
         : ""}`;
   }
 

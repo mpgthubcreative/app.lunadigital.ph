@@ -439,7 +439,24 @@ describe("navigation", () => {
     // Phase 18.5: the wedding story order (Tasks → Guests → Suppliers → Payments → Budget / Expenses).
     expect(nav("bridal-expense", "owner")).toEqual(["/ Wedding Dashboard", "/wedding-tasks Wedding Tasks", "/guests Guests & RSVP", "/wedding-suppliers Wedding Suppliers", "/supplier-payments Supplier Payments", "/budget Wedding Budget", "/expenses Wedding Expenses", "/users Users", "/settings Settings"]);
     expect(nav("baby-expense", "owner")).toEqual(["/ Baby Dashboard", "/budget Budget & Categories", "/expenses Baby Expenses", "/payment-schedule Payment Schedule", "/providers Providers / Vendors", "/users Users", "/settings Settings"]);
-    expect(nav("household-payroll", "owner")).toEqual(["/ Payroll Dashboard", "/attendance Attendance", "/payroll Payroll", "/advances Advances", "/household-staff Household Staff", "/users Users", "/settings Settings"]);
+    // Owner-pilot UX (2026-10-17): no Dashboard in Household; Payroll first (home).
+    expect(nav("household-payroll", "owner")).toEqual(["/payroll Payroll", "/attendance Attendance", "/advances Advances", "/household-staff Household Staff", "/users Users", "/settings Settings"]);
+  });
+
+  it("Household hides the Dashboard (still an allowed, entitled module) and names Payroll its home; the validator holds the rules", () => {
+    const t = WORKSPACE_TEMPLATES["household-payroll"];
+    expect(t.navHidden).toEqual(["dashboard"]);
+    expect(t.home).toBe("payroll");
+    expect(t.modules).toContain("dashboard");
+    expect(validateWorkspaceTemplate({ ...t, home: undefined }, CTX)).toContain("a template without the Dashboard in its navigation needs a home module");
+    expect(validateWorkspaceTemplate({ ...t, home: "dashboard" }, CTX)).toContain("home must be a navigation module");
+    expect(validateWorkspaceTemplate({ ...t, navHidden: [] }, CTX)).toContain("allowed module dashboard has no navigation position");
+    expect(validateWorkspaceTemplate({ ...t, mobileTabs: ["payroll", "attendance", "advances", "household", "users"] }, CTX)).toContain("mobileTabs must be up to four distinct module ids");
+    // The others keep their Dashboard (and three tabs).
+    for (const id of ["distributor", "baby-expense", "bridal-expense"]) {
+      expect(WORKSPACE_TEMPLATES[id].navigation[0]).toBe("dashboard");
+      expect(validateWorkspaceTemplate({ ...WORKSPACE_TEMPLATES[id], mobileTabs: [...WORKSPACE_TEMPLATES[id].mobileTabs, "users"] }, CTX)).toContain("mobileTabs must be up to three distinct module ids");
+    }
   });
 
   it("roles still differ inside a workspace (staff: no Users/Settings)", () => {

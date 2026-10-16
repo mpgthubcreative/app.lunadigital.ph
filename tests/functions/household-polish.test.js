@@ -218,6 +218,34 @@ describe("Dashboard: an ended period nobody paid (never saved) is flagged", () =
   });
 });
 
+describe("Bell: what needs attention, one sentence per item, by helper, with deep links", () => {
+  it("unrecorded prepaid days, salary / advance not confirmed, an ended period nobody paid; gone once handled", async () => {
+    const lor = await staff("Loriza Ibanez");
+    const ana = await staff("Ana");
+    at(OCT(13));
+    await mark(lor, range(1, 13).map(OCT));
+    await mark(ana, range(1, 13).map(OCT));
+    const adv = (await api("advances", u.carlo, { action: "give", advance: { staffId: lor, amount: 50000, date: OCT(13), method: "cash" } })).body.advanceId;
+    await api("payroll", u.carlo, { action: "release", staffId: lor, periodStart: OCT(1), payment: { method: "cash", prepaidDays: 2 } });
+    at(OCT(16));
+    const todos = (await summary()).todos;
+    const of = (kind) => todos.filter((x) => x.kind === kind).map((x) => [x.name, x.text, x.href]);
+    expect(of("unrecordedDays")).toEqual([["Loriza Ibanez", "2 attendance days of Loriza's Oct 1–15 still need to be recorded (salary paid early).", `/attendance?staff=${lor}&period=${OCT(1)}`]]);
+    expect(of("salaryConfirmation")).toEqual([["Loriza Ibanez", "Loriza hasn't confirmed the Oct 1–15 salary yet.", `/payroll?staff=${lor}&period=${OCT(1)}_${OCT(15)}`]]);
+    expect(of("advanceConfirmation")).toEqual([["Loriza Ibanez", "Loriza hasn't confirmed receiving the ₱500.00 advance (Oct 13).", `/advances?advance=${adv}`]]);
+    expect(of("unpaid")).toEqual([["Ana", "Ana's Oct 1–15 salary (₱5,343.00) hasn't been paid yet.", `/payroll?staff=${ana}&period=${OCT(1)}_${OCT(15)}`]]);
+    expect(todos.map((x) => x.name)).toEqual([...todos.map((x) => x.name)].sort((a, b) => a.localeCompare(b)));
+    // Handled -> gone.
+    await mark(lor, [OCT(14), OCT(15)]);
+    await api("payroll", u.carlo, { action: "release", staffId: ana, periodStart: OCT(1), payment: { method: "cash" } });
+    const after = (await summary()).todos;
+    expect(after.filter((x) => x.staffId === lor).map((x) => x.kind)).not.toContain("unrecordedDays");
+    expect(after.map((x) => x.kind)).not.toContain("unpaid");
+    // Ana was paid with Oct 14-15 still unmarked: those days are asked for now.
+    expect(after.filter((x) => x.staffId === ana).map((x) => x.text)).toContain("2 attendance days of Ana's Oct 1–15 still need to be recorded (salary already paid).");
+  });
+});
+
 describe("Attendance: Clear a day; usual rest day", () => {
   it("a recorded day goes back to Not marked (unpaid payroll moves, audit kept); upcoming days refused; the normal week proposes Rest Day on the usual day", async () => {
     const lor = await staff("Loriza Ibanez", { restDays: [6, 0] });

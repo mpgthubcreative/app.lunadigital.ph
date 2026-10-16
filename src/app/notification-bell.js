@@ -10,19 +10,41 @@
 // Owner-pilot batch: on a phone the drawer is a full-width sheet under the
 // top bar (inside the viewport, wrapped text, a Close button); desktop and
 // tablet keep the compact popover.
+// Owner-pilot UX (2026-10-17): in a Household (no Dashboard) the bell is the
+// one place for what needs the Owner: "Needs your attention" items, one
+// sentence each, grouped by helper, each linking to the exact tab / helper /
+// period (from GET /api/household-summary; they go away once handled). The
+// count = those items + unread notifications.
 
 import { html, render } from "../lib/html.js";
 import { icon } from "../components/icons.js";
 import { notificationRow, badgeText } from "../modules/notifications/view.js";
+import { api as defaultApi } from "../lib/api.js";
+
+// Household owners / managers who see payroll get the attention items.
+export const hasHouseholdTodos = (session) => session?.entitlements?.workspaceTemplateId === "household-payroll" && session?.member?.permissions?.["payroll.view"] === true;
+export const groupTodos = (todos) => {
+  const by = new Map();
+  for (const t of todos || []) {
+    if (!by.has(t.staffId)) by.set(t.staffId, { staffId: t.staffId, name: t.name, items: [] });
+    by.get(t.staffId).items.push(t);
+  }
+  return [...by.values()];
+};
+export const todoList = (todos, { onClickAct = "bell-todo" } = {}) =>
+  html`<div class="todo-groups" data-role="todos">${groupTodos(todos).map(
+    (g) => html`<div class="todo-group" data-staff="${g.staffId}"><div class="todo-name">${g.name}</div><ul class="todo-list">${g.items.map((t) => html`<li><a class="todo-link" href="${t.href}" data-link data-act="${onClickAct}" data-kind="${t.kind}">${t.text}</a></li>`)}</ul></div>`
+  )}</div>`;
 
 const REFRESH_MS = 60 * 1000;
 const loadData = () => import("../modules/notifications/data.js");
 
 // slot: the element the bell renders into. options.data / now are injectable.
-export function mountBell(slot, session, { data = null, now = () => new Date() } = {}) {
+export function mountBell(slot, session, { data = null, now = () => new Date(), api = defaultApi } = {}) {
   const businessId = session.business.id;
   const uid = session.user.uid;
-  const state = { count: 0, open: false, rows: null, error: false };
+  const withTodos = hasHouseholdTodos(session);
+  const state = { count: 0, open: false, rows: null, error: false, todos: [] };
   let alive = true;
   let timer = null;
   const getData = () => (data ? Promise.resolve(data) : loadData());
@@ -33,18 +55,19 @@ export function mountBell(slot, session, { data = null, now = () => new Date() }
     render(
       slot,
       html`<div class="bell-wrap">
-        <button type="button" class="bell-btn" data-act="bell" aria-haspopup="true" aria-expanded="${state.open ? "true" : "false"}" aria-label="${state.count ? `Notifications, ${state.count} unread` : "Notifications"}">
-          ${icon("bell")}${state.count ? html`<span class="bell-count" data-role="bell-count">${badgeText(state.count)}</span>` : ""}
+        <button type="button" class="bell-btn" data-act="bell" aria-haspopup="true" aria-expanded="${state.open ? "true" : "false"}" aria-label="${total() ? `Notifications, ${state.todos.length ? `${state.todos.length} need${state.todos.length === 1 ? "s" : ""} attention, ` : ""}${state.count} unread` : "Notifications"}">
+          ${icon("bell")}${total() ? html`<span class="bell-count" data-role="bell-count">${badgeText(total())}</span>` : ""}
         </button>
         ${state.open
           ? html`<div class="bell-drawer" role="dialog" aria-label="Notifications" data-role="bell-drawer">
+              ${state.todos.length ? html`<div class="bell-todos"><div class="bell-head"><strong>Needs your attention</strong><span class="bell-count-inline">${state.todos.length}</span></div>${todoList(state.todos)}</div>` : ""}
               <div class="bell-head"><strong>Notifications</strong><span class="bell-head-actions">${state.count ? html`<button type="button" class="btn btn-compact" data-act="bell-read-all">Mark all read</button>` : ""}<button type="button" class="btn btn-compact btn-ghost bell-close" data-act="bell-close" aria-label="Close notifications">✕</button></span></div>
               ${state.error
                 ? html`<p class="stat-hint bell-empty">Couldn't load notifications.</p>`
                 : state.rows === null
                   ? html`<p class="stat-hint bell-empty">Loading…</p>`
                   : !rows.length
-                    ? html`<p class="stat-hint bell-empty">Nothing yet. Payments to verify, low stock and ready orders will appear here.</p>`
+                    ? html`<p class="stat-hint bell-empty">${withTodos ? "Nothing new. Confirmations and reports from your helpers appear here." : "Nothing yet. Payments to verify, low stock and ready orders will appear here."}</p>`
                     : html`<ul class="bell-list">${rows.map(
                         (r) => html`<li class="bell-item ${r.unread ? "is-unread" : "is-read"}" data-notification="${r.id}">
                           <div class="bell-title">${r.unread ? html`<span class="bell-dot" aria-label="Unread">●</span> ` : ""}${r.title}${r.resolved ? html` <span class="stat-hint">· Resolved</span>` : ""}</div>
@@ -59,12 +82,17 @@ export function mountBell(slot, session, { data = null, now = () => new Date() }
     );
   }
 
+  const total = () => state.count + state.todos.length;
   async function refresh() {
     if (!alive) return;
     try {
-      const count = await (await getData()).fetchUnreadCount(businessId, uid);
+      const [count, todos] = await Promise.all([
+        (await getData()).fetchUnreadCount(businessId, uid),
+        withTodos ? api("household-summary").then((r) => r.summary?.todos || [], () => state.todos) : Promise.resolve([]),
+      ]);
       if (!alive) return;
       state.count = count;
+      state.todos = todos;
       draw();
     } catch (err) {
       console.error("notifications: count failed:", err && (err.code || err.message));
@@ -113,6 +141,8 @@ export function mountBell(slot, session, { data = null, now = () => new Date() }
       // The link itself navigates (router); marking read is a side effect.
       const row = (state.rows || []).find((n) => n.id === el.dataset.id);
       if (row && row.read !== true) getData().then((d) => d.markRead(row.id)).then(refresh, () => {});
+      close();
+    } else if (a === "bell-todo") {
       close();
     } else if (a === "bell-all" || a === "bell-close") {
       close();

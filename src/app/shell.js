@@ -9,7 +9,8 @@
 //                   the selected item ([data-workspace] on the shell).
 //   Phone (<720px)  no drawer: a bottom tab bar with Dashboard + the
 //                   template's three mobileTabs + More (a sheet with every
-//                   other page and Sign out).
+//                   other page and Sign out). Without a Dashboard
+//                   (Household): four mobileTabs + More.
 //   Sign out lives in the account menu (desktop) and the More sheet.
 
 import { resolveNavigation, accessPolicy, ENVIRONMENT_LABELS, normalizeEnvironment, canUseNotifications, terminologyLabels, getWorkspaceTemplate, snapshotWorkspaceTemplateId } from "@shared/index.js";
@@ -44,8 +45,11 @@ export function mobileTabs(nav, templateId) {
   const usable = new Map(nav.map((m) => [m.id, m]));
   const wanted = getWorkspaceTemplate(templateId)?.mobileTabs || [];
   const picked = wanted.filter((id) => usable.has(id));
-  for (const m of nav) if (picked.length < 3 && m.id !== "dashboard" && navGroup(m.id) === "work" && !picked.includes(m.id)) picked.push(m.id);
-  return [...(usable.has("dashboard") ? ["dashboard"] : []), ...picked.slice(0, 3)].map((id) => usable.get(id));
+  // Owner-pilot UX: a workspace without a Dashboard (Household) gets four
+  // work tabs instead (+ More), never five or six squeezed in.
+  const room = usable.has("dashboard") ? 3 : 4;
+  for (const m of nav) if (picked.length < room && m.id !== "dashboard" && navGroup(m.id) === "work" && !picked.includes(m.id)) picked.push(m.id);
+  return [...(usable.has("dashboard") ? ["dashboard"] : []), ...picked.slice(0, room)].map((id) => usable.get(id));
 }
 
 function businessSwitcher(session, id = "businessSelect") {
