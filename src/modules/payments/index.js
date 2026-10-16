@@ -85,7 +85,7 @@ export function mount(container, session, { data = defaultData, api = defaultApi
             { name: "from", label: "Received from", type: "date", value: f.from },
             { name: "to", label: "Received to", type: "date", value: f.to },
           ],
-          end: mayExport(session, "payments") ? html`<span class="visually-hidden" data-role="export-hint">${exportHint}</span>${exportButton("payments")}` : "",
+          end: "",
         })}
         <section class="card">
           ${state.error

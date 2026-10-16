@@ -100,7 +100,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
         ${canManage && state.settings ? html`<p class="chart-note" data-role="leave-default">Paid Leave allowance: <strong>${state.settings.paidLeaveDays} day${state.settings.paidLeaveDays === 1 ? "" : "s"} a year</strong> per helper (Jan–Dec). <button type="button" class="btn btn-compact btn-ghost" data-act="leave-default">Change</button></p>` : ""}
         ${filterBar({
           fields: [{ name: "status", label: "Status", type: "select", primary: true, def: "active", options: Object.entries(STAFF_STATUSES).map(([k, x]) => [k, x.label]), value: state.status }],
-          end: mayExport(session, "householdStaff") ? html`<span class="visually-hidden">${exportHint}</span>${exportButton("householdStaff")}` : "",
+          end: "",
         })}
         <section class="card">
           ${state.error

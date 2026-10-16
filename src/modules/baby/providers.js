@@ -68,7 +68,6 @@ export function mount(container, session, { data = defaultData, toast = defaultT
           <select class="select" name="type" aria-label="Type">${opt("", "Any type", f.type || "")}${TYPE_OPTIONS.map((t) => opt(t.value, t.label, f.type))}</select>
           <select class="select" name="status" aria-label="Status">${Object.entries(PROVIDER_STATUSES).map(([k, s]) => opt(k, s.label, f.status))}</select>
           <button type="submit" class="visually-hidden" tabindex="-1">Apply</button>
-          ${mayExport(session, "providers") ? html`<span class="toolbar-end">${exportButton("providers")}<span class="visually-hidden">${exportHint}</span></span>` : ""}
         </form>
         <section class="card">
           ${state.error

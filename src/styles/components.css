@@ -3572,21 +3572,38 @@ tr.is-saving {
   -webkit-overflow-scrolling: touch;
   scrollbar-width: thin;
 }
-/* Money: four small figures in one line, no cards. */
+/* Money: Budget · Spent · To pay · Left on one small line (wraps cleanly). */
 .wl-figs {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: var(--space-2);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 6px;
   margin: 0 0 var(--space-3);
-  padding: var(--space-2) 0;
-  border-bottom: 1px solid var(--border);
+  font-size: var(--text-sm);
 }
-.wl-fig { display: flex; flex-direction: column; min-width: 0; color: inherit; text-decoration: none; }
-.wl-fig span { font-size: var(--text-xs); color: var(--text-muted); }
-.wl-fig b { font-size: 1.05rem; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.wl-fig { white-space: nowrap; }
+.wl-fig > span { color: var(--text-muted); }
+.wl-fig b { font-variant-numeric: tabular-nums; }
 .wl-fig.is-warn b { color: var(--warning); }
 .wl-fig.is-over b { color: var(--danger); }
-a.wl-fig b { color: var(--luna-primary); }
+.wl-dot { color: var(--text-muted); }
+/* Money rows: Category | Supplier / Payee | Total | Status | Remaining | ⋯ */
+.wl-money .wl-main { flex-direction: column; }
+.wl-money .wl-cat-col { display: none; }
+.wl-money .is-quiet { font-weight: 500; }
+.wl-state { flex: none; display: flex; flex-direction: column; align-items: flex-end; gap: 2px; min-width: 4.6rem; }
+.wl-state small { font-size: var(--text-xs); color: var(--text-muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.wl-chip[data-tone="danger"] { color: var(--danger); background: var(--danger-bg); border-color: #f3c3be; }
+.wl-menu-gap { flex: none; width: 40px; }
+.wl-money .d-only { display: none; }
+@media (min-width: 720px) {
+  .wl-money .wl-main { flex-direction: row; align-items: center; gap: var(--space-3); }
+  .wl-money .wl-cat-col { display: block; flex: 0 0 9.5rem; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--text-muted); font-size: var(--text-sm); }
+  .wl-money .d-only { display: inline-block; }
+  .wl-money .m-only-inline { display: none; }
+  .wl-money .wl-num { min-width: 6.5rem; text-align: right; font-size: var(--text-sm); font-variant-numeric: tabular-nums; }
+  .wl-money .wl-state { min-width: 6rem; align-items: center; }
+}
 .wl-pick { display: inline-flex; align-items: center; gap: 4px; flex: none; font-size: var(--text-sm); color: var(--text-muted); }
 .wl-pick .select { width: auto; min-height: 38px; }
 .wl-add .line-menu-list { min-width: 200px; }
@@ -3613,3 +3630,9 @@ a.wl-fig b { color: var(--luna-primary); }
   .wl-due { min-width: 3.1em; }
 }
 .wl-amt { padding-right: var(--space-3); }
+/* Wedding Setup form. */
+.wl-form { max-width: 40rem; }
+.wl-fieldset { margin: var(--space-3) 0; padding: var(--space-2) var(--space-3); border: 1px solid var(--border); border-radius: var(--radius); }
+.wl-fieldset legend { padding: 0 4px; font-weight: 600; }
+.wl-check { display: flex; align-items: flex-start; gap: 8px; margin: var(--space-2) 0; }
+.wl-check input { margin-top: 3px; }

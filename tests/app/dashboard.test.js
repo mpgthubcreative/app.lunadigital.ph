@@ -252,20 +252,9 @@ describe("period filter: period figures vs live 'now' figures", () => {
     expect(fetch.mock.calls.length).toBe(calls);
   });
 
-  it("Download Excel (a quiet secondary action) sends the period on screen; staff (no data.export) get no button", async () => {
-    const download = vi.fn(async () => ({ blob: new Blob(["x"]), fileName: "Luna_Dashboard_2026-10-07.xlsx", rows: 3 }));
-    const save = vi.fn();
-    await show(sessionFixture(), DOCS, {}, { exportDeps: { download, save } });
+  it("Owner-pilot: no Download Excel on the dashboard (More → Export & Backup)", async () => {
+    await show(sessionFixture(), DOCS);
     await choose("yesterday");
-    const btn = container.querySelector('[data-act="export"]');
-    expect(btn.classList.contains("btn-ghost")).toBe(true);
-    btn.click();
-    await flush();
-    expect(download).toHaveBeenCalledWith("exports", { dataset: "dashboard", filters: { from: "2026-10-07", to: "2026-10-07" } });
-    expect(save).toHaveBeenCalledWith("Luna_Dashboard_2026-10-07.xlsx", expect.any(Blob));
-    document.body.innerHTML = '<main id="content"></main>';
-    container = document.getElementById("content");
-    await show(sessionFixture({ roleTemplate: "staff" }));
     expect(container.querySelector('[data-act="export"]')).toBeNull();
   });
 });

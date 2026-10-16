@@ -11,6 +11,8 @@ import { mount as mountInventory } from "../../src/modules/inventory/index.js";
 import { mount as mountCustomers } from "../../src/modules/customers/index.js";
 import { mount as mountExpenses } from "../../src/modules/expenses/index.js";
 import { mount as mountReports } from "../../src/modules/reports/index.js";
+import { mount as mountExportPage } from "../../src/modules/downloads/index.js";
+import { buildRoutes } from "../../src/app/routes.js";
 import { ApiError } from "../../src/lib/api.js";
 import { resolvePermissions } from "../../shared/permissions.js";
 import { ordersQuery, productsQuery, expensesQuery, ID } from "../../shared/list-queries.js";
@@ -42,75 +44,51 @@ const clickExport = async (dataset) => {
   await flush();
 };
 
-describe("lists send their applied filters (all pages, not the current page)", () => {
-  it("Orders: payment + fulfillment + date range; going to page 2 doesn't change the export", async () => {
+// Owner-pilot: Download Excel left the everyday screens. Every workspace's
+// lists are downloaded whole from More → Export & Backup (plus the Master
+// Backup for the Owner); Reports keeps its own workbook.
+describe("More → Export & Backup (every workspace)", () => {
+  it("Distributor owner: Master Backup + each list; the lists no longer carry a button", async () => {
     const ex = exporter();
     const toast = vi.fn();
-    const listOrders = page([{ id: "o1", orderNumber: "ORD-1", customer: { name: "A" }, items: [], total: 0, paymentStatus: "paid", fulfillmentStatus: "fulfilled", createdAt: new Date() }]);
-    mountOrders(container, session("manager"), { data: { listOrders }, toast, exportDeps: ex });
+    const download = vi.fn(async () => ({ blob: new Blob(["x"]), fileName: "ABC-Master-Backup-2026-10-17.xlsx", rows: 120 }));
+    const save = vi.fn();
+    mountExportPage(container, session(), { toast, exportDeps: ex, download, save });
+    expect([...container.querySelectorAll("[data-download]")].map((r) => r.dataset.download)).toEqual(["orders", "payments", "products", "inventory", "customers", "expenses"]);
+    container.querySelector('[data-act="backup"]').click();
     await flush();
-    await submit("filters", { paymentStatus: "paid", fulfillmentStatus: "fulfilled", from: "2026-10-01", to: "2026-10-31" });
-    container.querySelector('[data-act="next"]')?.click();
-    await flush();
-    // An edit that wasn't applied isn't exported.
-    container.querySelector('[data-role="filters"]').elements.source.value = "viber";
+    expect(download).toHaveBeenCalledWith("backup", {});
+    expect(save).toHaveBeenCalledWith("ABC-Master-Backup-2026-10-17.xlsx", expect.any(Blob));
+    expect(toast).toHaveBeenCalledWith("Master Backup downloaded.", "success");
     await clickExport("orders");
-    expect(ex.download).toHaveBeenCalledWith("exports", { dataset: "orders", filters: { paymentStatus: "paid", fulfillmentStatus: "fulfilled", from: "2026-10-01", to: "2026-10-31" } });
-    expect(ex.save).toHaveBeenCalledWith("Luna_X.xlsx", expect.any(Blob));
-    expect(toast).toHaveBeenCalledWith("Downloaded 42 rows.", "success");
-    expect(container.querySelector('[data-role="export-hint"]').textContent).toMatch(/every row that matches these filters, not just this page/);
+    expect(ex.download).toHaveBeenCalledWith("exports", { dataset: "orders", filters: {} });
+    document.body.innerHTML = '<main id="content"></main>';
+    container = document.getElementById("content");
+    mountOrders(container, session("manager"), { data: { listOrders: page([], false) } });
+    mountPayments(container, session(), { data: { listPayments: page([], false) } });
+    mountCustomers(container, session("manager"), { data: { listCustomers: page([], false) } });
+    mountExpenses(container, session(), { data: { listExpenses: page([], false) } });
+    await flush();
+    expect(container.querySelector('[data-act="export"]')).toBeNull();
   });
 
-  it("Orders: a reversed range is refused before anything is queried", async () => {
+  it("who sees what: a manager gets lists but no Master Backup (Owner only); staff get no page", () => {
+    mountExportPage(container, session("manager"), { toast: () => {} });
+    expect(container.querySelector('[data-act="backup"]')).toBeNull();
+    expect(container.querySelectorAll("[data-download]").length).toBeGreaterThan(0);
+    expect(buildRoutes(session("staff")).some((r) => r.path === "/export")).toBe(false);
+    expect(buildRoutes(session()).find((r) => r.path === "/export")).toMatchObject({ label: "Export & Backup" });
+    for (const w of ["household-payroll", "baby-expense", "bridal-expense"]) expect(buildRoutes(sessionFixture({ workspaceTemplateId: w })).some((r) => r.path === "/export"), w).toBe(true);
+  });
+
+  it("Orders: a reversed range is still refused before anything is queried", async () => {
     const toast = vi.fn();
     const listOrders = page([], false);
-    mountOrders(container, session(), { data: { listOrders }, toast, exportDeps: exporter() });
+    mountOrders(container, session(), { data: { listOrders }, toast });
     await flush();
     await submit("filters", { from: "2026-10-31", to: "2026-10-01" });
     expect(toast).toHaveBeenCalledWith(expect.stringMatching(/valid date range/), "danger");
     expect(listOrders).toHaveBeenCalledTimes(1);
-  });
-
-  it("Payments: status, method, received-date range", async () => {
-    const ex = exporter();
-    mountPayments(container, session(), { data: { listPayments: page([], false) }, exportDeps: ex });
-    await flush();
-    await submit("filters", { state: "verified", method: "gcash", from: "2026-10-01", to: "2026-10-08" });
-    await clickExport("payments");
-    expect(ex.download).toHaveBeenCalledWith("exports", { dataset: "payments", filters: { state: "verified", method: "gcash", from: "2026-10-01", to: "2026-10-08" } });
-  });
-
-  it("Inventory: two downloads (product list, stock levels) with search / category / low stock", async () => {
-    const ex = exporter();
-    const listProducts = page([], false);
-    mountInventory(container, session(), { data: { listProducts, loadCostDocs: vi.fn(async () => ({})) }, exportDeps: ex });
-    await flush();
-    await submit("filters", { search: "wi", category: "Frozen", low: "low" });
-    expect(listProducts.mock.calls.at(-1)[1]).toMatchObject({ search: "wi", category: "Frozen", lowOnly: true });
-    await clickExport("products");
-    await clickExport("inventory");
-    const want = { status: "active", lowOnly: true, search: "wi", category: "Frozen" };
-    expect(ex.download.mock.calls.map((c) => c[1])).toEqual([{ dataset: "products", filters: want }, { dataset: "inventory", filters: want }]);
-  });
-
-  it("Customers: status + search", async () => {
-    const ex = exporter();
-    mountCustomers(container, session("manager"), { data: { listCustomers: page([], false) }, exportDeps: ex });
-    await flush();
-    await submit("filters", { search: "abc", status: "inactive" });
-    await clickExport("customers");
-    expect(ex.download).toHaveBeenCalledWith("exports", { dataset: "customers", filters: { status: "inactive", search: "abc" } });
-  });
-
-  it("Expenses: active only — no button while viewing removed expenses", async () => {
-    const ex = exporter();
-    mountExpenses(container, session(), { data: { listExpenses: page([], false) }, exportDeps: ex });
-    await flush();
-    await submit("filters", { category: "rent", from: "2026-10-01", to: "2026-10-31" });
-    await clickExport("expenses");
-    expect(ex.download).toHaveBeenCalledWith("exports", { dataset: "expenses", filters: { status: "active", category: "rent", from: "2026-10-01", to: "2026-10-31" } });
-    await submit("filters", { status: "removed" });
-    expect(container.querySelector('[data-act="export"]')).toBeNull();
   });
 
   it("Reports: one workbook for the range on screen; CSV downloads stay", async () => {
@@ -126,15 +104,6 @@ describe("lists send their applied filters (all pages, not the current page)", (
 });
 
 describe("who gets the button; errors are explained", () => {
-  it("staff have no export permission: no buttons anywhere", async () => {
-    mountOrders(container, session("staff"), { data: { listOrders: page([], false) } });
-    mountPayments(container, session("staff"), { data: { listPayments: page([], false) } });
-    mountInventory(container, session("staff"), { data: { listProducts: page([], false), loadCostDocs: vi.fn() } });
-    mountCustomers(container, session("staff"), { data: { listCustomers: page([], false) } });
-    await flush();
-    expect(container.querySelector('[data-act="export"]')).toBeNull();
-  });
-
   it("Reports: reports.export, not data.export, decides (Phase 11 behaviour)", async () => {
     const report = { success: true, range: { from: "2026-10-01", to: "2026-10-08", granularity: "day" }, access: { financials: false }, overview: {}, series: [], sections: [] };
     mountReports(container, session("manager", { revoke: ["data.export"] }), { api: vi.fn(async () => report), now: () => new Date("2026-10-08T06:00:00Z") });
@@ -147,18 +116,19 @@ describe("who gets the button; errors are explained", () => {
     expect(container.querySelector('[data-export="reports"]')).toBeNull();
   });
 
-  it("too many rows: the server's message is shown and the button comes back", async () => {
+  it("too many rows / a failed backup: the server's message is shown and the button comes back", async () => {
     const toast = vi.fn();
     const download = vi.fn(async () => {
       throw new ApiError(413, "too-many-rows", "This export contains too many rows. Narrow your filters and try again.");
     });
-    mountOrders(container, session(), { data: { listOrders: page([], false) }, toast, exportDeps: { download, save: vi.fn() } });
-    await flush();
+    mountExportPage(container, session(), { toast, exportDeps: { download, save: vi.fn() }, download, save: vi.fn() });
     await clickExport("orders");
     expect(toast).toHaveBeenCalledWith("This export contains too many rows. Narrow your filters and try again.", "danger");
-    const btn = container.querySelector('[data-act="export"]');
-    expect(btn.disabled).toBe(false);
-    expect(btn.textContent).toBe("Download Excel");
+    const btn = container.querySelector('[data-act="export"][data-export="orders"]');
+    expect([btn.disabled, btn.textContent]).toEqual([false, "Download"]);
+    container.querySelector('[data-act="backup"]').click();
+    await flush();
+    expect(container.querySelector('[data-act="backup"]').textContent).toBe("Download Master Backup");
   });
 });
 

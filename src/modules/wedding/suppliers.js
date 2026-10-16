@@ -1,23 +1,24 @@
-// Money (Owner-pilot Bridal UX; the Wedding Suppliers module): what we
-// budgeted, paid and still owe, on one page. Second pass: less on screen.
-//   Summary   Budget · Spent · To pay · Left, one small line of figures
-//             (Spent = every active Wedding Expense, supplier payments
-//             included, so nothing is counted twice; To pay = what
-//             suppliers are still owed on their agreements, plus anything
-//             scheduled to a supplier without one; Left = budget − spent −
-//             to pay)
-//   + Add     one button: Add supplier / Add expense / Set or edit budget
-//   Suppliers one compact row each: name, "Partly paid · ₱15,000 due", Pay
-//             (when something is owed) and ⋯ (Record payment, Paid in full,
-//             View payments, Schedule a payment, Edit supplier, Details).
-//             RSVP-style dropdown filter (All / Unpaid / Partly paid / Paid)
-//             and a search once the list is long.
-//   Other     expenses not paid to a saved supplier, folded ("Other
-//             expenses (n)").
-// No budget category is needed first: forms take a category name and Luna
-// creates it if new (./categories.js). Pay records the supplier's next
-// scheduled payment, or one Wedding Expense for the supplier (the same
-// records as before; nothing is typed twice). Downloads live under More.
+// Money (Owner-pilot Bridal UX; the Wedding Suppliers module): ONE list of
+// everything the wedding costs, so the bride never has to think about
+// which kind of record something is.
+//   Row       Category | Supplier / Payee | Total | Status | Remaining | ⋯
+//             supplier  a saved supplier: total = its contract (or what was
+//                       paid without one), Paid / Partial / Unpaid
+//             planned   a budget line (category with a budget) that has no
+//                       supplier yet: "No supplier yet", Planned. Adding a
+//                       supplier in that category replaces it (no duplicate)
+//             expense   an expense paid to no saved supplier: Paid, ₱0 left
+//   Summary   Budget · Spent · To pay · Left, one small line (Spent = every
+//             active Wedding Expense, supplier payments included, so nothing
+//             is counted twice; To pay = what suppliers are still owed;
+//             Left = budget − spent − to pay)
+//   + Add     one button: Expense / Supplier / Budget item
+//   ⋯         supplier: Record payment, View payments, Edit, Change
+//             category, Payment schedule, Archive (Delete when nothing was
+//             recorded); expense: Details, Change category, Remove; planned:
+//             Add supplier, Add expense, Change amount, Remove from budget
+// No budget category is needed first: forms take a category NAME and Luna
+// creates it if new (./categories.js). Downloads live under More.
 
 import { html, render } from "../../lib/html.js";
 import { pageHeader, emptyState, badge, skeleton } from "../../components/ui.js";
@@ -41,8 +42,34 @@ export function paidState(s) {
   return "paid";
 }
 const PAID_STATES = { unpaid: "Unpaid", partly: "Partly paid", paid: "Paid" };
-const PAID_TONE = { unpaid: "neutral", partly: "warning", paid: "success" };
-const OTHER_SHOWN = 8;
+// Words in the Money list.
+const STATUS = { unpaid: "Unpaid", partly: "Partial", paid: "Paid", planned: "Planned" };
+const STATUS_TONE = { unpaid: "", partly: "warning", paid: "success", planned: "info" };
+const FILTERS = [["all", "All"], ["unpaid", "Unpaid"], ["partly", "Partial"], ["paid", "Paid"], ["planned", "Planned"]];
+
+// The unified Money rows (see the header), in budget-category order.
+export function moneyRows({ suppliers = [], categories = [], budget = null, expenses = [], upcoming = [] }) {
+  const order = new Map(categories.map((c, i) => [c.id, i]));
+  const name = (id) => categories.find((c) => c.id === id)?.name ?? "";
+  const spentBy = budget?.spentByCategory && typeof budget.spentByCategory === "object" ? budget.spentByCategory : {};
+  const rows = [];
+  for (const s of suppliers) {
+    const bal = supplierBalance(s);
+    const scheduled = upcoming.filter((p) => p.supplierId === s.id).reduce((n, p) => n + p.amount, 0);
+    rows.push({ kind: "supplier", id: s.id, categoryId: s.categoryId ?? null, category: name(s.categoryId), name: s.name, total: Number.isSafeInteger(s.agreedAmount) ? s.agreedAmount : (s.paid ?? 0) + scheduled, status: paidState(s), remaining: bal === null ? scheduled : Math.max(0, bal), record: s });
+  }
+  const withSupplier = new Set(suppliers.filter((s) => s.status === "active").map((s) => s.categoryId));
+  for (const c of categories) {
+    if (c.status !== "active" || !(c.budget > 0) || withSupplier.has(c.id)) continue;
+    rows.push({ kind: "planned", id: c.id, categoryId: c.id, category: c.name, name: null, total: c.budget, status: "planned", remaining: Math.max(0, c.budget - (spentBy[c.id] ?? 0)), record: c });
+  }
+  for (const e of expenses) {
+    if (e.supplierId) continue;
+    rows.push({ kind: "expense", id: e.id, categoryId: e.category, category: name(e.category) || e.categoryName || "", name: e.payee || null, total: e.amount, status: "paid", remaining: 0, record: e });
+  }
+  const rank = { supplier: 0, planned: 1, expense: 2 };
+  return rows.sort((a, b) => (order.get(a.categoryId) ?? 999) - (order.get(b.categoryId) ?? 999) || rank[a.kind] - rank[b.kind] || (a.name || "").localeCompare(b.name || ""));
+}
 
 // The Money figures (all in centavos; remaining null without a budget).
 export function moneySummary(budget, suppliers) {
@@ -117,15 +144,14 @@ export function mount(container, session, { data = defaultData, toast = defaultT
         data.listSuppliers(businessId, { status: "active" }, { pageSize: 200 }),
         data.listSuppliers(businessId, { status: "inactive" }, { pageSize: 200 }).catch(() => ({ rows: [] })),
         seesPayments ? data.listSupplierPayments(businessId, { status: "upcoming" }, { pageSize: 200 }).then((r) => r.rows).catch(() => []) : [],
-        seesExpenses && data.listWeddingExpenses ? data.listWeddingExpenses(businessId, { status: "active" }, { pageSize: 100 }).catch(() => ({ rows: [] })) : { rows: [] },
+        seesExpenses && data.listWeddingExpenses ? data.listWeddingExpenses(businessId, { status: "active" }, { pageSize: 300 }).catch(() => ({ rows: [] })) : { rows: [] },
       ]);
       state.categories = cats;
       state.budget = budget;
       state.upcoming = upcoming;
       state.rows = page.rows;
       state.inactive = inactive.rows;
-      const other = expenses.rows.filter((e) => !e.supplierId);
-      state.other = other;
+      state.other = expenses.rows.filter((e) => !e.supplierId);
       state.otherMore = Boolean(expenses.hasMore);
       state.error = null;
     } catch (err) {
@@ -143,105 +169,97 @@ export function mount(container, session, { data = defaultData, toast = defaultT
 
   const upcomingOf = (s) => state.upcoming.filter((p) => p.supplierId === s.id).sort((a, b) => (a.dueDate < b.dueDate ? -1 : 1));
   const short = (d) => formatDayId(d).replace(/, \d{4}$/, "");
+  const allRows = () => moneyRows({ suppliers: state.rows, categories: state.categories, budget: state.budget, expenses: state.other, upcoming: state.upcoming });
   const shown = () => {
     const q = state.search.toLowerCase();
-    return state.rows.filter((s) => (state.filter === "all" || paidState(s) === state.filter) && (!q || s.name.toLowerCase().includes(q)));
+    return allRows().filter((r) => (state.filter === "all" || r.status === state.filter) && (!q || `${r.name || ""} ${r.category}`.toLowerCase().includes(q)));
   };
+  const findRow = (kind, id) => allRows().find((r) => r.kind === kind && r.id === id) || (kind === "supplier" ? moneyRows({ suppliers: state.inactive, categories: state.categories }).find((r) => r.id === id) : null);
 
-  function menuItems(s) {
+  function menuItems(r) {
     const items = [];
-    const bal = supplierBalance(s);
-    const active = s.status === "active";
-    if (active && canPay) {
-      items.push({ x: "record", label: "Record payment" });
-      if (bal > 0 && !upcomingOf(s).length) items.push({ x: "full", label: "Paid in full" });
+    if (r.kind === "supplier") {
+      const s = r.record;
+      const active = s.status === "active";
+      if (active && canPay) items.push({ x: "record", label: "Record payment" });
+      if (seesExpenses || seesPayments) items.push({ x: "payments", label: "View payments" });
+      if (canManage) items.push({ x: "edit", label: "Edit" }, { x: "category", label: "Change category" });
+      if (active && canSchedule) items.push({ x: "schedule", label: "Payment schedule" });
+      items.push({ x: "view", label: "Details" });
+      if (canManage) items.push(!(s.paid > 0) && !(s.upcomingCount > 0) ? { x: "delete", label: "Delete", danger: true } : { x: "archive", label: active ? "Archive" : "Bring back", danger: active });
+    } else if (r.kind === "expense") {
+      items.push({ x: "view", label: "Details" });
+      if (can.update) items.push({ x: "category", label: "Change category" });
+      if (can.remove) items.push({ x: "remove", label: "Remove", danger: true });
+    } else {
+      if (canManage) items.push({ x: "supplier", label: "Add supplier" });
+      if (canPay) items.push({ x: "expense", label: "Add expense" });
+      if (canCategory) items.push({ x: "amount", label: "Change amount" }, { x: "unplan", label: "Remove from budget", danger: true });
     }
-    if (seesExpenses || seesPayments) items.push({ x: "payments", label: "View payments" });
-    if (active && canSchedule) items.push({ x: "schedule", label: "Schedule a payment" });
-    if (canManage) items.push({ x: "edit", label: "Edit supplier" });
-    items.push({ x: "view", label: "Details" });
     return items;
   }
 
-  function row(s) {
-    const st = paidState(s);
-    const bal = supplierBalance(s);
-    const list = upcomingOf(s);
-    const late = list.some((p) => p.dueDate < today());
-    const due = bal > 0 ? `${whole(bal)} due` : "";
-    const sub = [late ? "Overdue" : PAID_STATES[st], due].filter(Boolean).join(" · ");
-    const payable = s.status === "active" && canPay && (list.length > 0 || bal > 0);
-    return html`<li class="wl-row wl-supplier" data-supplier="${s.id}" data-state="${st}">
-      <button type="button" class="wl-main" data-act="view" data-id="${s.id}"><span class="wl-name">${s.name}</span><span class="wl-sub m-only-inline${late ? " is-over" : ""}" data-role="sub">${sub}</span></button>
-      <span class="wl-col wl-num d-only">${s.agreedAmount === null || s.agreedAmount === undefined ? "—" : money(s.agreedAmount)}</span>
-      <span class="wl-col d-only">${badge(PAID_STATES[st], PAID_TONE[st])}${late ? html` ${badge("Overdue", "danger")}` : ""}</span>
-      <span class="wl-col wl-num d-only" data-role="due">${due}</span>
-      <span class="wl-end">${payable ? html`<button type="button" class="btn btn-compact btn-primary" data-act="pay" data-id="${s.id}">Pay</button>` : ""}
-        <details class="line-menu"><summary class="btn btn-compact btn-ghost" aria-label="More for ${s.name}">⋯</summary><div class="line-menu-list" role="menu">${menuItems(s).map((i) => html`<button type="button" class="menu-item" role="menuitem" data-act="menu" data-x="${i.x}" data-id="${s.id}">${i.label}</button>`)}</div></details>
-      </span>
+  function row(r) {
+    const late = r.kind === "supplier" && upcomingOf(r.record).some((p) => p.dueDate < today());
+    const who = r.name || (r.kind === "planned" ? "No supplier yet" : "—");
+    const left = `${shortPeso(r.remaining)} left`;
+    const menu = menuItems(r);
+    return html`<li class="wl-row wl-money" data-kind="${r.kind}" data-${r.kind === "supplier" ? "supplier" : r.kind === "planned" ? "planned" : "expense"}="${r.id}" data-state="${r.status}">
+      <button type="button" class="wl-main" data-act="open" data-kind="${r.kind}" data-id="${r.id}">
+        <span class="wl-cat-col d-only">${r.category || "—"}</span>
+        <span class="wl-name${r.name ? "" : " is-quiet"}">${r.kind === "supplier" || r.name ? who : r.category || who}</span>
+        <span class="wl-sub m-only-inline" data-role="sub">${[r.kind === "supplier" || r.name ? r.category : r.kind === "planned" ? "No supplier yet" : "", shortPeso(r.total)].filter(Boolean).join(" · ")}</span>
+      </button>
+      <span class="wl-col wl-num d-only" data-role="total">${shortPeso(r.total)}</span>
+      <span class="wl-state" data-role="status"><span class="wl-chip" data-tone="${late ? "danger" : STATUS_TONE[r.status]}">${late ? "Overdue" : STATUS[r.status]}</span><small class="m-only-inline" data-role="left-m">${left}</small></span>
+      <span class="wl-col wl-num d-only" data-role="left">${left}</span>
+      ${menu.length ? html`<details class="line-menu"><summary class="btn btn-compact btn-ghost" aria-label="More for ${who}">⋯</summary><div class="line-menu-list" role="menu">${menu.map((i) => html`${i.danger ? html`<div class="menu-sep" role="separator"></div>` : ""}<button type="button" class="menu-item${i.danger ? " menu-danger" : ""}" role="menuitem" data-act="menu" data-kind="${r.kind}" data-x="${i.x}" data-id="${r.id}">${i.label}</button>`)}</div></details>` : html`<span class="wl-menu-gap"></span>`}
     </li>`;
   }
 
   const addItems = () => [
-    ...(canManage ? [{ x: "supplier", label: "Add supplier" }] : []),
-    ...(canPay ? [{ x: "expense", label: "Add expense" }] : []),
-    ...(seesBudget ? [{ x: "budget", label: "Set / edit budget", href: "/budget" }] : []),
+    ...(canPay ? [{ x: "expense", label: "Expense" }] : []),
+    ...(canManage ? [{ x: "supplier", label: "Supplier" }] : []),
+    ...(canCategory ? [{ x: "budget", label: "Budget item" }] : []),
   ];
 
   function summary() {
     if (!seesBudget) return "";
     if (state.loading) return html`<div class="wl-figs" data-role="money-summary-loading">${skeleton(1)}</div>`;
     const sum = moneySummary(state.budget, [...state.rows, ...state.inactive]);
-    const fig = (k, label, value, title, cls = "") => html`<div class="wl-fig ${cls}" data-k="${k}" title="${title}"><span>${label}</span><b>${value}</b></div>`;
-    return html`<div class="wl-figs" data-role="money-summary">
-      ${sum.budget === null ? html`<a class="wl-fig" data-k="budget" href="/budget" data-link><span>Budget</span><b>Set</b></a>` : fig("budget", "Budget", shortPeso(sum.budget), money(sum.budget))}
-      ${fig("spent", "Spent", shortPeso(sum.spent), money(sum.spent))}
-      ${fig("still", "To pay", shortPeso(sum.stillToPay), money(sum.stillToPay), sum.stillToPay ? "is-warn" : "")}
-      ${fig("remaining", "Left", sum.remaining === null ? "—" : shortPeso(sum.remaining), sum.remaining === null ? "Set a budget to see what's left" : money(sum.remaining), sum.remaining !== null && sum.remaining < 0 ? "is-over" : "")}
-    </div>`;
+    const fig = (k, label, value, title, cls = "") => html`<span class="wl-fig ${cls}" data-k="${k}" title="${title}"><span>${label}</span> <b>${value}</b></span>`;
+    return html`<p class="wl-figs" data-role="money-summary">
+      ${fig("budget", "Budget", sum.budget === null ? "—" : shortPeso(sum.budget), sum.budget === null ? "No budget yet: + Add → Budget item" : money(sum.budget))}<span class="wl-dot">·</span>${fig("spent", "Spent", shortPeso(sum.spent), money(sum.spent))}<span class="wl-dot">·</span>${fig("still", "To pay", shortPeso(sum.stillToPay), money(sum.stillToPay), sum.stillToPay ? "is-warn" : "")}<span class="wl-dot">·</span>${fig("remaining", "Left", sum.remaining === null ? "—" : shortPeso(sum.remaining), sum.remaining === null ? "Set a budget to see what's left" : money(sum.remaining), sum.remaining !== null && sum.remaining < 0 ? "is-over" : "")}
+    </p>`;
   }
 
   function draw() {
     if (!alive) return;
     const list = shown();
-    const names = new Map(state.categories.map((c) => [c.id, c.name]));
     const add = addItems();
     render(
       container,
       html`
         ${pageHeader({
           title: "Money",
-          actions: add.length ? html`<details class="line-menu wl-add" data-role="add"><summary class="btn btn-primary" aria-label="Add">+ Add</summary><div class="line-menu-list" role="menu">${add.map((i) => (i.href ? html`<a class="menu-item" role="menuitem" href="${i.href}" data-link data-x="${i.x}">${i.label}</a>` : html`<button type="button" class="menu-item" role="menuitem" data-act="add" data-x="${i.x}">${i.label}</button>`))}</div></details>` : "",
+          actions: add.length ? html`<details class="line-menu wl-add" data-role="add"><summary class="btn btn-primary" aria-label="Add">+ Add</summary><div class="line-menu-list" role="menu">${add.map((i) => html`<button type="button" class="menu-item" role="menuitem" data-act="add" data-x="${i.x}">${i.label}</button>`)}</div></details>` : "",
         })}
         ${state.error
           ? html`<section class="card">${emptyState({ title: "Couldn't load", body: state.error })}</section>`
           : html`
             ${summary()}
-            <section class="wl-section" data-section="suppliers">
-              ${state.rows.length
-                ? html`<div class="wl-tools">
-                    <label class="wl-pick"><span class="visually-hidden">Show suppliers</span><select class="select select-compact" data-role="filter" aria-label="Show suppliers">${[["all", "All"], ["unpaid", "Unpaid"], ["partly", "Partly paid"], ["paid", "Paid"]].map(([v, l]) => html`<option value="${v}" ${v === state.filter ? "selected" : ""}>${l}</option>`)}</select></label>
-                    ${state.rows.length > 6 || state.search ? html`<input class="input wl-search" type="search" data-role="search" placeholder="Search supplier" aria-label="Search supplier" value="${state.search}">` : ""}
-                  </div>`
-                : ""}
-              ${state.loading
-                ? skeleton(4)
-                : !state.rows.length
-                  ? emptyState({ iconName: "provider", title: "No suppliers yet", body: "Tap + Add to add your venue, caterer or photographer." })
-                  : !list.length
-                    ? html`<p class="stat-hint wl-none">No ${state.filter === "all" ? "" : PAID_STATES[state.filter].toLowerCase() + " "}suppliers${state.search ? ` matching "${state.search}"` : ""}.</p>`
-                    : html`<ul class="wl-list" data-role="suppliers">${list.map(row)}</ul>`}
-              ${state.inactive.length ? html`<details class="wl-fold"><summary>Inactive suppliers (${state.inactive.length})</summary><ul class="wl-list" data-role="suppliers-inactive">${state.inactive.map(row)}</ul></details>` : ""}
-            </section>
-            ${seesExpenses && !state.loading && state.other.length
-              ? html`<details class="wl-fold" data-role="other">
-                  <summary>Other expenses (${state.other.length}${state.otherMore ? "+" : ""})</summary>
-                  <ul class="wl-list" data-role="other-expenses">${state.other.slice(0, OTHER_SHOWN).map(
-                    (e) => html`<li class="wl-row" data-expense="${e.id}"><button type="button" class="wl-main" data-act="expense" data-id="${e.id}"><span class="wl-name">${e.payee || categoryName(names, e)}</span><span class="wl-sub">${categoryName(names, e)} · ${short(e.date)}</span></button><span class="wl-amt">${money(e.amount)}</span></li>`
-                  )}</ul>
-                  <p class="wl-links"><a href="/expenses" data-link>All expenses ›</a></p>
-                </details>`
-              : ""}`}`
+            ${state.loading
+              ? skeleton(5)
+              : !allRows().length
+                ? emptyState({ iconName: "budget", title: "Nothing here yet", body: "Tap + Add for an expense, a supplier or a budget item." })
+                : html`
+                  <div class="wl-tools">
+                    <label class="wl-pick"><span class="visually-hidden">Show</span><select class="select select-compact" data-role="filter" aria-label="Show">${FILTERS.map(([v, l]) => html`<option value="${v}" ${v === state.filter ? "selected" : ""}>${l}</option>`)}</select></label>
+                    ${allRows().length > 8 || state.search ? html`<input class="input wl-search" type="search" data-role="search" placeholder="Search" aria-label="Search money" value="${state.search}">` : ""}
+                  </div>
+                  ${list.length ? html`<ul class="wl-list" data-role="money">${list.map(row)}</ul>` : html`<p class="stat-hint wl-none">Nothing ${state.filter === "all" ? "" : STATUS[state.filter].toLowerCase() + " "}${state.search ? `matching "${state.search}"` : "here"}.</p>`}
+                  ${state.otherMore ? html`<p class="wl-links"><a href="/expenses" data-link>All expenses ›</a></p>` : ""}`}
+            ${state.inactive.length ? html`<details class="wl-fold"><summary>Archived suppliers (${state.inactive.length})</summary><ul class="wl-list" data-role="suppliers-inactive">${moneyRows({ suppliers: state.inactive, categories: state.categories }).map(row)}</ul></details>` : ""}`}`
     );
   }
 
@@ -252,10 +270,10 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     return { ...v, categoryId, service: v.service || guessService(categoryNameOf(state.categories, categoryId)) };
   };
 
-  const addSupplierDialog = () =>
+  const addSupplierDialog = (categoryName = "") =>
     formDialog({
       title: "Add supplier",
-      fields: supplierFields({}, state.categories),
+      fields: supplierFields({}, state.categories).map((f) => (f.name === "category" && categoryName ? { ...f, value: categoryName } : f)),
       moreLabel: "More options",
       submitLabel: "Add supplier",
       onSubmit: async (v) => data.suppliersApi({ action: "create", supplier: toSupplierInput(await withCategory(v)) }),
@@ -397,43 +415,88 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     }
     return r;
   };
-  async function payNow(s) {
-    const next = upcomingOf(s)[0];
-    if (next) return pay.after("Marked paid. The expense was recorded.")(await pay.payDialog(next));
-    return recorded(await recordPayment(s, false));
+  const categoryDialog = (title, current) =>
+    formDialog({ title, fields: [categoryField(state.categories, { value: current })], onSubmit: async (v) => ({ categoryId: await categoryFor(v.category) }) });
+  const budgetItemDialog = (c = null) =>
+    formDialog({
+      title: c ? `${c.name}: budget` : "Add budget item",
+      fields: [...(c ? [] : [{ ...categoryField(state.categories), label: "Item / category", placeholder: "e.g. Wedding gown" }]), { name: "budget", label: "Amount (₱)", value: c && Number.isSafeInteger(c.budget) ? String(c.budget / 100) : "", inputmode: "decimal", required: true }],
+      submitLabel: c ? "Save" : "Add",
+      onSubmit: async (v) => {
+        const amount = parseBudget(v.budget, "amount");
+        if (!(amount > 0)) throw new Error("Enter an amount more than ₱0");
+        const id = c ? c.id : await categoryFor(v.category);
+        const cat = state.categories.find((x) => x.id === id);
+        return data.budgetApi({ action: "updateCategory", categoryId: id, ...(cat?.revision ? { expectedRevision: cat.revision } : {}), changes: { budget: amount } });
+      },
+    });
+  const saved = (message) => (r) => {
+    if (r && !r.unchanged) toast(message, "success");
+    if (r) load();
+    return r;
+  };
+  async function openRow(kind, id) {
+    const r = findRow(kind, id);
+    if (!r) return;
+    if (kind === "supplier") openView(r.record);
+    else if (kind === "expense") exp.openView(r.record);
+    else if (canCategory) saved("Budget saved.")(await budgetItemDialog(r.record));
   }
 
   const onClick = async (event) => {
     const el = event.target.closest("[data-act]");
     if (!el || !container.contains(el)) return;
     const a = el.dataset.act;
-    const s = [...state.rows, ...state.inactive].find((r) => r.id === el.dataset.id);
     el.closest("details.line-menu")?.removeAttribute("open");
     try {
       if (a === "add") {
         const x = el.dataset.x;
-        if (x === "supplier") {
-          const r = await addSupplierDialog();
-          if (r) {
-            toast("Supplier added.", "success");
-            load();
-          }
-        } else if (x === "expense") exp.done("Expense added")(await exp.addDialog());
-      } else if (a === "expense") {
-        const e = state.other.find((y) => y.id === el.dataset.id);
-        if (e) exp.openView(e);
-      } else if (a === "view" && s) openView(s);
-      else if (a === "pay" && s) await payNow(s);
-      else if (a === "menu" && s) {
-        const x = el.dataset.x;
+        if (x === "supplier") saved("Supplier added.")(await addSupplierDialog());
+        else if (x === "expense") exp.done("Expense added")(await exp.addDialog());
+        else if (x === "budget") saved("Budget item added.")(await budgetItemDialog());
+        return;
+      }
+      if (a === "open") return await openRow(el.dataset.kind, el.dataset.id);
+      if (a !== "menu") return;
+      const r = findRow(el.dataset.kind, el.dataset.id);
+      if (!r) return;
+      const x = el.dataset.x;
+      if (r.kind === "supplier") {
+        const s = r.record;
         if (x === "view") openView(s);
         else if (x === "payments") await viewPayments(s);
-        else if (x === "edit") {
-          const r = await editDialog(s);
-          if (r && !r.unchanged) toast("Saved.", "success");
-          if (r) load();
-        } else if (x === "record" || x === "full") recorded(await recordPayment(s, x === "full"));
+        else if (x === "edit") saved("Saved.")(await editDialog(s));
+        else if (x === "category") {
+          const c = await categoryDialog(`${s.name}: category`, r.category);
+          if (c && c.categoryId !== (s.categoryId ?? null)) saved("Category changed.")(await data.suppliersApi({ action: "update", supplierId: s.id, expectedRevision: s.revision, changes: { categoryId: c.categoryId } }));
+        } else if (x === "record") recorded(await recordPayment(s, false));
         else if (x === "schedule") await pay.after("Payment scheduled.")(await pay.newDialog(s));
+        else if (x === "archive") {
+          await data.suppliersApi({ action: "setStatus", supplierId: s.id, status: s.status === "active" ? "inactive" : "active" });
+          toast(s.status === "active" ? "Archived. Its payments and history are kept." : "Brought back.", "success");
+          load();
+        } else if (x === "delete") {
+          if (!(await confirm({ title: `Delete ${s.name}?`, body: "Nothing was paid or scheduled to this supplier, so it can be deleted.", confirmLabel: "Delete", danger: true }))) return;
+          await data.suppliersApi({ action: "delete", supplierId: s.id });
+          toast(`${s.name} deleted.`, "success");
+          load();
+        }
+      } else if (r.kind === "expense") {
+        const e = r.record;
+        if (x === "view" || x === "remove") exp.openView(e);
+        else if (x === "category") {
+          const c = await categoryDialog("Expense category", r.category);
+          if (c && c.categoryId !== e.category) saved("Category changed.")(await data.expensesApi({ action: "update", expenseId: e.id, expectedRevision: e.revision, changes: { category: c.categoryId } }));
+        }
+      } else {
+        const c = r.record;
+        if (x === "supplier") saved("Supplier added.")(await addSupplierDialog(c.name));
+        else if (x === "expense") exp.done("Expense added")(await exp.addDialog({ category: c.name }));
+        else if (x === "amount") saved("Budget saved.")(await budgetItemDialog(c));
+        else if (x === "unplan") {
+          if (!(await confirm({ title: `Remove ${c.name} from the budget?`, body: "Its budget amount is cleared. Anything already paid stays.", confirmLabel: "Remove", danger: true }))) return;
+          saved("Removed from the budget.")(await data.budgetApi({ action: "updateCategory", categoryId: c.id, ...(c.revision ? { expectedRevision: c.revision } : {}), changes: { budget: null } }));
+        }
       }
     } catch (err) {
       toast(err.message || "Something went wrong", "danger");

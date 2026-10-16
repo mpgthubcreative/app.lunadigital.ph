@@ -42,4 +42,5 @@ export const MODULE_LOADERS = {
   subscription: () => import("./subscription/index.js"),
   // Owner-pilot Bridal UX: the workspace's Excel downloads (under More).
   downloads: () => import("./downloads/index.js"),
+  weddingsetup: () => import("./wedding/setup.js"),
 };

@@ -113,7 +113,7 @@ export function mount(container, session, { data = defaultData, api = defaultApi
             { name: "search", label: "Search by name", type: "search", primary: true, value: state.search },
             { name: "status", label: "Status", type: "select", primary: true, def: "active", options: Object.entries(CUSTOMER_STATUSES).map(([k, v]) => [k, v.label]), value: state.status },
           ],
-          end: mayExport(session, "customers") ? html`<span class="visually-hidden" data-role="export-hint">${exportHint}</span>${exportButton("customers")}` : "",
+          end: "",
         })}
         <section class="card">
           ${state.error

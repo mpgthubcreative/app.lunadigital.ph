@@ -40,13 +40,13 @@ describe("navigation", () => {
   it("Distributor: unchanged", () => {
     renderShell(document.getElementById("app"), sessionFixture());
     // Customers is back (built in Phase 9); Reports / Imports return as each is built.
-    expect(navOf()).toEqual(["/ Dashboard", "/orders Orders", "/payments Payments", "/inventory Inventory", "/customers Customers", "/expenses Operating Expenses", "/reports Reports", "/imports Imports", "/users Users", "/subscription Subscription", "/settings Settings"]);
+    expect(navOf()).toEqual(["/ Dashboard", "/orders Orders", "/payments Payments", "/inventory Inventory", "/customers Customers", "/expenses Operating Expenses", "/reports Reports", "/imports Imports", "/export Export & Backup", "/users Users", "/subscription Subscription", "/settings Settings"]);
   });
 
   it("Bridal: Money / Tasks / Guests / Budget, no Dashboard, no Orders / Inventory / Payments", () => {
     renderShell(document.getElementById("app"), bridal());
     // Owner-pilot Bridal UX: Wedding Expenses and Supplier Payments open from Money (no menu entry).
-    expect(navOf()).toEqual(["/wedding-suppliers Money", "/wedding-tasks Tasks", "/guests Guests", "/budget Budget", "/downloads Downloads", "/users Users", "/subscription Subscription", "/settings Settings"]);
+    expect(navOf()).toEqual(["/wedding-suppliers Money", "/wedding-tasks Tasks", "/guests Guests", "/budget Budget", "/wedding-setup Wedding Setup", "/export Export & Backup", "/users Users", "/subscription Subscription", "/settings Settings"]);
   });
 
   it("Bridal staff: roles still apply", () => {

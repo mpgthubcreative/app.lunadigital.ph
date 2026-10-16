@@ -85,7 +85,6 @@ export function mount(container, session, { data = defaultData, toast = defaultT
               <select class="select" name="status" aria-label="Show">${opt("", "Shown and hidden", state.status)}${opt("active", "Shown", state.status)}${opt("inactive", "Hidden", state.status)}</select>
               <button type="submit" class="visually-hidden" tabindex="-1">Apply</button>
               ${canManage ? html`<button type="button" class="btn btn-primary" data-act="new-category">Add category</button>` : ""}
-              ${mayExport(session, "budget") ? html`<span class="toolbar-end">${exportButton("budget")}<span class="visually-hidden">${exportHint}</span></span>` : ""}
             </form>
             <section class="card">
               ${state.loading

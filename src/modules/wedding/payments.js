@@ -101,7 +101,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
             { name: "from", label: "Due from", type: "date", value: f.from },
             { name: "to", label: "Due to", type: "date", value: f.to },
           ],
-          end: mayExport(session, "supplierPayments") ? html`<span class="visually-hidden">${exportHint}</span>${exportButton("supplierPayments")}` : "",
+          end: "",
         })}
         <section class="card">
           ${state.error

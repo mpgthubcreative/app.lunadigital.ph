@@ -392,7 +392,7 @@ const taskTotalsRef = (tenant) => tenant.doc("taskTotals", TOTALS_DOC_ID);
 const taskRef = (tenant, id) => ref(tenant, "weddingTasks", id, "task");
 const incTotals = (FieldValue, d) => Object.fromEntries(Object.entries(d).filter(([, v]) => v).map(([k, v]) => [k, FieldValue.increment(v)]));
 // guestTotals: the overall counts plus byCategory (Phase 18.6), one write.
-const guestTotalsWrite = (FieldValue, before, after) => {
+export const guestTotalsWrite = (FieldValue, before, after) => {
   const byCat = Object.fromEntries(Object.entries(guestCategoryDelta(before, after)).map(([c, d]) => [c, incTotals(FieldValue, d)]));
   return { ...incTotals(FieldValue, guestDelta(before, after)), ...(Object.keys(byCat).length ? { byCategory: byCat } : {}) };
 };
@@ -513,7 +513,9 @@ export async function setRsvp({ db, tenant, FieldValue, business, guestId, rsvp,
     if (v.status === g.rsvp && v.confirmed === int(g.confirmed)) return { guestId, unchanged: true };
     // Owner-pilot Bridal UX: no longer Attending -> the table seat is freed.
     const unseat = v.status !== "attending" && Boolean(g.tableId);
-    const text = (v.status === g.rsvp ? `Confirmed guests ${int(g.confirmed)} → ${v.confirmed}` : `RSVP changed ${label(RSVP_STATUSES, g.rsvp)} → ${label(RSVP_STATUSES, v.status)}${v.status === "attending" ? ` · ${v.confirmed} confirmed` : ""}`) + (unseat ? " · removed from their table" : "");
+    // "Owner changed: Attending 2 → Attending 1" (a guest's own answer reads "Guest responded: …").
+    const words = (s, n) => `${{ awaiting: "Waiting", attending: "Attending", declined: "Declined" }[s] ?? s}${s === "attending" ? ` ${n}` : ""}`;
+    const text = `Owner changed: ${words(g.rsvp, int(g.confirmed))} → ${words(v.status, v.confirmed)}${unseat ? " · removed from their table" : ""}`;
     const next = { ...g, rsvp: v.status, confirmed: v.confirmed };
     const stamp = FieldValue.serverTimestamp();
     // source: who answered (the Owner side here; a future invitation link

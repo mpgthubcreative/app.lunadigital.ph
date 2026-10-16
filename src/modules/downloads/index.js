@@ -1,33 +1,65 @@
-// Downloads (Owner-pilot Bridal UX): the workspace's Excel downloads on one
-// page under More, so they aren't part of the everyday screens. Which lists
-// appear comes from the template (`downloads`) and the usual per-dataset
-// export check (entitlement + permission). Each downloads the whole current
-// list through the Export Core. One place to gate later (a paid unlock):
-// nothing is blocked today.
+// Export & Backup (Owner-pilot): the business's Excel downloads on ONE page
+// under More, in every workspace, so they aren't part of the everyday
+// screens.
+//   Download Master Backup   one workbook with every record (the Owner who
+//                            may export; /api/backup)
+//   Single lists             each list of this workspace, whole (the usual
+//                            per-dataset export permission)
+// One place to gate later (a paid unlock); nothing is blocked today.
 
 import { html, render } from "../../lib/html.js";
 import { pageHeader, emptyState } from "../../components/ui.js";
 import { toast as defaultToast } from "../../components/feedback.js";
-import { exportButton, bindExport } from "../../lib/export.js";
+import { exportButton, bindExport, saveBlob } from "../../lib/export.js";
+import { apiDownload } from "../../lib/api.js";
 import { EXPORT_DATASETS } from "@shared/export-datasets.js";
-import { downloadsFor } from "../../app/routes.js";
+import { exportListsFor, canBackup } from "../../app/routes.js";
 
 // The whole list for each download (tasks: done ones too).
 const FILTERS = { weddingTasks: { state: "all" } };
 
-export function mount(container, session, { toast = defaultToast, exportDeps = {} } = {}) {
-  const ids = downloadsFor(session);
-  const label = (id) => EXPORT_DATASETS[id].label;
+export function mount(container, session, { toast = defaultToast, exportDeps = {}, download = apiDownload, save = saveBlob } = {}) {
+  const ids = exportListsFor(session);
+  const backup = canBackup(session);
   render(
     container,
     html`
-      ${pageHeader({ title: "Downloads" })}
+      ${pageHeader({ title: "Export & Backup" })}
+      ${backup
+        ? html`<section class="wl-section" data-section="backup">
+            <button type="button" class="btn btn-primary" data-act="backup">Download Master Backup</button>
+            <p class="stat-hint">One Excel file with everything in Luna for ${session.business.name}: every record, including removed and archived ones. Keep it somewhere safe.</p>
+          </section>`
+        : ""}
       ${ids.length
-        ? html`<ul class="wl-list" data-role="downloads">${ids.map(
-            (id) => html`<li class="wl-row" data-download="${id}"><span class="wl-main"><span class="wl-name">${label(id)}</span><span class="wl-sub">Excel (.xlsx), the whole list</span></span>${exportButton(id, "Download")}</li>`
+        ? html`<h2 class="wl-group-title">Single lists</h2><ul class="wl-list" data-role="downloads">${ids.map(
+            (id) => html`<li class="wl-row" data-download="${id}"><span class="wl-main"><span class="wl-name">${EXPORT_DATASETS[id].label}</span></span>${exportButton(id, "Download")}</li>`
           )}</ul>`
-        : emptyState({ title: "Nothing to download", body: "Downloads aren't available for your account." })}`
+        : !backup
+          ? emptyState({ title: "Nothing to download", body: "Downloads aren't available for your account." })
+          : ""}`
   );
   const unbind = bindExport(container, (id) => ({ ...(FILTERS[id] || {}) }), { toast, deps: exportDeps });
-  return () => unbind();
+  const onClick = async (event) => {
+    const btn = event.target.closest('[data-act="backup"]');
+    if (!btn || btn.disabled) return;
+    btn.disabled = true;
+    const text = btn.textContent;
+    btn.textContent = "Preparing…";
+    try {
+      const { blob, fileName } = await download("backup", {});
+      save(fileName, blob);
+      toast("Master Backup downloaded.", "success");
+    } catch (err) {
+      toast(err.message || "Couldn't prepare the backup.", "danger");
+    } finally {
+      btn.disabled = false;
+      btn.textContent = text;
+    }
+  };
+  container.addEventListener("click", onClick);
+  return () => {
+    unbind();
+    container.removeEventListener("click", onClick);
+  };
 }

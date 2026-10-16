@@ -38,3 +38,5 @@ export const tasksApi = (body) => post("wedding-tasks", body);
 export const guestsApi = (body) => post("guests", body);
 // Owner-pilot Bridal UX: the reception tables (guestTotals/seating).
 export const getSeating = (businessId) => getOne(businessId, "guestTotals", "seating");
+// Owner-pilot Bridal: the invitation / RSVP setup (read through the API).
+export const getWeddingSetup = () => post("wedding-setup", { action: "get" });

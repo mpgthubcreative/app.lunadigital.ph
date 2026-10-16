@@ -187,6 +187,12 @@ function boot() {
     import("./receipt.js").then((m) => m.renderReceiptPage(root));
     return;
   }
+  // Owner-pilot Bridal: a guest's wedding invitation needs no login (the
+  // token in the link is the only credential, checked by the server).
+  if (window.location.pathname.startsWith("/invite/")) {
+    import("./invite.js").then((m) => m.renderInvitePage(root));
+    return;
+  }
   // Phase 18.6: the account activation page needs no login either.
   if (window.location.pathname === "/activate") {
     import("./activate.js").then((m) => m.renderActivatePage(root));

@@ -20,11 +20,6 @@
 //   navHidden      (Owner-pilot UX) allowed modules kept OUT of the
 //                  navigation (still entitled, can come back): Household
 //                  hides the Dashboard
-//   downloads      (Owner-pilot Bridal UX) Excel downloads (export dataset
-//                  ids, shared/export-datasets.js) offered on ONE Downloads
-//                  page under More instead of on the everyday screens. Kept
-//                  apart from the workflow so it can become a paid unlock
-//                  later; the usual export permission still applies.
 //   home           (Owner-pilot UX) the module "/" opens when the Dashboard
 //                  is hidden (Household: payroll)
 //   menuHidden     (Owner-pilot Bridal UX) navigation modules that keep
@@ -189,7 +184,6 @@ const TEMPLATES = [
     navHidden: ["dashboard"],
     menuHidden: ["expenses", "vendorpayments"],
     home: "vendors",
-    downloads: ["weddingSuppliers", "weddingExpenses", "supplierPayments", "weddingBudget", "weddingTasks", "guests"],
     dashboard: {
       // Selected period (spending, payments made), then the current state (as of now).
       widgets: ["weddingSpent", "weddingSupplierPaid", "weddingExpenseCount", "weddingBudgetTotal", "weddingSpentNow", "weddingRemaining", "weddingSupplierBalance", "weddingUpcoming", "weddingOpenTasks", "weddingOverdueTasks", "weddingConfirmedGuests", "weddingAwaitingRsvp", "upcomingSupplierPayments", "tasksDueSoon", "recentWeddingExpenses", "rsvpSummary", "supplierSummary"],
@@ -265,7 +259,7 @@ export function validateWorkspaceTemplate(t, { moduleIds, coreModuleIds, availab
   const problems = [];
   const isObj = (v) => Boolean(v) && typeof v === "object" && !Array.isArray(v);
   if (!isObj(t)) return ["template must be an object"];
-  const allowedKeys = ["id", "version", "upgradingFrom", "name", "description", "status", "modules", "navigation", "mobileTabs", "navHidden", "menuHidden", "downloads", "home", "dashboard", "labels", "settings", "plannedModules"];
+  const allowedKeys = ["id", "version", "upgradingFrom", "name", "description", "status", "modules", "navigation", "mobileTabs", "navHidden", "menuHidden", "home", "dashboard", "labels", "settings", "plannedModules"];
   for (const k of Object.keys(t)) if (!allowedKeys.includes(k)) problems.push(`unknown key ${k}`);
   if (typeof t.id !== "string" || !WORKSPACE_TEMPLATE_ID_PATTERN.test(t.id)) problems.push("invalid id");
   if (!Number.isSafeInteger(t.version) || t.version < 1) problems.push("version must be a positive integer");
@@ -289,7 +283,6 @@ export function validateWorkspaceTemplate(t, { moduleIds, coreModuleIds, availab
   for (const m of hidden || []) if (!mods.includes(m) || nav.includes(m)) problems.push(`navHidden ${m} must be an allowed module that isn't in the navigation`);
   for (const m of mods) if (!nav.includes(m) && !(hidden || []).includes(m)) problems.push(`allowed module ${m} has no navigation position`);
   if (t.home !== undefined && (!nav.includes(t.home) || t.home === "dashboard")) problems.push("home must be a navigation module");
-  if (t.downloads !== undefined && (!Array.isArray(t.downloads) || !t.downloads.length || new Set(t.downloads).size !== t.downloads.length || t.downloads.some((d) => typeof d !== "string" || !/^[a-z][A-Za-z]{1,40}$/.test(d)))) problems.push("downloads must be a list of export dataset ids");
   const menuHidden = t.menuHidden === undefined ? [] : Array.isArray(t.menuHidden) ? t.menuHidden : null;
   if (!menuHidden || new Set(menuHidden).size !== menuHidden.length) problems.push("menuHidden must be a list without duplicates");
   for (const m of menuHidden || []) if (!nav.includes(m) || m === t.home || (t.mobileTabs || []).includes(m)) problems.push(`menuHidden ${m} must be a navigation module that isn't home or a phone tab`);

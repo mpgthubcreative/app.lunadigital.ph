@@ -323,10 +323,10 @@ describe("Guests & RSVP", () => {
     expect(rsvpSummary(docAt("guestTotals/current"))).toMatchObject({ invitations: 1, invitedSeats: 4, awaiting: 1, awaitingSeats: 4, attendingSeats: 0, invitationsSent: 1 });
     ok(await api("guests", u.camille, { action: "setRsvp", guestId: g, rsvp: { status: "attending", confirmed: 3 } }));
     expect(rsvpSummary(docAt("guestTotals/current"))).toMatchObject({ attending: 1, attendingSeats: 3, awaiting: 0 });
-    expect(docAt(`guests/${g}`).history.at(-1).label).toBe("RSVP changed Awaiting RSVP → Attending · 3 confirmed");
+    expect(docAt(`guests/${g}`).history.at(-1).label).toBe("Owner changed: Waiting → Attending 3");
     ok(await api("guests", u.mon, { action: "setRsvp", guestId: g, rsvp: { status: "attending", confirmed: 4 } }));
     expect(rsvpSummary(docAt("guestTotals/current")).attendingSeats).toBe(4);
-    expect(docAt(`guests/${g}`).history.at(-1).label).toBe("Confirmed guests 3 → 4");
+    expect(docAt(`guests/${g}`).history.at(-1).label).toBe("Owner changed: Attending 3 → Attending 4");
     ok(await api("guests", u.camille, { action: "setRsvp", guestId: g, rsvp: { status: "declined" } }));
     expect(docAt(`guests/${g}`)).toMatchObject({ rsvp: "declined", confirmed: 0, rsvpDate: "2026-10-16" });
     expect(rsvpSummary(docAt("guestTotals/current"))).toMatchObject({ attending: 0, attendingSeats: 0, declined: 1, declinedSeats: 4 });
@@ -392,7 +392,7 @@ describe("Seating (Owner-pilot Bridal UX): tables in guestTotals/seating, a gues
     ok(await api("guests", u.camille, { action: "seat", guestId: g, tableId: t1 }));
     ok(await api("guests", u.camille, { action: "setRsvp", guestId: g, rsvp: { status: "declined" } }));
     expect(docAt(`guests/${g}`)).toMatchObject({ tableId: null, rsvp: "declined" });
-    expect(docAt(`guests/${g}`).history.at(-1).label).toBe("RSVP changed Attending → Declined · removed from their table");
+    expect(docAt(`guests/${g}`).history.at(-1).label).toBe("Owner changed: Attending 3 → Declined · removed from their table");
     ok(await api("guests", u.camille, { action: "setRsvp", guestId: g, rsvp: { status: "attending", confirmed: 2 } }));
     ok(await api("guests", u.camille, { action: "seat", guestId: g, tableId: t2 }));
     ok(await api("guests", u.camille, { action: "updateTable", tableId: t2, changes: { name: "Sponsors", capacity: 6 } }));

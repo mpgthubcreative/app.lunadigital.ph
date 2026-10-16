@@ -166,7 +166,6 @@ export function mount(container, session, { data = defaultData, toast = defaultT
           : ""}
         <div class="pick-row page-pickers" data-role="pickers">
           <label class="pick">Employee <select class="select" data-role="pick-staff" aria-label="Employee"><option value="">Everyone</option>${state.staff.map((x) => html`<option value="${x.id}" ${x.id === state.staffId ? "selected" : ""}>${x.name}</option>`)}</select></label>
-          ${mayExport(session, "advances") ? html`<span class="visually-hidden">${exportHint}</span>${exportButton("advances")}` : ""}
         </div>
         ${state.error
           ? html`<section class="card section">${emptyState({ title: "Couldn't load", body: state.error })}</section>`

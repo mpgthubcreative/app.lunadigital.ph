@@ -99,7 +99,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
             { name: "to", label: "To", type: "date", value: f.to },
             { name: "status", label: "Show", type: "select", primary: false, options: [["active", "Active"], ["removed", "Removed"]], value: f.status || "active", def: "active" },
           ],
-          end: mayExport(session, "weddingExpenses") && (f.status || "active") === "active" ? html`<span class="visually-hidden">${exportHint}</span>${exportButton("weddingExpenses")}` : "",
+          end: "",
         })}
         <section class="card">
           ${state.error
@@ -186,14 +186,14 @@ export function expenseActions({ data, currency, timezone, can, toast, getCtx, r
   // rest under More options. No budget category needed first: a new name
   // becomes a category (resolveCategory). Typing a saved supplier's name
   // links the expense to it (counts toward its balance).
-  const addDialog = () => {
+  const addDialog = (prefill = {}) => {
     const { today: day, categories, suppliers } = ctx();
     return formDialog({
       title: "Add expense",
       fields: [
         { name: "amount", label: "Amount (₱)", value: "", inputmode: "decimal", required: true },
         { name: "payee", label: "Supplier / Payee", value: "", placeholder: "e.g. Van rental", suggestions: suppliers.map((s) => s.name), hint: "Optional." },
-        categoryField(categories),
+        categoryField(categories, { value: prefill.category || "" }),
         { name: "date", label: "Date paid", type: "date", value: day, max: day, required: true },
         { name: "method", label: "Payment method", type: "select", options: METHOD_OPTIONS, value: "cash", more: true, default: true },
         { name: "reference", label: "Reference (OR no., invoice, transfer ref)", value: "", more: true },

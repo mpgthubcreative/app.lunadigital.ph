@@ -56,7 +56,7 @@ describe("Household navigation without a Dashboard", () => {
 
   it("sidebar: Payroll first, no Dashboard; phone tabs Payroll · Attendance · Advances · Staff + More", () => {
     renderShell(document.getElementById("app"), home());
-    expect([...document.querySelectorAll(".nav-link")].map((a) => a.textContent.trim())).toEqual(["Payroll", "Attendance", "Advances", "Household Staff", "Users", "Subscription", "Settings"]);
+    expect([...document.querySelectorAll(".nav-link")].map((a) => a.textContent.trim())).toEqual(["Payroll", "Attendance", "Advances", "Household Staff", "Export & Backup", "Users", "Subscription", "Settings"]);
     expect([...document.querySelectorAll(".tabbar .tab-link")].map((a) => a.textContent.trim())).toEqual(["Payroll", "Attendance", "Advances", "Staff", "More"]);
     expect(document.querySelector('.nav-link[href="/"]')).toBeNull();
     expect(document.querySelector('.tab-link[href="/"]')).toBeNull();

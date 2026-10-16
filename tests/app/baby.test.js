@@ -172,7 +172,8 @@ describe("Baby Expenses", () => {
     submit(f);
     await flush();
     expect(data.listBabyExpenses).toHaveBeenLastCalledWith("demo-distributor-a", { status: "active", category: "catMedical0001", providerId: "provABCclinic01" }, { cursor: null });
-    expect(container.querySelector('[data-export="babyExpenses"]')).not.toBeNull();
+    // Owner-pilot: downloads live under More → Export & Backup, not on the list.
+    expect(container.querySelector('[data-export="babyExpenses"]')).toBeNull();
   });
 
   it("parseBabyExpense: provider, payee and paid by are separate (Phase 18.6)", () => {

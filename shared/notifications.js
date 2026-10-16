@@ -48,6 +48,8 @@ export const NOTIFICATION_CATEGORIES = Object.freeze({
   requests: { label: "Staff reports and requests (attendance corrections, salary issues)", mandatory: true },
   // Phase 18.6: the Owner's Luna subscription payment was sent / confirmed / not accepted.
   billing: { label: "Luna subscription payments", mandatory: true },
+  // Owner-pilot Bridal: a guest answered their invitation (informational).
+  guests: { label: "Guest RSVPs from invitations", mandatory: false },
 });
 export const NOTIFICATION_CATEGORY_IDS = Object.freeze(Object.keys(NOTIFICATION_CATEGORIES));
 
@@ -134,6 +136,14 @@ export const NOTIFICATION_TYPES = Object.freeze({
   },
   // Phase 16: a supplier payment was marked Paid (its Wedding Expense was
   // recorded). Goes to the OTHER members who follow supplier payments.
+  // Owner-pilot Bridal: a guest answered through their invitation link
+  // (Recent, never "needs attention"). One per guest answer.
+  "guest.rsvp": {
+    category: "guests",
+    module: "guests",
+    permissions: ["guests.view"],
+    action: { label: "View guests", route: "/guests" },
+  },
   "supplierpayment.paid": {
     category: "wedding",
     module: "vendorpayments",

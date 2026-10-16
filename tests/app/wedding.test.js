@@ -7,7 +7,9 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { mount as mountBudget } from "../../src/modules/wedding/budget.js";
 import { mount as mountExpenses, parseWeddingExpense } from "../../src/modules/wedding/expenses.js";
-import { mount as mountSuppliers, toSupplierInput, paidState, moneySummary, shortPeso } from "../../src/modules/wedding/suppliers.js";
+import { mount as mountSuppliers, toSupplierInput, paidState, moneySummary, shortPeso, moneyRows } from "../../src/modules/wedding/suppliers.js";
+import { mount as mountSetup } from "../../src/modules/wedding/setup.js";
+import { renderInvitePage, inviteTokenFrom } from "../../src/app/invite.js";
 import { guessService } from "../../src/modules/wedding/categories.js";
 import { mount as mountDownloads } from "../../src/modules/downloads/index.js";
 import { mount as mountPayments } from "../../src/modules/wedding/payments.js";
@@ -119,67 +121,62 @@ describe("Wedding Expenses", () => {
   });
 });
 
-describe("Money (Owner-pilot Bridal UX): budget, suppliers and other expenses on one page", () => {
+describe("Money (Owner-pilot Bridal): ONE list of everything the wedding costs", () => {
   const OTHER = { id: "expTaxi000001", date: "2026-10-14", category: "catVenue00001", amount: 150000, payee: "Grab to venue", supplierId: null, method: "cash", status: "active", revision: 1, history: [] };
   const NOAGREE = { id: "supNoAgree001", name: "Lights Co", service: "other", agreedAmount: null, paid: 0, upcoming: 500000, upcomingCount: 1, status: "active", revision: 1, history: [] };
   const money = (extra = {}) => fakeData({ listSuppliers: vi.fn(async (_b, f) => ({ rows: f.status === "inactive" ? [] : [SUP], hasMore: false })), listWeddingExpenses: vi.fn(async () => ({ rows: [OTHER, { ...OTHER, id: "expPhoto00001", supplierId: SUP.id, payee: "ABC Photo Studio" }], hasMore: false })), ...extra });
-  const rowOf = (id) => container.querySelector(`[data-supplier="${id}"]`);
-
-  it("one small line of figures: Budget ₱500k · Spent ₱20k · To pay ₱60k · Left ₱420k (no double counting); one + Add; no Download on the page", async () => {
-    const data = money();
-    mountSuppliers(container, wedding(), { data, now: NOW, toast: () => {} });
+  const rowOf = (sel) => container.querySelector(sel);
+  const mountMoney = async (data = money(), session = wedding()) => {
+    mountSuppliers(container, session, { data, now: NOW, toast: () => {}, confirm: async () => true });
     await flush();
+    return data;
+  };
+
+  it("one small line: Budget ₱500k · Spent ₱20k · To pay ₱60k · Left ₱420k (no double counting); one + Add (Expense / Supplier / Budget item); no Download", async () => {
+    await mountMoney();
     const k = (x) => container.querySelector(`[data-role="money-summary"] [data-k="${x}"]`);
     expect(["budget", "spent", "still", "remaining"].map((x) => [...k(x).children].map((c) => c.textContent).join(" "))).toEqual(["Budget ₱500k", "Spent ₱20k", "To pay ₱60k", "Left ₱420k"]);
     expect(k("remaining").title).toBe("₱420,000.00");
-    expect(shortPeso(15250000)).toBe("₱152.5k");
-    expect(shortPeso(120000000)).toBe("₱1.2M");
-    expect(shortPeso(85000)).toBe("₱850");
-    expect([...container.querySelectorAll('[data-role="add"] .menu-item')].map((b) => b.textContent)).toEqual(["Add supplier", "Add expense", "Set / edit budget"]);
+    expect([shortPeso(15250000), shortPeso(120000000), shortPeso(85000)]).toEqual(["₱152.5k", "₱1.2M", "₱850"]);
+    expect([...container.querySelectorAll('[data-role="add"] .menu-item')].map((b) => b.textContent)).toEqual(["Expense", "Supplier", "Budget item"]);
     expect(container.querySelectorAll(".page-header .btn-primary")).toHaveLength(1);
     expect(container.querySelector('[data-act="export"]')).toBeNull();
-    expect(container.querySelectorAll(".stat-card")).toHaveLength(0);
-    // A supplier without an agreement adds what's scheduled to it.
     expect(moneySummary(BUDGET, [SUP, NOAGREE])).toEqual({ budget: 50000000, spent: 2000000, stillToPay: 6500000, remaining: 41500000 });
-    expect(moneySummary(null, [])).toMatchObject({ budget: null, remaining: null });
-    expect(data.listSuppliers).toHaveBeenCalledWith("demo-distributor-a", { status: "active" }, { pageSize: 200 });
   });
 
-  it("supplier row: name, status and amount due on one sub-line (phone), Pay and ⋯; Pay pays the next scheduled payment (one markPaid)", async () => {
-    const data = money();
-    mountSuppliers(container, wedding(), { data, now: NOW, toast: () => {} });
-    await flush();
-    const row = rowOf(SUP.id);
-    expect(row.querySelector(".wl-name").textContent).toBe("ABC Photo Studio");
-    expect(row.querySelector('[data-role="sub"]').textContent).toBe("Partly paid · ₱60,000 due");
-    // Record payment first; payments and the schedule live behind View payments.
-    expect([...row.querySelectorAll('[data-act="menu"]')].map((b) => b.textContent)).toEqual(["Record payment", "View payments", "Schedule a payment", "Edit supplier", "Details"]);
-    row.querySelector('[data-act="pay"]').click();
-    await flush();
-    submit(lastForm());
-    await flush();
-    expect(data.paymentsApi).toHaveBeenCalledTimes(1);
-    expect(data.paymentsApi).toHaveBeenCalledWith({ action: "markPaid", paymentId: PAY.id, payment: { paidDate: "2026-10-16", method: "bank_transfer" } });
+  it("rows: supplier (Category | Supplier | Total | Partial | left), planned budget line without a supplier, expense paid to no supplier; one list, budget-category order", async () => {
+    await mountMoney();
+    const rows = [...container.querySelectorAll('[data-role="money"] > li')].map((r) => [r.dataset.kind, r.querySelector(".wl-name").textContent, r.querySelector('[data-role="sub"]').textContent, r.querySelector('[data-role="status"] .wl-chip').textContent, r.querySelector('[data-role="left"]').textContent]);
+    // CATS order: Photo / Video (₱80k, has ABC), Venue (₱150k budget, no supplier -> Planned; and the Grab expense).
+    expect(rows).toEqual([
+      ["supplier", "ABC Photo Studio", "Photo / Video · ₱80k", "Partial", "₱60k left"],
+      ["planned", "Venue", "No supplier yet · ₱150k", "Planned", "₱150k left"],
+      ["expense", "Grab to venue", "Venue · ₱1.5k", "Paid", "₱0 left"],
+    ]);
+    // Desktop columns carry the category and total.
+    expect(rowOf('[data-supplier="supABCphoto01"] .wl-cat-col').textContent).toBe("Photo / Video");
+    expect(rowOf('[data-supplier="supABCphoto01"] [data-role="total"]').textContent).toBe("₱80k");
+    // Adding a supplier in Venue replaces the planned line (no duplicate).
+    const after = moneyRows({ suppliers: [SUP, { ...SUP, id: "supVenue00001", name: "Palazzo", categoryId: "catVenue00001", agreedAmount: 12000000, paid: 0 }], categories: CATS, budget: BUDGET, expenses: [] });
+    expect(after.map((r) => [r.kind, r.name])).toEqual([["supplier", "ABC Photo Studio"], ["supplier", "Palazzo"]]);
   });
 
-  it("⋯ Record payment / Paid in full record ONE Wedding Expense for the supplier (nothing typed twice)", async () => {
-    const data = money({ listSupplierPayments: vi.fn(async () => ({ rows: [], hasMore: false })) });
-    mountSuppliers(container, wedding(), { data, now: NOW, toast: () => {} });
+  it("supplier ⋯: Record payment, View payments, Edit, Change category, Payment schedule, Details, Archive; Record payment records ONE expense", async () => {
+    const data = await mountMoney(money({ listSupplierPayments: vi.fn(async () => ({ rows: [], hasMore: false })) }));
+    const row = rowOf('[data-supplier="supABCphoto01"]');
+    expect([...row.querySelectorAll('[data-act="menu"]')].map((b) => b.textContent)).toEqual(["Record payment", "View payments", "Edit", "Change category", "Payment schedule", "Details", "Archive"]);
+    row.querySelector('[data-x="record"]').click();
     await flush();
-    rowOf(SUP.id).querySelector('[data-x="full"]').click();
-    await flush();
-    expect(lastForm().elements.amount.value).toBe("60000.00");
+    lastForm().elements.amount.value = "15000";
     submit(lastForm());
     await flush();
     expect(data.expensesApi).toHaveBeenCalledTimes(1);
-    expect(data.expensesApi).toHaveBeenCalledWith({ action: "create", idempotencyKey: expect.stringMatching(/^[A-Za-z0-9_-]{16,64}$/), expense: { date: "2026-10-16", category: "catPhotoVid01", amount: 6000000, supplierId: SUP.id, method: "bank_transfer" } });
+    expect(data.expensesApi).toHaveBeenCalledWith({ action: "create", idempotencyKey: expect.stringMatching(/^[A-Za-z0-9_-]{16,64}$/), expense: { date: "2026-10-16", category: "catPhotoVid01", amount: 1500000, supplierId: SUP.id, method: "bank_transfer" } });
   });
 
-  it("⋯ Schedule a payment schedules for THIS supplier", async () => {
-    const data = money();
-    mountSuppliers(container, wedding(), { data, now: NOW, toast: () => {} });
-    await flush();
-    rowOf(SUP.id).querySelector('[data-x="schedule"]').click();
+  it("⋯ Payment schedule schedules for THIS supplier; ⋯ Change category moves it (a new name is created)", async () => {
+    const data = await mountMoney(money({ budgetApi: vi.fn(async () => ({ categoryId: "catVideo00001" })), suppliersApi: vi.fn(async () => ({})) }));
+    rowOf('[data-supplier="supABCphoto01"] [data-x="schedule"]').click();
     await flush();
     const form = lastForm();
     expect(form.elements.supplierId).toBeUndefined();
@@ -189,45 +186,33 @@ describe("Money (Owner-pilot Bridal UX): budget, suppliers and other expenses on
     submit(form);
     await flush();
     expect(data.paymentsApi).toHaveBeenCalledWith({ action: "create", payment: expect.objectContaining({ supplierId: SUP.id, amount: 1000000, dueDate: "2027-01-10", category: "catPhotoVid01" }) });
+    rowOf('[data-supplier="supABCphoto01"] [data-x="category"]').click();
+    lastForm().elements.category.value = "Video only";
+    submit(lastForm());
+    await flush();
+    expect(data.budgetApi).toHaveBeenCalledWith({ action: "createCategory", category: { name: "Video only", budget: null } });
+    expect(data.suppliersApi).toHaveBeenCalledWith({ action: "update", supplierId: SUP.id, expectedRevision: 2, changes: { categoryId: "catVideo00001" } });
   });
 
-  it("one dropdown (All / Unpaid / Partly paid / Paid) filters the list", async () => {
-    const paidOne = { ...SUP, id: "supVenue00001", name: "Garden Venue", agreedAmount: 1000000, paid: 1000000 };
-    const fresh = { ...SUP, id: "supFlorist001", name: "Florist", paid: 0, upcoming: 0, upcomingCount: 0 };
-    const data = money({ listSuppliers: vi.fn(async (_b, f) => ({ rows: f.status === "active" ? [SUP, paidOne, fresh] : [], hasMore: false })) });
-    mountSuppliers(container, wedding(), { data, now: NOW, toast: () => {} });
-    await flush();
-    const ids = () => [...container.querySelectorAll('[data-role="suppliers"] [data-supplier]')].map((r) => r.dataset.supplier);
-    expect(ids()).toEqual([SUP.id, paidOne.id, fresh.id]);
+  it("one dropdown filter (All / Unpaid / Partial / Paid / Planned)", async () => {
+    await mountMoney();
     const pick = (v) => {
       const sel = container.querySelector('[data-role="filter"]');
       sel.value = v;
       sel.dispatchEvent(new Event("change", { bubbles: true }));
     };
-    pick("unpaid");
-    expect(ids()).toEqual([fresh.id]);
+    const kinds = () => [...container.querySelectorAll('[data-role="money"] > li')].map((r) => r.dataset.kind);
+    expect([...container.querySelector('[data-role="filter"]').options].map((o) => o.textContent)).toEqual(["All", "Unpaid", "Partial", "Paid", "Planned"]);
+    pick("planned");
+    expect(kinds()).toEqual(["planned"]);
     pick("paid");
-    expect(ids()).toEqual([paidOne.id]);
-    expect(rowOf(paidOne.id).querySelector('[data-act="pay"]')).toBeNull(); // nothing due
-    pick("all");
-    expect(rowOf(fresh.id).querySelector('[data-act="pay"]')).not.toBeNull();
+    expect(kinds()).toEqual(["expense"]);
+    pick("partly");
+    expect(kinds()).toEqual(["supplier"]);
   });
 
-  it("Other expenses folded at the bottom: only those not paid to a saved supplier, + All expenses", async () => {
-    const data = money();
-    mountSuppliers(container, wedding(), { data, now: NOW, toast: () => {} });
-    await flush();
-    const fold = container.querySelector('[data-role="other"]');
-    expect(fold.open).toBe(false);
-    expect(fold.querySelector("summary").textContent).toBe("Other expenses (1)");
-    expect([...fold.querySelectorAll("[data-expense]")].map((r) => r.dataset.expense)).toEqual([OTHER.id]);
-    expect(fold.querySelector(".wl-links a").getAttribute("href")).toBe("/expenses");
-  });
-
-  it("+ Add → Add expense: Amount, Supplier / Payee, Category, Date (rest under More options); a NEW category is created on the spot, no budget needed", async () => {
-    const data = money({ budgetApi: vi.fn(async () => ({ categoryId: "catNewFlower1" })) });
-    mountSuppliers(container, wedding(), { data, now: NOW, toast: () => {} });
-    await flush();
+  it("+ Add → Expense: Amount, Supplier / Payee, Category, Date (rest under More options); a NEW category is created on the spot, no budget needed", async () => {
+    const data = await mountMoney(money({ budgetApi: vi.fn(async () => ({ categoryId: "catNewFlower1" })) }));
     container.querySelector('[data-act="add"][data-x="expense"]').click();
     const form = lastForm();
     const main = [...form.querySelectorAll(".field")].filter((f) => !f.closest(".form-more")).map((f) => f.querySelector("input,select,textarea").name);
@@ -243,9 +228,7 @@ describe("Money (Owner-pilot Bridal UX): budget, suppliers and other expenses on
   });
 
   it("an existing category (any case) is reused; a saved supplier's name links the expense to it; a blank category is Miscellaneous", async () => {
-    const data = money({ budgetApi: vi.fn(async () => ({ categoryId: "catMisc000001" })) });
-    mountSuppliers(container, wedding(), { data, now: NOW, toast: () => {} });
-    await flush();
+    const data = await mountMoney(money({ budgetApi: vi.fn(async () => ({ categoryId: "catMisc000001" })) }));
     container.querySelector('[data-act="add"][data-x="expense"]').click();
     let form = lastForm();
     form.elements.amount.value = "500";
@@ -263,29 +246,37 @@ describe("Money (Owner-pilot Bridal UX): budget, suppliers and other expenses on
     expect(data.budgetApi).toHaveBeenCalledWith({ action: "createCategory", category: { name: "Miscellaneous", budget: null } });
   });
 
-  it("+ Add → Add supplier: name, category, total amount; the category is created if new and the service follows it", async () => {
-    const data = money({ budgetApi: vi.fn(async () => ({ categoryId: "catHmua000001" })), suppliersApi: vi.fn(async () => ({ supplierId: "x" })) });
-    mountSuppliers(container, wedding(), { data, now: NOW, toast: () => {} });
-    await flush();
+  it("+ Add → Supplier: name, category, total; the category is created if new and the service follows it", async () => {
+    const data = await mountMoney(money({ budgetApi: vi.fn(async () => ({ categoryId: "catHmua000001" })), suppliersApi: vi.fn(async () => ({ supplierId: "x" })) }));
     container.querySelector('[data-act="add"][data-x="supplier"]').click();
     const form = lastForm();
-    const main = [...form.querySelectorAll(".field")].filter((f) => !f.closest(".form-more")).map((f) => f.querySelector("input,select,textarea").name);
-    expect(main).toEqual(["name", "category", "agreedAmount"]);
+    expect([...form.querySelectorAll(".field")].filter((f) => !f.closest(".form-more")).map((f) => f.querySelector("input,select,textarea").name)).toEqual(["name", "category", "agreedAmount"]);
     form.elements.name.value = "Glam by Jo";
     form.elements.category.value = "HMUA";
     form.elements.agreedAmount.value = "15000";
     submit(form);
     await flush();
     expect(data.suppliersApi).toHaveBeenCalledWith({ action: "create", supplier: { name: "Glam by Jo", service: "hair_makeup", agreedAmount: 1500000, categoryId: "catHmua000001", contactPerson: null, phone: null, email: null, location: null, notes: null } });
-    expect(guessService("Photo & Video")).toBe("photo_video");
-    expect(guessService("Souvenirs")).toBe("other");
+    expect([guessService("Photo & Video"), guessService("Souvenirs")]).toEqual(["photo_video", "other"]);
+  });
+
+  it("+ Add → Budget item: a new item with an amount (the planned line appears); planned ⋯ Add supplier pre-fills its category", async () => {
+    const data = await mountMoney(money({ budgetApi: vi.fn(async () => ({ categoryId: "catGown000001" })) }));
+    container.querySelector('[data-act="add"][data-x="budget"]').click();
+    lastForm().elements.category.value = "Wedding gown";
+    lastForm().elements.budget.value = "80000";
+    submit(lastForm());
+    await flush();
+    expect(data.budgetApi).toHaveBeenNthCalledWith(1, { action: "createCategory", category: { name: "Wedding gown", budget: null } });
+    expect(data.budgetApi).toHaveBeenNthCalledWith(2, { action: "updateCategory", categoryId: "catGown000001", changes: { budget: 8000000 } });
+    rowOf('[data-planned="catVenue00001"] [data-x="supplier"]').click();
+    expect(lastForm().elements.category.value).toBe("Venue");
   });
 
   it("⋯ View payments lists what was paid and what's scheduled (open a scheduled one to pay / edit it)", async () => {
     const data = money({ listWeddingExpenses: vi.fn(async (_b, f) => ({ rows: f.supplierId ? [{ id: "e1", date: "2026-10-01", amount: 1500000, supplierId: SUP.id }, { id: "e2", date: "2026-10-10", amount: 500000, supplierId: SUP.id }] : [], hasMore: false })) });
-    mountSuppliers(container, wedding(), { data, now: NOW, toast: () => {} });
-    await flush();
-    rowOf(SUP.id).querySelector('[data-x="payments"]').click();
+    await mountMoney(data);
+    rowOf('[data-supplier="supABCphoto01"] [data-x="payments"]').click();
     await flush();
     const box = document.querySelector('[data-role="supplier-payments"]');
     expect(data.listWeddingExpenses).toHaveBeenCalledWith("demo-distributor-a", { status: "active", supplierId: SUP.id }, { pageSize: 100 });
@@ -295,16 +286,14 @@ describe("Money (Owner-pilot Bridal UX): budget, suppliers and other expenses on
     expect(document.querySelector('[data-role="details"] .card-title').textContent).toContain("Second payment");
   });
 
-  it("no Pay / record without expenses.create; no schedule without vendorpayments.manage; nothing hidden is offered", async () => {
+  it("permissions: no record / schedule / add expense without the right; no hidden action is offered", async () => {
     const s = wedding("manager");
     delete s.member.permissions["expenses.create"];
     delete s.member.permissions["vendorpayments.manage"];
-    mountSuppliers(container, s, { data: money(), now: NOW, toast: () => {} });
-    await flush();
-    expect(container.querySelector('[data-act="pay"]')).toBeNull();
+    await mountMoney(money(), s);
     expect(container.querySelector('[data-x="record"]')).toBeNull();
     expect(container.querySelector('[data-x="schedule"]')).toBeNull();
-    expect(container.querySelector('[data-x="expense"]')).toBeNull();
+    expect(container.querySelector('[data-act="add"][data-x="expense"]')).toBeNull();
   });
 
   it("paidState and toSupplierInput keep their rules", () => {
@@ -495,7 +484,9 @@ describe("Guests (Owner-pilot Bridal UX): RSVP | Seating", () => {
     switchTo("seating");
     expect(container.querySelector('[data-role="seating-summary"]').textContent).toBe("4 attending · 2 seated · 2 unassigned");
     expect([...container.querySelectorAll('[data-role="unassigned"] [data-guest]')].map((r) => r.dataset.guest)).toEqual(["guestReyes001"]);
-    expect([...container.querySelectorAll("[data-table]")].map((s) => [s.querySelector(".wl-group-title").firstChild.textContent.trim(), s.querySelector('[data-role="table-seats"]').textContent])).toEqual([["Table 1", "2/2 seats"], ["Table 2", "0/10 seats"]]);
+    // Unassigned rows: Name | Seats | Assign (a visible button).
+    expect(container.querySelector('[data-role="unassigned"] [data-act="seat"]').textContent).toBe("Assign");
+    expect([...container.querySelectorAll("[data-table]")].map((s) => [s.querySelector(".wl-group-title").textContent, s.querySelector('[data-role="table-seats"]').textContent])).toEqual([["Table 1", "· 2/2"], ["Table 2", "· 0/10"]]);
     expect(container.querySelector('[data-act="new-table"]')).not.toBeNull();
     expect(container.querySelector('[data-role="search"]')).toBeNull();
   });
@@ -592,11 +583,11 @@ describe("Phase 18.5 corrections: Delete what was added by mistake", () => {
     const data = fakeData({ listSuppliers: vi.fn(async () => ({ rows: [SUP, fresh], hasMore: false })) });
     mountSuppliers(container, wedding(), { data, now: NOW, toast: () => {}, confirm: async () => true });
     await flush();
-    container.querySelector('[data-supplier="supABCphoto01"] [data-act="view"]').click();
-    expect(panel().querySelector('[data-act="delete"]')).toBeNull(); // has payments: deactivate only
+    container.querySelector('[data-supplier="supABCphoto01"] [data-act="open"]').click();
+    expect(panel().querySelector('[data-act="delete"]')).toBeNull(); // has payments: archive only
     panel().querySelector('[data-act="close"]').click();
-    container.querySelector('[data-supplier="supFreshOne01"] [data-act="view"]').click();
-    panel().querySelector('[data-act="delete"]').click();
+    expect(container.querySelector('[data-supplier="supABCphoto01"] [data-x="delete"]')).toBeNull();
+    container.querySelector('[data-supplier="supFreshOne01"] [data-x="delete"]').click();
     await flush();
     expect(data.suppliersApi).toHaveBeenCalledWith({ action: "delete", supplierId: "supFreshOne01" });
   });
@@ -616,22 +607,98 @@ describe("Phase 18.5 corrections: Delete what was added by mistake", () => {
   });
 });
 
-describe("Downloads (Owner-pilot Bridal UX): Excel downloads under More, not on the everyday screens", () => {
-  it("the Owner gets a Downloads page (More / Manage) listing the wedding lists; Staff don't; other workspaces keep theirs on the pages", async () => {
-    expect(buildRoutes(wedding()).find((r) => r.path === "/downloads")).toMatchObject({ moduleId: "downloads", label: "Downloads" });
-    expect(buildRoutes(wedding("staff")).some((r) => r.path === "/downloads")).toBe(false);
-    expect(buildRoutes(sessionFixture({ workspaceTemplateId: "distributor" })).some((r) => r.path === "/downloads")).toBe(false);
-    document.body.innerHTML = '<div id="app"></div>';
-    renderShell(document.getElementById("app"), wedding());
-    expect([...document.querySelectorAll('nav.nav [data-group="manage"] .nav-label')].map((x) => x.textContent)).toEqual(["Downloads", "Users", "Subscription", "Settings"]);
-    document.body.innerHTML = '<main id="content"></main>';
-    container = document.getElementById("content");
-    const download = vi.fn(async () => ({ blob: new Blob(["x"]), fileName: "f.xlsx", rows: 3 }));
-    mountDownloads(container, wedding(), { toast: () => {}, exportDeps: { download, save: () => {} } });
-    expect([...container.querySelectorAll("[data-download]")].map((r) => r.dataset.download)).toEqual(["weddingSuppliers", "weddingExpenses", "supplierPayments", "weddingBudget", "weddingTasks", "guests"]);
-    container.querySelector('[data-download="weddingTasks"] [data-act="export"]').click();
+describe("Bridal More: Wedding Setup and Export & Backup", () => {
+  it("More holds Wedding Setup and Export & Backup; Staff get neither", () => {
+    expect(buildRoutes(wedding()).filter((r) => ["/wedding-setup", "/export"].includes(r.path)).map((r) => r.label)).toEqual(["Export & Backup", "Wedding Setup"]);
+    expect(buildRoutes(wedding("staff")).some((r) => ["/wedding-setup", "/export"].includes(r.path))).toBe(false);
+  });
+
+  it("Wedding Setup saves the controlled invitation fields and the RSVP rules", async () => {
+    const api = vi.fn(async (_p, { body }) => (body.action === "get" ? { setup: { coupleNames: "Camille & Carlo", rsvpEnabled: true }, hasHero: false } : { saved: true }));
+    mountSetup(container, wedding(), { api, toast: () => {} });
     await flush();
-    expect(download).toHaveBeenCalledWith("exports", { dataset: "weddingTasks", filters: { state: "all" } });
+    const f = container.querySelector('[data-role="setup"]');
+    expect(f.elements.coupleNames.value).toBe("Camille & Carlo");
+    f.elements.weddingDate.value = "2027-12-12";
+    f.elements.ceremonyTime.value = "15:00";
+    f.elements.ceremonyVenue.value = "Example Church";
+    f.elements.rsvpDeadline.value = "2027-11-15";
+    f.elements.dressCode.value = "Formal";
+    f.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    await flush();
+    expect(api).toHaveBeenLastCalledWith("wedding-setup", { method: "POST", body: { action: "save", setup: expect.objectContaining({ coupleNames: "Camille & Carlo", weddingDate: "2027-12-12", ceremonyTime: "15:00", ceremonyVenue: "Example Church", rsvpDeadline: "2027-11-15", dressCode: "Formal", rsvpEnabled: true, closeAfterDeadline: true }) } });
+  });
+
+  it("Guest ⋯ (invitation set up): View invitation / Copy invitation link / Regenerate invitation link", async () => {
+    const data = fakeData({ listGuests: vi.fn(async () => ({ rows: [{ ...GUEST, category: "family" }], hasMore: false })), getSeating: vi.fn(async () => null), getWeddingSetup: vi.fn(async () => ({ setup: { coupleNames: "Camille & Carlo", rsvpEnabled: true } })), guestsApi: vi.fn(async () => ({ path: "/invite/" + "a".repeat(32) })) });
+    Object.assign(navigator, { clipboard: { writeText: vi.fn(async () => {}) } });
+    const toast = vi.fn();
+    mountGuests(container, wedding(), { data, toast, confirm: async () => true });
+    await flush();
+    const items = [...container.querySelectorAll('[data-guest="guestPrado001"] .menu-item')].map((b) => b.textContent);
+    expect(items).toEqual(expect.arrayContaining(["View invitation", "Copy invitation link", "Regenerate invitation link"]));
+    container.querySelector('[data-guest="guestPrado001"] [data-act="invite-copy"]').click();
+    await flush();
+    expect(data.guestsApi).toHaveBeenCalledWith({ action: "inviteLink", guestId: GUEST.id });
+    expect(navigator.clipboard.writeText).toHaveBeenCalledWith(`${location.origin}/invite/${"a".repeat(32)}`);
+    container.querySelector('[data-guest="guestPrado001"] [data-act="invite-new"]').click();
+    await flush();
+    expect(data.guestsApi).toHaveBeenCalledWith({ action: "regenerateInvite", guestId: GUEST.id });
+    expect(toast).toHaveBeenCalledWith("New link for Prado Family copied.", "success");
+  });
+});
+
+describe("the guest's invitation page (/invite/{token}, no login)", () => {
+  const TOKEN = "Abc123_-".repeat(4);
+  const INV = { wedding: { coupleNames: "Camille & Carlo", weddingDate: "2027-12-12", ceremonyTime: "15:00", ceremonyVenue: "Example Church", ceremonyAddress: "Taguig City", receptionTime: "17:30", receptionVenue: "Example Garden", receptionAddress: "Taguig City", dressCode: "Formal", welcomeMessage: "Together with our families, we invite you to celebrate our wedding day.", rsvpDeadline: "2027-11-15" }, hero: null, guest: { name: "Maria Santos", seats: 2, rsvp: "awaiting", confirmed: 0 }, rsvpOpen: true };
+  const fetcher = (answer) =>
+    vi.fn(async (_u, { body }) => {
+      const b = JSON.parse(body);
+      const out = b.action === "view" ? { success: true, invitation: INV } : answer(b);
+      return { ok: !out.error, status: out.error ? 409 : 200, json: async () => (out.error ? { message: out.error } : out) };
+    });
+
+  it("shows the couple's invitation for THIS party; Accept asks how many (≤ invited seats) and sends one answer", async () => {
+    expect(inviteTokenFrom(`/invite/${TOKEN}`)).toBe(TOKEN);
+    expect(inviteTokenFrom("/invite/short")).toBe("");
+    const fetchImpl = fetcher((b) => ({ success: true, rsvp: b.rsvp.status, confirmed: b.rsvp.confirmed ?? 0, name: "Maria Santos" }));
+    document.body.innerHTML = '<div id="root"></div>';
+    const root = document.getElementById("root");
+    await renderInvitePage(root, { token: TOKEN, fetchImpl });
+    expect(fetchImpl).toHaveBeenCalledWith("/api/invite", expect.objectContaining({ method: "POST", body: JSON.stringify({ action: "view", token: TOKEN }) }));
+    expect(root.querySelector(".inv-names").textContent).toBe("Camille & Carlo");
+    expect(root.querySelector(".inv-date").textContent).toBe("December 12, 2027");
+    expect(root.textContent).toContain("3:00 PM");
+    expect(root.textContent).toContain("RSVP before November 15, 2027");
+    expect(root.querySelector('[data-role="guest-name"]').textContent).toBe("Maria Santos");
+    expect(root.querySelector('[data-role="seats"]').textContent).toBe("2 seats reserved");
+    root.querySelector('[data-act="accept"]').click();
+    expect([...root.querySelectorAll("[data-seats]")].map((b) => b.textContent)).toEqual(["1", "2"]);
+    root.querySelector('[data-seats="1"]').click();
+    root.querySelector('[data-act="send"]').click();
+    await flush();
+    expect(JSON.parse(fetchImpl.mock.calls.at(-1)[1].body)).toEqual({ action: "respond", token: TOKEN, rsvp: { status: "attending", confirmed: 1 } });
+    expect(root.querySelector('[data-role="done"]').textContent).toContain("Thank you, Maria.");
+    expect(root.querySelector('[data-role="done"]').textContent).toContain("We've saved your RSVP for 1 guest.");
+  });
+
+  it("Decline thanks them; closed RSVPs say so; a bad link explains", async () => {
+    document.body.innerHTML = '<div id="root"></div>';
+    let root = document.getElementById("root");
+    await renderInvitePage(root, { token: TOKEN, fetchImpl: fetcher(() => ({ success: true, rsvp: "declined", confirmed: 0 })) });
+    root.querySelector('[data-act="decline"]').click();
+    await flush();
+    expect(root.querySelector('[data-role="done"]').textContent).toContain("You'll be missed on our special day.");
+    document.body.innerHTML = '<div id="root"></div>';
+    root = document.getElementById("root");
+    const closed = vi.fn(async () => ({ ok: true, status: 200, json: async () => ({ success: true, invitation: { ...INV, rsvpOpen: false } }) }));
+    await renderInvitePage(root, { token: TOKEN, fetchImpl: closed });
+    expect(root.querySelector('[data-act="accept"]')).toBeNull();
+    expect(root.querySelector('[data-role="closed"]')).not.toBeNull();
+    document.body.innerHTML = '<div id="root"></div>';
+    root = document.getElementById("root");
+    await renderInvitePage(root, { token: "", fetchImpl: vi.fn(async () => ({ ok: false, status: 404, json: async () => ({ message: "This invitation link isn't valid. Please ask the couple for a new one." }) })) });
+    expect(root.querySelector('[data-role="message"]').textContent).toMatch(/isn't valid/);
   });
 });
 

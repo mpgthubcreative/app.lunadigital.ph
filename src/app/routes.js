@@ -22,11 +22,19 @@ const NOTIFICATIONS_ROUTE = Object.freeze({ path: "/notifications", label: "Noti
 // module registry: every workspace has it, whatever its template.
 export const SUBSCRIPTION_ROUTE = Object.freeze({ path: "/subscription", label: "Subscription", moduleId: "subscription" });
 export const canSeeSubscription = (session) => session?.member?.permissions?.["billing.view"] === true;
-// Owner-pilot Bridal UX: one Downloads page (under More) for the workspace's
-// Excel downloads, when the template lists them and this person may export
-// at least one. The export permission / entitlement checks stay per dataset.
-export const DOWNLOADS_ROUTE = Object.freeze({ path: "/downloads", label: "Downloads", moduleId: "downloads" });
-export const downloadsFor = (session) => (getWorkspaceTemplate(snapshotWorkspaceTemplateId(session?.entitlements))?.downloads || []).filter((id) => canExport({ entitlements: session.entitlements, permissions: session.member.permissions }, EXPORT_DATASETS[id]));
+// Owner-pilot: ONE Export & Backup page (under More) in every workspace,
+// instead of Download Excel on the everyday screens. Single lists = this
+// workspace's export datasets this person may download (the usual
+// per-dataset checks); the Dashboard and Reports workbooks need a period and
+// stay on their pages. Master Backup = the Owner (billing.view) who may export.
+export const EXPORT_ROUTE = Object.freeze({ path: "/export", label: "Export & Backup", moduleId: "downloads" });
+const PAGE_ONLY = new Set(["dashboard", "reports"]);
+export const exportListsFor = (session) => Object.keys(EXPORT_DATASETS).filter((id) => !PAGE_ONLY.has(id) && canExport({ entitlements: session.entitlements, permissions: session.member.permissions }, EXPORT_DATASETS[id]));
+export const canBackup = (session) => session?.member?.permissions?.["billing.view"] === true && session?.member?.permissions?.["data.export"] === true;
+export const showExportPage = (session) => canBackup(session) || exportListsFor(session).length > 0;
+// Owner-pilot Bridal: Wedding Setup (the invitation + RSVP settings), under More.
+export const SETUP_ROUTE = Object.freeze({ path: "/wedding-setup", label: "Wedding Setup", moduleId: "weddingsetup" });
+export const canSeeWeddingSetup = (session) => snapshotWorkspaceTemplateId(session?.entitlements) === "bridal-expense" && session?.member?.permissions?.["guests.view"] === true && canUseModule(accessOf(session), "guests");
 
 export function buildRoutes(session) {
   // Tenant terminology (Phase 17) relabels a module (e.g. Customers -> Dealers); ids and paths never change.
@@ -34,7 +42,8 @@ export function buildRoutes(session) {
   const routes = resolveNavigation(accessOf(session)).map((mod) => ({ path: mod.path, label: labels[mod.id] ?? mod.label, moduleId: mod.id }));
   if (canUseNotifications(accessOf(session))) routes.push({ ...NOTIFICATIONS_ROUTE });
   if (canSeeSubscription(session)) routes.push({ ...SUBSCRIPTION_ROUTE });
-  if (downloadsFor(session).length) routes.push({ ...DOWNLOADS_ROUTE });
+  if (showExportPage(session)) routes.push({ ...EXPORT_ROUTE });
+  if (canSeeWeddingSetup(session)) routes.push({ ...SETUP_ROUTE });
   // Owner-pilot UX: a workspace whose home isn't the Dashboard (Household:
   // Payroll) sends "/" (sign-in, old links) there.
   const home = getWorkspaceTemplate(snapshotWorkspaceTemplateId(session.entitlements))?.home;
@@ -46,7 +55,8 @@ export function buildRoutes(session) {
 export function routeAllowed(session, route) {
   if (route && route.moduleId === NOTIFICATIONS_ROUTE.moduleId) return canUseNotifications(accessOf(session));
   if (route && route.moduleId === SUBSCRIPTION_ROUTE.moduleId) return canSeeSubscription(session);
-  if (route && route.moduleId === DOWNLOADS_ROUTE.moduleId) return downloadsFor(session).length > 0;
+  if (route && route.moduleId === EXPORT_ROUTE.moduleId) return showExportPage(session);
+  if (route && route.moduleId === SETUP_ROUTE.moduleId) return canSeeWeddingSetup(session);
   return Boolean(route && route.moduleId) && canUseModule(accessOf(session), route.moduleId);
 }
 

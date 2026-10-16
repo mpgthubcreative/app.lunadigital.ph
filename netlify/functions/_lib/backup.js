@@ -1,0 +1,145 @@
+// Master Backup (Owner-pilot): ONE Excel workbook with everything the
+// business has in Luna, as its emergency copy. Not a report: every record of
+// every collection the workspace's modules own (removed / voided / inactive
+// ones included), read in full pages (never truncated: too much data is an
+// error, not a shorter file), one sheet each, with every field as a column
+// (nested values as JSON, timestamps as ISO text). Plus Export Info, Users /
+// Memberships and the Audit log; a wedding also gets Wedding Setup, Guest
+// Categories, RSVP History, Tables and Seating Assignments as readable sheets.
+//
+// Never exported: credentials. Fields whose name says token / secret / hash
+// / password are dropped, and the invitation links live in a server-only
+// collection that is never read here. Aggregates Luna recomputes (metrics,
+// totals) and notification inboxes are left out.
+
+import { getWorkspaceTemplate } from "../../../shared/workspaces.js";
+import { getModule, isModuleEnabled } from "../../../shared/modules.js";
+import { writeXlsx } from "../../../shared/xlsx.js";
+import { rsvpByCategory, seatingPlan, SEATING_DOC_ID, TOTALS_DOC_ID } from "../../../shared/wedding.js";
+
+export class BackupError extends Error {
+  constructor(code, message) {
+    super(message);
+    this.code = code;
+  }
+}
+
+export const BACKUP_MAX_ROWS = 60000;
+const PAGE = 500;
+const SKIP = new Set(["metrics", "financialMetrics", "spendingMetrics", "inbox", "inboxState", "reports", "taskTotals", "guestTotals", "members"]);
+const SECRET = /token|secret|hash|password/i;
+const NAMES = {
+  orders: "Orders", orderCosts: "Order costs", payments: "Payments", products: "Products", inventoryTransactions: "Stock movements", productCosts: "Product costs", inventoryTransactionCosts: "Stock movement costs",
+  customers: "Customers", expenses: "Expenses", imports: "Imports", householdStaff: "Staff", attendance: "Attendance", attendanceRequests: "Attendance requests", payrolls: "Payroll", advances: "Advances",
+  budgets: "Budget totals", expenseCategories: "Budget", scheduledPayments: "Payment schedule", providers: "Providers", weddingSuppliers: "Suppliers", supplierPayments: "Supplier Payments", weddingTasks: "Tasks", guests: "Guests", settings: "Settings",
+};
+// Bridal sheet order (what the couple expects to find first).
+const WEDDING_ORDER = ["Export Info", "Wedding Setup", "Budget", "Budget totals", "Suppliers", "Supplier Payments", "Expenses", "Tasks", "Guest Categories", "Guests", "RSVP History", "Tables", "Seating Assignments", "Users & Memberships", "Audit log"];
+
+const iso = (v) => (v && typeof v.toDate === "function" ? v.toDate().toISOString() : v instanceof Date ? v.toISOString() : null);
+// One cell: text / number / ISO time / JSON for nested values.
+export function cellOf(v) {
+  if (v === null || v === undefined) return null;
+  if (typeof v === "number") return Number.isFinite(v) ? v : null;
+  if (typeof v === "boolean") return v ? "true" : "false";
+  if (typeof v === "string") return v.slice(0, 32000);
+  const t = iso(v);
+  if (t) return t;
+  try {
+    return JSON.stringify(v, (k, x) => (k && SECRET.test(k) ? undefined : iso(x) ?? x)).slice(0, 32000);
+  } catch {
+    return String(v).slice(0, 32000);
+  }
+}
+// Records -> [header, ...rows]: id first, then every field seen (secrets dropped).
+export function tableOf(records) {
+  const keys = [];
+  const seen = new Set();
+  for (const r of records) for (const k of Object.keys(r.data)) if (!seen.has(k) && !SECRET.test(k)) seen.add(k) && keys.push(k);
+  return [["id", ...keys], ...records.map((r) => [r.id, ...keys.map((k) => cellOf(r.data[k]))])];
+}
+
+// Every document of a collection, page by page (ordered by id).
+async function readAll(col, FieldPath, budget) {
+  const out = [];
+  let last = null;
+  for (;;) {
+    let q = col.orderBy(FieldPath.documentId()).limit(PAGE);
+    if (last) q = q.startAfter(last);
+    const snap = await q.get();
+    for (const d of snap.docs) out.push({ id: d.id, data: d.data() });
+    budget.rows += snap.docs.length;
+    if (budget.rows > BACKUP_MAX_ROWS) throw new BackupError("too-many-rows", `This business has more than ${BACKUP_MAX_ROWS.toLocaleString("en-US")} records; the backup can't be made in one file yet. Contact Luna support.`);
+    if (snap.docs.length < PAGE) return out;
+    last = snap.docs.at(-1).id;
+  }
+}
+
+const sheet = (name, rows) => ({ name, rows: rows.length ? rows : [["(none)"]], header: true, filter: rows.length > 1 });
+
+export async function buildBackup({ db, tenant, business, entitlements, FieldPath, actor, now = new Date() }) {
+  const template = getWorkspaceTemplate(entitlements?.workspaceTemplateId);
+  const wedding = template?.id === "bridal-expense";
+  const budget = { rows: 0 };
+  const collections = [];
+  for (const id of template?.modules || []) {
+    if (!isModuleEnabled(entitlements, id)) continue;
+    for (const c of Object.keys(getModule(id)?.collections || {})) if (!SKIP.has(c) && !collections.includes(c)) collections.push(c);
+  }
+  const sheets = [];
+  const counts = [];
+  const add = (name, rows) => {
+    sheets.push(sheet(name, rows));
+    counts.push([name, Math.max(0, rows.length - 1)]);
+  };
+  const data = {};
+  for (const c of collections) {
+    data[c] = await readAll(tenant.collection(c), FieldPath, budget);
+    add(NAMES[c] || c, tableOf(data[c]));
+  }
+  const members = await readAll(tenant.collection("members"), FieldPath, budget);
+  add("Users & Memberships", tableOf(members));
+  const audit = await readAll(tenant.collection("auditLog"), FieldPath, budget);
+  add("Audit log", tableOf(audit));
+
+  if (wedding) {
+    const setup = await tenant.doc("weddingSetup", "current").get();
+    const s = setup.exists ? setup.data() : {};
+    add("Wedding Setup", [["Setting", "Value"], ...Object.keys(s).filter((k) => !SECRET.test(k) && k !== "hero").sort().map((k) => [k, cellOf(s[k])])]);
+    const totals = await tenant.doc("guestTotals", TOTALS_DOC_ID).get();
+    add("Guest Categories", [["Category", "Invitations", "Invited seats", "Attending seats", "Waiting seats", "Declined seats"], ...rsvpByCategory(totals.exists ? totals.data() : {}).map((r) => [r.label, r.invitations, r.invitedSeats, r.attendingSeats, r.awaitingSeats, r.declinedSeats])]);
+    const guests = data.guests || [];
+    const rsvp = [["Guest id", "Guest", "When", "Source", "By", "From status", "From seats", "To status", "To seats", "Entry"]];
+    for (const g of guests) {
+      for (const h of g.data.history || []) {
+        if (!h || (!h.to && !/RSVP|Confirmed guests|responded/i.test(h.label || ""))) continue;
+        rsvp.push([g.id, g.data.name, iso(h.at) ?? cellOf(h.at), h.source || (h.to ? "owner" : ""), h.actor?.name || "", h.from?.rsvp ?? "", h.from?.confirmed ?? null, h.to?.status ?? "", h.to?.confirmed ?? null, h.label || ""]);
+      }
+    }
+    add("RSVP History", rsvp);
+    const seatingDoc = await tenant.doc("guestTotals", SEATING_DOC_ID).get();
+    const plan = seatingPlan(guests.map((g) => ({ id: g.id, ...g.data })), seatingDoc.exists ? seatingDoc.data() : {});
+    add("Tables", [["Table id", "Table", "Seats", "Seats taken", "Guests"], ...plan.tables.map((t) => [t.id, t.name, t.capacity, t.used, t.guests.length])]);
+    add("Seating Assignments", [["Guest id", "Guest", "Attending seats", "Table id", "Table"], ...plan.tables.flatMap((t) => t.guests.map((g) => [g.id, g.name, g.confirmed ?? 0, t.id, t.name])), ...plan.unassigned.map((g) => [g.id, g.name, g.confirmed ?? 0, "", "Unassigned"])]);
+  }
+
+  const info = [
+    ["Luna Master Backup", ""],
+    ["Business", business.name || ""],
+    ["Business id", tenant.businessId || ""],
+    ["Workspace", template?.name || ""],
+    ["Created", now.toISOString()],
+    ["Created by", actor?.name || actor?.email || actor?.uid || ""],
+    ["Contents", "Every record Luna keeps for this business, including removed, voided and inactive ones. One sheet per kind of record; every field is a column (nested values as JSON, times in UTC)."],
+    ["Not included", "Passwords, sign-in and invitation links (secrets), and totals Luna recalculates."],
+    ["", ""],
+    ["Sheet", "Rows"],
+    ...counts,
+  ];
+  const all = [{ name: "Export Info", rows: info, header: false }, ...sheets];
+  if (wedding) all.sort((a, b) => (WEDDING_ORDER.indexOf(a.name) + 1 || 99) - (WEDDING_ORDER.indexOf(b.name) + 1 || 99));
+  const bytes = writeXlsx(all, { title: `Luna Master Backup — ${business.name || ""}`, created: now });
+  const day = now.toISOString().slice(0, 10);
+  const safe = (business.name || "Luna").replace(/[^A-Za-z0-9 _-]/g, "").trim().replace(/\s+/g, "-").slice(0, 40) || "Luna";
+  return { bytes, fileName: `${safe}-Master-Backup-${day}.xlsx`, rows: budget.rows, sheets: all.map((s) => s.name) };
+}

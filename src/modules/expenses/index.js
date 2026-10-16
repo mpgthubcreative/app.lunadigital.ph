@@ -142,7 +142,7 @@ export function mount(container, session, { data = defaultData, api = defaultApi
             { name: "to", label: "To", type: "date", value: f.to },
             { name: "status", label: "Show", type: "select", def: "active", options: [["active", "Active"], ["removed", "Removed"]], value: f.status || "active" },
           ],
-          end: mayExport(session, "expenses") && (f.status || "active") === "active" ? html`<span class="visually-hidden" data-role="export-hint">${exportHint}</span>${exportButton("expenses")}` : "",
+          end: "",
         })}
         <section class="card">
           ${state.error

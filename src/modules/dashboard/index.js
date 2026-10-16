@@ -87,11 +87,8 @@ export function mount(container, session, { fetchDocuments = fetchMetricDocument
               <input class="input" type="date" name="to" value="${state.range.to}" max="${today}" aria-label="To" />
               <button type="submit" class="btn">Apply</button>
             </span>
-            ${canDownload ? exportButton("dashboard", "Download Excel") : ""}
           </form>`
-        : canDownload
-          ? exportButton("dashboard", "Download Excel")
-          : ""}`;
+        : ""}`;
     return pageHeader({ title: titleOf(session), subtitle: `${session.business.name} · ${hasPeriod ? `${periodLabel()}: ${rangeText(state.range)}` : formatDayId(today)} · business time (${session.business.timezone})`, actions });
   }
 

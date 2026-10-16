@@ -76,7 +76,6 @@ export function mount(container, session, { data = defaultData, toast = defaultT
               <select class="select" name="status" aria-label="Status">${opt("", "Active and inactive", state.status)}${Object.entries(CATEGORY_STATUSES).map(([k, v]) => opt(k, v.label, state.status))}</select>
               <button type="submit" class="visually-hidden" tabindex="-1">Apply</button>
               ${canManage ? html`<button type="button" class="btn" data-act="new-category">Add category</button>` : ""}
-              ${mayExport(session, "weddingBudget") ? html`<span class="toolbar-end">${exportButton("weddingBudget")}<span class="visually-hidden">${exportHint}</span></span>` : ""}
             </form>
             <section class="card">
               ${state.loading

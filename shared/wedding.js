@@ -411,6 +411,48 @@ export function seatingPlan(guests, seatingDoc) {
   return { tables, unassigned, attendingSeats: seats(attending), seatedSeats: tables.reduce((s, t) => s + t.used, 0), unassignedSeats: seats(unassigned) };
 }
 
+// ---------- Wedding Setup + invitations (Owner-pilot Bridal) ----------
+// One document per wedding (weddingSetup/current, written by the server,
+// read through the API). Controlled fields only: one elegant theme, no page
+// builder. The hero photo is kept apart (weddingSetup/hero).
+export const SETUP_TEXT = { coupleNames: 80, ceremonyVenue: 100, ceremonyAddress: 160, receptionVenue: 100, receptionAddress: 160, dressCode: 80, welcomeMessage: 600 };
+export const SETUP_FIELDS = [...Object.keys(SETUP_TEXT), "weddingDate", "ceremonyTime", "receptionTime", "ceremonyMap", "receptionMap", "rsvpDeadline", "rsvpEnabled", "closeAfterDeadline", "showTable"];
+const TIME = /^([01]\d|2[0-3]):[0-5]\d$/;
+export function validateWeddingSetup(input) {
+  only(input, SETUP_FIELDS, "setup");
+  const out = {};
+  for (const [k, max] of Object.entries(SETUP_TEXT)) if (Object.hasOwn(input, k)) out[k] = text(input[k], { field: k, max });
+  for (const k of ["weddingDate", "rsvpDeadline"]) {
+    if (!Object.hasOwn(input, k)) continue;
+    if (input[k] !== null && input[k] !== "" && !isDayId(input[k])) throw new WeddingError("invalid-input", "Choose a valid date");
+    out[k] = input[k] || null;
+  }
+  for (const k of ["ceremonyTime", "receptionTime"]) {
+    if (!Object.hasOwn(input, k)) continue;
+    if (input[k] !== null && input[k] !== "" && !TIME.test(input[k])) throw new WeddingError("invalid-input", "Choose a valid time");
+    out[k] = input[k] || null;
+  }
+  for (const k of ["ceremonyMap", "receptionMap"]) {
+    if (!Object.hasOwn(input, k)) continue;
+    const v = input[k] === null || input[k] === "" ? null : String(input[k]).trim();
+    if (v !== null && (v.length > 500 || !/^https:\/\/[^\s<>"]+$/.test(v))) throw new WeddingError("invalid-input", "A map link must start with https://");
+    out[k] = v;
+  }
+  for (const k of ["rsvpEnabled", "closeAfterDeadline", "showTable"]) {
+    if (!Object.hasOwn(input, k)) continue;
+    if (typeof input[k] !== "boolean") throw new WeddingError("invalid-input", "Invalid setting");
+    out[k] = input[k];
+  }
+  return out;
+}
+// Guests can answer while RSVP is on and (if set to close) the deadline
+// hasn't passed. The Owner can always change an RSVP in Luna.
+export function rsvpOpen(setup, today) {
+  if (!setup || setup.rsvpEnabled !== true) return false;
+  if (setup.closeAfterDeadline !== false && isDayId(setup.rsvpDeadline) && isDayId(today) && today > setup.rsvpDeadline) return false;
+  return true;
+}
+
 // ---------- Dashboard figures ----------
 
 // The wedding budget as of now: Baby's budget arithmetic + supplier balance.

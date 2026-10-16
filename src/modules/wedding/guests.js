@@ -88,14 +88,16 @@ export function mount(container, session, { data = defaultData, toast = defaultT
   const canManage = session.member.permissions["guests.manage"] === true;
   const businessId = session.business.id;
   const timezone = session.business.timezone;
-  const state = { view: "rsvp", filter: "all", search: "", rows: [], totals: null, seating: null, loading: true, error: null };
+  const state = { view: "rsvp", filter: "all", search: "", rows: [], totals: null, seating: null, loading: true, error: null, invites: false };
   let alive = true;
 
   async function load() {
     state.loading = !state.rows.length;
     draw();
     try {
-      const [totals, page, seating] = await Promise.all([data.getGuestTotals(businessId), data.listGuests(businessId, {}, { pageSize: MAX_GUESTS }), data.getSeating ? data.getSeating(businessId).catch(() => null) : null]);
+      const [totals, page, seating, setup] = await Promise.all([data.getGuestTotals(businessId), data.listGuests(businessId, {}, { pageSize: MAX_GUESTS }), data.getSeating ? data.getSeating(businessId).catch(() => null) : null, canManage && data.getWeddingSetup ? data.getWeddingSetup().catch(() => null) : null]);
+      // Invitation links once the couple has set up their invitation.
+      state.invites = Boolean(setup?.setup && (setup.setup.coupleNames || setup.setup.rsvpEnabled));
       state.totals = totals;
       state.rows = page.rows;
       state.seating = seating;
@@ -122,6 +124,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     menu(`More for ${g.name}`, [
       ...(canManage && g.rsvp === "attending" && g.partySize > 1 ? [{ act: "count", id: g.id, label: "Change number attending" }] : []),
       ...(canManage ? [{ act: "edit", id: g.id, label: "Edit" }] : []),
+      ...(canManage && state.invites ? [{ act: "invite-view", id: g.id, label: "View invitation" }, { act: "invite-copy", id: g.id, label: "Copy invitation link" }, { act: "invite-new", id: g.id, label: "Regenerate invitation link" }] : []),
       { act: "view", id: g.id, label: "Details & history" },
       ...(canManage ? [{ act: "remove", id: g.id, label: "Remove guest", danger: true, sep: true }] : []),
     ]);
@@ -152,16 +155,16 @@ export function mount(container, session, { data = defaultData, toast = defaultT
   function seatingView() {
     const plan = seatingPlan(state.rows, state.seating);
     const seatRow = (g, table) =>
-      html`<li class="wl-row wl-guest" data-guest="${g.id}"><button type="button" class="wl-main" data-act="view" data-id="${g.id}"><span class="wl-name">${g.name}</span></button>${seats(g, String(g.confirmed))}${menu(`Seating for ${g.name}`, canManage ? (table ? [{ act: "seat", id: g.id, label: "Move to another table" }, { act: "unseat", id: g.id, label: "Unassign" }] : [{ act: "seat", id: g.id, label: "Assign to a table" }]) : [{ act: "view", id: g.id, label: "Details & history" }])}</li>`;
+      html`<li class="wl-row wl-guest" data-guest="${g.id}"><button type="button" class="wl-main" data-act="view" data-id="${g.id}"><span class="wl-name">${g.name}</span></button>${seats(g, String(g.confirmed))}${!table && canManage ? html`<button type="button" class="btn btn-compact" data-act="seat" data-id="${g.id}">Assign</button>` : menu(`Seating for ${g.name}`, canManage ? [{ act: "seat", id: g.id, label: "Move to another table" }, { act: "unseat", id: g.id, label: "Unassign" }] : [{ act: "view", id: g.id, label: "Details & history" }])}</li>`;
     return html`
       <section class="wl-section" data-group="unassigned">
-        <h2 class="wl-group-title">Unassigned <span>${fmt(plan.unassignedSeats)} seat${plan.unassignedSeats === 1 ? "" : "s"}</span></h2>
+        <h2 class="wl-cat-head"><span class="wl-group-title">Unassigned</span><span class="wl-cat-counts">· ${fmt(plan.unassignedSeats)}</span></h2>
         ${plan.unassigned.length ? html`<ul class="wl-list wl-scroll" data-role="unassigned">${plan.unassigned.map((g) => seatRow(g, null))}</ul>` : html`<p class="stat-hint wl-none">${plan.attendingSeats ? "Everyone attending has a table." : "Guests appear here once they're attending."}</p>`}
       </section>
       ${plan.tables.length
         ? plan.tables.map(
             (t) => html`<section class="wl-section" data-table="${t.id}">
-              <div class="wl-head"><h2 class="wl-group-title">${t.name} <span class="${t.used > t.capacity ? "is-over" : ""}" data-role="table-seats">${t.used}/${t.capacity} seats${t.used > t.capacity ? ` · over by ${t.used - t.capacity}` : ""}</span></h2>${canManage ? menu(`Table ${t.name}`, [{ act: "table-edit", id: t.id, label: "Rename / change seats" }, { act: "table-delete", id: t.id, label: "Delete table", danger: true, sep: true }]) : ""}</div>
+              <div class="wl-head"><h2 class="wl-cat-head"><span class="wl-group-title">${t.name}</span><span class="wl-cat-counts ${t.used > t.capacity ? "is-over" : ""}" data-role="table-seats" title="seats taken / seats">· ${t.used}/${t.capacity}${t.used > t.capacity ? ` · over by ${t.used - t.capacity}` : ""}</span></h2>${canManage ? menu(`Table ${t.name}`, [{ act: "table-edit", id: t.id, label: "Rename / change seats" }, { act: "table-delete", id: t.id, label: "Delete table", danger: true, sep: true }]) : ""}</div>
               ${t.guests.length ? html`<ul class="wl-list wl-scroll" data-role="table-guests">${t.guests.map((g) => seatRow(g, t))}</ul>` : html`<p class="stat-hint wl-none">No one yet.</p>`}
             </section>`
           )
@@ -283,6 +286,15 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     });
   }
 
+  async function copyLink(url, name, fresh = false) {
+    try {
+      await navigator.clipboard.writeText(url);
+      toast(`${fresh ? "New link" : "Link"} for ${name} copied.`, "success");
+    } catch {
+      // No clipboard access: show the link to copy by hand.
+      await formDialog({ title: `Invitation link for ${name}`, fields: [{ name: "url", label: "Copy this link", value: url }], submitLabel: "Done", onSubmit: () => true });
+    }
+  }
   const onClick = async (event) => {
     const el = event.target.closest("[data-act]");
     if (!el || !container.contains(el) || el.dataset.act === "export") return;
@@ -309,6 +321,18 @@ export function mount(container, session, { data = defaultData, toast = defaultT
       else if (a === "count") after("RSVP saved.")(await rsvpDialog(g));
       else if (a === "seat") after(g.tableId ? "Moved." : "Seated.")(await seatDialog(g));
       else if (a === "unseat") after("Unassigned.")(await data.guestsApi({ action: "seat", guestId: g.id, tableId: null }));
+      else if (a === "invite-view" || a === "invite-copy") {
+        // Open the window first (a popup must start from the tap), then fill it in.
+        const win = a === "invite-view" ? window.open("about:blank", "_blank") : null;
+        const r = await data.guestsApi({ action: "inviteLink", guestId: g.id });
+        const url = `${location.origin}${r.path}`;
+        if (win) win.location.href = url;
+        else await copyLink(url, g.name);
+      } else if (a === "invite-new") {
+        if (!(await confirm({ title: `New invitation link for ${g.name}?`, body: "The link you sent before stops working. Send them the new one.", confirmLabel: "Make a new link" }))) return;
+        const r = await data.guestsApi({ action: "regenerateInvite", guestId: g.id });
+        await copyLink(`${location.origin}${r.path}`, g.name, true);
+      }
     } catch (err) {
       toast(err.message || "Something went wrong", "danger");
     }

@@ -225,7 +225,6 @@ export function mount(container, session, { data = defaultData, toast = defaultT
           <div class="pick-row" data-role="pickers">
             <label class="pick">Employee <select class="select" data-role="pick-staff" aria-label="Employee">${state.staff.map((x) => html`<option value="${x.id}" ${x.id === state.staffId ? "selected" : ""}>${x.name}</option>`)}</select></label>
             <label class="pick">Period <select class="select" data-role="pick-period" aria-label="Pay period" ${s ? "" : "disabled"}>${periods().map((p) => html`<option value="${p.start}" ${p.start === state.periodStart ? "selected" : ""}>${range(p)}${p.start <= today && today <= p.end ? " (now)" : ""}</option>`)}</select></label>
-            ${mayExport(session, "attendance") ? html`<span class="visually-hidden">${exportHint}</span>${exportButton("attendance")}` : ""}
           </div>
           ${state.error ? emptyState({ title: "Couldn't load", body: state.error }) : state.loading && !state.lines.length ? skeleton(6) : sheet()}
         </section>`

@@ -112,7 +112,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
             { name: "to", label: "To", type: "date", value: f.to },
             { name: "status", label: "Show", type: "select", primary: false, options: [["active", "Active"], ["removed", "Removed"]], value: f.status || "active", def: "active" },
           ],
-          end: mayExport(session, "babyExpenses") && (f.status || "active") === "active" ? html`<span class="visually-hidden">${exportHint}</span>${exportButton("babyExpenses")}` : "",
+          end: "",
         })}
         <section class="card">
           ${state.error
