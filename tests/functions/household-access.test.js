@@ -83,7 +83,7 @@ describe("the kasambahay's login is Household Staff, never Manager / Admin", () 
     expect(r.status, JSON.stringify(r.body)).toBe(200);
     const m = docAt(`members/${yanie.uid}`);
     expect(m).toMatchObject({ roleTemplate: "household_staff", staffId: rec });
-    expect(Object.keys(m.permissions).filter((k) => m.permissions[k]).sort()).toEqual(["advances.self", "attendance.self", "payroll.self"]);
+    expect(Object.keys(m.permissions).filter((k) => m.permissions[k]).sort()).toEqual(["advances.self", "attendance.self", "grocery.check", "grocery.view", "payroll.self"]);
     expect(docAt(`householdStaff/${rec}`).memberUid).toBe(yanie.uid);
     const audit = paths("auditLog/").map((p) => world.db.docs.get(p)).find((a) => a.type === "member.updated" && a.member?.uid === yanie.uid);
     expect(audit).toMatchObject({ before: { roleTemplate: "manager" }, after: { roleTemplate: "household_staff" } });

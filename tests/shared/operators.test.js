@@ -37,7 +37,7 @@ describe("operators", () => {
 
   it("overridable = the workspace's own built, non-core modules (never another workspace's)", () => {
     expect(overridableModules("distributor")).toEqual(["orders", "payments", "inventory", "customers", "expenses", "reports", "imports"]);
-    expect(overridableModules("household-payroll")).toEqual(["household", "attendance", "payroll", "advances", "expenses", "budget", "schedule"]);
+    expect(overridableModules("household-payroll")).toEqual(["household", "attendance", "payroll", "advances", "expenses", "budget", "schedule", "grocery"]);
     expect(overridableModules("nope")).toEqual([]);
     expect(code(() => overrideChange("distributor", "payroll", "enabled"))).toBe("not-overridable");
     expect(code(() => overrideChange("distributor", "users", "disabled"))).toBe("not-overridable");

@@ -74,7 +74,7 @@ service firebase.storage {
 
     // Same snapshot validation as firestore.rules (minus the plan lookup).
     function moduleIds() {
-      return ['dashboard', 'orders', 'payments', 'inventory', 'customers', 'reports', 'expenses', 'imports', 'household', 'attendance', 'payroll', 'advances', 'budget', 'schedule', 'providers', 'vendors', 'vendorpayments', 'tasks', 'guests', 'users', 'settings', 'suppliers', 'production', 'returns'];
+      return ['dashboard', 'orders', 'payments', 'inventory', 'customers', 'reports', 'expenses', 'imports', 'household', 'attendance', 'payroll', 'advances', 'budget', 'schedule', 'grocery', 'providers', 'vendors', 'vendorpayments', 'tasks', 'guests', 'users', 'settings', 'suppliers', 'production', 'returns'];
     }
 
     // Keys every snapshot must carry. During a module's staged rollout
@@ -123,7 +123,9 @@ service firebase.storage {
         && m.guests is bool
         && m.suppliers == false
         && m.production == false
-        && m.returns == false;
+        && m.returns == false
+        // Rolling out (shared/modules.js ROLLING_OUT_MODULE_IDS): may be missing.
+        && m.get('grocery', false) is bool;
     }
 
     function validLimit(limits, key) {
@@ -160,13 +162,13 @@ service firebase.storage {
     // OPERATIONAL (built) modules it allows (core included). tests/shared/rules-registry.test.js
     // fails if these drift from the registry.
     function workspaceTemplateVersions() {
-      return {'distributor': [5], 'household-payroll': [2, 3], 'baby-expense': [2], 'bridal-expense': [2]};
+      return {'distributor': [5], 'household-payroll': [2, 3, 4], 'baby-expense': [2], 'bridal-expense': [2]};
     }
 
     function workspaceTemplateModules() {
       return {
         'distributor': ['dashboard', 'users', 'settings', 'orders', 'payments', 'inventory', 'customers', 'expenses', 'reports', 'imports'],
-        'household-payroll': ['dashboard', 'users', 'settings', 'household', 'attendance', 'payroll', 'advances', 'expenses', 'budget', 'schedule'],
+        'household-payroll': ['dashboard', 'users', 'settings', 'household', 'attendance', 'payroll', 'advances', 'expenses', 'budget', 'schedule', 'grocery'],
         'baby-expense': ['dashboard', 'users', 'settings', 'expenses', 'budget', 'schedule', 'providers'],
         'bridal-expense': ['dashboard', 'users', 'settings', 'expenses', 'budget', 'vendors', 'vendorpayments', 'tasks', 'guests']
       };

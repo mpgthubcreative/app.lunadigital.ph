@@ -124,7 +124,7 @@ describe("planned modules are roadmap metadata only", () => {
     // Phase 14 built Household Staff, Attendance, Payroll (incl. salary payments,
     // receipt confirmation, deductions, history) and Advances; Reports stay planned.
     expect(ids("household-payroll")).toEqual(["payroll-reports"]);
-    expect(WORKSPACE_TEMPLATES["household-payroll"].modules).toEqual(["dashboard", "users", "settings", "household", "attendance", "payroll", "advances", "expenses", "budget", "schedule"]);
+    expect(WORKSPACE_TEMPLATES["household-payroll"].modules).toEqual(["dashboard", "users", "settings", "household", "attendance", "payroll", "advances", "expenses", "budget", "schedule", "grocery"]);
     // Phase 16 built Wedding Budget / Expenses / Suppliers / Supplier Payments / Tasks / Guests & RSVP.
     expect(ids("bridal-expense")).toEqual(["wedding-reports"]);
     expect(WORKSPACE_TEMPLATES["bridal-expense"].modules).toEqual(["dashboard", "users", "settings", "expenses", "budget", "vendors", "vendorpayments", "tasks", "guests"]);
@@ -285,12 +285,17 @@ describe("stored snapshot validation fails closed", () => {
     expect(v({ ...s, workspaceTemplateVersion: 4 }, "growth", "distributor").ok).toBe((WORKSPACE_TEMPLATES.distributor.upgradingFrom ?? []).includes(4));
   });
 
-  it("Luna Household compatible step: v3 is current, v2 still accepted while businesses are recomputed; stale or malformed snapshots fail closed", () => {
-    expect(WORKSPACE_TEMPLATES["household-payroll"].upgradingFrom).toEqual([2]);
+  it("Luna Household compatible step: v4 (Grocery List) is current, v2 and v3 still accepted (kept until the production stack is verified); stale or malformed snapshots fail closed", () => {
+    expect(WORKSPACE_TEMPLATES["household-payroll"].upgradingFrom).toEqual([2, 3]);
     const s = ent("household-payroll", "growth");
-    expect(s.workspaceTemplateVersion).toBe(3);
+    expect(s.workspaceTemplateVersion).toBe(4);
     expect(v(s, "growth", "household-payroll")).toEqual({ ok: true, problems: [] });
-    for (const bad of [1, 0, 4, 99, "3", null, 2.5]) expect(v({ ...s, workspaceTemplateVersion: bad }, "growth", "household-payroll").ok, String(bad)).toBe(false);
+    // A v3 snapshot from before the Grocery List (no grocery key) still validates: the key is rolling out.
+    const v3 = structuredClone(s);
+    v3.workspaceTemplateVersion = 3;
+    delete v3.modules.grocery;
+    expect(v(v3, "growth", "household-payroll")).toEqual({ ok: true, problems: [] });
+    for (const bad of [1, 0, 5, 99, "4", null, 2.5]) expect(v({ ...s, workspaceTemplateVersion: bad }, "growth", "household-payroll").ok, String(bad)).toBe(false);
     const noVersion = structuredClone(s);
     delete noVersion.workspaceTemplateVersion;
     expect(v(noVersion, "growth", "household-payroll").ok).toBe(false);
@@ -337,7 +342,8 @@ describe("stored snapshot validation fails closed", () => {
   });
 
   it("Phase 16 strict: bridal-expense v2 is the only accepted version; stale, malformed or keyless snapshots fail closed", () => {
-    expect(ROLLING_OUT_MODULE_IDS).toEqual([]);
+    // grocery is rolling out (Luna Household v4); Bridal snapshots without the key read it as off.
+    expect(ROLLING_OUT_MODULE_IDS).toEqual(["grocery"]);
     expect(WORKSPACE_TEMPLATES["bridal-expense"].upgradingFrom).toBeUndefined();
     const s = ent("bridal-expense", "growth");
     expect(s.workspaceTemplateVersion).toBe(2);

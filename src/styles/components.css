@@ -3732,3 +3732,13 @@ tr.is-saving {
 .input-compact { width: 6.5rem; padding: 4px 6px; min-height: 32px; }
 .design-asset { display: flex; align-items: center; gap: 8px; padding: 4px 0; list-style: none; }
 .design-asset img { width: 48px; height: 48px; object-fit: contain; background: var(--surface-muted); border-radius: var(--radius-sm); }
+
+/* Luna Household: Grocery List (checklist rows reuse .wl-*). */
+.gl-check { flex: none; width: 22px; height: 22px; margin: 0 2px 0 0; accent-color: var(--primary); cursor: pointer; }
+.gl-check-space { flex: none; width: 24px; }
+.gl-row .gl-main { cursor: default; }
+.gl-row.is-bought .wl-name { font-weight: 500; color: var(--text-muted); text-decoration: line-through; }
+.gl-after { justify-content: flex-start; margin-top: var(--space-2); }
+.gl-pick-bar { position: sticky; top: 0; z-index: 2; display: flex; justify-content: flex-end; padding: var(--space-1) 0; background: var(--bg); }
+.gl-setting { display: inline-flex; align-items: center; gap: var(--space-2); margin-top: var(--space-3); font-size: var(--text-sm); color: var(--text-muted); }
+.gl-portal-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); margin-bottom: var(--space-2); }

@@ -72,7 +72,7 @@ describe("staff logins: activation links, never a password the Owner knows", () 
     expect(JSON.stringify(r.body)).not.toMatch(/password/i);
     const member = docAt(`members/${r.body.uid}`);
     expect(member).toMatchObject({ roleTemplate: "household_staff", staffId: id, status: "active", activation: { status: "pending" }, email: `${r.body.login}@${STAFF_LOGIN_DOMAIN}` });
-    expect(Object.keys(member.permissions).sort()).toEqual(["advances.self", "attendance.self", "payroll.self"]);
+    expect(Object.keys(member.permissions).sort()).toEqual(["advances.self", "attendance.self", "grocery.check", "grocery.view", "payroll.self"]);
     expect(docAt(`householdStaff/${id}`)).toMatchObject({ memberUid: r.body.uid, login: { login: r.body.login, status: "pending" } });
     // Only the hash is stored.
     expect([...world.db.docs.keys()].some((k) => k.includes(r.body.activationToken))).toBe(false);

@@ -7,6 +7,9 @@
 //                  I didn't receive it, and this period so far
 //   My Advances    amount received, date, what's left, the planned
 //                  deduction (set by the employer), proof, I received it
+//   Grocery        the household's Grocery List (grocery.view): tick items
+//                  as bought; add items only when the Owner allows it.
+//                  Never any expense, budget or bill.
 // No editing of attendance, payroll or repayment plans here: a correction
 // is reported in one sentence and the employer fixes it. Everything comes
 // from /api/me (their OWN record only, enforced by the server).
@@ -22,14 +25,15 @@ const label = (s) => ATTENDANCE_STATUSES[s]?.label ?? s;
 const shortDay = (d) => formatDayId(d).replace(/, \d{4}$/, "");
 const span = (a, b) => (a === b ? shortDay(a) : a.slice(0, 7) === b.slice(0, 7) ? `${shortDay(a)}–${Number(b.slice(8))}` : `${shortDay(a)} – ${shortDay(b)}`);
 const days = (n) => `${n} day${n === 1 ? "" : "s"}`;
-const TABS = [["home", "Home"], ["attendance", "Attendance"], ["salary", "Salary"], ["advances", "Advances"]];
+const TABS = [["home", "Home"], ["attendance", "Attendance"], ["salary", "Salary"], ["advances", "Advances"], ["grocery", "Grocery"]];
 
-export function mountStaffPortal(root, session, { api = defaultApi, onSignOut = () => {} } = {}) {
+export function mountStaffPortal(root, session, { api = defaultApi, onSignOut = () => {}, loadGrocery = () => import("../modules/household/grocery.js") } = {}) {
+  let groceryCleanup = null;
   const state = { me: null, error: "", tab: "home", period: null, details: false, reporting: false, busy: false, message: "", formError: "" };
   const currency = session.business.currency || "PHP";
   const money = (c) => formatCentavos(c ?? 0, currency);
-  const can = { attendance: session.member.permissions?.["attendance.self"] === true, advance: session.member.permissions?.["advances.self"] === true, salary: session.member.permissions?.["payroll.self"] === true };
-  const tabs = TABS.filter(([k]) => k === "home" || (k === "attendance" && can.attendance) || (k === "salary" && can.salary) || (k === "advances" && can.advance));
+  const can = { attendance: session.member.permissions?.["attendance.self"] === true, advance: session.member.permissions?.["advances.self"] === true, salary: session.member.permissions?.["payroll.self"] === true, grocery: session.member.permissions?.["grocery.view"] === true && session.entitlements?.modules?.grocery === true };
+  const tabs = TABS.filter(([k]) => k === "home" || (k === "attendance" && can.attendance) || (k === "salary" && can.salary) || (k === "advances" && can.advance) || (k === "grocery" && can.grocery));
 
   async function load() {
     try {
@@ -166,6 +170,8 @@ export function mountStaffPortal(root, session, { api = defaultApi, onSignOut = 
   function draw() {
     const m = state.me;
     const tab = tabs.some(([k]) => k === state.tab) ? state.tab : "home";
+    groceryCleanup?.();
+    groceryCleanup = null;
     render(
       root,
       html`<div class="staff-app" data-role="staff-portal" data-workspace="household-payroll">
@@ -181,10 +187,16 @@ export function mountStaffPortal(root, session, { api = defaultApi, onSignOut = 
               ? html`<p class="staff-note">Loading…</p>`
               : html`${tab === "home" ? html`<h1 class="staff-hello">Hi, ${m.staff.name.split(" ")[0]}!</h1>` : ""}
                   ${state.message ? html`<p class="form-notice" role="status" data-role="message">${state.message}</p>` : ""}
-                  ${tab === "home" ? home(m) : tab === "attendance" ? attendance(m) : tab === "salary" ? salary(m) : advances(m)}`}
+                  ${tab === "home" ? home(m) : tab === "attendance" ? attendance(m) : tab === "salary" ? salary(m) : tab === "grocery" ? html`<div data-role="grocery-host"></div>` : advances(m)}`}
         </main>
       </div>`
     );
+    const host = root.querySelector('[data-role="grocery-host"]');
+    if (host) {
+      loadGrocery().then((g) => {
+        if (host.isConnected) groceryCleanup = g.mount(host, session, { portal: true });
+      });
+    }
   }
 
   async function send(body, done) {

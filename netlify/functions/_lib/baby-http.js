@@ -27,6 +27,7 @@ export const BABY_STATUS = {
   "invalid-provider": 400,
   "not-available": 403,
   removed: 409,
+  "too-many-items": 409,
 };
 
 const FORBIDDEN = () => new RequestError("forbidden", "This feature isn't available for your account.", 403);

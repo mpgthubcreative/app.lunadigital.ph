@@ -49,6 +49,8 @@ export const MODULES = Object.freeze([
   // Categories are the budget's lines, so they belong to Budget.
   { id: "budget", label: "Budget", path: "/budget", icon: "budget", permission: "budget.view", available: true, collections: { budgets: "budget.view", expenseCategories: "budget.view", spendingMetrics: "budget.view" }, storage: {} },
   { id: "schedule", label: "Payment Schedule", path: "/payment-schedule", icon: "calendar", permission: "schedule.view", available: true, collections: { scheduledPayments: "schedule.view" }, storage: {} },
+  // Luna Household: the Grocery List (a shared shopping checklist; no money).
+  { id: "grocery", label: "Grocery List", path: "/grocery-list", icon: "cart", permission: "grocery.view", available: true, collections: { groceryItems: "grocery.view", groceryLists: "grocery.view" }, storage: {} },
   { id: "providers", label: "Providers", path: "/providers", icon: "provider", permission: "providers.view", available: true, collections: { providers: "providers.view" }, storage: {} },
   // Built in Phase 16 (Bridal / Wedding Command Center). Operational only in
   // the bridal-expense template, which also reuses `expenses` ("Wedding
@@ -74,7 +76,9 @@ export const MODULE_IDS = Object.freeze(MODULES.map((m) => m.id));
 // missing from snapshots computed before it (staged rollout, see
 // docs/ARCHITECTURE.md "Activating a module"): a missing key reads as false.
 // Emptied once recompute-entitlements has run everywhere.
-export const ROLLING_OUT_MODULE_IDS = Object.freeze([]);
+// grocery (Luna Household v4, 2026-10-17): snapshots computed before it
+// read it as off; only Household businesses are recomputed to switch it on.
+export const ROLLING_OUT_MODULE_IDS = Object.freeze(["grocery"]);
 export const CORE_MODULE_IDS = Object.freeze(MODULES.filter((m) => m.core).map((m) => m.id));
 // Modules a plan or override can switch on or off.
 export const SELLABLE_MODULE_IDS = Object.freeze(MODULES.filter((m) => !m.core).map((m) => m.id));

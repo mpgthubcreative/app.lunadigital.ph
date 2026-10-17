@@ -42,8 +42,8 @@ const NAMES = {
 };
 // Bridal sheet order (what the couple expects to find first).
 // Luna Household names for the shared money collections, and sheet order.
-const HOUSEHOLD_NAMES = { scheduledPayments: "Bills", expenseCategories: "Categories", budgets: "Budget record" };
-const HOUSEHOLD_ORDER = ["Export Info", "Staff", "Attendance", "Attendance requests", "Payroll", "Advances", "Expenses", "Bills", "Recurring Items", "Categories", "Budget", "Budget record", "Users & Memberships", "Audit log"];
+const HOUSEHOLD_NAMES = { scheduledPayments: "Bills", expenseCategories: "Categories", budgets: "Budget record", groceryItems: "Grocery List record", groceryLists: "Grocery List settings" };
+const HOUSEHOLD_ORDER = ["Export Info", "Staff", "Attendance", "Attendance requests", "Payroll", "Advances", "Expenses", "Bills", "Recurring Items", "Categories", "Budget", "Budget record", "Grocery List", "Grocery List record", "Grocery List settings", "Users & Memberships", "Audit log"];
 const WEDDING_ORDER = ["Export Info", "Wedding Setup", "Budget", "Budget totals", "Suppliers", "Supplier Payments", "Expenses", "Tasks", "Guest Categories", "Guests", "RSVP History", "Tables", "Seating Assignments", "Party Members", "Wedding Roles", "Music & Program", "Crew Meals", "Invitation Design", "Users & Memberships", "Audit log"];
 
 const iso = (v) => (v && typeof v.toDate === "function" ? v.toDate().toISOString() : v instanceof Date ? v.toISOString() : null);
@@ -159,6 +159,10 @@ export async function buildBackup({ db, tenant, business, entitlements, FieldPat
     add("Seating Assignments", [["Guest id", "Guest", "Attending seats", "Table id", "Table"], ...plan.tables.flatMap((t) => t.guests.map((g) => [g.id, g.name, g.confirmed ?? 0, t.id, t.name])), ...plan.unassigned.map((g) => [g.id, g.name, g.confirmed ?? 0, "", "Unassigned"])]);
   }
 
+  if (home && data.groceryItems) {
+    // Readable: item, quantity, category, bought, created / bought dates and who.
+    add("Grocery List", [["Item", "Qty", "Category", "Bought", "Created", "Created by", "Bought on", "Bought by", "Updated by"], ...data.groceryItems.map((g) => [g.data.name, g.data.qty ?? "", g.data.category ?? "", g.data.bought ? "Yes" : "No", iso(g.data.createdAt) ?? "", g.data.createdBy?.name ?? "", iso(g.data.boughtAt) ?? "", g.data.boughtBy?.name ?? "", g.data.updatedBy?.name ?? ""])]);
+  }
   if (home && data.scheduledPayments) {
     const names = Object.fromEntries((data.expenseCategories || []).map((c) => [c.id, c.data.name]));
     const peso = (c) => (Number.isSafeInteger(c) ? c / 100 : null);

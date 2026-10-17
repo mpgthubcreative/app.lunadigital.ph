@@ -92,6 +92,11 @@ export const PERMISSIONS = Object.freeze({
   "schedule.view": { module: "schedule", group: "Payment Schedule", label: "View upcoming payments" },
   // Marking a payment Paid also records its expense, so it needs expenses.create too.
   "schedule.manage": { module: "schedule", group: "Payment Schedule", label: "Schedule, edit, cancel and mark payments paid" },
+  // Luna Household Grocery List: separate from Household money (a helper
+  // with the list sees no expenses, budget or bills).
+  "grocery.view": { module: "grocery", group: "Grocery List", label: "View the grocery list" },
+  "grocery.check": { module: "grocery", group: "Grocery List", label: "Tick grocery items as bought (and add items when the Owner allows)" },
+  "grocery.manage": { module: "grocery", group: "Grocery List", label: "Add, edit, delete and clear grocery items" },
   "providers.view": { module: "providers", group: "Providers", label: "View providers and vendors" },
   "providers.manage": { module: "providers", group: "Providers", label: "Add and edit providers and vendors" },
 
@@ -135,9 +140,9 @@ export const ROLE_TEMPLATES = Object.freeze({
   // attendance, leave, advances and salary, nothing else.
   household_staff: {
     label: "Household Staff",
-    description: "Their own attendance, leave, advances and salary only.",
+    description: "Their own attendance, leave, advances and salary, and the Grocery List.",
     workspaces: ["household-payroll"],
-    permissions: ["attendance.self", "advances.self", "payroll.self"],
+    permissions: ["attendance.self", "advances.self", "payroll.self", "grocery.view", "grocery.check"],
   },
   staff: {
     label: "Staff",

@@ -119,17 +119,19 @@ const TEMPLATES = [
     // re-entered as expenses. v2 snapshots are accepted (upgradingFrom)
     // until every Household business is recomputed; the same businessId
     // and data throughout.
-    version: 3,
-    upgradingFrom: [2],
+    // v4 (2026-10-17): + the Grocery List (under More; household staff can
+    // see it and tick items). v2 / v3 snapshots stay accepted.
+    version: 4,
+    upgradingFrom: [2, 3],
     name: "Luna Household",
     description: "Your household, organized: household staff, payroll, bills and household spending in one place.",
     status: "live",
-    modules: [...CORE, "household", "attendance", "payroll", "advances", "expenses", "budget", "schedule"],
+    modules: [...CORE, "household", "attendance", "payroll", "advances", "expenses", "budget", "schedule", "grocery"],
     // Owner-pilot UX: no Dashboard in Household. Payroll is the home page;
     // what needs attention lives in the bell. Phone: Payroll, Attendance,
     // Expenses + More (Advances, Household Staff, Bills, Export & Backup,
     // Users, Subscription, Settings). Budget & Categories open from Expenses.
-    navigation: ["payroll", "attendance", "expenses", "advances", "household", "schedule", "budget", "users", "settings"],
+    navigation: ["payroll", "attendance", "expenses", "advances", "household", "schedule", "grocery", "budget", "users", "settings"],
     mobileTabs: ["payroll", "attendance", "expenses"],
     navHidden: ["dashboard"],
     menuHidden: ["budget"],

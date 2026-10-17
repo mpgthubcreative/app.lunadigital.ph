@@ -32,6 +32,7 @@ export const MODULE_LOADERS = {
   advances: () => import("./advances/index.js"),
   // Phase 15: Baby Expense Tracker.
   budget: (session) => (isHome(session) ? import("./household/budget.js") : isBridal(session) ? import("./wedding/budget.js") : import("./baby/budget.js")),
+  grocery: () => import("./household/grocery.js"),
   schedule: (session) => (isHome(session) ? import("./household/bills.js") : import("./baby/schedule.js")),
   providers: () => import("./baby/providers.js"),
   // Phase 16: Bridal / Wedding.

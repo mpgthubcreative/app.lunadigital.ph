@@ -46,7 +46,10 @@ export function parseHouseholdExpense(v) {
   return { date: v.date, amount, payee: (v.payee || "").trim() || null, method: v.method || "cash", reference: (v.reference || "").trim() || null, notes: (v.notes || "").trim() || null };
 }
 
-export function mount(container, session, { data = defaultData, toast = defaultToast, now = () => new Date(), prepareProof = defaultPrepareProof } = {}) {
+export function mount(container, session, { data = defaultData, toast = defaultToast, now = () => new Date(), prepareProof = defaultPrepareProof, location: loc = globalThis.location } = {}) {
+  // From the Grocery List ("Record grocery expense"): open + Add expense
+  // with Groceries and today; the Owner types the trip's real total.
+  let groceryTrip = new URLSearchParams(loc?.search || "").get("add") === "groceries";
   const perms = session.member.permissions;
   const can = { create: perms["expenses.create"] === true, update: perms["expenses.update"] === true, remove: perms["expenses.delete"] === true, category: perms["budget.manage"] === true, bills: perms["schedule.view"] === true };
   const businessId = session.business.id;
@@ -73,6 +76,13 @@ export function mount(container, session, { data = defaultData, toast = defaultT
       state.rows = page.rows;
       state.hasMore = page.hasMore;
       state.error = null;
+      if (groceryTrip && can.create) {
+        groceryTrip = false;
+        try {
+          globalThis.history?.replaceState?.({}, "", "/expenses");
+        } catch {}
+        queueMicrotask(async () => done("Grocery expense recorded")(await addDialog({ category: "Groceries" })));
+      }
     } catch (err) {
       console.error("household expenses: load failed:", err && (err.code || err.message));
       state.error = "Couldn't load expenses.";
@@ -153,11 +163,11 @@ export function mount(container, session, { data = defaultData, toast = defaultT
   };
   const showProof = (e) => viewProof({ title: `Proof · ${money(e.amount)}${e.payee ? ` · ${e.payee}` : ""}`, load: async () => (await data.expenseProof(e.id)).proof });
 
-  const expenseFields = (e = null) => {
+  const expenseFields = (e = null, prefill = {}) => {
     const day = today();
     return [
       { name: "amount", label: "Amount (₱)", value: e ? (e.amount / 100).toFixed(2) : "", inputmode: "decimal", required: true },
-      householdCategoryField(state.categories, { value: e ? categoryNameOf(state.categories, e.category) || e.categoryName || "" : "" }),
+      householdCategoryField(state.categories, { value: e ? categoryNameOf(state.categories, e.category) || e.categoryName || "" : prefill.category || "" }),
       { name: "date", label: "Date paid", type: "date", value: e?.date ?? day, max: day, required: true, hint: e ? "" : "Not paid yet? Add it under Bills." },
       { name: "payee", label: "Paid to", value: e?.payee ?? "", placeholder: "e.g. Meralco, SM Supermarket", more: true },
       { name: "method", label: "Payment method", type: "select", options: METHOD_OPTIONS, value: e?.method ?? "cash", more: true },
@@ -168,10 +178,11 @@ export function mount(container, session, { data = defaultData, toast = defaultT
   };
   const category = (text) => resolveCategory(text, { categories: state.categories, data, canCreate: can.category });
 
-  const addDialog = () =>
+  const addDialog = (prefill = {}) =>
     formDialog({
-      title: "Add expense",
-      fields: expenseFields(),
+      title: prefill.category === "Groceries" ? "Record grocery expense" : "Add expense",
+      intro: prefill.category === "Groceries" ? "Enter the total you paid for this grocery trip." : "",
+      fields: expenseFields(null, prefill),
       moreLabel: "More details",
       submitLabel: "Add expense",
       onSubmit: async (v) => {

@@ -34,7 +34,7 @@ beforeAll(async () => {
       "home-old": (e) => { for (const k of ["household", "attendance", "payroll", "advances"]) delete e.modules[k]; e.workspaceTemplateVersion = 1; },
       "home-v1": (e) => { e.workspaceTemplateVersion = 1; },
       "home-nover": (e) => { delete e.workspaceTemplateVersion; },
-      "home-v4": (e) => { e.workspaceTemplateVersion = 4; },
+      "home-v5": (e) => { e.workspaceTemplateVersion = 5; },
       "home-v2": (e) => { e.workspaceTemplateVersion = 2; for (const k of ["expenses", "budget", "schedule"]) e.modules[k] = false; },
       "home-vstr": (e) => { e.workspaceTemplateVersion = "3"; },
       "home-nokeys": (e) => { delete e.modules.payroll; },
@@ -99,7 +99,7 @@ describe("reading household payroll data", () => {
     await assertSucceeds(dbAs(env, `owner@${H}`).doc(`businesses/${H}/payrolls/d1`).get());
   });
 
-  for (const [bid, what] of [["home-old", "pre-Phase-14 (v1, no household keys)"], ["home-v1", "v1 with every key"], ["home-nover", "missing version"], ["home-v4", "unknown future version"], ["home-vstr", "version as a string"], ["home-nokeys", "v2 missing the payroll key"]]) {
+  for (const [bid, what] of [["home-old", "pre-Phase-14 (v1, no household keys)"], ["home-v1", "v1 with every key"], ["home-nover", "missing version"], ["home-v5", "unknown future version"], ["home-vstr", "version as a string"], ["home-nokeys", "v2 missing the payroll key"]]) {
     it(`strict: ${what} snapshot fails closed (payroll AND settings)`, async () => {
       await assertFails(dbAs(env, `owner@${bid}`).doc(`businesses/${bid}/payrolls/d1`).get());
       await assertFails(dbAs(env, `owner@${bid}`).doc(`businesses/${bid}/settings/general`).get());
