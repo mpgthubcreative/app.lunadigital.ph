@@ -186,6 +186,22 @@ export function validateAmountSchedule(v) {
   }
   return out;
 }
+// The recurrence period a due date belongs to (one occurrence per bill per
+// period): monthly bills by month, yearly by year, weekly by the date itself.
+export function recurrencePeriod(dayId, repeat) {
+  if (!repeat || typeof dayId !== "string") return dayId;
+  return repeat.every === "year" ? dayId.slice(0, 4) : repeat.every === "month" ? dayId.slice(0, 7) : dayId;
+}
+// A recurring bill's due dates from `fromDay` (included) up to `toDay`.
+export function chainDueDates(fromDay, repeat, anchorDay, toDay, max = 600) {
+  const out = [];
+  let d = fromDay;
+  for (let i = 0; i < max && d <= toDay; i++) {
+    out.push(d);
+    d = nextDueDate(d, repeat, anchorDay);
+  }
+  return out;
+}
 // The amount in force on a day, or null when no period covers it.
 export function amountOn(schedule, dayId) {
   if (!Array.isArray(schedule)) return null;

@@ -151,12 +151,22 @@ export function mount(container, session, { data = defaultData, toast = defaultT
   const rowItems = (r) => {
     if (r.kind === "payroll") return [];
     if (r.kind === "bill-due" || r.kind === "scheduled") return [...(can.pay ? [{ act: "bill-paid", label: "Paid" }] : []), ...(can.billsManage ? [{ act: "bill-edit", label: "Edit" }, { sep: true }, { act: "bill-remove", label: "Remove", danger: true }] : [])];
-    // A later occurrence of a recurring bill: edit the bill (pay the earlier one first).
-    if (r.kind === "bill-next") return can.billsManage ? [{ act: "bill-edit", label: "Edit bill" }] : [];
+    // A recurring bill's occurrence not stored yet: payable once it's due
+    // (this month or overdue), otherwise just Edit bill.
+    if (r.kind === "bill-next") return [...(can.pay && r.date <= monthRange(today().slice(0, 7)).to ? [{ act: "bill-paid", label: "Paid" }] : []), ...(can.billsManage ? [{ act: "bill-edit", label: "Edit bill" }] : [])];
     if (r.kind === "bill-paid") return [...(can.remove ? [{ act: "bill-unpaid", label: "Mark unpaid" }] : []), ...(can.update ? [{ act: "edit", label: "Edit" }] : []), ...(can.remove && can.billsManage ? [{ sep: true }, { act: "bill-remove-paid", label: "Remove", danger: true }] : [])];
     return [...(can.update ? [{ act: "edit", label: "Edit" }] : []), { act: "view", label: "Details" }, ...(can.remove ? [{ sep: true }, { act: "remove", label: "Remove", danger: true }] : [])];
   };
-  const quiet = (r) => (r.kind === "bill-due" || r.kind === "bill-next" ? html`<span class="hx-due${r.kind === "bill-due" && r.date < today() ? " is-over" : ""}">Due ${short(r.date)}</span>` : r.kind === "scheduled" ? html`<span class="hx-due${r.date < today() ? " is-over" : ""}">Scheduled ${short(r.date)}</span>` : r.kind === "bill-paid" ? `Paid · ${short(r.date)}` : short(r.date));
+  // Overdue bills: "Overdue from Oct · 34 days" (carried from an earlier
+  // month) or "3 days overdue"; otherwise "Due Nov 17".
+  const daysLate = (d) => Math.round((Date.parse(`${today()}T00:00:00Z`) - Date.parse(`${d}T00:00:00Z`)) / 86400000);
+  const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  const dueText = (r) => {
+    if (r.date >= today()) return `Due ${short(r.date)}`;
+    const n = daysLate(r.date);
+    return r.record?.overdueFrom ? `Overdue from ${MONTHS[Number(r.date.slice(5, 7)) - 1]}${r.date.slice(0, 4) !== state.month.slice(0, 4) ? ` ${r.date.slice(0, 4)}` : ""} · ${n} day${n === 1 ? "" : "s"}` : `${n} day${n === 1 ? "" : "s"} overdue · ${short(r.date)}`;
+  };
+  const quiet = (r) => (r.kind === "bill-due" || r.kind === "bill-next" ? html`<span class="hx-due${r.date < today() ? " is-over" : ""}" data-role="due">${dueText(r)}</span>` : r.kind === "scheduled" ? html`<span class="hx-due${r.date < today() ? " is-over" : ""}">Scheduled ${short(r.date)}</span>` : r.kind === "bill-paid" ? `Paid · ${short(r.date)}` : short(r.date));
   const row = (r) => html`<li class="wl-row hx-row" data-kind="${r.kind}" data-row="${r.id}">
     <span class="wl-main hx-main"><span class="wl-name">${r.title}</span><span class="wl-sub hx-sub">${quiet(r)}</span></span>
     <span class="wl-amt hx-amt">${money(r.amount)}</span>
@@ -359,7 +369,9 @@ export function mount(container, session, { data = defaultData, toast = defaultT
   // Bills and scheduled expenses from the list: one tap each; the server
   // keeps it to ONE expense (and a repeating bill's next one is made once).
   async function billPaid(b) {
-    const r = await data.scheduleApi({ action: "markPaid", scheduleId: b.scheduleId, payment: { method: "cash", amount: b.amount, paidDate: today(), final: true, key: partKey() } });
+    const payment = { method: "cash", amount: b.amount, paidDate: today(), final: true, key: partKey() };
+    // Not stored yet (a projected occurrence): stored once by bill + date, then paid.
+    const r = b.projected ? await data.scheduleApi({ action: "payOccurrence", scheduleId: b.scheduleId, dueDate: b.dueDate, payment }) : await data.scheduleApi({ action: "markPaid", scheduleId: b.scheduleId, payment });
     return done(r?.alreadyPaid ? "Already paid." : r?.nextScheduleId ? `${b.description} paid. The next one is scheduled.` : `${b.description} paid.`)(r);
   }
   async function billEdit(b) {

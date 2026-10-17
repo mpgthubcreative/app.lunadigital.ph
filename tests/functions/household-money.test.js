@@ -435,3 +435,67 @@ describe("Recurring bills: one occurrence per bill per period (no duplicates)", 
     }
   });
 });
+
+describe("Overdue bills carry forward until paid", () => {
+  const setup = async () => {
+    at("2026-10-01");
+    const util = await category("Utilities");
+    const sid = ok(await api("schedule", u.carlo, { action: "create", payment: { description: "Meralco", category: util, amount: 500000, dueDate: OCT(17), repeat: { every: "month", interval: 1 } } }), 201).scheduleId;
+    at("2026-11-20"); // October is still unpaid
+    return sid;
+  };
+  const view = (m) => m.bills.filter((b) => b.kind === "bill").map((b) => [b.dueDate, b.amount, Boolean(b.overdue), b.overdueFrom ?? null, b.projected]);
+
+  it("November shows October's unpaid Meralco (Overdue from Oct) AND November's; Bills remaining = both; December carries both and adds its own", async () => {
+    await setup();
+    const nov = ok(await month("2026-11")).month;
+    expect(view(nov)).toEqual([["2026-10-17", 500000, true, "2026-10", false], ["2026-11-17", 500000, true, null, true]]);
+    expect(nov.billsRemaining).toBe(1000000);
+    const dec = ok(await month("2026-12")).month;
+    expect(view(dec)).toEqual([["2026-10-17", 500000, true, "2026-10", false], ["2026-11-17", 500000, true, "2026-11", true], ["2026-12-17", 500000, false, null, true]]);
+    expect(dec.billsRemaining).toBe(1500000);
+    // October itself still lists it (not carried into its own month).
+    expect(view(ok(await month("2026-10")).month)).toEqual([["2026-10-17", 500000, true, null, false]]);
+  });
+
+  it("paying the overdue October lowers Bills remaining at once and leaves November's occurrence as it was", async () => {
+    const sid = await setup();
+    const r = ok(await api("schedule", u.carlo, { action: "markPaid", scheduleId: sid, payment: { method: "cash", paidDate: "2026-11-20", final: true, key: "kmeralcooct001" } }));
+    expect(docAt(`scheduledPayments/${r.nextScheduleId}`)).toMatchObject({ dueDate: "2026-11-17", status: "upcoming", amount: 500000 });
+    const nov = ok(await month("2026-11")).month;
+    expect(view(nov)).toEqual([["2026-11-17", 500000, true, null, false]]);
+    expect(nov.billsRemaining).toBe(500000);
+    expect(nov.spent).toBe(500000);
+  });
+
+  it("paying November first (from its projected row) stores it once and leaves October overdue; later paying October reuses November (one per period); retries never duplicate", async () => {
+    const sid = await setup();
+    const pay = (dueDate, key) => api("schedule", u.carlo, { action: "payOccurrence", scheduleId: sid, dueDate, payment: { method: "cash", paidDate: "2026-11-20", final: true, key } });
+    const r1 = ok(await pay("2026-11-17", "kmeralconov001"));
+    const r2 = ok(await pay("2026-11-17", "kmeralconov001"));
+    expect(r1.occurrence).toBe(`${sid}20261117`);
+    expect(r2).toMatchObject({ occurrence: r1.occurrence, alreadyPaid: true });
+    // October (unpaid) + November (paid) + December (made when November was paid).
+    expect(under("scheduledPayments").filter((x) => x.description === "Meralco").map((x) => [x.dueDate, x.status]).sort()).toEqual([["2026-10-17", "upcoming"], ["2026-11-17", "paid"], ["2026-12-17", "upcoming"]]);
+    let nov = ok(await month("2026-11")).month;
+    expect(view(nov)).toEqual([["2026-10-17", 500000, true, "2026-10", false]]);
+    expect(nov.billsRemaining).toBe(500000);
+    // Pay October now: November already exists -> reused, nothing new.
+    const r3 = ok(await api("schedule", u.carlo, { action: "markPaid", scheduleId: sid, payment: { method: "cash", paidDate: "2026-11-20", final: true, key: "kmeralcooct002" } }));
+    expect(r3).toMatchObject({ nextScheduleId: r1.occurrence, nextExisted: true });
+    nov = ok(await month("2026-11")).month;
+    expect(nov.billsRemaining).toBe(0);
+    expect(under("scheduledPayments").filter((x) => x.description === "Meralco")).toHaveLength(3);
+    expect(under("expenses").filter((e) => e.status === "active")).toHaveLength(2);
+    // December goes on as usual (stored once).
+    expect(view(ok(await month("2026-12")).month)).toEqual([["2026-12-17", 500000, false, null, false]]);
+  });
+
+  it("an unpaid October doesn't stop later months; a date that isn't the bill's own is refused", async () => {
+    const sid = await setup();
+    const jan = ok(await month("2027-01")).month;
+    expect(jan.bills.map((b) => b.dueDate)).toEqual(["2026-10-17", "2026-11-17", "2027-01-17"]); // Dec isn't past yet: only its own month shows it
+    const bad = await api("schedule", u.carlo, { action: "payOccurrence", scheduleId: sid, dueDate: "2026-11-18", payment: { method: "cash", paidDate: "2026-11-20", final: true, key: "kmeralcobad001" } });
+    expect(bad.status).toBe(400);
+  });
+});

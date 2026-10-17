@@ -9,7 +9,7 @@
 
 import { getAdmin } from "./_lib/firebase-admin.js";
 import { babyActionHandler } from "./_lib/baby-http.js";
-import { createScheduledPayment, updateScheduledPayment, cancelScheduledPayment, markScheduledPaymentPaid } from "./_lib/baby.js";
+import { createScheduledPayment, updateScheduledPayment, cancelScheduledPayment, markScheduledPaymentPaid, payOccurrence } from "./_lib/baby.js";
 
 const M = "schedule.manage";
 export const createScheduleHandler = (deps) =>
@@ -20,6 +20,8 @@ export const createScheduleHandler = (deps) =>
       update: { permission: M, fields: ["action", "scheduleId", "expectedRevision", "changes"], run: (c, b) => updateScheduledPayment({ ...c, scheduleId: b.scheduleId, changes: b.changes, expectedRevision: b.expectedRevision ?? null }) },
       cancel: { permission: M, fields: ["action", "scheduleId", "reason"], run: (c, b) => cancelScheduledPayment({ ...c, scheduleId: b.scheduleId, reason: b.reason ?? null }) },
       markPaid: { permission: M, also: ["expenses.create"], fields: ["action", "scheduleId", "payment"], run: (c, b) => markScheduledPaymentPaid({ ...c, scheduleId: b.scheduleId, payment: b.payment }) },
+      // Luna Household: pay a recurring bill's occurrence by due date (stored on demand, once).
+      payOccurrence: { permission: M, also: ["expenses.create"], fields: ["action", "scheduleId", "dueDate", "payment"], run: (c, b) => payOccurrence({ ...c, scheduleId: b.scheduleId, dueDate: b.dueDate, payment: b.payment }) },
     },
   });
 

@@ -18,7 +18,7 @@
 // second request can't make a second expense. The payment leaves Upcoming
 // and the expense counts as spent in the same transaction.
 
-import { BabyError, BABY_SCHEMA_VERSION, BUDGET_DOC_ID, MAX_CATEGORIES, SUGGESTED_CATEGORIES, CATEGORY_STATUSES, PROVIDER_STATUSES, PROVIDER_TYPES, isValidRecordId, validateCategoryInput, validateBudgetTotal, validateProviderInput, validateScheduleInput, validatePaidBy, thresholdLevel, totalFromCategories, upcomingPart, SUGGESTED_HOUSEHOLD_CATEGORIES, nextDueDate, repeatLabel, amountOn, scheduleKind } from "../../../shared/baby.js";
+import { BabyError, BABY_SCHEMA_VERSION, BUDGET_DOC_ID, MAX_CATEGORIES, SUGGESTED_CATEGORIES, CATEGORY_STATUSES, PROVIDER_STATUSES, PROVIDER_TYPES, isValidRecordId, validateCategoryInput, validateBudgetTotal, validateProviderInput, validateScheduleInput, validatePaidBy, thresholdLevel, totalFromCategories, upcomingPart, SUGGESTED_HOUSEHOLD_CATEGORIES, nextDueDate, repeatLabel, amountOn, scheduleKind, recurrencePeriod, chainDueDates } from "../../../shared/baby.js";
 import { partsOf } from "./baby-spending.js";
 import { EXPENSE_METHODS } from "../../../shared/expenses.js";
 import { businessDate, isDayId } from "../../../shared/metrics.js";
@@ -432,8 +432,10 @@ export async function updateScheduledPayment({ db, tenant, FieldValue, scheduleI
     // recurring bill already has is refused (that made duplicate rows).
     const rid = s.recurringId ?? (next.repeat ? scheduleId : null);
     if (rid && "dueDate" in diff) {
-      const same = await tx.get(tenant.collection("scheduledPayments").where("recurringId", "==", rid).where("dueDate", "==", next.dueDate).limit(5));
-      if (same.docs.some((d) => d.id !== scheduleId && d.data().status !== "cancelled")) throw new BabyError("invalid-input", `${s.description} already has a bill due ${next.dueDate}. Pay or edit that one instead.`);
+      const same = await tx.get(tenant.collection("scheduledPayments").where("recurringId", "==", rid).limit(1000));
+      const period = recurrencePeriod(next.dueDate, next.repeat);
+      const clash = same.docs.find((d) => d.id !== scheduleId && d.data().status !== "cancelled" && recurrencePeriod(d.data().dueDate, next.repeat) === period);
+      if (clash) throw new BabyError("invalid-input", `${s.description} already has a bill due ${clash.data().dueDate}. Pay or edit that one instead.`);
     }
     if (next.repeat && !s.recurringId) diff.recurringId = scheduleId;
     // Amount by period: THIS (unpaid) occurrence follows the period of its due
@@ -502,6 +504,53 @@ const PART_KEY = /^[A-Za-z0-9]{8,16}$/;
 //   with a key             -> "<id>k<key>"
 export const partExpenseId = (scheduleId, attempt, key = null) => (key ? `${scheduleId}k${key}` : expenseIdForPayment(scheduleId, attempt));
 
+// Luna Household (overdue carry-forward): a recurring bill's occurrence that
+// is due but not stored yet (the next one is normally stored only when the
+// previous is paid) is stored on demand, once: id = recurringId + yyyymmdd,
+// and the same bill + period is never stored twice. Returns its id.
+export async function ensureOccurrence({ db, tenant, FieldValue, scheduleId, dueDate, actor }) {
+  if (!isDayId(dueDate)) throw new BabyError("invalid-input", "Choose a valid due date");
+  const sRef = scheduleRef(tenant, scheduleId);
+  return db.runTransaction(async (tx) => {
+    const snap = await tx.get(sRef);
+    if (!snap.exists) throw new BabyError("not-found", "Bill not found");
+    const s = snap.data();
+    if (!s.repeat) throw new BabyError("invalid-input", "This bill doesn't repeat");
+    const rid = s.recurringId ?? scheduleId;
+    const chain = (await tx.get(tenant.collection("scheduledPayments").where("recurringId", "==", rid).limit(1000))).docs;
+    const period = recurrencePeriod(dueDate, s.repeat);
+    const have = chain.find((d) => recurrencePeriod(d.data().dueDate, s.repeat) === period) ?? (recurrencePeriod(s.dueDate, s.repeat) === period ? snap : null);
+    if (have) {
+      if (have.data().status === "cancelled") throw new BabyError("not-upcoming", "That bill was removed");
+      return { scheduleId: have.id, existed: true };
+    }
+    // The date must be one of this bill's own due dates.
+    const first = [snap, ...chain].map((d) => d.data().dueDate).sort()[0];
+    if (!chainDueDates(first, s.repeat, s.repeatDay ?? null, dueDate).includes(dueDate)) throw new BabyError("invalid-input", "That isn't one of this bill's due dates");
+    const before = [snap, ...chain].map((d) => ({ id: d.id, ...d.data() })).filter((x) => x.dueDate < dueDate).sort((a, b) => b.dueDate.localeCompare(a.dueDate))[0];
+    const amount = amountOn(s.amountSchedule, dueDate) ?? s.amount;
+    const ref = tenant.collection("scheduledPayments").doc(`${rid}${dueDate.replace(/-/g, "")}`);
+    await loadBudget(tx, tenant);
+    const stamp = FieldValue.serverTimestamp();
+    tx.create(ref, { schemaVersion: BABY_SCHEMA_VERSION, description: s.description, category: s.category, categoryName: s.categoryName ?? null, providerId: s.providerId ?? null, payee: s.payee ?? null, amount, dueDate, status: "upcoming", notes: s.notes ?? null, repeat: s.repeat, repeatDay: s.repeatDay ?? null, recurringId: rid, amountSchedule: s.amountSchedule ?? null, ...(s.kind ? { kind: s.kind } : {}), previousId: before?.id ?? null, expenseId: null, paidDate: null, paidAmount: null, method: null, reference: null, attempt: 0, history: [entry(actor, `Scheduled ${s.description} ${peso(amount)} due ${dueDate} (${repeatLabel(s.repeat).toLowerCase()})`)], revision: 1, createdBy: who(actor), createdAt: stamp, updatedBy: who(actor), updatedAt: stamp });
+    tx.set(budgetRef(tenant), { schemaVersion: BABY_SCHEMA_VERSION, ...upcomingWrite(FieldValue, [[s.category, amount, 1]]), updatedAt: stamp }, { merge: true });
+    return { scheduleId: ref.id, existed: false };
+  }, TX_OPTIONS).catch(async (err) => {
+    // A concurrent request stored it first (deterministic id): use it.
+    if (err && (err.code === 6 || err.code === "already-exists")) {
+      const s = (await sRef.get()).data();
+      return { scheduleId: `${s?.recurringId ?? scheduleId}${dueDate.replace(/-/g, "")}`, existed: true };
+    }
+    throw err;
+  });
+}
+
+// Pay one occurrence of a recurring bill by its due date (stored or not yet).
+export async function payOccurrence(args) {
+  const occ = await ensureOccurrence(args);
+  return { ...(await markScheduledPaymentPaid({ ...args, scheduleId: occ.scheduleId })), occurrence: occ.scheduleId };
+}
+
 export async function markScheduledPaymentPaid(args) {
   try {
     return await markPaidOnce(args);
@@ -559,8 +608,9 @@ async function markPaidOnce({ db, tenant, FieldValue, business, workspace, sched
     const nextDue = wantsNext ? nextDueDate(s.dueDate, s.repeat, s.repeatDay ?? null) : null;
     let existingNext = null;
     if (wantsNext) {
-      const q = await tx.get(tenant.collection("scheduledPayments").where("recurringId", "==", rid).where("dueDate", "==", nextDue).limit(5));
-      existingNext = q.docs.find((d) => d.id !== scheduleId && d.data().status !== "cancelled") ?? null;
+      const q = await tx.get(tenant.collection("scheduledPayments").where("recurringId", "==", rid).limit(1000));
+      const period = recurrencePeriod(nextDue, s.repeat);
+      existingNext = q.docs.find((d) => d.id !== scheduleId && recurrencePeriod(d.data().dueDate, s.repeat) === period) ?? null;
     }
     const repeatsNow = wantsNext && !existingNext;
     const nextRef = repeatsNow ? tenant.collection("scheduledPayments").doc() : null;

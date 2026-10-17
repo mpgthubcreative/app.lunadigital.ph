@@ -22,7 +22,7 @@
 // "Household Staff" in the breakdown = that expense category (if any) plus
 // the salaries paid, so payroll shows once.
 
-import { upcomingPart, nextDueDate, amountOn, scheduleKind } from "../../../shared/baby.js";
+import { upcomingPart, amountOn, scheduleKind, recurrencePeriod, chainDueDates } from "../../../shared/baby.js";
 import { businessDate } from "../../../shared/metrics.js";
 
 const int = (v) => (Number.isSafeInteger(v) ? v : 0);
@@ -42,7 +42,7 @@ export async function householdMonth({ db, tenant, business, uid = null, month =
     tenant.doc("spendingMetrics", m).get(),
     tenant.collection("expenseCategories").limit(200).get(),
     tenant.collection("payrolls").where("status", "==", "released").limit(1000).get(),
-    tenant.collection("scheduledPayments").where("status", "==", "upcoming").limit(500).get(),
+    tenant.collection("scheduledPayments").limit(3000).get(),
     tenant.collection("advances").where("status", "==", "paid").limit(1000).get(),
   ]);
   let advancesReleased = 0;
@@ -69,47 +69,55 @@ export async function householdMonth({ db, tenant, business, uid = null, month =
       payroll.push({ id: d.id, staffName: p.staffName ?? null, amount: int(p.salary?.amount), paidDate });
     }
   }
-  // The month's bills and scheduled expenses (Luna Household, 2026-10-17):
-  //   stored bills still to pay: due by the month's end (the current month
-  //     also shows overdue ones from earlier months), their unpaid part
-  //   projected occurrences of a recurring bill in this month (after its
-  //     stored next one; never stored): the amount in force on that date
+  // The month's bills and scheduled expenses (Luna Household):
+  //   every unpaid occurrence of a bill due in the month, plus any from an
+  //     earlier month whose due date has PASSED: it carries forward
+  //     ("Overdue from Oct", listed first) into every later month until
+  //     it's paid; each occurrence separate, never merged
+  //   a recurring bill's occurrences not stored yet (the next one is stored
+  //     when the previous is paid, or on demand when paid from the list):
+  //     projected from the bill's own due dates, at the amount in force; an
+  //     unpaid earlier one doesn't stop later ones; already-past ones carry
+  //     forward too (they're really due)
+  //   one occurrence per bill per period (month / year / week): a period the
+  //     bill already has (paid, unpaid or removed) is never projected
   //   scheduled one-time expenses planned in this month (kind "scheduled"):
   //     listed, never in Bills remaining, Spent only once paid
-  const current = m === today.slice(0, 7);
   const monthBills = [];
-  // One recurring bill = one chain (recurringId; older records: their own
-  // id). Later months are projected from the chain's LATEST unpaid
-  // occurrence only, and the same bill + date is listed once.
-  const stored = bills.docs.map((d) => ({ id: d.id, ...d.data() }));
-  const chainOf = (s) => s.recurringId ?? s.id;
-  const latest = new Map();
-  for (const s of stored) if (s.repeat && typeof s.dueDate === "string" && (!latest.has(chainOf(s)) || s.dueDate > latest.get(chainOf(s)).dueDate)) latest.set(chainOf(s), s);
-  const ids = new Set(stored.map((s) => s.id));
-  const seen = new Set();
-  const once = (s, due) => {
-    const k = `${chainOf(s)}|${due}`;
-    if (seen.has(k)) return false;
-    seen.add(k);
-    return true;
-  };
-  for (const s of stored) {
-    if (typeof s.dueDate !== "string") continue;
-    const base = { scheduleId: s.id, description: s.description, category: s.category, categoryName: s.categoryName ?? null, payee: s.payee ?? null, repeat: s.repeat ?? null, changesByPeriod: Array.isArray(s.amountSchedule) && s.amountSchedule.length > 1 };
-    if (scheduleKind(s) === "scheduled") {
-      if (s.dueDate >= start && s.dueDate <= end) monthBills.push({ ...base, id: s.id, kind: "scheduled", amount: upcomingPart(s), dueDate: s.dueDate, projected: false });
+  const all = bills.docs.map((d) => ({ id: d.id, ...d.data() })).filter((x) => typeof x.dueDate === "string");
+  const chainOf = (x) => x.recurringId ?? x.id;
+  const chains = new Map();
+  for (const x of all) if (x.repeat && scheduleKind(x) !== "scheduled") chains.set(chainOf(x), [...(chains.get(chainOf(x)) || []), x]);
+  const baseOf = (x) => ({ scheduleId: x.id, description: x.description, category: x.category, categoryName: x.categoryName ?? null, payee: x.payee ?? null, repeat: x.repeat ?? null, changesByPeriod: Array.isArray(x.amountSchedule) && x.amountSchedule.length > 1 });
+  const carry = (due) => (due < start ? { overdue: true, overdueFrom: due.slice(0, 7) } : due < today ? { overdue: true } : {});
+  const listed = new Set();
+  for (const x of all) {
+    if (x.status !== "upcoming") continue;
+    if (scheduleKind(x) === "scheduled") {
+      if (x.dueDate >= start && x.dueDate <= end) monthBills.push({ ...baseOf(x), id: x.id, kind: "scheduled", amount: upcomingPart(x), dueDate: x.dueDate, projected: false });
       continue;
     }
-    if (s.dueDate <= end && (current || s.dueDate >= start) && upcomingPart(s) > 0 && once(s, s.dueDate)) monthBills.push({ ...base, id: s.id, kind: "bill", amount: upcomingPart(s), dueDate: s.dueDate, projected: false });
-    // Project only from the chain's latest occurrence (an older reopened one
-    // whose next one exists would project the same months again).
-    if (s.repeat && latest.get(chainOf(s)) === s && !(s.nextId && ids.has(s.nextId))) {
-      let due = s.dueDate;
-      for (let i = 0; i < 400; i++) {
-        due = nextDueDate(due, s.repeat, s.repeatDay ?? null);
-        if (due > end) break;
-        if (due >= start && once(s, due)) monthBills.push({ ...base, id: `${s.id}@${due}`, kind: "bill", amount: amountOn(s.amountSchedule, due) ?? s.amount, dueDate: due, projected: true });
-      }
+    const key = `${chainOf(x)}|${recurrencePeriod(x.dueDate, x.repeat)}`;
+    // In this month, or an earlier one whose due date has passed (carried).
+    const inView = (x.dueDate >= start && x.dueDate <= end) || (x.dueDate < start && x.dueDate < today);
+    if (inView && upcomingPart(x) > 0 && !listed.has(key)) {
+      listed.add(key);
+      monthBills.push({ ...baseOf(x), id: x.id, kind: "bill", amount: upcomingPart(x), dueDate: x.dueDate, projected: false, ...carry(x.dueDate) });
+    }
+  }
+  for (const [rid, xs] of chains) {
+    const live = xs.filter((x) => x.status === "upcoming");
+    if (!live.length) continue; // removed (or a one-time bill): nothing to project
+    const ref = live.reduce((p, q) => (q.dueDate > p.dueDate ? q : p));
+    const taken = new Set(xs.map((x) => recurrencePeriod(x.dueDate, ref.repeat)));
+    const first = xs.map((x) => x.dueDate).sort()[0];
+    for (const due of chainDueDates(first, ref.repeat, ref.repeatDay ?? null, end)) {
+      const period = recurrencePeriod(due, ref.repeat);
+      if (taken.has(period) || listed.has(`${rid}|${period}`)) continue;
+      // In this month, or an earlier one whose due date has passed (carried).
+      if (!(due >= start || due < today)) continue;
+      listed.add(`${rid}|${period}`);
+      monthBills.push({ ...baseOf(ref), id: `${ref.id}@${due}`, kind: "bill", amount: amountOn(ref.amountSchedule, due) ?? ref.amount, dueDate: due, projected: true, ...carry(due) });
     }
   }
   const dueBills = monthBills.filter((b) => b.kind === "bill");

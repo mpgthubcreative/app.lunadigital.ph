@@ -355,3 +355,26 @@ describe("Categories", () => {
     expect([...n.elements].filter((e) => e.name).map((e) => e.name)).toEqual(["name"]);
   });
 });
+
+describe("Overdue carry-forward (Expenses)", () => {
+  it("November: October's unpaid Meralco first (Overdue from Oct · 34 days), then November's; Paid on the projected one stores + pays it by date", async () => {
+    const NOV = { ...MONTH, month: "2026-11", spent: 0, staffPaid: 0, payroll: [], billsRemaining: 1000000, bills: [
+      { id: "schedMer000001", scheduleId: "schedMer000001", kind: "bill", projected: false, overdue: true, overdueFrom: "2026-10", description: "Meralco", category: "catUtilities01", amount: 500000, dueDate: "2026-10-17" },
+      { id: "schedMer000001@2026-11-17", scheduleId: "schedMer000001", kind: "bill", projected: true, overdue: true, description: "Meralco", category: "catUtilities01", amount: 500000, dueDate: "2026-11-17" },
+    ] };
+    const data = fakeData({ householdMonth: vi.fn(async () => NOV), listExpenses: vi.fn(async () => ({ rows: [], hasMore: false })) });
+    mountExpenses(container, home(), { data, now: () => new Date("2026-11-20T04:00:00Z"), location: { search: "" }, toast: () => {} });
+    await flush();
+    const rows = $$('[data-group="catUtilities01"] .hx-row');
+    expect(rows.map((r) => flat(r.querySelector('[data-role="due"]')))).toEqual(["Overdue from Oct · 34 days", "3 days overdue · Nov 17"]);
+    expect(rows.map((r) => r.dataset.kind)).toEqual(["bill-due", "bill-next"]);
+    expect([...rows[1].querySelectorAll(".menu-item")].map((b) => b.textContent.trim())).toEqual(["Paid", "Edit bill"]);
+    expect(flat($('[data-role="month-summary"]'))).toContain("₱10,000.00");
+    rows[1].querySelector('[data-act="bill-paid"]').click();
+    await flush();
+    expect(data.scheduleApi).toHaveBeenCalledWith({ action: "payOccurrence", scheduleId: "schedMer000001", dueDate: "2026-11-17", payment: expect.objectContaining({ amount: 500000, paidDate: "2026-11-20", final: true }) });
+    $('[data-row="schedMer000001"] [data-act="bill-paid"]').click(); // re-rendered after the first payment
+    await flush();
+    expect(data.scheduleApi).toHaveBeenCalledWith(expect.objectContaining({ action: "markPaid", scheduleId: "schedMer000001" }));
+  });
+});
