@@ -778,6 +778,28 @@ The accepted Bridal design (Money | Tasks | Guests | More) is unchanged; this pa
   - **Live on staging (temporary `phx-home-tmp`, removed):** 6/6 API, 26/27 browser + 4/4 re-check at 390, 1280. The one failure was my script's selector (it matched menu buttons).
   - **Checked:** top shows only Spent / Bills remaining; group totals = rows and the sum = Spent + Bills remaining; payroll once, read-only; Water ⋯ Paid (double tap) = one expense with Spent +₱840 and Bills remaining −₱840; Mark unpaid = 0 expenses, bill unpaid, figures back; Paid again = one expense; the monthly Meralco has exactly one next bill; Record grocery expense lands under Groceries and the checklist creates no money; + Add bill has exactly the 5 fields; no sideways scroll.
 
+### 2026-10-17 · Business switch routing; strict Pay salary flow; Expenses cleanup (6bd55c7, 1762fab, then a spacing fix)
+
+- **Business switch (bug):** switching re-mounted the app with the NEW session but kept the old workspace's URL, which the new router didn't know, so it showed "Page not available".
+  - **Fix:** `src/app/workspace-router.js` checks the URL against the new membership before anything renders.
+    - A page of another workspace (left by a switch, back / forward or an old bookmark), or right after a switch any page this membership can't open, is replaced (replaceState, no extra history entry) by the workspace's home: "/" = Dashboard, or the template home via its alias (Household Payroll, Bridal Money).
+    - Unknown pages and pages of this workspace the person may not open still show "Page not available".
+    - A switch into a household staff portal drops the old URL.
+  - **Tests:** 15 unit tests.
+  - **Live (one owner with temporary Household / Bridal / Distributor businesses, removed):** 18/18 at 390 and 1280, with a watcher confirming "Page not available" never appeared.
+    - **Covered:** Grocery List → Bridal = Money; Guests → Distributor = Dashboard; Orders → Household = Payroll; Users stays Users; back after a switch; refresh keeps the page; unknown pages still not available.
+    - **Not covered:** checked with Chromium's mobile emulation, not on a real iPhone Safari.
+- **Pay salary (money bug):** "Pay" opened the payroll panel, waited for a refresh, then auto-opened the payment form, whose confirm button sits where the panel's "Pay salary" button is. A tap could land on the confirm button as the form appeared, and a panel tap during the wait could open a second form.
+  - **Fix:**
+    - The confirm button is now "Pay salary" and stays inactive for 700 ms after the form opens.
+    - One payment form at a time.
+    - Submits are ignored while one is in flight (the server also refuses a second release).
+    - Advances "Mark given" has the same arming.
+  - **Live (390):** immediate taps on the confirm paid nothing; one form only; Cancel and reopen left it unpaid; a deliberate press (double tap) released exactly one payroll and showed the receipt link.
+- **Expenses cleanup:** two equal summary boxes (live: 175×76 px each, same top); category headings without totals (still ordered by total); rows show the merchant / bill / "Payroll · {name}" under the category.
+- **Form dialogs:** even 16 px field spacing (also under More details), footer pinned with equal-width buttons on phones.
+- **Unit tests:** 1614 pass.
+
 ## Plan (decisions made from the brief)
 
 ### Stage 1: Distributor
