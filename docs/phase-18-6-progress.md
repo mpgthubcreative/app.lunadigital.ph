@@ -858,6 +858,19 @@ The accepted Bridal design (Money | Tasks | Guests | More) is unchanged; this pa
   - **Unit:** 1639 pass (5 new: months Oct 2026–Feb 2027 viewed 3×, pay / retry / Mark unpaid / pay again, an existing next occurrence reused, the pilot's same-date move refused, older duplicate data listed once).
   - **Live API (temporary `pdup-home-tmp`, removed):** 5/5.
 
+### 2026-10-18 · One popover behavior for every ⋯ menu (603318f)
+
+- **Shared code:** `src/components/menus.js`, installed once at boot for the app and the household staff portal. It covers both menu kinds: `details.line-menu` and `rowMenu` / `.menu-wrap`.
+- **Behavior:**
+  - Tapping ⋯ opens the menu; tapping the same ⋯ again closes it; only one menu is open at a time (another row's ⋯ switches).
+  - A tap outside, a menu action (after it runs), scrolling (except inside the menu's own list), navigation (links, back / forward), a dialog or sheet opening, and Escape each close it.
+  - Listeners run in the capture phase, so a page that stops a click can't keep a stale menu open.
+- **Tests:**
+  - **Unit:** 1646 pass (7 new).
+  - **Live on staging (one owner, temporary household + wedding, removed):** 18/18 pages × 8–9 checks at 390 and 1280, using real mouse and keyboard events. Pages: Expenses, Bills, Grocery List, Payroll, Advances, Household Staff, Bridal Money, Bridal Tasks, Guests.
+  - **Not checked live:** Distributor rows (no temporary Distributor was set up). They use the same shared code and the unit tests.
+  - **Test-script fixes:** a dropdown covers the row below it, so "another ⋯" is tested by opening a lower row and tapping the one above. Page-level menus with links are excluded from row checks. No seeded data was changed by stray taps (checked).
+
 ## Plan (decisions made from the brief)
 
 ### Stage 1: Distributor
