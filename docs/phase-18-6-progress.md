@@ -547,6 +547,47 @@ The accepted Bridal design (Money | Tasks | Guests | More) is unchanged; this pa
     - adding from the Sample Checklist, and a Planned line from the Sample Budget with totals unchanged
     - no sideways scrolling on any screen.
 
+### 2026-10-17 · Bridal: Music & Program, Money Edit / Details / Remove, visible links, requirements + roles, Crew Meals (2567a77, 97eb31d, 26a0feb, ec331f2, 6462b07)
+
+- **More (Bridal):** Wedding Setup, Music & Program, Crew Meals, Export & Backup, Users, Subscription, Settings.
+  - **Budget page:** left the menu (`menuHidden`). Its route, data and Money behaviour are unchanged.
+- **Music & Program** (`/wedding-program`): Ceremony | Reception, My Program | Sample Program.
+  - **Rows:** one line per moment: Moment | Song | Duration | ⋯.
+  - **Adding and editing:** one + Add; Person / group, Notes and Part sit under More options.
+  - **Order:** ⋯ Move up / Move down.
+  - **Server:** `/api/wedding-program` (tasks.view to read, tasks.manage to edit); server-only `weddingProgram/{id}`.
+  - **Backup:** a Music & Program sheet.
+- **Money ⋯ = Edit / Details / Remove.**
+  - **Edit (supplier):** one sheet: Category, Supplier, Total, Payments (paid · remaining · status, proofs, Record payment), Payment schedule, Save changes.
+  - **Edit (other lines):** an expense's Edit includes its proof. A planned line's Edit covers category, amount and an optional supplier.
+  - **Details:** read-only, with payment history and schedule.
+  - **Remove:** deletes when nothing was recorded. Otherwise it takes the line off the active list and keeps the payments; the confirmation says so, and there's Bring back.
+- **Links visible.**
+  - **Wedding Setup:** shows `https://{host}/w/{slug}` with Copy link (Copied ✓) and an in-Luna Preview with a sample guest, and explains the private guest link.
+  - **The wedding link alone:** `/w/{slug}` shows a "personal links" note and nothing about the wedding.
+  - **Guest ⋯:** View invitation (in Luna, with an Owner-only bar), Copy invitation link (the full friendly URL, Copied ✓), Share invitation (native share sheet), Regenerate link. Token security is unchanged.
+- **Requirements.**
+  - **Sample Checklist groups:** Documents & Legal, Church Requirements (optional, "vary by church / parish", with an officiating-priest subsection), Civil / Marriage License ("verify with your local civil registrar"), then the rest. Duplicates are merged.
+  - **New optional task fields:** "For" (Bride / Groom / Bride & Groom) and "Where to get it". For Bride & Groom, each person has their own done mark, shown compactly as "Bride ✓ · Groom —"; both done means Done.
+- **Roles:** Guests gets RSVP | Seating | Roles, and roles live on the same guest record (`roles` / `roleKeys`).
+  - **Which roles:** built-in roles plus custom ones. Single roles (such as Best Man) belong to one guest at a time.
+  - **Actions:** ⋯ Change person / Change role / View guest / Remove role. Removing a role keeps the guest and their RSVP.
+  - **Invitation:** the public payload carries the guest's role labels, ready for personal wording later.
+  - **Backup:** a Wedding Roles sheet.
+- **Crew Meals** (`/wedding-crew-meals`): a "Breakfast · Lunch · Dinner" summary computed from the list.
+  - **Prices:** optional prices per head give an estimate.
+  - **Rows:** one per crew, with meals and place; on a phone they sit under the name.
+  - **Linking and actions:** an optional link to one of the wedding's own suppliers; a Sample list; ⋯ Edit / Details / Remove.
+  - **Backup:** a Crew Meals sheet with a total row.
+- **Tests:**
+  - **Unit:** 1518 pass.
+  - **Live on staging (`p186b-wed-tmp`, 390px and 1280px):** three runs, all passing:
+    - Music & Program, Money and links: 46/46
+    - requirements, roles and Crew Meals: 34/34
+    - friendly link, partial attendance and sample lists (earlier): 56/56
+  - **Phone fix found during the checks:** Crew Meals rows now show meals and place under the name.
+- **Content source:** the reference sheets weren't available here, so requirements, roles and crew lists were built from the item lists in the Owner's notes. Items are short, editable labels.
+
 ## Plan (decisions made from the brief)
 
 ### Stage 1: Distributor
