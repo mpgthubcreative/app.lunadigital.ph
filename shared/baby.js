@@ -155,7 +155,44 @@ export function validateProviderInput(input, { partial = false } = {}) {
 export const SCHEDULE_STATUSES = Object.freeze({ upcoming: { label: "Upcoming" }, paid: { label: "Paid" }, cancelled: { label: "Cancelled" } });
 export const SCHEDULE_STATUS_IDS = Object.freeze(Object.keys(SCHEDULE_STATUSES));
 
-const SCHEDULE_FIELDS = ["description", "category", "providerId", "payee", "amount", "dueDate", "notes", "repeat"];
+const SCHEDULE_FIELDS = ["description", "category", "providerId", "payee", "amount", "dueDate", "notes", "repeat", "amountSchedule", "kind"];
+// Luna Household (2026-10-17): what a scheduled payment IS.
+//   bill        a (usually recurring) bill: counts in Bills remaining
+//   scheduled   a one-time expense planned for a future date: shown in its
+//               month, never in Bills remaining; Spent only once paid
+// Baby / Bridal records have no kind (= bill).
+export const SCHEDULE_KINDS = Object.freeze(["bill", "scheduled"]);
+export const scheduleKind = (s) => (s?.kind === "scheduled" ? "scheduled" : "bill");
+
+// A recurring bill whose amount changes by period: [{ amount, from, until? }],
+// sorted by from, not overlapping (until optional: open-ended until the next
+// "from"). Each occurrence takes the amount in force on its due date
+// (amountOn); paid occurrences keep their own amount, so a later change
+// never rewrites history. Up to 12 periods.
+export function validateAmountSchedule(v) {
+  if (v === null || v === undefined) return null;
+  if (!Array.isArray(v) || v.length < 1 || v.length > 12) throw new BabyError("invalid-input", "Add 1 to 12 amount periods");
+  const out = v.map((p) => {
+    if (!p || typeof p !== "object" || Array.isArray(p) || Object.keys(p).some((k) => !["amount", "from", "until"].includes(k))) throw new BabyError("invalid-input", "Invalid amount period");
+    if (!isCentavos(p.amount) || p.amount <= 0 || p.amount > MAX_PAYMENT_CENTAVOS) throw new BabyError("invalid-amount", "Each amount must be more than ₱0");
+    if (!isDayId(p.from)) throw new BabyError("invalid-input", "Choose when each amount starts");
+    const until = p.until ?? null;
+    if (until !== null && (!isDayId(until) || until < p.from)) throw new BabyError("invalid-input", "An amount period can't end before it starts");
+    return { amount: p.amount, from: p.from, until };
+  });
+  for (let i = 1; i < out.length; i++) {
+    if (out[i].from <= out[i - 1].from) throw new BabyError("invalid-input", "Put the amount changes in date order, one per start date");
+    if (out[i - 1].until !== null && out[i - 1].until >= out[i].from) throw new BabyError("invalid-input", "Amount periods can't overlap");
+  }
+  return out;
+}
+// The amount in force on a day, or null when no period covers it.
+export function amountOn(schedule, dayId) {
+  if (!Array.isArray(schedule)) return null;
+  let hit = null;
+  for (const p of schedule) if (p.from <= dayId && (p.until == null || dayId <= p.until)) hit = p.amount;
+  return hit;
+}
 // Recurring bills (Luna Household): { every: "week" | "month" | "year",
 // interval: 1..12 } or null. Generic so custom rules can come later; when a
 // repeating payment is paid in full, the next one is scheduled with it.
@@ -208,6 +245,13 @@ export function validateScheduleInput(input, { partial = false } = {}) {
   }
   if (has("notes")) out.notes = text(input.notes, { field: "Notes", max: 500 });
   if (Object.hasOwn(input, "repeat")) out.repeat = validateRepeat(input.repeat);
+  if (Object.hasOwn(input, "amountSchedule")) out.amountSchedule = validateAmountSchedule(input.amountSchedule);
+  if (Object.hasOwn(input, "kind")) {
+    if (!SCHEDULE_KINDS.includes(input.kind)) throw new BabyError("invalid-input", "Invalid kind");
+    out.kind = input.kind;
+  }
+  // A scheduled one-time expense never repeats and has one amount.
+  if (out.kind === "scheduled" && (out.repeat || out.amountSchedule)) throw new BabyError("invalid-input", "A scheduled expense happens once: add a recurring bill instead");
   if (partial && !Object.keys(out).length) throw new BabyError("invalid-input", "Nothing to change");
   return out;
 }

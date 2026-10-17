@@ -4,6 +4,7 @@
 // Every write goes through the API, which keeps Spent / Upcoming itself.
 
 import { api } from "../../lib/api.js";
+import { getFirestoreLite } from "../../lib/firebase.js";
 
 export { getBudget, listCategories, listBabyExpenses as listExpenses, listScheduled as listBills, budgetApi, expensesApi, scheduleApi } from "../baby/data.js";
 
@@ -12,3 +13,10 @@ const post = (endpoint, body) => api(endpoint, { method: "POST", body });
 export const householdMonth = async (month = null) => (await api(`household-money${month ? `?month=${encodeURIComponent(month)}` : ""}`)).month;
 export const attachExpenseProof = (expenseId, proof) => post("expenses", { action: "attachProof", expenseId, proof });
 export const expenseProof = (expenseId) => post("expenses", { action: "proof", expenseId });
+
+// One bill / scheduled expense (for Edit from the Expenses list).
+export async function getBill(businessId, scheduleId) {
+  const { db, lite } = await getFirestoreLite();
+  const snap = await lite.getDoc(lite.doc(db, "businesses", businessId, "scheduledPayments", scheduleId));
+  return snap.exists() ? { id: snap.id, ...snap.data() } : null;
+}

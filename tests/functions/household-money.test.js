@@ -261,3 +261,94 @@ describe("Master Backup (Household)", () => {
     expect(docAt(`expenseCategories/${util}`).budget).toBe(500000);
   });
 });
+
+describe("Recurring bill amounts by period (one bill definition)", () => {
+  const pay = (sid, day) => api("schedule", u.carlo, { action: "markPaid", scheduleId: sid, payment: { method: "cash", paidDate: day, final: true, key: `k${sid.slice(0, 6)}${day.replace(/-/g, "")}`.slice(0, 16) } });
+
+  it("Insurance ₱2,500 May–Sep, ₱3,000 from Oct: each occurrence takes its period's amount; paid September stays ₱2,500 when a later change is added", async () => {
+    at("2026-10-26");
+    const personal = await category("Personal");
+    const schedule = [{ amount: 250000, from: "2026-05-01", until: "2026-09-30" }, { amount: 300000, from: "2026-10-01", until: null }];
+    let sid = ok(await api("schedule", u.carlo, { action: "create", payment: { description: "Insurance", category: personal, amount: 250000, dueDate: "2026-05-25", repeat: { every: "month", interval: 1 }, amountSchedule: schedule } }), 201).scheduleId;
+    const seen = [];
+    for (const day of ["2026-05-25", "2026-06-25", "2026-07-25", "2026-08-25", "2026-09-25"]) {
+      const s = docAt(`scheduledPayments/${sid}`);
+      seen.push([s.dueDate, s.amount]);
+      sid = ok(await pay(sid, day)).nextScheduleId;
+    }
+    expect(seen.every(([, a]) => a === 250000)).toBe(true);
+    const oct = docAt(`scheduledPayments/${sid}`);
+    expect(oct).toMatchObject({ dueDate: "2026-10-25", amount: 300000, amountSchedule: schedule });
+    expect(under("scheduledPayments").filter((x) => x.description === "Insurance")).toHaveLength(6); // one chain, not separate bills
+    const sepPaid = under("scheduledPayments").find((x) => x.dueDate === "2026-09-25");
+    // A future change (₱3,200 from Nov): October (unpaid, due before it) stays ₱3,000; paid history untouched.
+    const changed = [{ amount: 300000, from: "2026-10-01", until: null }, { amount: 320000, from: "2026-11-01", until: null }];
+    ok(await api("schedule", u.carlo, { action: "update", scheduleId: sid, changes: { amountSchedule: changed } }));
+    expect(docAt(`scheduledPayments/${sid}`)).toMatchObject({ amount: 300000, amountSchedule: changed });
+    expect(docAt(`scheduledPayments/${sepPaid.id}`)).toMatchObject({ status: "paid", amount: 250000, paidAmount: 250000 });
+    expect(under("expenses").filter((e) => e.payee === "Insurance").map((e) => e.amount)).toEqual([250000, 250000, 250000, 250000, 250000]);
+    // Paying October creates November at ₱3,200.
+    const nov = ok(await pay(sid, "2026-10-26")).nextScheduleId;
+    expect(docAt(`scheduledPayments/${nov}`)).toMatchObject({ dueDate: "2026-11-25", amount: 320000 });
+  });
+
+  it("future months show projected occurrences at the amount in force; Bills remaining counts them; past months don't", async () => {
+    const personal = await category("Personal");
+    ok(await api("schedule", u.carlo, { action: "create", payment: { description: "Insurance", category: personal, amount: 250000, dueDate: OCT(25), repeat: { every: "month", interval: 1 }, amountSchedule: [{ amount: 250000, from: "2026-05-01" }, { amount: 300000, from: "2026-12-01" }] } }), 201);
+    const nov = ok(await month("2026-11")).month;
+    expect(nov.bills.map((b) => [b.description, b.dueDate, b.amount, b.projected])).toEqual([["Insurance", "2026-11-25", 250000, true]]);
+    expect(nov).toMatchObject({ billsRemaining: 250000, spent: 0 });
+    const dec = ok(await month("2026-12")).month;
+    expect(dec.bills[0]).toMatchObject({ dueDate: "2026-12-25", amount: 300000, projected: true, changesByPeriod: true });
+    expect(dec.billsRemaining).toBe(300000);
+    expect(ok(await month("2026-10")).month.bills.map((b) => [b.dueDate, b.projected])).toEqual([["2026-10-25", false]]);
+    expect(ok(await month("2026-09")).month).toMatchObject({ bills: [], billsRemaining: 0 });
+  });
+
+  it("amount periods are validated (order, overlap, amounts); a scheduled expense can't repeat", async () => {
+    const c = await category("Personal");
+    const base = { description: "X", category: c, amount: 100, dueDate: OCT(25), repeat: { every: "month", interval: 1 } };
+    expect((await api("schedule", u.carlo, { action: "create", payment: { ...base, amountSchedule: [{ amount: 100, from: "2026-10-01" }, { amount: 200, from: "2026-09-01" }] } })).status).toBe(400);
+    expect((await api("schedule", u.carlo, { action: "create", payment: { ...base, amountSchedule: [{ amount: 100, from: "2026-01-01", until: "2026-12-31" }, { amount: 200, from: "2026-06-01" }] } })).status).toBe(400);
+    expect((await api("schedule", u.carlo, { action: "create", payment: { ...base, amountSchedule: [{ amount: 0, from: "2026-10-01" }] } })).status).toBe(400);
+    expect((await api("schedule", u.carlo, { action: "create", payment: { ...base, kind: "scheduled" } })).status).toBe(400);
+  });
+});
+
+describe("Scheduled one-time expenses", () => {
+  it("Insurance ₱2,500 scheduled Nov 25: shown in November, not in Spent or Bills remaining; Paid counts once (retry safe), with the actual date and the scheduled date kept", async () => {
+    const personal = await category("Personal");
+    const sid = ok(await api("schedule", u.carlo, { action: "create", payment: { kind: "scheduled", description: "Insurance", payee: "Insurance", category: personal, amount: 250000, dueDate: "2026-11-25" } }), 201).scheduleId;
+    expect(docAt(`scheduledPayments/${sid}`)).toMatchObject({ kind: "scheduled", status: "upcoming", repeat: null });
+    const nov = ok(await month("2026-11")).month;
+    expect(nov.bills).toEqual([expect.objectContaining({ id: sid, kind: "scheduled", amount: 250000, dueDate: "2026-11-25", projected: false })]);
+    expect(nov).toMatchObject({ spent: 0, billsRemaining: 0, billsDue: 0 });
+    expect(ok(await month()).month.bills.some((b) => b.id === sid)).toBe(false); // not in October
+    // Paid on Nov 26 (a day late): one expense, dated when paid; the schedule keeps Nov 25.
+    at("2026-11-26");
+    const payment = { method: "gcash", paidDate: "2026-11-26", final: true, key: "kinsurancenov1" };
+    const r1 = ok(await api("schedule", u.carlo, { action: "markPaid", scheduleId: sid, payment }));
+    const r2 = ok(await api("schedule", u.carlo, { action: "markPaid", scheduleId: sid, payment }));
+    expect(r2.alreadyPaid).toBe(true);
+    expect(r1.nextScheduleId).toBeUndefined();
+    const exps = under("expenses").filter((e) => e.scheduleId === sid);
+    expect(exps).toHaveLength(1);
+    expect(exps[0]).toMatchObject({ amount: 250000, date: "2026-11-26", payee: "Insurance", notes: "Scheduled for 2026-11-25" });
+    expect(docAt(`scheduledPayments/${sid}`)).toMatchObject({ status: "paid", dueDate: "2026-11-25", paidDate: "2026-11-26" });
+    const after = ok(await month("2026-11")).month;
+    expect(after).toMatchObject({ spent: 250000, billsRemaining: 0, bills: [] });
+  });
+
+  it("before payment it can be edited (amount, date); it can't become a recurring bill", async () => {
+    const c = await category("Personal");
+    const sid = ok(await api("schedule", u.carlo, { action: "create", payment: { kind: "scheduled", description: "Insurance", category: c, amount: 250000, dueDate: "2026-11-25" } }), 201).scheduleId;
+    ok(await api("schedule", u.carlo, { action: "update", scheduleId: sid, changes: { amount: 260000, dueDate: "2026-12-05" } }));
+    expect(docAt(`scheduledPayments/${sid}`)).toMatchObject({ amount: 260000, dueDate: "2026-12-05" });
+    expect((await api("schedule", u.carlo, { action: "update", scheduleId: sid, changes: { repeat: { every: "month", interval: 1 } } })).status).toBe(400);
+    expect((await api("schedule", u.carlo, { action: "update", scheduleId: sid, changes: { kind: "bill" } })).status).toBe(400);
+  });
+
+  it("months far back and ahead render; empty months are zero", async () => {
+    for (const m of ["2026-01", "2027-01", "2028-10"]) expect(ok(await month(m)).month).toMatchObject({ month: m, spent: 0, billsRemaining: 0, bills: [], payroll: [] });
+  });
+});

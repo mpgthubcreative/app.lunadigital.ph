@@ -36,7 +36,10 @@ function fieldMarkup(f, id) {
 // that long after the dialog opens, so a tap that opened it (or a tap meant
 // for the screen underneath) can never submit it. Only a deliberate press
 // of the button after that submits.
-export function formDialog({ title, intro = "", fields, submitLabel = "Save", onSubmit, moreLabel = "More details (optional)", armMs = 0 }) {
+// onFormChange(form): called once when the dialog opens and after every
+// change, to adapt the form (e.g. "Schedule for later" swaps Date paid for
+// Scheduled date).
+export function formDialog({ title, intro = "", fields, submitLabel = "Save", onSubmit, moreLabel = "More details (optional)", armMs = 0, onFormChange = null }) {
   return new Promise((resolve) => {
     const uid = ++counter;
     const backdrop = document.createElement("div");
@@ -114,6 +117,10 @@ export function formDialog({ title, intro = "", fields, submitLabel = "Save", on
       if (event.target === backdrop) close(null);
     });
     document.addEventListener("keydown", onKey);
+    if (onFormChange) {
+      form.addEventListener("change", () => onFormChange(form));
+      onFormChange(form);
+    }
     document.body.appendChild(backdrop);
     const first = form.querySelector("input:not([disabled]), select:not([disabled]), textarea");
     if (first) first.focus();

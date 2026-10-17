@@ -22,7 +22,7 @@
 // "Household Staff" in the breakdown = that expense category (if any) plus
 // the salaries paid, so payroll shows once.
 
-import { upcomingPart } from "../../../shared/baby.js";
+import { upcomingPart, nextDueDate, amountOn, scheduleKind } from "../../../shared/baby.js";
 import { businessDate } from "../../../shared/metrics.js";
 
 const int = (v) => (Number.isSafeInteger(v) ? v : 0);
@@ -69,8 +69,35 @@ export async function householdMonth({ db, tenant, business, uid = null, month =
       payroll.push({ id: d.id, staffName: p.staffName ?? null, amount: int(p.salary?.amount), paidDate });
     }
   }
-  const dueBills = bills.docs.map((d) => ({ id: d.id, ...d.data() })).filter((s) => typeof s.dueDate === "string" && s.dueDate <= end && (m === today.slice(0, 7) || s.dueDate >= start));
-  const billsRemaining = dueBills.reduce((t, s) => t + upcomingPart(s), 0);
+  // The month's bills and scheduled expenses (Luna Household, 2026-10-17):
+  //   stored bills still to pay: due by the month's end (the current month
+  //     also shows overdue ones from earlier months), their unpaid part
+  //   projected occurrences of a recurring bill in this month (after its
+  //     stored next one; never stored): the amount in force on that date
+  //   scheduled one-time expenses planned in this month (kind "scheduled"):
+  //     listed, never in Bills remaining, Spent only once paid
+  const current = m === today.slice(0, 7);
+  const monthBills = [];
+  for (const d of bills.docs) {
+    const s = { id: d.id, ...d.data() };
+    if (typeof s.dueDate !== "string") continue;
+    const base = { scheduleId: s.id, description: s.description, category: s.category, categoryName: s.categoryName ?? null, payee: s.payee ?? null, repeat: s.repeat ?? null, changesByPeriod: Array.isArray(s.amountSchedule) && s.amountSchedule.length > 1 };
+    if (scheduleKind(s) === "scheduled") {
+      if (s.dueDate >= start && s.dueDate <= end) monthBills.push({ ...base, id: s.id, kind: "scheduled", amount: upcomingPart(s), dueDate: s.dueDate, projected: false });
+      continue;
+    }
+    if (s.dueDate <= end && (current || s.dueDate >= start) && upcomingPart(s) > 0) monthBills.push({ ...base, id: s.id, kind: "bill", amount: upcomingPart(s), dueDate: s.dueDate, projected: false });
+    if (s.repeat) {
+      let due = s.dueDate;
+      for (let i = 0; i < 400; i++) {
+        due = nextDueDate(due, s.repeat, s.repeatDay ?? null);
+        if (due > end) break;
+        if (due >= start) monthBills.push({ ...base, id: `${s.id}@${due}`, kind: "bill", amount: amountOn(s.amountSchedule, due) ?? s.amount, dueDate: due, projected: true });
+      }
+    }
+  }
+  const dueBills = monthBills.filter((b) => b.kind === "bill");
+  const billsRemaining = dueBills.reduce((t, b) => t + b.amount, 0);
   // Breakdown: expense categories + payroll under "Household Staff".
   const rows = new Map();
   for (const [id, amount] of Object.entries(byCategory)) {
@@ -90,6 +117,7 @@ export async function householdMonth({ db, tenant, business, uid = null, month =
     staffPayments: staffCount,
     billsRemaining,
     billsDue: dueBills.length,
+    bills: monthBills.sort((a, b) => a.dueDate.localeCompare(b.dueDate)),
     payroll: payroll.sort((a, b) => (a.paidDate < b.paidDate ? 1 : a.paidDate > b.paidDate ? -1 : 0)),
     advancesReleased,
     advanceCount,

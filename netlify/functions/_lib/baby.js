@@ -18,7 +18,7 @@
 // second request can't make a second expense. The payment leaves Upcoming
 // and the expense counts as spent in the same transaction.
 
-import { BabyError, BABY_SCHEMA_VERSION, BUDGET_DOC_ID, MAX_CATEGORIES, SUGGESTED_CATEGORIES, CATEGORY_STATUSES, PROVIDER_STATUSES, PROVIDER_TYPES, isValidRecordId, validateCategoryInput, validateBudgetTotal, validateProviderInput, validateScheduleInput, validatePaidBy, thresholdLevel, totalFromCategories, upcomingPart, SUGGESTED_HOUSEHOLD_CATEGORIES, nextDueDate, repeatLabel } from "../../../shared/baby.js";
+import { BabyError, BABY_SCHEMA_VERSION, BUDGET_DOC_ID, MAX_CATEGORIES, SUGGESTED_CATEGORIES, CATEGORY_STATUSES, PROVIDER_STATUSES, PROVIDER_TYPES, isValidRecordId, validateCategoryInput, validateBudgetTotal, validateProviderInput, validateScheduleInput, validatePaidBy, thresholdLevel, totalFromCategories, upcomingPart, SUGGESTED_HOUSEHOLD_CATEGORIES, nextDueDate, repeatLabel, amountOn, scheduleKind } from "../../../shared/baby.js";
 import { partsOf } from "./baby-spending.js";
 import { EXPENSE_METHODS } from "../../../shared/expenses.js";
 import { businessDate, isDayId } from "../../../shared/metrics.js";
@@ -363,6 +363,8 @@ const upcomingWrite = (FieldValue, parts) => {
 export async function createScheduledPayment({ db, tenant, FieldValue, input, actor }) {
   const data = validateScheduleInput(input);
   for (const k of ["description", "category", "amount", "dueDate"]) if (data[k] === undefined) throw new BabyError("invalid-input", `${k} is required`);
+  // Amount by period: this occurrence takes the amount in force on its due date.
+  if (data.amountSchedule) data.amount = amountOn(data.amountSchedule, data.dueDate) ?? data.amount;
   return db.runTransaction(async (tx) => {
     await loadBudget(tx, tenant);
     const links = await resolveLinks(tx, tenant, data);
@@ -384,13 +386,16 @@ export async function createScheduledPayment({ db, tenant, FieldValue, input, ac
       // monthly bill on its own day (the 31st stays the 31st where it can).
       repeat: data.repeat ?? null,
       repeatDay: data.repeat ? Number(data.dueDate.slice(8)) : null,
+      // Luna Household: amount by period (recurring bills) and what it is.
+      amountSchedule: data.amountSchedule ?? null,
+      ...(data.kind ? { kind: data.kind } : {}),
       expenseId: null,
       paidDate: null,
       paidAmount: null,
       method: null,
       reference: null,
       attempt: 0,
-      history: [entry(actor, `Scheduled ${data.description} ${peso(data.amount)} due ${data.dueDate}`)],
+      history: [entry(actor, data.kind === "scheduled" ? `Scheduled expense ${data.description} ${peso(data.amount)} for ${data.dueDate}` : `Scheduled ${data.description} ${peso(data.amount)} due ${data.dueDate}${data.amountSchedule && data.amountSchedule.length > 1 ? ` (amount changes by period)` : ""}`)],
       revision: 1,
       createdBy: who(actor),
       createdAt: stamp,
@@ -414,9 +419,21 @@ export async function updateScheduledPayment({ db, tenant, FieldValue, scheduleI
     const s = snap.data();
     if (s.status !== "upcoming") throw new BabyError("not-upcoming", "Only an Upcoming payment can be edited");
     checkRevision(expectedRevision, s.revision);
-    const diff = Object.fromEntries(Object.entries(data).filter(([k, v]) => (k === "repeat" ? JSON.stringify(s.repeat ?? null) !== JSON.stringify(v ?? null) : (s[k] ?? null) !== (v ?? null))));
+    if ("kind" in data && data.kind !== scheduleKind(s)) throw new BabyError("invalid-input", "A bill can't become a scheduled expense (or back): add a new one instead");
+    delete data.kind;
+    const diff = Object.fromEntries(Object.entries(data).filter(([k, v]) => (k === "repeat" || k === "amountSchedule" ? JSON.stringify(s[k] ?? null) !== JSON.stringify(v ?? null) : (s[k] ?? null) !== (v ?? null))));
     if (!Object.keys(diff).length) return { scheduleId, unchanged: true, revision: s.revision };
     const next = { ...s, ...diff };
+    if (scheduleKind(next) === "scheduled" && (next.repeat || next.amountSchedule)) throw new BabyError("invalid-input", "A scheduled expense happens once: add a recurring bill instead");
+    // Amount by period: THIS (unpaid) occurrence follows the period of its due
+    // date. Paid occurrences are separate records and never change.
+    if (next.amountSchedule && ("amountSchedule" in diff || "dueDate" in diff)) {
+      const a = amountOn(next.amountSchedule, next.dueDate);
+      if (a !== null && a !== next.amount) {
+        diff.amount = a;
+        next.amount = a;
+      }
+    }
     if ("repeat" in diff || ("dueDate" in diff && next.repeat)) diff.repeatDay = next.repeat ? Number(next.dueDate.slice(8)) : null;
     if ("amount" in diff && diff.amount < int(s.paidAmount)) throw new BabyError("invalid-amount", `${peso(int(s.paidAmount))} is already paid: the amount can't be less than that`);
     if ("payee" in diff && next.providerId && !("providerId" in diff)) throw new BabyError("invalid-input", "This payment is linked to a saved provider: change the provider instead of the payee");
@@ -426,7 +443,7 @@ export async function updateScheduledPayment({ db, tenant, FieldValue, scheduleI
     if ("providerId" in diff && next.providerId) update.payee = links.providerName;
     const labels = Object.keys(update)
       .filter((k) => k !== "categoryName" && k !== "providerId" && k !== "repeatDay")
-      .map((k) => (k === "notes" ? "Notes updated" : k === "repeat" ? `Repeats: ${repeatLabel(update.repeat) || "no"}` : `${{ description: "Description", category: "Category", payee: "Payee", amount: "Amount", dueDate: "Due date" }[k]} changed ${k === "amount" ? peso(s.amount) : k === "category" ? s.categoryName : s[k] || "—"} → ${k === "amount" ? peso(update.amount) : k === "category" ? update.categoryName : update[k] || "—"}`));
+      .map((k) => (k === "notes" ? "Notes updated" : k === "amountSchedule" ? `Amount by period: ${(update.amountSchedule || []).map((x) => `${peso(x.amount)} from ${x.from}${x.until ? ` to ${x.until}` : ""}`).join(", ") || "none"}` : k === "repeat" ? `Repeats: ${repeatLabel(update.repeat) || "no"}` : `${{ description: "Description", category: "Category", payee: "Payee", amount: "Amount", dueDate: "Due date" }[k]} changed ${k === "amount" ? peso(s.amount) : k === "category" ? s.categoryName : s[k] || "—"} → ${k === "amount" ? peso(update.amount) : k === "category" ? update.categoryName : update[k] || "—"}`));
     const stamp = FieldValue.serverTimestamp();
     tx.update(sRef, { ...update, history: append(s.history, entry(actor, labels.join(" · ") || "Updated")), revision: s.revision + 1, updatedBy: who(actor), updatedAt: stamp });
     if (links.catRef) tx.update(links.catRef, { useCount: FieldValue.increment(1) });
@@ -525,6 +542,9 @@ async function markPaidOnce({ db, tenant, FieldValue, business, workspace, sched
     // its expense was removed (nextId already set) doesn't make another.
     const repeatsNow = Boolean(final && s.repeat && !s.nextId);
     const nextRef = repeatsNow ? tenant.collection("scheduledPayments").doc() : null;
+    // The next occurrence: its due date and the amount in force then.
+    const nextDue = repeatsNow ? nextDueDate(s.dueDate, s.repeat, s.repeatDay ?? null) : null;
+    const nextAmount = repeatsNow ? amountOn(s.amountSchedule, nextDue) ?? s.amount : 0;
     const plan = await prepareExpenseCreate(tx, {
       tenant,
       business,
@@ -536,7 +556,7 @@ async function markPaidOnce({ db, tenant, FieldValue, business, workspace, sched
       // Leaves Upcoming in the same budgets/current write as the spending:
       // all of the unpaid part when final, otherwise the part just paid. A
       // repeating bill paid in full adds its next one to Upcoming at once.
-      upcomingDelta: final ? { amount: -unpaid + (repeatsNow ? s.amount : 0), count: repeatsNow ? 0 : -1, category: s.category } : { amount: -Math.min(amount, unpaid), count: 0, category: s.category },
+      upcomingDelta: final ? { amount: -unpaid + (repeatsNow ? nextAmount : 0), count: repeatsNow ? 0 : -1, category: s.category } : { amount: -Math.min(amount, unpaid), count: 0, category: s.category },
       input: {
         date: paidDate,
         category: s.category,
@@ -547,7 +567,7 @@ async function markPaidOnce({ db, tenant, FieldValue, business, workspace, sched
         ...(s.payee ? { payee: s.payee } : workspace === "household-payroll" ? { payee: s.description } : {}),
         ...(payment.reference ? { reference: payment.reference } : {}),
         ...(paidBy ? { paidBy: paidBy.map(({ name, amount: a }) => ({ name, amount: a })) } : {}),
-        notes: `Scheduled payment: ${s.description}`,
+        notes: scheduleKind(s) === "scheduled" ? `Scheduled for ${s.dueDate}` : `Scheduled payment: ${s.description}`,
       },
     });
     plan.commit({ FieldValue });
@@ -571,9 +591,9 @@ async function markPaidOnce({ db, tenant, FieldValue, business, workspace, sched
     if (nextRef) {
       const r = nextRef;
       nextScheduleId = r.id;
-      const due = nextDueDate(s.dueDate, s.repeat, s.repeatDay ?? null);
+      const due = nextDue;
       const stamp = FieldValue.serverTimestamp();
-      tx.create(r, { schemaVersion: BABY_SCHEMA_VERSION, description: s.description, category: s.category, categoryName: s.categoryName ?? null, providerId: s.providerId ?? null, payee: s.payee ?? null, amount: s.amount, dueDate: due, status: "upcoming", notes: s.notes ?? null, repeat: s.repeat, repeatDay: s.repeatDay ?? null, previousId: scheduleId, expenseId: null, paidDate: null, paidAmount: null, method: null, reference: null, attempt: 0, history: [entry(actor, `Scheduled ${s.description} ${peso(s.amount)} due ${due} (${repeatLabel(s.repeat).toLowerCase()})`)], revision: 1, createdBy: who(actor), createdAt: stamp, updatedBy: who(actor), updatedAt: stamp });
+      tx.create(r, { schemaVersion: BABY_SCHEMA_VERSION, description: s.description, category: s.category, categoryName: s.categoryName ?? null, providerId: s.providerId ?? null, payee: s.payee ?? null, amount: nextAmount, dueDate: due, status: "upcoming", notes: s.notes ?? null, repeat: s.repeat, repeatDay: s.repeatDay ?? null, amountSchedule: s.amountSchedule ?? null, ...(s.kind ? { kind: s.kind } : {}), previousId: scheduleId, expenseId: null, paidDate: null, paidAmount: null, method: null, reference: null, attempt: 0, history: [entry(actor, `Scheduled ${s.description} ${peso(nextAmount)} due ${due} (${repeatLabel(s.repeat).toLowerCase()})`)], revision: 1, createdBy: who(actor), createdAt: stamp, updatedBy: who(actor), updatedAt: stamp });
     }
     return { scheduleId, expenseId, paid: final, partPaid: !final, paidAmount, remaining: final ? 0 : Math.max(0, s.amount - paidAmount), ...(nextScheduleId ? { nextScheduleId } : {}) };
   }, TX_OPTIONS);
