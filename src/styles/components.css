@@ -3742,3 +3742,8 @@ tr.is-saving {
 .gl-pick-bar { position: sticky; top: 0; z-index: 2; display: flex; justify-content: flex-end; padding: var(--space-1) 0; background: var(--bg); }
 .gl-setting { display: inline-flex; align-items: center; gap: var(--space-2); margin-top: var(--space-3); font-size: var(--text-sm); color: var(--text-muted); }
 .gl-portal-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); margin-bottom: var(--space-2); }
+/* Household staff portal: five tabs (with Grocery) fit a phone without scrolling. */
+@media (max-width: 480px) {
+  .staff-tabs { gap: 0; padding: 0 var(--space-1); }
+  .staff-tab { flex: 1 1 auto; padding: 0 6px; font-size: var(--text-sm); }
+}
