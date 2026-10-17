@@ -800,6 +800,29 @@ The accepted Bridal design (Money | Tasks | Guests | More) is unchanged; this pa
 - **Form dialogs:** even 16 px field spacing (also under More details), footer pinned with equal-width buttons on phones.
 - **Unit tests:** 1614 pass.
 
+### 2026-10-17 · Household: bill amounts by period, scheduled one-time expenses, future months; Bills = My Bills | Sample Bills (cfe0e18, 79eb374)
+
+- **Amount by period:** `scheduledPayments.amountSchedule = [{ amount, from, until? }]` on a recurring bill (sorted, non-overlapping, up to 12).
+  - **Which amount:** each occurrence takes the amount in force on its due date (`amountOn`). The next occurrence is created with it when the previous one is paid, and the schedule travels with the bill.
+  - **History:** paid occurrences are separate records with their own amount, so a later change never rewrites them.
+  - **Editing:** applies to the unpaid occurrence (if its due date falls in a changed period) and every later one.
+- **Bill editor:** Bill name, Amount, Category, (Next) due date, Repeat. Under "+ Add future amount change": "This amount applies from", then up to two "New amount + Starting". Plain bills send no schedule.
+- **Scheduled one-time expense:** `scheduledPayments` with `kind: "scheduled"`, from Expenses → + Add expense → "Schedule for later".
+  - **The form:** Date paid becomes "Scheduled date" (today or later); method, reference and receipt hide; the button reads "Schedule expense".
+  - **Counting:** shown in its month ("Scheduled Nov 25", ⋯ Paid / Edit / Remove); never in Bills remaining; in Spent only once Paid.
+  - **Paying:** Paid = the idempotent mark-paid. The expense is dated when actually paid, its notes keep "Scheduled for {date}", and the schedule keeps its date.
+  - **Rules:** it can't repeat or become a bill.
+- **Months:** Expenses goes back without limit and up to 24 months ahead; empty months show ₱0 / ₱0.
+  - **The month list (`/api/household-money` bills):** stored bills (current month incl. overdue); projected occurrences of recurring bills in later months at their period amount (never stored; ⋯ Edit bill); scheduled expenses of the month.
+  - **Bills remaining:** bills only.
+- **Bills page:** My Bills | Sample Bills.
+  - **My Bills:** ONE row per bill (a reopened occurrence + its already-made next one show once, "· 1 unpaid"): "Monthly · next due Oct 28" (+ "Amount changes by period"), amount, ⋯ Edit / Remove. Remove cancels all its unpaid occurrences; paying happens on Expenses.
+  - **Sample Bills:** Meralco ₱5,000 / PLDT ₱2,000 (Utilities), Parking ₱3,000 (Transportation), Monthly. + Add opens the prefilled bill form; "Added ✓" when it's already in My Bills.
+- **Tests:**
+  - **Unit:** 1622 pass. New server tests: Insurance May–Sep ₱2,500 then Oct ₱3,000; a later change leaves paid September at ₱2,500 and makes November ₱3,200; projections; validation; a scheduled expense excluded from Spent and Bills remaining, Paid once on retry with the actual date; months 2026-01 / 2027-01 / 2028-10.
+  - **Live on staging (temporary `pab-home-tmp`, removed):** 3/3 API + 17/17 browser at 390.
+  - **Checked:** one row per bill; Sample Bills + Add PLDT prefilled; Schedule for later (Nov 25) recorded no expense; November Spent ₱0 with Bills remaining ₱10,000 excluding the scheduled ₱2,500; a double-tap Paid gave one expense dated today with the scheduled date kept; December projections at period amounts; January 2027 and January 2026 (empty) render; no sideways scroll.
+
 ## Plan (decisions made from the brief)
 
 ### Stage 1: Distributor
