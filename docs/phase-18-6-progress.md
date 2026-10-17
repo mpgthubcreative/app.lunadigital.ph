@@ -823,6 +823,24 @@ The accepted Bridal design (Money | Tasks | Guests | More) is unchanged; this pa
   - **Live on staging (temporary `pab-home-tmp`, removed):** 3/3 API + 17/17 browser at 390.
   - **Checked:** one row per bill; Sample Bills + Add PLDT prefilled; Schedule for later (Nov 25) recorded no expense; November Spent ₱0 with Bills remaining ₱10,000 excluding the scheduled ₱2,500; a double-tap Paid gave one expense dated today with the scheduled date kept; December projections at period amounts; January 2027 and January 2026 (empty) render; no sideways scroll.
 
+### 2026-10-17/18 · Per-user navigation: Settings → Arrange navigation (03a41e5 + Settings placement)
+
+- **Model:** `members/{uid}.navigationPreference = { primary: [up to 3 page ids] } | null`, one per user per business (`shared/navigation-prefs.js`).
+  - **Saving:** `POST /api/preferences { action: "setNavigation", navigation }` writes only the caller's own member record. Household staff are refused (their portal is separate).
+  - **What it doesn't change:** modules, permissions or entitlements; it's returned in the session as `member.navigationPreference`.
+- **Phone tab bar:** `mobileTabs(nav, template, preference)` uses the member's order of eligible "work" pages they can open, then tops up from the template default.
+  - **Fixed:** never more than 3 main tabs; More always last; a Dashboard stays first where the workspace has one.
+  - **Unchanged:** the desktop sidebar and the order of pages inside More.
+  - **Generic:** `shellNavigation` / `arrangeable` / `mobileTabs` work for Bridal and Business too.
+- **Settings → Arrange navigation (top of Settings):** Main navigation (1–3 with ↑ / ↓ / Remove) and Other pages (+ Add to main; when full: "Replace which one?" with one button per main page). Save and Reset to default (back to the template).
+  - **No drag:** the buttons are the accessible way to reorder.
+  - **After saving:** the session reloads, so the tab bar updates at once on the same page.
+- **Labels:** the phone tab label for Grocery List is "Grocery"; Household's schedule tab says "Bills" (Baby keeps "Schedule").
+- **Tests:**
+  - **Unit:** 1634 pass (new: preferences endpoint, tab bar, the Settings UI).
+  - **Live on staging (temporary `pnav-home-tmp` with an Owner and an Admin, removed):** 9/9 at 390, run twice.
+  - **Checked:** default tabs; arranged Expenses · Payroll · Grocery · More, saved to the Owner's record only; Attendance moved to More; kept after refresh; the Admin still has the default; Reset restores the default.
+
 ## Plan (decisions made from the brief)
 
 ### Stage 1: Distributor
