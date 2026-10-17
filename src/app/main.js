@@ -26,6 +26,7 @@ import { MODULE_LOADERS } from "../modules/loaders.js";
 import { render } from "../lib/html.js";
 import { card, emptyState } from "../components/ui.js";
 import { isStaffPortalSession } from "../staff/is-staff.js";
+import { installMenuBehavior } from "../components/menus.js";
 
 const root = document.getElementById("app");
 const REVALIDATE_MS = 5 * 60 * 1000;
@@ -200,6 +201,9 @@ window.addEventListener("luna:session-changed", () => {
 });
 
 function boot() {
+  // Every ⋯ / ▾ menu behaves like a popover (one open; outside tap, scroll,
+  // navigation, a dialog and Escape close it): ../components/menus.js.
+  installMenuBehavior(document);
   // Phase 14: the employee's salary receipt page needs no login (the token
   // in the URL fragment is the only credential, checked by the server).
   if (window.location.pathname === "/receipt") {
