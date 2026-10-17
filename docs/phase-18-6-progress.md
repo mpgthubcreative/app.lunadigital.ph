@@ -626,6 +626,41 @@ The accepted Bridal design (Money | Tasks | Guests | More) is unchanged; this pa
   - **Unit:** 1527 pass.
   - **Live on staging (390px and 1280px):** 22/22 — the party sheet, 4 names added (no new guest records), 3/5 on the row with no names, companions in Assign, two Maids of Honor and two Best Men, a duplicate refused, "Not assigned yet" named people only, Seating 3 seats with names, rename keeping roles, and removal warning when linked.
 
+### 2026-10-17 · Luna Bridal / Luna Bridal+: one invitation engine, per-wedding design (33f0a70)
+
+- **Plans:** `bridal-basic` = **Luna Bridal** (Standard invitation); `bridal-plus` = **Luna Bridal+** (Customized invitation).
+  - **Same planning features** in both, and Export & Backup in both. Prices are unchanged (not final).
+  - **Where the level comes from:** the plan (`INVITATION_LEVEL_BY_PLAN` in `shared/invitation-design.js`), never a tenant id.
+  - **Plan names:** the display names live in `shared/plans.seed.js`. Staging's plan records still show "Bridal Basic / Plus" until `npm run seed:plans` is run; that wasn't run here.
+- **Three layers:**
+  - **Wedding content** (`weddingSetup/*`, edited by the Owner). Adds story, FAQ, closing line and gallery photos (`weddingGallery/*`), used by designs.
+  - **Invitation design** (`invitationDesign/current` + `invitationAssets/*`, server-only, edited by Super Admin).
+  - **Guest party + secure token:** unchanged.
+- **A design** is a validated config over shared components. The current invitation is the `standard` template; others are `classic`, `modern` and `garden`.
+  - **What it sets:** colours (hex), allow-listed Google fonts, layout choices, hero style, section order / visibility / colours, designer images (PNG / JPG / WebP / SVG without scripts) and short wording.
+  - **What it doesn't allow:** raw HTML or CSS. Colours and fonts are applied as CSS variables through the CSSOM, so the site's content security policy is unchanged.
+- **Lifecycle:** Draft → Ready → Published. Published versions are kept (up to 10) and can be restored into the draft.
+  - **What guests see** (`live`): standard or custom. A custom design shows only while the plan is Bridal+ and the design is published and live.
+  - **Plan changes** only change the plan. Nothing is deleted on a downgrade, and an upgrade brings the design back.
+- **Screens:**
+  - **Wedding Setup → Invitation:** Standard or Customized, with Draft / Ready / Live and "Your current Standard invitation remains live". Preview and Preview draft. The Bridal+ content fields are shown only to Bridal+ weddings. There are no design controls for the couple.
+  - **Console → Business → Invitation design:** `/api/invitation-design` (operators only).
+  - **Backup:** an Invitation Design sheet.
+- **Migration:** none needed.
+  - **Existing weddings** have no design record, so they're on the Standard template exactly as before; the invitation CSS uses variables whose defaults are the old values.
+  - **Links, slugs, tokens and RSVPs** are untouched.
+- **Tests:**
+  - **Unit:** 1543 pass.
+  - **Rules:** 26 pass, including that design, design images and gallery records are server-only.
+  - **Live on staging (temporary wedding `pinv-wed-tmp`, starting on Luna Bridal):** 33/33 — 14 through the API and 19 in the browser at 390px and 1280px.
+    - **On Luna Bridal:** Standard live; the Owner can't use the design API; a draft can't be published.
+    - **Upgrade:** a plan change only; party, RSVP, tokens, slug and URL all identical.
+    - **Draft → Ready:** guests still see Standard.
+    - **Publish:** the guest link shows the garden design (colours, fonts, ornament, wording, entourage from Roles) with no Owner controls. An RSVP through the designed page lands on the same record ("3 of 5 → 4 of 5").
+    - **Owner:** sees "Customized Invitation · Live", with a Preview.
+    - **Downgrade:** Standard shows and the design is kept. Upgrading again brings it back without re-publishing.
+    - **Unchanged:** the guest's identity, members, roles and token lookups. No sideways scrolling.
+
 ## Plan (decisions made from the brief)
 
 ### Stage 1: Distributor

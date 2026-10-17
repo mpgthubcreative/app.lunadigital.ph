@@ -955,5 +955,6 @@ label.check {
 .inv-entourage { display: grid; gap: 12px; }
 .inv-entourage p { margin: 0; }
 .inv-map-links { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+.inv-map-links .inv-btn { display: inline-flex; align-items: center; justify-content: center; text-decoration: none; }
 .inv-designed[data-align="left"] .inv-map-links { justify-content: flex-start; }
 .inv-footer { margin-top: 28px; color: var(--inv-muted, #7b6f66); font-size: 0.92rem; }
