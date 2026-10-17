@@ -27,6 +27,7 @@ import { WeddingError, WEDDING_SCHEMA_VERSION, TOTALS_DOC_ID, SUPPLIER_SERVICES,
 import { EXPENSE_METHODS } from "../../../shared/expenses.js";
 import { businessDate, isDayId } from "../../../shared/metrics.js";
 import { prepareExpenseCreate } from "./expenses.js";
+import { attendingMarksFor } from "./wedding-roles.js";
 import { prepareNotifications } from "./notifications.js";
 import { meterActivity } from "./metering.js";
 
@@ -521,6 +522,8 @@ export async function updateGuest({ db, tenant, FieldValue, guestId, changes, ex
     const diff = Object.fromEntries(Object.entries(data).filter(([k, v]) => (g[k] ?? null) !== (v ?? null)));
     if (!Object.keys(diff).length) return { guestId, unchanged: true, revision: g.revision };
     if ("partySize" in diff && diff.partySize < int(g.confirmed)) throw new WeddingError("invalid-input", `The party size can't be less than the ${g.confirmed} confirmed guests`);
+    const named = 1 + (Array.isArray(g.members) ? g.members.length : 0);
+    if ("partySize" in diff && diff.partySize < named) throw new WeddingError("invalid-input", `The party has ${named} named people; remove a name first or keep at least ${named} seats`);
     const next = { ...g, ...diff, invited: "invitationSent" in diff ? Boolean(diff.invitationSent) : Boolean(g.invitationSent) };
     const names = { name: "Name", group: "Group", side: "Side", contact: "Contact", partySize: "Party size", invitationSent: "Invitation sent" };
     const show = (k, v) => (k === "side" ? label(GUEST_SIDES, v) : v === null || v === undefined || v === "" ? "—" : String(v));
@@ -552,7 +555,7 @@ export async function setRsvp({ db, tenant, FieldValue, business, guestId, rsvp,
     const stamp = FieldValue.serverTimestamp();
     // source: who answered (the Owner side here; a future invitation link
     // records "guest"), kept on the guest and in each history line.
-    tx.update(gRef, { rsvp: v.status, confirmed: v.confirmed, rsvpDate: v.status === "awaiting" ? null : businessDate(business.timezone, now), rsvpSource: "owner", ...(unseat ? { tableId: null } : {}), history: append(g.history, entry(actor, text, { from: { rsvp: g.rsvp, confirmed: int(g.confirmed) }, to: v, source: "owner" })), revision: g.revision + 1, updatedBy: who(actor), updatedAt: stamp });
+    tx.update(gRef, { rsvp: v.status, confirmed: v.confirmed, rsvpDate: v.status === "awaiting" ? null : businessDate(business.timezone, now), rsvpSource: "owner", ...(unseat ? { tableId: null } : {}), ...attendingMarksFor(g, v), history: append(g.history, entry(actor, text, { from: { rsvp: g.rsvp, confirmed: int(g.confirmed) }, to: v, source: "owner" })), revision: g.revision + 1, updatedBy: who(actor), updatedAt: stamp });
     tx.set(guestTotalsRef(tenant), { schemaVersion: WEDDING_SCHEMA_VERSION, ...guestTotalsWrite(FieldValue, g, next), updatedAt: stamp }, { merge: true });
     return { guestId, rsvp: v.status, confirmed: v.confirmed };
   }, TX_OPTIONS);

@@ -1332,7 +1332,7 @@ describe("Owner-pilot Bridal: Guests → Roles", () => {
     expect(groups).toEqual([["Maid / Matron of Honor", "· 1", ["Sarah Barnes"]], ["Principal Sponsors", "· 2", ["Ryan Reyes", "Shirley Saragcon"]]]);
     expect(container.querySelector('[data-role="roles-summary"]').textContent).toBe("3 people · 2 roles");
     expect(container.querySelector('.page-header [data-act="role-new"]').textContent).toBe("+ Assign role");
-    expect(container.querySelector('[data-role="open-roles"] summary').textContent).toBe("Not assigned yet (15)");
+    expect(container.querySelector('[data-role="open-roles"] summary').textContent).toBe("Not assigned yet (1)"); // named people without a role
     const items = [...container.querySelectorAll('[data-role-guest="principal_sponsor|gRyan000001"] .menu-item')].map((b) => b.textContent);
     expect(items).toEqual(["Change person", "Change role", "View guest", "Remove role"]);
   });
@@ -1341,7 +1341,7 @@ describe("Owner-pilot Bridal: Guests → Roles", () => {
     const data = await mountRoles();
     container.querySelector('.page-header [data-act="role-new"]').click();
     let f = lastForm();
-    expect([...f.elements.guestId.options].map((o) => o.textContent)).toEqual(["— Choose a guest —", "Ryan Reyes", "Sarah Barnes", "Shirley Saragcon", "Tan Family", "+ Add guest and assign"]);
+    expect([...f.elements.guestId.options].map((o) => o.textContent)).toEqual(["— Choose a person —", "Ryan Reyes", "Sarah Barnes", "Shirley Saragcon", "Tan Family", "+ Add guest and assign"]);
     f.elements.role.value = "best_man";
     f.elements.guestId.value = "gTan0000001";
     submit(f);
@@ -1464,5 +1464,97 @@ describe("Owner-pilot Bridal: Crew Meals (More)", () => {
     expect(container.querySelector('[data-act="new"]')).toBeNull();
     expect(container.querySelector('[data-act="prices"]')).toBeNull();
     expect([...container.querySelectorAll('[data-crew="c1"] .menu-item')].map((b) => b.textContent)).toEqual(["Details"]);
+  });
+});
+
+describe("Owner-pilot Bridal: party members are real people (RSVP · Roles · Seating)", () => {
+  const SANRAH = { id: "gSanrah0001", name: "Sanrah", category: "friends", side: "bride", partySize: 5, rsvp: "attending", confirmed: 3, tableId: "tA1b2c3d4", attending: true, roles: [{ id: "maid_of_honor" }], roleKeys: ["maid_of_honor", "bridesmaid"], members: [{ id: "mAnna000001", name: "Anna", roles: [{ id: "bridesmaid" }], attending: true }, { id: "mBea0000001", name: "Bea", roles: [] }], revision: 2, history: [] };
+  const MIGUEL = { id: "gMiguel0001", name: "Miguel", category: "entourage", side: "groom", partySize: 1, rsvp: "awaiting", confirmed: 0, roles: [{ id: "best_man" }], roleKeys: ["best_man"], revision: 1, history: [] };
+  const mountParty = async (extra = {}, confirmFn = async () => true) => {
+    const data = fakeData({ listGuests: vi.fn(async () => ({ rows: [SANRAH, MIGUEL], hasMore: false })), getSeating: vi.fn(async () => ({ tables: { tA1b2c3d4: { name: "Table 5", capacity: 8, order: 1 } } })), getWeddingSetup: vi.fn(async () => null), guestsApi: vi.fn(async () => ({})), ...extra });
+    mountGuests(container, wedding(), { data, toast: () => {}, confirm: confirmFn });
+    await flush();
+    return data;
+  };
+
+  it("the main row stays compact (Sanrah 3/5 Attending ⋯, no companion names); Seating shows who's coming: 'Sanrah, Anna + 1 unnamed' in 3 seats", async () => {
+    await mountParty();
+    const row = container.querySelector('[data-guest="gSanrah0001"]');
+    expect(row.querySelector('[data-role="seats"]').textContent).toBe("3/5");
+    expect(row.textContent).not.toMatch(/Anna|Bea/);
+    container.querySelector('[data-act="seg"][data-value="seating"]').click();
+    await flush();
+    const seat = container.querySelector('[data-table="tA1b2c3d4"] [data-guest="gSanrah0001"]');
+    expect(seat.querySelector('[data-role="seat-names"]').textContent).toBe("Sanrah, Anna + 1 unnamed");
+    expect(container.querySelector('[data-table="tA1b2c3d4"] [data-role="table-seats"]').textContent.trim()).toBe("· 3/8");
+  });
+
+  it("Details = the party sheet: Invited 5 · Attending 3; members (primary first, roles shown); + Add name for each unnamed seat; add / rename; marking attending", async () => {
+    const data = await mountParty();
+    container.querySelector('[data-guest="gSanrah0001"] .wl-main').click();
+    const d = document.querySelector('[data-role="details"]');
+    expect(d.querySelector(".card-title").textContent).toBe("Sanrah's Party");
+    expect([...d.querySelectorAll('[data-role="party-figures"] dd')].map((x) => x.textContent)).toEqual(["5", "3"]);
+    expect([...d.querySelectorAll('[data-role="members"] .wl-member-name')].map((x) => x.textContent.replace(/\s+/g, " ").trim())).toEqual(["Sanrah Primary Maid / Matron of Honor", "Anna Bridesmaid", "Bea"]);
+    expect([...d.querySelectorAll('[data-pa="add"]')].length).toBe(2);
+    expect([...d.querySelectorAll('[data-pa="attend"]')].map((b) => b.textContent)).toEqual(["Attending ✓", "Attending ✓", "Mark attending"]);
+    d.querySelector('[data-pa="add"]').click();
+    await flush();
+    lastForm().elements.name.value = "Carla";
+    submit(lastForm());
+    await flush();
+    expect(data.guestsApi).toHaveBeenCalledWith({ action: "addMember", guestId: "gSanrah0001", name: "Carla" });
+    document.querySelector('[data-role="details"] [data-pa="rename"][data-mid="mAnna000001"]').click();
+    await flush();
+    lastForm().elements.name.value = "Annabelle";
+    submit(lastForm());
+    await flush();
+    expect(data.guestsApi).toHaveBeenCalledWith({ action: "renameMember", guestId: "gSanrah0001", memberId: "mAnna000001", name: "Annabelle" });
+    document.querySelector('[data-role="details"] [data-pa="attend"][data-mid="mBea0000001"]').click();
+    await flush();
+    expect(data.guestsApi).toHaveBeenCalledWith({ action: "setAttending", guestId: "gSanrah0001", memberId: "mBea0000001", attending: true });
+  });
+
+  it("removing a companion with a role warns with the reason first, then removes with force; without a link it just removes", async () => {
+    const asked = [];
+    const guestsApi = vi.fn(async (b) => {
+      if (b.action === "removeMember" && b.memberId === "mAnna000001" && !b.force) throw new Error("Anna is Bridesmaid, marked attending. Remove them from this party anyway?");
+      return {};
+    });
+    await mountParty({ guestsApi }, async (c) => (asked.push(c), true));
+    container.querySelector('[data-guest="gSanrah0001"] .wl-main').click();
+    document.querySelector('[data-role="details"] [data-pa="remove"][data-mid="mAnna000001"]').click();
+    await flush();
+    expect(asked[0]).toMatchObject({ title: "Remove Anna?", body: "Anna is Bridesmaid, marked attending. Remove them from this party anyway?" });
+    expect(guestsApi).toHaveBeenCalledWith({ action: "removeMember", guestId: "gSanrah0001", memberId: "mAnna000001", force: true });
+    document.querySelector('[data-role="details"] [data-pa="remove"][data-mid="mBea0000001"]').click();
+    await flush();
+    expect(asked.length).toBe(1);
+    expect(guestsApi).toHaveBeenCalledWith({ action: "removeMember", guestId: "gSanrah0001", memberId: "mBea0000001" });
+  });
+
+  it("Roles: people incl. party members; counts are people (MAID / MATRON OF HONOR · 1, BRIDESMAIDS · 1); Not assigned yet = named people only; assign picks a party member", async () => {
+    const data = await mountParty();
+    container.querySelector('[data-act="seg"][data-value="roles"]').click();
+    await flush();
+    const groups = [...container.querySelectorAll("[data-role-group]")].map((s) => [s.querySelector(".wl-group-title").textContent, s.querySelector(".wl-cat-counts").textContent, [...s.querySelectorAll(".wl-name")].map((n) => n.textContent)]);
+    expect(groups).toEqual([["Maid / Matron of Honor", "· 1", ["Sanrah"]], ["Best Man", "· 1", ["Miguel"]], ["Bridesmaids", "· 1", ["Anna"]]]);
+    expect(container.querySelector('[data-role-guest="bridesmaid|gSanrah0001:mAnna000001"] [data-role="party"]').textContent).toBe("Sanrah's party");
+    // Only Bea is named and without a role (the 2 unnamed seats aren't people).
+    expect([...container.querySelectorAll('[data-role="open-roles"] [data-free]')].map((li) => li.querySelector(".wl-name").textContent)).toEqual(["Bea"]);
+    container.querySelector('.page-header [data-act="role-new"]').click();
+    const f = lastForm();
+    expect([...f.elements.guestId.options].map((o) => o.textContent)).toEqual(["— Choose a person —", "Anna · Sanrah's party", "Bea · Sanrah's party", "Miguel", "Sanrah", "+ Add guest and assign"]);
+    // A second Best Man: repeated assignment adds, never replaces.
+    f.elements.role.value = "best_man";
+    f.elements.guestId.value = "gSanrah0001:mBea0000001";
+    submit(f);
+    await flush();
+    expect(data.guestsApi).toHaveBeenCalledWith({ action: "assignRole", guestId: "gSanrah0001", memberId: "mBea0000001", role: { id: "best_man" } });
+    container.querySelector('[data-role-guest="bridesmaid|gSanrah0001:mAnna000001"] [data-act="role-person"]').click();
+    lastForm().elements.guestId.value = "gMiguel0001";
+    submit(lastForm());
+    await flush();
+    expect(data.guestsApi).toHaveBeenCalledWith({ action: "moveRole", fromGuestId: "gSanrah0001", fromMemberId: "mAnna000001", toGuestId: "gMiguel0001", role: { id: "bridesmaid" } });
   });
 });

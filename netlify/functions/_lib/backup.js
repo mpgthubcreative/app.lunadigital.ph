@@ -18,7 +18,7 @@ import { getModule, isModuleEnabled } from "../../../shared/modules.js";
 import { writeXlsx } from "../../../shared/xlsx.js";
 import { rsvpByCategory, seatingPlan, SEATING_DOC_ID, TOTALS_DOC_ID } from "../../../shared/wedding.js";
 import { programSection, formatDuration, PROGRAM_SECTIONS } from "../../../shared/wedding-program.js";
-import { rolesPlan } from "../../../shared/wedding-roles.js";
+import { rolesPlan, membersOf, roleLabel } from "../../../shared/wedding-roles.js";
 import { crewTotals } from "../../../shared/wedding-crew.js";
 
 export class BackupError extends Error {
@@ -38,7 +38,7 @@ const NAMES = {
   budgets: "Budget totals", expenseCategories: "Budget", scheduledPayments: "Payment schedule", providers: "Providers", weddingSuppliers: "Suppliers", supplierPayments: "Supplier Payments", weddingTasks: "Tasks", guests: "Guests", settings: "Settings",
 };
 // Bridal sheet order (what the couple expects to find first).
-const WEDDING_ORDER = ["Export Info", "Wedding Setup", "Budget", "Budget totals", "Suppliers", "Supplier Payments", "Expenses", "Tasks", "Guest Categories", "Guests", "RSVP History", "Tables", "Seating Assignments", "Wedding Roles", "Music & Program", "Crew Meals", "Users & Memberships", "Audit log"];
+const WEDDING_ORDER = ["Export Info", "Wedding Setup", "Budget", "Budget totals", "Suppliers", "Supplier Payments", "Expenses", "Tasks", "Guest Categories", "Guests", "RSVP History", "Tables", "Seating Assignments", "Party Members", "Wedding Roles", "Music & Program", "Crew Meals", "Users & Memberships", "Audit log"];
 
 const iso = (v) => (v && typeof v.toDate === "function" ? v.toDate().toISOString() : v instanceof Date ? v.toISOString() : null);
 // A stored proof file (expense / payment / payroll): safe facts only (type,
@@ -129,7 +129,15 @@ export async function buildBackup({ db, tenant, business, entitlements, FieldPat
     const seatingDoc = await tenant.doc("guestTotals", SEATING_DOC_ID).get();
     const plan = seatingPlan(guests.map((g) => ({ id: g.id, ...g.data })), seatingDoc.exists ? seatingDoc.data() : {});
     add("Tables", [["Table id", "Table", "Seats", "Seats taken", "Guests"], ...plan.tables.map((t) => [t.id, t.name, t.capacity, t.used, t.guests.length])]);
-    add("Wedding Roles", [["Role", "Role key", "Guest", "Guest id", "RSVP", "Seats invited", "Attending"], ...rolesPlan(guests.map((g) => ({ id: g.id, ...g.data }))).flatMap((gr) => gr.guests.map((g) => [gr.label, gr.key, g.name, g.id, g.rsvp ?? "", g.partySize ?? null, g.rsvp === "attending" ? g.confirmed ?? 0 : 0]))]);
+    const parties = guests.map((g) => ({ id: g.id, ...g.data }));
+    // One row per named person (primary first); unnamed seats are a count.
+    add("Party Members", [["Party (guest)", "Guest id", "Person", "Person key", "Primary", "Marked attending", "Roles", "Party seats", "Party attending", "Unnamed seats"], ...parties.flatMap((g) => {
+      const members = membersOf(g);
+      const people = [{ key: g.id, name: g.name, primary: true, attending: g.attending, roles: g.roles }, ...members.map((m) => ({ key: `${g.id}:${m.id}`, name: m.name, primary: false, attending: m.attending, roles: m.roles }))];
+      const unnamed = Math.max(0, (g.partySize ?? 1) - people.length);
+      return people.map((p) => [g.name, g.id, p.name, p.key, p.primary ? "yes" : "no", p.attending === true ? "yes" : "", (Array.isArray(p.roles) ? p.roles : []).map((r) => roleLabel(r)).join(", "), g.partySize ?? null, g.rsvp === "attending" ? g.confirmed ?? 0 : 0, p.primary ? unnamed : ""]);
+    })]);
+    add("Wedding Roles", [["Role", "Role key", "Person", "Person key", "Party (guest)", "Guest id", "RSVP"], ...rolesPlan(parties).flatMap((gr) => gr.people.map((p) => [gr.label, gr.key, p.name, p.key, p.party, p.guestId, p.rsvp ?? ""]))]);
     const program = (await readAll(tenant.collection("weddingProgram"), FieldPath, budget)).map((r) => ({ id: r.id, ...r.data }));
     add("Music & Program", [["Part", "#", "Moment", "Song", "Duration", "Person / group", "Notes", "Item id"], ...["ceremony", "reception"].flatMap((sec) => programSection(program, sec).map((i, n) => [PROGRAM_SECTIONS[sec].label, n + 1, i.moment, i.song ?? "", Number.isSafeInteger(i.durationSec) ? formatDuration(i.durationSec) : "", i.person ?? "", i.notes ?? "", i.id]))]);
     const crew = (await readAll(tenant.collection("weddingCrewMeals"), FieldPath, budget)).map((r) => ({ id: r.id, ...r.data })).sort((a, b) => String(a.name).localeCompare(String(b.name)));

@@ -1,18 +1,26 @@
-// Owner-pilot Bridal: wedding roles live ON the guest record (one record
-// drives RSVP, seats, category, role, seating and the invitation):
-//   guests/{id}.roles    [{ id: "principal_sponsor" }, { id: "custom", label: "Program host" }]
-//   guests/{id}.roleKeys ["principal_sponsor", "custom:program host"]   (for queries)
-// Single roles (Best Man…) belong to one guest at a time; the others take
-// any number of people. Removing a role never touches the guest or RSVP.
+// Owner-pilot Bridal: people, parties and wedding roles, all on the guest
+// record (one record drives RSVP, seats, category, roles, seating and the
+// invitation; nobody is typed twice):
+//   guests/{id}                       the PARTY and its primary person
+//     .roles     [{ id: "maid_of_honor" }, { id: "custom", label: "Program host" }]
+//     .attending true | false | absent  (primary's own attending mark, optional)
+//     .members   [{ id: "m…", name, roles, attending? }]   named companions
+//                (at most partySize − 1; unnamed seats stay just a count)
+//     .roleKeys  every role key in the party (for queries)
+// A person's key: "<guestId>" (primary) or "<guestId>:<memberId>"; ids never
+// change when a name does, so roles / seating survive a rename.
+// Roles are person ↔ role, many-to-many: a role may have any number of
+// people and a person several roles; only the exact same person + role
+// twice is refused. Removing a role never touches the guest or RSVP.
 // The invitation can later personalize wording from the roles (not yet).
 
 import { WeddingError, keyOf } from "./wedding.js";
 
 export const WEDDING_ROLES = Object.freeze({
-  bride: { label: "Bride", plural: "Bride", single: true },
-  groom: { label: "Groom", plural: "Groom", single: true },
-  maid_of_honor: { label: "Maid / Matron of Honor", plural: "Maid / Matron of Honor", single: true },
-  best_man: { label: "Best Man", plural: "Best Man", single: true },
+  bride: { label: "Bride", plural: "Bride" },
+  groom: { label: "Groom", plural: "Groom" },
+  maid_of_honor: { label: "Maid / Matron of Honor", plural: "Maid / Matron of Honor" },
+  best_man: { label: "Best Man", plural: "Best Man" },
   principal_sponsor: { label: "Principal Sponsor", plural: "Principal Sponsors" },
   candle_sponsor: { label: "Secondary Sponsor — Candle", plural: "Candle Sponsors" },
   veil_sponsor: { label: "Secondary Sponsor — Veil", plural: "Veil Sponsors" },
@@ -28,7 +36,9 @@ export const WEDDING_ROLES = Object.freeze({
   groom_parents: { label: "Groom's Parent", plural: "Groom's Parents" },
 });
 export const WEDDING_ROLE_IDS = Object.freeze(Object.keys(WEDDING_ROLES));
-export const MAX_ROLES_PER_GUEST = 10;
+export const MAX_ROLES_PER_PERSON = 10;
+export const MAX_ROLES_PER_GUEST = MAX_ROLES_PER_PERSON;
+export const PRIMARY = "primary";
 // The guest category a NEW guest gets when added straight from a role.
 export const categoryForRole = (r) => (r.id === "custom" ? "other" : /_sponsor$/.test(r.id) ? "sponsors" : ["bride", "groom", "bride_parents", "groom_parents"].includes(r.id) ? "family" : "entourage");
 
@@ -46,21 +56,51 @@ export function validateRole(input) {
 }
 export const roleKey = (r) => (r.id === "custom" ? `custom:${keyOf(r.label)}` : r.id);
 export const roleLabel = (r, { plural = false } = {}) => (r.id === "custom" ? r.label : WEDDING_ROLES[r.id]?.[plural ? "plural" : "label"] ?? r.id);
-export const isSingleRole = (r) => r.id !== "custom" && WEDDING_ROLES[r.id]?.single === true;
 
-// Roles view: one group per role (built-in order, then custom by name),
-// each with its guests (by name). Guests without roles aren't listed.
+// ---- People ----
+export const personKey = (guestId, memberId = null) => (memberId && memberId !== PRIMARY ? `${guestId}:${memberId}` : guestId);
+export const parsePersonKey = (key) => {
+  const [guestId, memberId = null] = String(key || "").split(":");
+  return { guestId, memberId };
+};
+const list = (v) => (Array.isArray(v) ? v : []);
+export const membersOf = (g) => list(g?.members);
+// Every role key in the party (primary + members), for guests/{id}.roleKeys.
+export const partyRoleKeys = (g) => [...new Set([...list(g.roles), ...membersOf(g).flatMap((m) => list(m.roles))].map(roleKey))];
+// Named people only (anonymous seats are just a count): the primary, then
+// companions. { key, guestId, memberId, name, party, primary, roles, rsvp, attending, guest }
+export function peopleOf(guests) {
+  const out = [];
+  for (const g of guests || []) {
+    out.push({ key: personKey(g.id), guestId: g.id, memberId: null, name: g.name, party: g.name, primary: true, roles: list(g.roles), rsvp: g.rsvp, attending: g.attending ?? null, guest: g });
+    for (const m of membersOf(g)) out.push({ key: personKey(g.id, m.id), guestId: g.id, memberId: m.id, name: m.name, party: g.name, primary: false, roles: list(m.roles), rsvp: g.rsvp, attending: m.attending ?? null, guest: g });
+  }
+  return out;
+}
+// Names marked attending in an Attending party (primary first).
+export function attendingNames(g) {
+  if (!g || g.rsvp !== "attending") return [];
+  return [...(g.attending === true ? [g.name] : []), ...membersOf(g).filter((m) => m.attending === true).map((m) => m.name)];
+}
+
+// Roles view: one group per role (built-in order, then custom by name) with
+// its PEOPLE (by name). The count is people, never party seats.
 export function rolesPlan(guests) {
   const groups = new Map();
-  for (const g of guests || []) {
-    for (const r of Array.isArray(g.roles) ? g.roles : []) {
+  for (const p of peopleOf(guests)) {
+    for (const r of p.roles) {
       const key = roleKey(r);
-      if (!groups.has(key)) groups.set(key, { key, role: r, label: roleLabel(r, { plural: true }), guests: [] });
-      groups.get(key).guests.push(g);
+      if (!groups.has(key)) groups.set(key, { key, role: r, label: roleLabel(r, { plural: true }), people: [], guests: [] });
+      groups.get(key).people.push(p);
     }
   }
   const rank = (k) => (WEDDING_ROLE_IDS.includes(k) ? WEDDING_ROLE_IDS.indexOf(k) : 1000);
-  const list = [...groups.values()].sort((a, b) => rank(a.key) - rank(b.key) || a.label.localeCompare(b.label));
-  for (const gr of list) gr.guests.sort((a, b) => a.name.localeCompare(b.name));
-  return list;
+  const plan = [...groups.values()].sort((a, b) => rank(a.key) - rank(b.key) || a.label.localeCompare(b.label));
+  for (const gr of plan) {
+    gr.people.sort((a, b) => a.name.localeCompare(b.name));
+    gr.guests = gr.people; // (older callers)
+  }
+  return plan;
 }
+// Named people who have no role yet (anonymous seats never count).
+export const peopleWithoutRole = (guests) => peopleOf(guests).filter((p) => !p.roles.length).sort((a, b) => a.name.localeCompare(b.name));

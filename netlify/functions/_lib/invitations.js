@@ -25,6 +25,7 @@ import { prepareNotifications } from "./notifications.js";
 import { tenantDb } from "./tenant-db.js";
 import { guestTotalsWrite } from "./wedding.js";
 import { roleLabel } from "../../../shared/wedding-roles.js";
+import { attendingMarksFor } from "./wedding-roles.js";
 
 const TX_OPTIONS = { maxAttempts: 10 };
 const MAX_HISTORY = 200;
@@ -226,7 +227,7 @@ export async function respondInvite({ db, FieldValue, token, rsvp, now = new Dat
       events: [{ type: "guest.rsvp", key: `${r.guestId}-${now.getTime()}`, title: `${g.name} RSVP'd ${rsvpWords(v.status, v.confirmed).replace(/ (\d+)$/, " · $1")}`, message: `${g.name} answered their invitation: ${rsvpWords(v.status, v.confirmed).replace(/ (\d+)$/, " · $1")}.`, recordType: "guest", recordId: r.guestId }],
     });
     const stamp = FieldValue.serverTimestamp();
-    tx.update(gRef, { rsvp: v.status, confirmed: v.confirmed, rsvpDate: today, rsvpSource: "guest", ...(unseat ? { tableId: null } : {}), history: append(g.history, { at: now, actor: null, label, source: "guest", from: { rsvp: g.rsvp, confirmed: int(g.confirmed) }, to: v }), revision: int(g.revision) + 1, updatedBy: { uid: null, name: `${g.name} (invitation)` }, updatedAt: stamp });
+    tx.update(gRef, { rsvp: v.status, confirmed: v.confirmed, rsvpDate: today, rsvpSource: "guest", ...(unseat ? { tableId: null } : {}), ...attendingMarksFor(g, v), history: append(g.history, { at: now, actor: null, label, source: "guest", from: { rsvp: g.rsvp, confirmed: int(g.confirmed) }, to: v }), revision: int(g.revision) + 1, updatedBy: { uid: null, name: `${g.name} (invitation)` }, updatedAt: stamp });
     tx.set(totalsRef(tenant), { schemaVersion: WEDDING_SCHEMA_VERSION, ...guestTotalsWrite(FieldValue, g, next), updatedAt: stamp }, { merge: true });
     notes.commit({ FieldValue });
     return { rsvp: v.status, confirmed: v.confirmed, name: g.name };

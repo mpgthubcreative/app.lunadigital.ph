@@ -31,7 +31,7 @@ import { RSVP_STATUSES, GUEST_SIDES, GUEST_CATEGORIES, GUEST_CATEGORY_IDS, rsvpS
 import { activityLines, detailsDialog } from "../baby/common.js";
 import * as defaultData from "./data.js";
 import { openInvitePreview, copyText, canShare } from "./invite-preview.js";
-import { WEDDING_ROLES, WEDDING_ROLE_IDS, rolesPlan, roleLabel, roleKey, categoryForRole } from "@shared/wedding-roles.js";
+import { WEDDING_ROLES, WEDDING_ROLE_IDS, rolesPlan, roleLabel, roleKey, categoryForRole, peopleOf, peopleWithoutRole, parsePersonKey, personKey, membersOf, attendingNames } from "@shared/wedding-roles.js";
 
 const SIDE_OPTIONS = Object.entries(GUEST_SIDES).map(([value, s]) => ({ value, label: s.label }));
 // Simple words for the stored RSVP statuses.
@@ -164,8 +164,9 @@ export function mount(container, session, { data = defaultData, toast = defaultT
 
   function seatingView() {
     const plan = seatingPlan(state.rows, state.seating);
+    const names = (g) => attendingNames(g);
     const seatRow = (g, table) =>
-      html`<li class="wl-row wl-guest" data-guest="${g.id}"><button type="button" class="wl-main" data-act="view" data-id="${g.id}"><span class="wl-name">${g.name}</span></button>${seats(g, String(g.confirmed))}${!table && canManage ? html`<button type="button" class="btn btn-compact" data-act="seat" data-id="${g.id}">Assign</button>` : menu(`Seating for ${g.name}`, canManage ? [{ act: "seat", id: g.id, label: "Move to another table" }, { act: "unseat", id: g.id, label: "Unassign" }] : [{ act: "view", id: g.id, label: "Details & history" }])}</li>`;
+      html`<li class="wl-row wl-guest" data-guest="${g.id}"><button type="button" class="wl-main" data-act="view" data-id="${g.id}"><span class="wl-name">${g.name}</span>${names(g).length ? html`<span class="wl-sub" data-role="seat-names">${names(g).join(", ")}${g.confirmed > names(g).length ? ` + ${g.confirmed - names(g).length} unnamed` : ""}</span>` : ""}</button>${seats(g, String(g.confirmed))}${!table && canManage ? html`<button type="button" class="btn btn-compact" data-act="seat" data-id="${g.id}">Assign</button>` : menu(`Seating for ${g.name}`, canManage ? [{ act: "seat", id: g.id, label: "Move to another table" }, { act: "unseat", id: g.id, label: "Unassign" }] : [{ act: "view", id: g.id, label: "Details & history" }])}</li>`;
     return html`
       <section class="wl-section" data-group="unassigned">
         <h2 class="wl-cat-head"><span class="wl-group-title">Unassigned</span><span class="wl-cat-counts">· ${fmt(plan.unassignedSeats)}</span></h2>
@@ -183,30 +184,40 @@ export function mount(container, session, { data = defaultData, toast = defaultT
 
   // Roles: one group per role (PRINCIPAL SPONSORS · 8), one line per guest.
   // The roles live on the guest records (no second list of names).
+  // Roles: one group per role (MAID / MATRON OF HONOR · 2), one line per
+  // PERSON (a guest or a named party member); the count is people, never
+  // party seats. "Not assigned yet" = named people without a role.
+  const personLabel = (pp) => (pp.primary ? pp.name : `${pp.name} · ${pp.party}'s party`);
   function rolesView(roles) {
-    const used = new Set(roles.map((r) => r.key));
-    const open = WEDDING_ROLE_IDS.filter((id) => !used.has(id));
-    const roleRow = (gr, g) => html`<li class="wl-row wl-guest" data-role-guest="${gr.key}|${g.id}"><button type="button" class="wl-main" data-act="view" data-id="${g.id}"><span class="wl-name">${g.name}</span></button><span class="wl-chip" data-tone="${RSVP_TONE[g.rsvp] || ""}">${RSVP_WORDS[g.rsvp] ?? g.rsvp}</span>${menu(`${gr.label}: ${g.name}`, [
-      ...(canManage ? [{ act: "role-person", id: `${gr.key}|${g.id}`, label: "Change person" }, { act: "role-change", id: `${gr.key}|${g.id}`, label: "Change role" }] : []),
-      { act: "view", id: g.id, label: "View guest" },
-      ...(canManage ? [{ act: "role-remove", id: `${gr.key}|${g.id}`, label: "Remove role", danger: true, sep: true }] : []),
+    const free = peopleWithoutRole(state.rows);
+    const roleRow = (gr, pp) => html`<li class="wl-row wl-guest" data-role-guest="${gr.key}|${pp.key}"><button type="button" class="wl-main" data-act="view" data-id="${pp.guestId}"><span class="wl-name">${pp.name}</span>${pp.primary ? "" : html`<span class="wl-sub" data-role="party">${pp.party}'s party</span>`}</button><span class="wl-chip" data-tone="${RSVP_TONE[pp.rsvp] || ""}">${RSVP_WORDS[pp.rsvp] ?? pp.rsvp}</span>${menu(`${gr.label}: ${pp.name}`, [
+      ...(canManage ? [{ act: "role-person", id: `${gr.key}|${pp.key}`, label: "Change person" }, { act: "role-change", id: `${gr.key}|${pp.key}`, label: "Change role" }] : []),
+      { act: "view", id: pp.guestId, label: "View guest" },
+      ...(canManage ? [{ act: "role-remove", id: `${gr.key}|${pp.key}`, label: "Remove role", danger: true, sep: true }] : []),
     ])}</li>`;
     return html`
       ${roles.length ? "" : html`<p class="stat-hint wl-none" data-role="no-roles">No roles yet. Assign the Maid of Honor, Best Man, sponsors and entourage from your guest list${canManage ? ": + Assign role" : ""}.</p>`}
-      ${roles.map((gr) => html`<section class="wl-section" data-role-group="${gr.key}"><h2 class="wl-cat-head"><span class="wl-group-title">${gr.label}</span><span class="wl-cat-counts">· ${gr.guests.length}</span></h2><ul class="wl-list wl-scroll" data-role="role-guests">${gr.guests.map((g) => roleRow(gr, g))}</ul></section>`)}
-      ${canManage && open.length ? html`<details class="wl-fold" data-role="open-roles"><summary>Not assigned yet (${open.length})</summary><ul class="wl-list">${open.map((id) => html`<li class="wl-row wl-sample"><span class="wl-main"><span class="wl-name">${WEDDING_ROLES[id].label}</span></span><button type="button" class="btn btn-compact" data-act="role-new" data-role-id="${id}">Assign</button></li>`)}</ul></details>` : ""}`;
+      ${roles.map((gr) => html`<section class="wl-section" data-role-group="${gr.key}"><h2 class="wl-cat-head"><span class="wl-group-title">${gr.label}</span><span class="wl-cat-counts">· ${gr.people.length}</span></h2><ul class="wl-list wl-scroll" data-role="role-guests">${gr.people.map((pp) => roleRow(gr, pp))}</ul></section>`)}
+      ${canManage && free.length ? html`<details class="wl-fold" data-role="open-roles"><summary>Not assigned yet (${free.length})</summary><ul class="wl-list">${free.map((pp) => html`<li class="wl-row wl-sample" data-free="${pp.key}"><span class="wl-main"><span class="wl-name">${pp.name}</span>${pp.primary ? "" : html`<small class="wl-opt">${pp.party}'s party</small>`}</span><button type="button" class="btn btn-compact" data-act="role-new" data-person="${pp.key}">Assign</button></li>`)}</ul></details>` : ""}`;
   }
   const ROLE_OPTIONS = [...WEDDING_ROLE_IDS.map((id) => ({ value: id, label: WEDDING_ROLES[id].label })), { value: "custom", label: "Custom role…" }];
-  const guestOptions = () => [{ value: "", label: "— Choose a guest —" }, ...[...state.rows].sort((a, b) => a.name.localeCompare(b.name)).map((g) => ({ value: g.id, label: g.name })), { value: "__new", label: "+ Add guest and assign" }];
+  // Every named person (guests and party members), by name.
+  const personOptions = (exclude = null) => [{ value: "", label: "— Choose a person —" }, ...peopleOf(state.rows).filter((pp) => pp.key !== exclude).sort((a, b) => a.name.localeCompare(b.name)).map((pp) => ({ value: pp.key, label: personLabel(pp) }))];
+  const guestOptions = () => [...personOptions(), { value: "__new", label: "+ Add guest and assign" }];
+  const target = (key) => {
+    const { guestId, memberId } = parsePersonKey(key);
+    return { guestId, ...(memberId ? { memberId } : {}) };
+  };
   const roleOf = (v) => (v.role === "custom" ? { id: "custom", label: (v.customRole || "").trim() } : { id: v.role });
-  // Assign: a role (or a custom one) to an existing guest, or a new guest.
-  const assignDialog = (roleId = "") =>
+  // Assign: a role (or a custom one) to an existing person, or a new guest.
+  // Assigning again adds another person (roles hold many people).
+  const assignDialog = (roleId = "", person = "") =>
     formDialog({
       title: "Assign a wedding role",
       fields: [
         { name: "role", label: "Role", type: "select", options: ROLE_OPTIONS, value: roleId || "maid_of_honor" },
         { name: "customRole", label: "Custom role name", value: "", placeholder: "e.g. Program host", hint: "Only for Custom role." },
-        { name: "guestId", label: "Guest", type: "select", options: guestOptions(), value: "", hint: "Not on the list yet? Choose + Add guest and assign." },
+        { name: "guestId", label: "Person", type: "select", options: guestOptions(), value: person, hint: "Guests and the named people in their parties. Not on the list yet? Choose + Add guest and assign." },
         { name: "newName", label: "New guest's name", value: "", hint: "Only for + Add guest and assign.", more: true },
         { name: "newSeats", label: "Seats invited", value: "1", inputmode: "numeric", more: true },
       ],
@@ -215,17 +226,17 @@ export function mount(container, session, { data = defaultData, toast = defaultT
       onSubmit: async (v) => {
         const role = roleOf(v);
         if (role.id === "custom" && !role.label) throw new Error("Name the custom role");
-        let guestId = v.guestId;
-        if (guestId === "__new") {
+        let key = v.guestId;
+        if (key === "__new") {
           const name = (v.newName || "").trim();
           if (!name) throw new Error("Enter the new guest's name");
-          guestId = (await data.guestsApi({ action: "create", guest: toGuestInput({ name, category: categoryForRole(role), side: "both", partySize: v.newSeats || "1", contact: "", invitationSent: "", notes: "" }) })).guestId;
+          key = (await data.guestsApi({ action: "create", guest: toGuestInput({ name, category: categoryForRole(role), side: "both", partySize: v.newSeats || "1", contact: "", invitationSent: "", notes: "" }) })).guestId;
         }
-        if (!guestId) throw new Error("Choose a guest");
-        return data.guestsApi({ action: "assignRole", guestId, role });
+        if (!key) throw new Error("Choose a person");
+        return data.guestsApi({ action: "assignRole", ...target(key), role });
       },
     });
-  const roleFromKey = (key) => (key.startsWith("custom:") ? state.rows.flatMap((g) => g.roles || []).find((r) => roleKey(r) === key) : { id: key });
+  const roleFromKey = (key) => (key.startsWith("custom:") ? peopleOf(state.rows).flatMap((pp) => pp.roles).find((r) => roleKey(r) === key) : { id: key });
 
   function draw() {
     if (!alive) return;
@@ -241,7 +252,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
         ${state.loading || state.error
           ? ""
           : rolesOn
-            ? html`<p class="wl-count" data-role="roles-summary">${fmt(new Set(roles.flatMap((r) => r.guests.map((g) => g.id))).size)} people · ${fmt(roles.length)} roles</p>`
+            ? html`<p class="wl-count" data-role="roles-summary">${fmt(new Set(roles.flatMap((r) => r.people.map((pp) => pp.key))).size)} people · ${fmt(roles.length)} roles</p>`
           : seatingOn
             ? html`<p class="wl-count" data-role="seating-summary">${fmt(plan.attendingSeats)} attending · ${fmt(plan.seatedSeats)} seated · <strong class="${plan.unassignedSeats ? "is-warn" : ""}">${fmt(plan.unassignedSeats)} unassigned</strong></p>`
             : html`<p class="wl-count" data-role="rsvp-summary" title="People (seats), not invitations">${fmt(t.invitedSeats)} invited · ${fmt(t.attendingSeats)} attending · ${fmt(t.awaitingSeats)} waiting${t.declinedSeats ? ` · ${fmt(t.declinedSeats)} declined` : ""}</p>`}
@@ -328,24 +339,96 @@ export function mount(container, session, { data = defaultData, toast = defaultT
       },
     });
 
-  function openView(g) {
-    const table = g.tableId ? tables().find((t) => t.id === g.tableId) : null;
-    detailsDialog({
-      title: g.name,
-      badgeHtml: html`<span class="wl-chip" data-tone="${RSVP_TONE[g.rsvp] || ""}">${RSVP_WORDS[g.rsvp] ?? g.rsvp}</span>`,
-      rows: [["Category", GUEST_CATEGORIES[g.category]?.label ?? "Not set"], ...(g.group ? [["Group (earlier note)", g.group]] : []), ["Role", (g.roles || []).length ? g.roles.map((r) => roleLabel(r)).join(", ") : null], ["Seats invited", String(g.partySize)], ["Attending", g.rsvp === "attending" ? String(g.confirmed) : null], ["Table", table ? table.name : null], ["RSVP date", g.rsvpDate ? formatDayId(g.rsvpDate) : null], ["Side", GUEST_SIDES[g.side]?.label], ["Invitation sent", g.invitationSent ? formatDayId(g.invitationSent) : "Not sent"], ["Invitation link", g.invitation?.status === "active" ? "Created (⋯ → View / Copy invitation link)" : "Not created yet (⋯ → Create invitation link)"], ["Contact", g.contact], ["Notes", g.notes]],
-      activity: activityLines(g.history, timezone),
-      actions: canManage ? [{ act: "remove", label: "Remove guest", danger: true }, { act: "edit", label: "Edit" }] : [],
-      onAction: async (act) => {
-        try {
-          if (act === "edit") return after("Saved.")(await editDialog(g));
-          if (act === "remove") return await removeGuest(g);
-        } catch (err) {
-          toast(err.message || "Something went wrong", "danger");
+  // Details = the party sheet: "Sanrah's Party", invited / attending, the
+  // named people (primary first; + Add name for each unnamed seat; rename,
+  // remove with a warning when linked, mark who's attending), then the
+  // guest's details and history. Read-only without guests.manage.
+  function openView(g0) {
+    const backdrop = document.createElement("div");
+    backdrop.className = "modal-backdrop is-panel";
+    document.body.appendChild(backdrop);
+    const close = () => backdrop.remove();
+    let g = g0;
+    const paint = () => {
+      const table = g.tableId ? tables().find((t) => t.id === g.tableId) : null;
+      const members = membersOf(g);
+      const seats = g.partySize || 1;
+      const unnamed = Math.max(0, seats - 1 - members.length);
+      const attendingOn = canManage && g.rsvp === "attending";
+      const rolesTxt = (roles) => (Array.isArray(roles) && roles.length ? roles.map((r) => roleLabel(r)).join(", ") : "");
+      const markBtn = (mid, on) => (attendingOn ? html`<button type="button" class="btn btn-compact btn-ghost wl-mark${on ? " is-on" : ""}" data-pa="attend" data-mid="${mid}" aria-pressed="${on ? "true" : "false"}">${on ? "Attending ✓" : "Mark attending"}</button>` : on && g.rsvp === "attending" ? html`<span class="wl-chip" data-tone="success">Attending</span>` : "");
+      const rows = [["Category", GUEST_CATEGORIES[g.category]?.label ?? "Not set"], ...(g.group ? [["Group (earlier note)", g.group]] : []), ["Role", rolesTxt(g.roles) || null], ["Table", table ? table.name : null], ["RSVP date", g.rsvpDate ? formatDayId(g.rsvpDate) : null], ["Side", GUEST_SIDES[g.side]?.label], ["Invitation sent", g.invitationSent ? formatDayId(g.invitationSent) : "Not sent"], ["Invitation link", g.invitation?.status === "active" ? "Created (⋯ → View / Copy invitation link)" : "Not created yet (⋯ → Create invitation link)"], ["Contact", g.contact], ["Notes", g.notes]].filter(([, v]) => v !== null && v !== undefined && v !== "");
+      render(
+        backdrop,
+        html`<div class="modal modal-wide" role="dialog" aria-modal="true" aria-label="${g.name}" data-role="details">
+          <div class="modal-header"><h2 class="card-title">${seats > 1 ? `${g.name}'s Party` : g.name}</h2><div class="page-actions"><span class="wl-chip" data-tone="${RSVP_TONE[g.rsvp] || ""}">${RSVP_WORDS[g.rsvp] ?? g.rsvp}</span></div></div>
+          <div class="modal-body">
+            <dl class="dl dl-compact" data-role="party-figures"><dt>Invited</dt><dd>${seats}</dd><dt>Attending</dt><dd>${g.rsvp === "attending" ? String(g.confirmed) : g.rsvp === "declined" ? "0" : "Waiting"}</dd></dl>
+            <h3 class="section-title">${seats > 1 ? "Members" : "Guest"}</h3>
+            <ul class="list wl-party" data-role="members">
+              <li class="wl-member" data-member="primary"><span class="wl-member-name">${g.name} <small class="wl-opt">Primary</small>${rolesTxt(g.roles) ? html` <small class="wl-opt" data-role="member-roles">${rolesTxt(g.roles)}</small>` : ""}</span>${markBtn("primary", g.attending === true)}</li>
+              ${members.map((m) => html`<li class="wl-member" data-member="${m.id}"><span class="wl-member-name">${m.name}${rolesTxt(m.roles) ? html` <small class="wl-opt" data-role="member-roles">${rolesTxt(m.roles)}</small>` : ""}</span>${markBtn(m.id, m.attending === true)}${canManage ? html`<button type="button" class="btn btn-compact btn-ghost" data-pa="rename" data-mid="${m.id}" aria-label="Rename ${m.name}">Rename</button><button type="button" class="btn btn-compact btn-ghost menu-danger" data-pa="remove" data-mid="${m.id}" aria-label="Remove ${m.name}">Remove</button>` : ""}</li>`)}
+              ${canManage ? Array.from({ length: Math.min(unnamed, 12) }, () => html`<li class="wl-member"><button type="button" class="btn btn-compact btn-ghost" data-pa="add">+ Add name</button></li>`) : unnamed ? html`<li class="wl-member stat-hint">${unnamed} more invited (no names yet)</li>` : ""}
+            </ul>
+            ${unnamed && canManage ? html`<p class="stat-hint">Names are optional: the RSVP works by seat count, and names can be added later.</p>` : ""}
+            <dl class="dl dl-compact" data-role="fields">${rows.map(([k, v]) => html`<dt>${k}</dt><dd>${v}</dd>`)}</dl>
+            ${(g.history || []).length ? html`<h3 class="section-title">Activity</h3><ul class="list activity" data-role="activity">${activityLines(g.history, timezone).map((l) => html`<li>${l}</li>`)}</ul>` : ""}
+          </div>
+          <div class="modal-footer">${canManage ? html`<button type="button" class="btn btn-danger" data-act="remove">Remove guest</button><button type="button" class="btn" data-act="edit">Edit</button>` : ""}<button type="button" class="btn" data-act="close">Close</button></div>
+        </div>`
+      );
+    };
+    const refresh = async () => {
+      await load();
+      const fresh = state.rows.find((r) => r.id === g.id);
+      if (!fresh) return close();
+      g = fresh;
+      return paint();
+    };
+    backdrop.addEventListener("click", async (ev) => {
+      const act = ev.target.closest("[data-act]")?.dataset.act;
+      const pa = ev.target.closest("[data-pa]");
+      if (ev.target === backdrop || act === "close") return close();
+      try {
+        if (act === "edit") {
+          close();
+          return after("Saved.")(await editDialog(g));
         }
-        return false;
-      },
+        if (act === "remove") {
+          if (await removeGuest(g)) close();
+          return undefined;
+        }
+        if (!pa) return undefined;
+        const mid = pa.dataset.mid;
+        const m = membersOf(g).find((x) => x.id === mid);
+        if (pa.dataset.pa === "add") {
+          const r = await formDialog({ title: `Add a name to ${g.name}'s party`, fields: [{ name: "name", label: "Name", value: "", required: true, placeholder: "e.g. Anna" }], submitLabel: "Add", onSubmit: (v) => data.guestsApi({ action: "addMember", guestId: g.id, name: v.name }) });
+          if (r) await refresh();
+        } else if (pa.dataset.pa === "rename" && m) {
+          const r = await formDialog({ title: `Rename ${m.name}`, fields: [{ name: "name", label: "Name", value: m.name, required: true }], submitLabel: "Save", onSubmit: (v) => data.guestsApi({ action: "renameMember", guestId: g.id, memberId: m.id, name: v.name }) });
+          if (r) await refresh();
+        } else if (pa.dataset.pa === "remove" && m) {
+          try {
+            await data.guestsApi({ action: "removeMember", guestId: g.id, memberId: m.id });
+          } catch (err) {
+            // Linked (a role / marked attending): say what, then ask.
+            if (!/anyway\?$/.test(err.message || "")) throw err;
+            if (!(await confirm({ title: `Remove ${m.name}?`, body: err.message, confirmLabel: "Remove anyway", danger: true }))) return undefined;
+            await data.guestsApi({ action: "removeMember", guestId: g.id, memberId: m.id, force: true });
+          }
+          toast(`${m.name} removed from the party.`, "success");
+          await refresh();
+        } else if (pa.dataset.pa === "attend") {
+          const on = mid === "primary" ? g.attending === true : m?.attending === true;
+          await data.guestsApi({ action: "setAttending", guestId: g.id, ...(mid === "primary" ? {} : { memberId: mid }), attending: !on });
+          await refresh();
+        }
+      } catch (err) {
+        toast(err.message || "Something went wrong", "danger");
+      }
+      return undefined;
     });
+    paint();
   }
 
   // The full friendly link: https://{host}/w/{wedding}/invite/{private code}.
@@ -381,20 +464,26 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     if (a.startsWith("role-")) {
       el.closest("details.line-menu")?.removeAttribute("open");
       try {
-        if (a === "role-new") return after("Role assigned.")(await assignDialog(el.dataset.roleId || ""));
-        const [key, gid] = (el.dataset.id || "").split("|");
-        const g = state.rows.find((r) => r.id === gid);
+        if (a === "role-new") return after("Role assigned.")(await assignDialog(el.dataset.roleId || "", el.dataset.person || ""));
+        const [key, pkey] = (el.dataset.id || "").split("|");
+        const pp = peopleOf(state.rows).find((x) => x.key === pkey);
         const role = roleFromKey(key);
-        if (!g || !role) return undefined;
+        if (!pp || !role) return undefined;
+        const from = parsePersonKey(pp.key);
+        const fromArgs = { fromGuestId: from.guestId, ...(from.memberId ? { fromMemberId: from.memberId } : {}) };
         if (a === "role-remove") {
-          if (!(await confirm({ title: `Remove ${roleLabel(role)} from ${g.name}?`, body: "Only the role is removed. The guest, their RSVP, seats and table stay.", confirmLabel: "Remove role", danger: true }))) return undefined;
-          return after("Role removed.")(await data.guestsApi({ action: "unassignRole", guestId: g.id, role }));
+          if (!(await confirm({ title: `Remove ${roleLabel(role)} from ${pp.name}?`, body: "Only the role is removed. The guest, their RSVP, seats and table stay.", confirmLabel: "Remove role", danger: true }))) return undefined;
+          return after("Role removed.")(await data.guestsApi({ action: "unassignRole", ...target(pp.key), role }));
         }
         if (a === "role-person") {
-          return after("Role moved.")(await formDialog({ title: `${roleLabel(role)}: change person`, fields: [{ name: "guestId", label: "Guest", type: "select", options: guestOptions().filter((o) => o.value !== g.id && o.value !== "__new"), value: "" }], submitLabel: "Change", onSubmit: (v) => (v.guestId ? data.guestsApi({ action: "moveRole", fromGuestId: g.id, toGuestId: v.guestId, role }) : Promise.reject(new Error("Choose a guest"))) }));
+          return after("Role moved.")(await formDialog({ title: `${roleLabel(role)}: change person`, fields: [{ name: "guestId", label: "Person", type: "select", options: personOptions(pp.key), value: "" }], submitLabel: "Change", onSubmit: (v) => {
+            if (!v.guestId) return Promise.reject(new Error("Choose a person"));
+            const to = parsePersonKey(v.guestId);
+            return data.guestsApi({ action: "moveRole", ...fromArgs, toGuestId: to.guestId, ...(to.memberId ? { toMemberId: to.memberId } : {}), role });
+          } }));
         }
         if (a === "role-change") {
-          return after("Role changed.")(await formDialog({ title: `${g.name}: change role`, fields: [{ name: "role", label: "Role", type: "select", options: ROLE_OPTIONS, value: role.id }, { name: "customRole", label: "Custom role name", value: role.id === "custom" ? role.label : "", hint: "Only for Custom role." }], submitLabel: "Change", onSubmit: (v) => data.guestsApi({ action: "moveRole", fromGuestId: g.id, role, toRole: roleOf(v) }) }));
+          return after("Role changed.")(await formDialog({ title: `${pp.name}: change role`, fields: [{ name: "role", label: "Role", type: "select", options: ROLE_OPTIONS, value: role.id }, { name: "customRole", label: "Custom role name", value: role.id === "custom" ? role.label : "", hint: "Only for Custom role." }], submitLabel: "Change", onSubmit: (v) => data.guestsApi({ action: "moveRole", ...fromArgs, role, toRole: roleOf(v) }) }));
         }
       } catch (err) {
         toast(err.message || "Something went wrong", "danger");

@@ -10,7 +10,8 @@ import { createInviteHandler } from "../../netlify/functions/invite.js";
 import { createWeddingSetupHandler } from "../../netlify/functions/wedding-setup.js";
 import { createBusiness, addMember, ensureAuthUser } from "../../netlify/functions/_lib/provisioning.js";
 import { buildWorld, request } from "../helpers/tenants.js";
-import { validateRole, roleKey, rolesPlan, categoryForRole } from "../../shared/wedding-roles.js";
+import { validateRole, roleKey, rolesPlan, categoryForRole, peopleOf, peopleWithoutRole, attendingNames } from "../../shared/wedding-roles.js";
+import { seatingPlan, SEATING_DOC_ID } from "../../shared/wedding.js";
 import { readXlsx } from "../../shared/xlsx.js";
 
 const NOW = new Date("2026-10-16T04:00:00Z");
@@ -58,24 +59,25 @@ describe("wedding roles (on the guest record)", () => {
     expect([categoryForRole({ id: "candle_sponsor" }), categoryForRole({ id: "bridesmaid" }), categoryForRole({ id: "groom_parents" }), categoryForRole({ id: "custom", label: "x" })]).toEqual(["sponsors", "entourage", "family", "other"]);
   });
 
-  it("many people per role (sponsors); one person for a single role (Best Man) — a second is refused with a clear message", async () => {
+  it("roles are person ↔ role: many people per role (two Maids of Honor, two Best Men), one person with several roles; only the exact same assignment is refused", async () => {
     const ryan = await guest("Ryan Reyes", "sponsors");
     const shirley = await guest("Shirley Saragcon", "sponsors");
-    const tristan = await guest("Tristan", "entourage", 1);
-    const rj = await guest("RJ", "entourage", 1);
+    const miguel = await guest("Miguel", "entourage", 1);
+    const carlo = await guest("Carlo Jr.", "entourage", 1);
+    const sanrah = await guest("Sanrah", "entourage", 1);
+    const anna = await guest("Anna", "entourage", 1);
     ok(await assign(ryan, { id: "principal_sponsor" }));
     ok(await assign(shirley, { id: "principal_sponsor" }));
-    ok(await assign(tristan, { id: "best_man" }));
-    const taken = await assign(rj, { id: "best_man" });
-    expect(taken.status).toBe(409);
-    expect(taken.body.message).toBe("Best Man is already Tristan. Use ⋯ → Change person instead.");
-    expect(doc(`guests/${ryan}`)).toMatchObject({ roles: [{ id: "principal_sponsor" }], roleKeys: ["principal_sponsor"] });
-    expect(doc(`guests/${ryan}`).history.at(-1).label).toBe("Role added: Principal Sponsor");
-    // Same role again: unchanged; a custom role too.
-    expect(ok(await assign(ryan, { id: "principal_sponsor" })).unchanged).toBe(true);
-    ok(await assign(rj, { id: "custom", label: "Program host" }));
-    const plan = rolesPlan([ryan, shirley, tristan, rj].map((id) => ({ id, ...doc(`guests/${id}`) })));
-    expect(plan.map((g) => [g.label, g.guests.map((x) => x.name)])).toEqual([["Best Man", ["Tristan"]], ["Principal Sponsors", ["Ryan Reyes", "Shirley Saragcon"]], ["Program host", ["RJ"]]]);
+    for (const g of [miguel, carlo]) ok(await assign(g, { id: "best_man" }));
+    for (const g of [sanrah, anna]) ok(await assign(g, { id: "maid_of_honor" }));
+    ok(await assign(anna, { id: "bridesmaid" }));
+    const dup = await assign(anna, { id: "bridesmaid" });
+    expect(dup.status).toBe(409);
+    expect(dup.body.message).toBe("Anna is already Bridesmaid.");
+    expect(doc(`guests/${anna}`)).toMatchObject({ roles: [{ id: "maid_of_honor" }, { id: "bridesmaid" }], roleKeys: ["maid_of_honor", "bridesmaid"] });
+    ok(await assign(sanrah, { id: "custom", label: "Program host" }));
+    const plan = rolesPlan([ryan, shirley, miguel, carlo, sanrah, anna].map((id) => ({ id, ...doc(`guests/${id}`) })));
+    expect(plan.map((g) => [g.label, g.people.map((x) => x.name)])).toEqual([["Maid / Matron of Honor", ["Anna", "Sanrah"]], ["Best Man", ["Carlo Jr.", "Miguel"]], ["Principal Sponsors", ["Ryan Reyes", "Shirley Saragcon"]], ["Bridesmaids", ["Anna"]], ["Program host", ["Sanrah"]]]);
   });
 
   it("Change person moves a single role in one step; Change role swaps it on the same guest; Remove role keeps the guest, RSVP, seats and table", async () => {
@@ -111,7 +113,7 @@ describe("wedding roles (on the guest record)", () => {
     ok(await api("tasks", u.camille, { action: "create", task: { title: "Baptismal certificate", category: "Church Requirements", forWhom: "both", source: "San Jose Parish" } }), 201);
     const res = await createBackupHandler(deps())({ ...request({ uid: u.camille, businessId: W, method: "POST" }), body: "{}" });
     const bytes = Buffer.from(res.body, "base64");
-    expect(readXlsx(bytes, { sheet: "Wedding Roles" }).rows).toEqual([["Role", "Role key", "Guest", "Guest id", "RSVP", "Seats invited", "Attending"], ["Principal Sponsors", "principal_sponsor", "Ryan Reyes", ryan, "awaiting", "2", "0"]]);
+    expect(readXlsx(bytes, { sheet: "Wedding Roles" }).rows).toEqual([["Role", "Role key", "Person", "Person key", "Party (guest)", "Guest id", "RSVP"], ["Principal Sponsors", "principal_sponsor", "Ryan Reyes", ryan, "Ryan Reyes", ryan, "awaiting"]]);
     const tasks = readXlsx(bytes, { sheet: "Tasks" }).rows;
     expect(tasks[0]).toEqual(expect.arrayContaining(["source", "forWhom", "parts"]));
   });
@@ -137,5 +139,91 @@ describe("requirement tasks: where to get it, Bride / Groom / Both", () => {
     // Changing an ordinary task to Both starts the marks.
     ok(await api("tasks", u.camille, { action: "update", taskId: plain, changes: { forWhom: "both" } }));
     expect(doc(`weddingTasks/${plain}`).parts).toEqual({ bride: false, groom: false });
+  });
+});
+
+describe("party members: named companions are real, reusable people", () => {
+  const party = async () => {
+    const g = await guest("Sanrah", "friends", 5);
+    const ids = {};
+    for (const n of ["Anna", "Bea", "Carla", "Diane"]) ids[n] = ok(await api("guests", u.camille, { action: "addMember", guestId: g, name: n }), 201).memberId;
+    return { g, ids };
+  };
+  const people = () => peopleOf([...world.db.docs.entries()].filter(([k]) => k.startsWith(`businesses/${W}/guests/`)).map(([k, v]) => ({ id: k.split("/").pop(), ...v })));
+
+  it("5 invited with only the primary named: one person (anonymous seats are not people); adding 4 names makes 5 people in ONE guest record", async () => {
+    const g = await guest("Sanrah", "friends", 5);
+    expect(people().map((p) => p.name)).toEqual(["Sanrah"]);
+    for (const n of ["Anna", "Bea", "Carla", "Diane"]) ok(await api("guests", u.camille, { action: "addMember", guestId: g, name: n }), 201);
+    expect(people().map((p) => [p.name, p.key === g || p.key.startsWith(`${g}:m`), p.party])).toEqual([["Sanrah", true, "Sanrah"], ["Anna", true, "Sanrah"], ["Bea", true, "Sanrah"], ["Carla", true, "Sanrah"], ["Diane", true, "Sanrah"]]);
+    expect([...world.db.docs.keys()].filter((k) => k.startsWith(`businesses/${W}/guests/`)).length).toBe(1); // no duplicate records
+    expect((await api("guests", u.camille, { action: "addMember", guestId: g, name: "Ella" })).body.message).toMatch(/All 5 invited seats already have names/);
+    expect((await api("guests", u.camille, { action: "addMember", guestId: g, name: "anna" })).status).toBe(400);
+    expect((await api("guests", u.camille, { action: "update", guestId: g, changes: { partySize: 4 } })).body.message).toMatch(/5 named people/);
+  });
+
+  it("a companion takes a role (Anna → Bridesmaid) without copying the primary's; the role count is people, not seats", async () => {
+    const { g, ids } = await party();
+    ok(await assign(g, { id: "maid_of_honor" }));
+    ok(await api("guests", u.camille, { action: "assignRole", guestId: g, memberId: ids.Anna, role: { id: "maid_of_honor" } }));
+    ok(await api("guests", u.camille, { action: "assignRole", guestId: g, memberId: ids.Anna, role: { id: "bridesmaid" } }));
+    const d = doc(`guests/${g}`);
+    expect(d.roles).toEqual([{ id: "maid_of_honor" }]);
+    expect(d.members.find((m) => m.name === "Anna").roles).toEqual([{ id: "maid_of_honor" }, { id: "bridesmaid" }]);
+    expect(d.members.find((m) => m.name === "Bea").roles).toEqual([]);
+    expect(d.roleKeys).toEqual(["maid_of_honor", "bridesmaid"]);
+    const plan = rolesPlan([{ id: g, ...d }]);
+    expect(plan.map((x) => [x.label, x.people.length, x.people.map((p) => p.name)])).toEqual([["Maid / Matron of Honor", 2, ["Anna", "Sanrah"]], ["Bridesmaids", 1, ["Anna"]]]);
+    expect(peopleWithoutRole([{ id: g, ...d }]).map((p) => p.name)).toEqual(["Bea", "Carla", "Diane"]);
+    const tan = await guest("Tan", "friends", 1);
+    ok(await api("guests", u.camille, { action: "moveRole", fromGuestId: g, fromMemberId: ids.Anna, toGuestId: tan, role: { id: "bridesmaid" } }));
+    expect(doc(`guests/${tan}`).roles).toEqual([{ id: "bridesmaid" }]);
+    ok(await api("guests", u.camille, { action: "moveRole", fromGuestId: g, fromMemberId: ids.Anna, toGuestId: g, toMemberId: ids.Bea, role: { id: "maid_of_honor" } }));
+    expect(doc(`guests/${g}`).members.map((m) => [m.name, m.roles.map((r) => r.id)])).toEqual([["Anna", []], ["Bea", ["maid_of_honor"]], ["Carla", []], ["Diane", []]]);
+  });
+
+  it("5 invited → 3 attending: RSVP by count with names optional; marks ≤ confirmed; Seating counts 3; a lower count clears marks", async () => {
+    const { g, ids } = await party();
+    ok(await api("guests", u.camille, { action: "setRsvp", guestId: g, rsvp: { status: "attending", confirmed: 3 } }));
+    expect(doc(`guests/${g}`)).toMatchObject({ rsvp: "attending", confirmed: 3, partySize: 5 });
+    for (const m of [null, ids.Anna, ids.Bea]) ok(await api("guests", u.camille, { action: "setAttending", guestId: g, memberId: m, attending: true }));
+    expect((await api("guests", u.camille, { action: "setAttending", guestId: g, memberId: ids.Carla, attending: true })).body.message).toBe("Only 3 are attending. Raise the number attending first.");
+    expect(attendingNames({ id: g, ...doc(`guests/${g}`) })).toEqual(["Sanrah", "Anna", "Bea"]);
+    const t = ok(await api("guests", u.camille, { action: "createTable", table: { name: "Table 5", capacity: 8 } }), 201).tableId;
+    ok(await api("guests", u.camille, { action: "seat", guestId: g, tableId: t }));
+    const plan = seatingPlan([{ id: g, ...doc(`guests/${g}`) }], doc(`guestTotals/${SEATING_DOC_ID}`));
+    expect(plan.tables[0].used).toBe(3);
+    ok(await api("guests", u.camille, { action: "setRsvp", guestId: g, rsvp: { status: "attending", confirmed: 2 } }));
+    expect(attendingNames({ id: g, ...doc(`guests/${g}`) })).toEqual([]);
+    expect(doc(`guests/${g}`).confirmed).toBe(2);
+  });
+
+  it("renaming a companion keeps their role; removing one with a role warns first (member-linked), then works with force", async () => {
+    const { g, ids } = await party();
+    ok(await api("guests", u.camille, { action: "assignRole", guestId: g, memberId: ids.Anna, role: { id: "bridesmaid" } }));
+    ok(await api("guests", u.camille, { action: "renameMember", guestId: g, memberId: ids.Anna, name: "Annabelle" }));
+    expect(doc(`guests/${g}`).members.find((m) => m.id === ids.Anna)).toMatchObject({ name: "Annabelle", roles: [{ id: "bridesmaid" }] });
+    const warn = await api("guests", u.camille, { action: "removeMember", guestId: g, memberId: ids.Anna });
+    expect(warn.status).toBe(409);
+    expect(warn.body.message).toBe("Annabelle is Bridesmaid. Remove them from this party anyway?");
+    ok(await api("guests", u.camille, { action: "removeMember", guestId: g, memberId: ids.Bea }));
+    ok(await api("guests", u.camille, { action: "removeMember", guestId: g, memberId: ids.Anna, force: true }));
+    const d = doc(`guests/${g}`);
+    expect(d.members.map((m) => m.name)).toEqual(["Carla", "Diane"]);
+    expect(d.roleKeys).toEqual([]);
+    expect(d.history.at(-1).label).toBe("Party member removed: Annabelle (was Bridesmaid)");
+    expect((await api("guests", u.camille, { action: "removeMember", guestId: g, memberId: "primary" })).status).toBe(400);
+  });
+
+  it("the invitation stays party-based: one link, 5 seats; the guest answers 3 of 5, then 4 of 5", async () => {
+    const { g } = await party();
+    ok(await api("setup", u.camille, { action: "save", setup: { coupleNames: "Camille & Carlo", weddingDate: "2027-02-14", rsvpEnabled: true } }));
+    const token = ok(await api("guests", u.camille, { action: "inviteLink", guestId: g })).path.split("/").pop();
+    const invite = async (body) => JSON.parse((await createInviteHandler(deps())({ httpMethod: "POST", headers: {}, body: JSON.stringify(body) })).body);
+    expect((await invite({ action: "view", token })).invitation.guest).toMatchObject({ name: "Sanrah", seats: 5 });
+    await invite({ action: "respond", token, rsvp: { status: "attending", confirmed: 3 } });
+    expect(doc(`guests/${g}`).history.at(-1).label).toBe("Guest responded: Attending · 3 of 5");
+    await invite({ action: "respond", token, rsvp: { status: "attending", confirmed: 4 } });
+    expect(doc(`guests/${g}`).history.at(-1).label).toBe("Guest changed RSVP: 3 of 5 → 4 of 5");
   });
 });

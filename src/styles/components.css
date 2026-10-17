@@ -3710,3 +3710,10 @@ tr.is-saving {
   .wl-crew .d-only { display: inline-block; }
   .wl-crew .m-only-inline { display: none; }
 }
+
+/* Owner-pilot Bridal: a party's named people in Guest Details. */
+.wl-party { padding: 0; margin: 0 0 var(--space-2); }
+.wl-member { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; min-height: 40px; padding: 4px 0; border-top: 1px solid var(--border); list-style: none; }
+.wl-member:first-child { border-top: 0; }
+.wl-member-name { flex: 1 1 8rem; min-width: 0; }
+.wl-mark.is-on { color: var(--success); }
