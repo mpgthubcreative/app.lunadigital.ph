@@ -884,6 +884,17 @@ The accepted Bridal design (Money | Tasks | Guests | More) is unchanged; this pa
   - **Live (temporary `pcarry-home-tmp`, a bill first due Sep 17, today Oct 18, removed):** 6/6.
   - **Checked:** October shows September overdue + October (₱10,000). Paying October (a double tap) leaves ₱5,000 with September still overdue. November still shows its own. Paying September leaves ₱0, with one record per month and two expenses.
 
+### 2026-10-18 · Bridal Money in the Household Expenses layout (c947dcf; presentation only)
+
+- **Tabs gone:** no My Money | Sample Budget tabs; Money opens on the couple's own records. The sample budget is a secondary view (+ Add → From sample budget, ‹ Money back) and counts nothing until a line is added.
+- **Top:** two equal boxes, Spent and To pay. A set budget is a quiet line under them ("Budget ₱500k · ₱420k left" / "over by …").
+- **Grouped list:** category headings without totals, in budget-category order. The row is the supplier / payee / description (a plan line without a supplier: "No supplier yet") with the total. Planned / Unpaid / Partial / Paid (or Overdue) and "₱330k left" sit quietly under it; the category isn't repeated.
+- **Unchanged:** ⋯ stays Edit / Details / Remove. No filter or search above the list. + Add: Expense (paid) / Supplier / Budget item / From sample budget. Categories use the same typed field as Household: suggestions, a new name created on save, duplicates prevented by case / space-insensitive matching.
+- **Payment logic unchanged:** moneyRows, moneySummary, supplier balances, payments, schedules, proofs and history are untouched; the Edit sheet still shows "₱470,000 paid · ₱330,000 remaining · Partial".
+- **Tests:**
+  - **Unit:** 1651 pass (Money tests rewritten for the grouped layout).
+  - **Live (temporary `pbm-wed-tmp`, removed):** 12/12 at 390 and 1280: Reception / Admiral Hotel ₱800k Partial · ₱330k left; Printing / MV Prints ₱40k Unpaid; Crew Meals / Planned ₱30k; Transportation / Bridal car fuel ₱3.5k Paid. Spent ₱473.5k, To pay ₱370k; the sample budget is reached from + Add; no sideways scroll.
+
 ## Plan (decisions made from the brief)
 
 ### Stage 1: Distributor
