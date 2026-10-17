@@ -175,14 +175,16 @@ const TEMPLATES = [
     modules: [...CORE, "expenses", "budget", "vendors", "vendorpayments", "tasks", "guests"],
     // Owner-pilot Bridal UX: no Dashboard. Money (budget, suppliers, other
     // expenses, payments: the Wedding Suppliers module) is the home page,
-    // then Tasks and Guests; the Budget categories sit with Users and
-    // Settings under More on a phone. Wedding Expenses and Supplier Payments
-    // keep their pages (opened from Money), not the menu. The dashboard
+    // then Tasks and Guests. Budget planning lives in Money (+ Add → Budget
+    // item, Sample Budget), so the Budget page left the menu like Wedding
+    // Expenses and Supplier Payments: their pages and data stay (opened from
+    // Money / old links); More holds Wedding Setup, Music & Program, Export
+    // & Backup, Users, Subscription, Settings. The dashboard
     // module itself stays (core) so it can come back.
     navigation: ["vendors", "tasks", "guests", "budget", "expenses", "vendorpayments", "users", "settings"],
     mobileTabs: ["vendors", "tasks", "guests"],
     navHidden: ["dashboard"],
-    menuHidden: ["expenses", "vendorpayments"],
+    menuHidden: ["budget", "expenses", "vendorpayments"],
     home: "vendors",
     dashboard: {
       // Selected period (spending, payments made), then the current state (as of now).

@@ -34,6 +34,9 @@ export const canBackup = (session) => session?.member?.permissions?.["billing.vi
 export const showExportPage = (session) => canBackup(session) || exportListsFor(session).length > 0;
 // Owner-pilot Bridal: Wedding Setup (the invitation + RSVP settings), under More.
 export const SETUP_ROUTE = Object.freeze({ path: "/wedding-setup", label: "Wedding Setup", moduleId: "weddingsetup" });
+// Owner-pilot Bridal: Music & Program (ceremony / reception sequence and songs), under More.
+export const PROGRAM_ROUTE = Object.freeze({ path: "/wedding-program", label: "Music & Program", moduleId: "weddingprogram" });
+export const canSeeWeddingProgram = (session) => snapshotWorkspaceTemplateId(session?.entitlements) === "bridal-expense" && session?.member?.permissions?.["tasks.view"] === true && canUseModule(accessOf(session), "tasks");
 export const canSeeWeddingSetup = (session) => snapshotWorkspaceTemplateId(session?.entitlements) === "bridal-expense" && session?.member?.permissions?.["guests.view"] === true && canUseModule(accessOf(session), "guests");
 
 export function buildRoutes(session) {
@@ -44,6 +47,7 @@ export function buildRoutes(session) {
   if (canSeeSubscription(session)) routes.push({ ...SUBSCRIPTION_ROUTE });
   if (showExportPage(session)) routes.push({ ...EXPORT_ROUTE });
   if (canSeeWeddingSetup(session)) routes.push({ ...SETUP_ROUTE });
+  if (canSeeWeddingProgram(session)) routes.push({ ...PROGRAM_ROUTE });
   // Owner-pilot UX: a workspace whose home isn't the Dashboard (Household:
   // Payroll) sends "/" (sign-in, old links) there.
   const home = getWorkspaceTemplate(snapshotWorkspaceTemplateId(session.entitlements))?.home;
@@ -57,6 +61,7 @@ export function routeAllowed(session, route) {
   if (route && route.moduleId === SUBSCRIPTION_ROUTE.moduleId) return canSeeSubscription(session);
   if (route && route.moduleId === EXPORT_ROUTE.moduleId) return showExportPage(session);
   if (route && route.moduleId === SETUP_ROUTE.moduleId) return canSeeWeddingSetup(session);
+  if (route && route.moduleId === PROGRAM_ROUTE.moduleId) return canSeeWeddingProgram(session);
   return Boolean(route && route.moduleId) && canUseModule(accessOf(session), route.moduleId);
 }
 

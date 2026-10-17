@@ -9,6 +9,7 @@ import { mount as mountBudget } from "../../src/modules/wedding/budget.js";
 import { mount as mountExpenses, parseWeddingExpense } from "../../src/modules/wedding/expenses.js";
 import { mount as mountSuppliers, toSupplierInput, paidState, moneySummary, shortPeso, moneyRows } from "../../src/modules/wedding/suppliers.js";
 import { mount as mountSetup } from "../../src/modules/wedding/setup.js";
+import { mount as mountProgram } from "../../src/modules/wedding/program.js";
 import { renderInvitePage, inviteTokenFrom } from "../../src/app/invite.js";
 import { guessService } from "../../src/modules/wedding/categories.js";
 import { mount as mountDownloads } from "../../src/modules/downloads/index.js";
@@ -1132,5 +1133,85 @@ describe("the bell in a wedding (Owner-pilot Bridal UX): Needs attention, Money 
     await flush();
     expect(api2).not.toHaveBeenCalledWith("wedding-attention");
     b2.stop();
+  });
+});
+
+describe("Owner-pilot Bridal: Music & Program (More)", () => {
+  const ITEMS = [
+    { id: "p1", section: "ceremony", order: 10, moment: "Groom entrance", song: "Turning Page", durationSec: 257, person: null, notes: null },
+    { id: "p2", section: "ceremony", order: 20, moment: "Bride entrance", song: "Moon River", durationSec: 177, person: "Bride & father", notes: null },
+    { id: "p3", section: "ceremony", order: 30, moment: "Recessional", song: null, durationSec: null, person: null, notes: null },
+    { id: "p4", section: "reception", order: 10, moment: "Guest waiting", song: "Lounge playlist", durationSec: 3600, person: null, notes: null },
+  ];
+  const progApi = (items = ITEMS) => vi.fn(async (_p, { body }) => (body.action === "list" ? { items } : body.action === "create" ? { itemId: "pNew" } : {}));
+
+  it("Ceremony | Reception and My Program | Sample Program; one line per moment: Moment | Song | Duration | ⋯", async () => {
+    const api = progApi();
+    mountProgram(container, wedding(), { api, toast: () => {} });
+    await flush();
+    expect(container.querySelector(".page-header h1, .page-header .page-title")?.textContent || container.textContent).toContain("Music & Program");
+    expect([...container.querySelectorAll('[data-role="seg-section"] .seg-btn')].map((b) => b.textContent)).toEqual(["Ceremony", "Reception"]);
+    expect([...container.querySelectorAll('[data-role="seg-mode"] .seg-btn')].map((b) => b.textContent)).toEqual(["My Program", "Sample Program"]);
+    const rows = [...container.querySelectorAll('[data-role="program"] .wl-prog')].map((r) => [r.querySelector(".wl-prog-moment").textContent, r.querySelector('[data-role="song"]').textContent, r.querySelector('[data-role="duration"]').textContent]);
+    expect(rows).toEqual([["Groom entrance", "Turning Page", "4:17"], ["Bride entrance", "Moon River", "2:57"], ["Recessional", "—", "—"]]);
+    expect(container.querySelectorAll('.page-header [data-act="new"]').length).toBe(1);
+    // Person / notes aren't on the row.
+    expect(container.querySelector('[data-item="p2"]').textContent).not.toContain("Bride & father");
+    // Order: first can't move up, last can't move down.
+    const items = (id) => [...container.querySelectorAll(`[data-item="${id}"] .menu-item`)].map((b) => b.textContent);
+    expect(items("p1")).toEqual(["Edit", "Move down", "Delete"]);
+    expect(items("p2")).toEqual(["Edit", "Move up", "Move down", "Delete"]);
+    expect(items("p3")).toEqual(["Edit", "Move up", "Delete"]);
+    container.querySelector('[data-item="p3"] [data-act="up"]').click();
+    await flush();
+    expect(api).toHaveBeenCalledWith("wedding-program", { method: "POST", body: { action: "move", itemId: "p3", direction: "up" } });
+    container.querySelector('[data-act="seg"][data-seg="section"][data-value="reception"]').click();
+    await flush();
+    expect([...container.querySelectorAll('[data-role="program"] .wl-prog-moment')].map((x) => x.textContent)).toEqual(["Guest waiting"]);
+    expect(container.querySelector('[data-item="p4"] [data-role="duration"]').textContent).toBe("1:00:00");
+  });
+
+  it("+ Add: Moment, Song, Duration up front; Person / group and Notes under More options; '4:17' is saved as seconds", async () => {
+    const api = progApi();
+    mountProgram(container, wedding(), { api, toast: () => {} });
+    await flush();
+    container.querySelector('[data-act="new"]').click();
+    await flush();
+    const form = lastForm();
+    expect(document.querySelector(".modal-backdrop .card-title, .modal-backdrop h2").textContent).toBe("Add ceremony moment");
+    expect(["moment", "song", "duration", "person", "notes"].every((n) => form.elements[n])).toBe(true);
+    form.elements.moment.value = "Signing";
+    form.elements.song.value = "Love Wins All";
+    form.elements.duration.value = "4:30";
+    form.elements.person.value = "Principal sponsors";
+    submit(form);
+    await flush();
+    expect(api).toHaveBeenCalledWith("wedding-program", { method: "POST", body: { action: "create", item: { section: "ceremony", moment: "Signing", song: "Love Wins All", durationSec: 270, person: "Principal sponsors", notes: null } } });
+  });
+
+  it("Sample Program: common moments without songs, nothing added by itself; + Add puts ONE moment in the current part", async () => {
+    const api = progApi();
+    mountProgram(container, wedding(), { api, toast: () => {} });
+    await flush();
+    container.querySelector('[data-act="seg"][data-seg="mode"][data-value="sample"]').click();
+    await flush();
+    const line = (t) => [...container.querySelectorAll(".wl-sample")].find((li) => li.querySelector(".wl-name").textContent === t);
+    expect(line("Groom entrance").querySelector('[data-role="added"]').textContent).toBe("Added ✓");
+    expect(api.mock.calls.filter(([, o]) => o.body.action === "create")).toEqual([]);
+    line("Signing").querySelector('[data-act="sample-add"]').click();
+    await flush();
+    expect(api).toHaveBeenCalledWith("wedding-program", { method: "POST", body: { action: "create", item: { section: "ceremony", moment: "Signing" } } });
+    container.querySelector('[data-act="seg"][data-seg="section"][data-value="reception"]').click();
+    await flush();
+    expect([...container.querySelectorAll(".wl-sample .wl-name")].map((n) => n.textContent)).toContain("Father & daughter dance");
+  });
+
+  it("without tasks.manage: read only (no + Add, no Move / Delete)", async () => {
+    const s = wedding("manager");
+    delete s.member.permissions["tasks.manage"];
+    mountProgram(container, s, { api: progApi(), toast: () => {} });
+    await flush();
+    expect(container.querySelector('[data-act="new"]')).toBeNull();
+    expect([...container.querySelectorAll('[data-item="p2"] .menu-item')].map((b) => b.textContent)).toEqual(["Details"]);
   });
 });

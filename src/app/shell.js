@@ -18,7 +18,7 @@ import { html, render } from "../lib/html.js";
 import { icon, lunaMark } from "../components/icons.js";
 import { initials } from "../lib/format.js";
 import { mountBell } from "./notification-bell.js";
-import { showExportPage, canSeeWeddingSetup } from "./routes.js";
+import { showExportPage, canSeeWeddingSetup, canSeeWeddingProgram } from "./routes.js";
 
 // One bell per rendered shell (a business switch renders a new shell).
 let bell = null;
@@ -30,7 +30,7 @@ const SUBSCRIPTION_MESSAGES = {
 };
 
 // The purpose of each page decides its group (and nothing else).
-const MANAGE = new Set(["users", "settings", "imports", "subscription", "downloads", "weddingsetup"]);
+const MANAGE = new Set(["users", "settings", "imports", "subscription", "downloads", "weddingsetup", "weddingprogram"]);
 export const navGroup = (id) => (id === "dashboard" ? "overview" : id === "reports" ? "analyze" : MANAGE.has(id) ? "manage" : "work");
 const GROUP_LABELS = { overview: "Overview", work: "Work", analyze: "Analyze", manage: "Manage" };
 // One-word labels for the phone tab bar (display only; ids never change).
@@ -87,6 +87,12 @@ export function renderShell(root, session, handlers = {}) {
   if (canSeeWeddingSetup(session)) {
     const at = nav.findIndex((m) => navGroup(m.id) === "manage");
     nav.splice(at < 0 ? nav.length : at, 0, { id: "weddingsetup", path: "/wedding-setup", label: "Wedding Setup", icon: "heart" });
+  }
+  // Owner-pilot Bridal: Music & Program right after Wedding Setup.
+  if (canSeeWeddingProgram(session)) {
+    const setupAt = nav.findIndex((m) => m.id === "weddingsetup");
+    const at = setupAt >= 0 ? setupAt + 1 : nav.findIndex((m) => navGroup(m.id) === "manage");
+    nav.splice(at < 0 ? nav.length : at, 0, { id: "weddingprogram", path: "/wedding-program", label: "Music & Program", icon: "music" });
   }
   // Owner-pilot: Export & Backup, one page under More / Manage (every workspace).
   if (showExportPage(session)) {

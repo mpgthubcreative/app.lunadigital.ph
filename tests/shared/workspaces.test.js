@@ -462,7 +462,7 @@ describe("navigation", () => {
 
   it("Bridal (Owner-pilot UX): Dashboard hidden, Money (vendors) home; Expenses / Payments routed but off the menu; the validator holds menuHidden", () => {
     const t = WORKSPACE_TEMPLATES["bridal-expense"];
-    expect(t).toMatchObject({ navHidden: ["dashboard"], home: "vendors", menuHidden: ["expenses", "vendorpayments"], mobileTabs: ["vendors", "tasks", "guests"] });
+    expect(t).toMatchObject({ navHidden: ["dashboard"], home: "vendors", menuHidden: ["budget", "expenses", "vendorpayments"], mobileTabs: ["vendors", "tasks", "guests"] });
     expect(t.modules).toContain("dashboard");
     expect(validateWorkspaceTemplate(t, CTX)).toEqual([]);
     expect(validateWorkspaceTemplate({ ...t, menuHidden: ["vendors"] }, CTX)).toContain("menuHidden vendors must be a navigation module that isn't home or a phone tab");

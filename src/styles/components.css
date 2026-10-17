@@ -3677,3 +3677,11 @@ tr.is-saving {
 .ws-hero-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
 .ws-hero-actions label.btn { cursor: pointer; }
 .ws-hero-actions label.btn:focus-within { outline: 2px solid var(--focus, currentColor); outline-offset: 2px; }
+
+/* Owner-pilot Bridal: Music & Program. Moment | Song | Duration | ⋯ on one line. */
+.wl-prog-tools { flex-wrap: wrap; gap: var(--space-2); }
+.wl-prog-main { flex-direction: row; align-items: center; gap: var(--space-3); }
+.wl-prog-moment { flex: 1 1 45%; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wl-prog-song { flex: 1 1 55%; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-muted); font-size: var(--text-sm); text-align: left; }
+.wl-prog-song.is-quiet { opacity: 0.7; }
+.wl-prog-dur { flex: none; min-width: 3.2rem; text-align: right; font-variant-numeric: tabular-nums; font-size: var(--text-sm); color: var(--text-muted); }

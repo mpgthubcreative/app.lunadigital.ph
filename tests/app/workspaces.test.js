@@ -43,10 +43,12 @@ describe("navigation", () => {
     expect(navOf()).toEqual(["/ Dashboard", "/orders Orders", "/payments Payments", "/inventory Inventory", "/customers Customers", "/expenses Operating Expenses", "/reports Reports", "/imports Imports", "/export Export & Backup", "/users Users", "/subscription Subscription", "/settings Settings"]);
   });
 
-  it("Bridal: Money / Tasks / Guests / Budget, no Dashboard, no Orders / Inventory / Payments", () => {
+  it("Bridal: Money / Tasks / Guests; More = Wedding Setup, Music & Program, Export & Backup, Users, Subscription, Settings (no Budget page: it's in Money)", () => {
     renderShell(document.getElementById("app"), bridal());
-    // Owner-pilot Bridal UX: Wedding Expenses and Supplier Payments open from Money (no menu entry).
-    expect(navOf()).toEqual(["/wedding-suppliers Money", "/wedding-tasks Tasks", "/guests Guests", "/budget Budget", "/wedding-setup Wedding Setup", "/export Export & Backup", "/users Users", "/subscription Subscription", "/settings Settings"]);
+    // Owner-pilot Bridal UX: Wedding Expenses, Supplier Payments and Budget open from Money (no menu entry).
+    expect(navOf()).toEqual(["/wedding-suppliers Money", "/wedding-tasks Tasks", "/guests Guests", "/wedding-setup Wedding Setup", "/wedding-program Music & Program", "/export Export & Backup", "/users Users", "/subscription Subscription", "/settings Settings"]);
+    // The Budget page keeps its route (data and Money behaviour unchanged).
+    expect(buildRoutes(bridal()).some((r) => r.path === "/budget")).toBe(true);
   });
 
   it("Bridal staff: roles still apply", () => {
