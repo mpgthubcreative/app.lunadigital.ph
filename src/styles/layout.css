@@ -7,6 +7,7 @@
   display: grid;
   grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
   min-height: 100vh;
+  min-height: 100dvh; /* Safari: the height with its toolbar showing */
 }
 
 /* ---------- Sidebar ---------- */
@@ -291,12 +292,20 @@
     display: none;
   }
 
+  /* Owner-pilot: one bottom-space rule for every phone page (Bridal and
+     the rest): content ends above the tab bar + safe area, and anything
+     scrolled into view (focus, links) stops above it too. */
+  html {
+    scroll-padding-bottom: var(--bottom-nav-space);
+  }
+
   .topbar {
-    padding: 0 var(--space-4);
+    height: calc(var(--topbar-height) + env(safe-area-inset-top, 0px));
+    padding: env(safe-area-inset-top, 0px) max(var(--space-4), env(safe-area-inset-right, 0px)) 0 max(var(--space-4), env(safe-area-inset-left, 0px));
   }
 
   .content {
-    padding: var(--space-4) var(--space-4) calc(var(--tabbar-height) + var(--space-6) + env(safe-area-inset-bottom, 0px));
+    padding: var(--space-4) max(var(--space-4), env(safe-area-inset-right, 0px)) var(--bottom-nav-space) max(var(--space-4), env(safe-area-inset-left, 0px));
   }
 
   .banner {
@@ -311,7 +320,7 @@
     grid-auto-flow: column;
     grid-auto-columns: minmax(0, 1fr);
     min-height: var(--tabbar-height);
-    padding: var(--space-1) var(--space-1) calc(var(--space-1) + env(safe-area-inset-bottom, 0px));
+    padding: var(--space-1) max(var(--space-1), env(safe-area-inset-right, 0px)) calc(var(--space-1) + var(--safe-bottom)) max(var(--space-1), env(safe-area-inset-left, 0px));
     background: rgba(255, 255, 255, 0.97);
     backdrop-filter: blur(8px);
     border-top: 1px solid var(--border);
@@ -370,8 +379,9 @@
     flex-direction: column;
     gap: var(--space-2);
     max-height: 80vh;
+    max-height: 80dvh;
     overflow-y: auto;
-    padding: var(--space-2) var(--space-4) calc(var(--space-5) + env(safe-area-inset-bottom, 0px));
+    padding: var(--space-2) var(--space-4) calc(var(--space-5) + var(--safe-bottom));
     background: var(--surface);
     border-radius: 18px 18px 0 0;
     box-shadow: var(--shadow-lg);

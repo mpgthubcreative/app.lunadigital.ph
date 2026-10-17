@@ -1582,7 +1582,7 @@ a.item:hover {
 @media (max-width: 719px) {
   .toast-region {
     left: var(--space-4);
-    bottom: calc(var(--tabbar-height) + var(--space-3));
+    bottom: calc(var(--tabbar-height) + var(--safe-bottom) + var(--space-3));
   }
 }
 
@@ -3589,7 +3589,8 @@ tr.is-saving {
   max-height: calc(6 * 49px + 2px);
   overflow-x: hidden;
   overflow-y: auto;
-  overscroll-behavior: contain;
+  /* At a box's end the page keeps scrolling (no trapped finger on a phone). */
+  overscroll-behavior-y: auto;
   -webkit-overflow-scrolling: touch;
   scrollbar-width: thin;
 }

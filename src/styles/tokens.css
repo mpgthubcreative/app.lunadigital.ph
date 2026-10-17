@@ -88,6 +88,11 @@
   --sidebar-rail: 72px;
   --topbar-height: 60px;
   --tabbar-height: 62px;
+  /* Phone: the room the page keeps free at the bottom so the last row ends
+     clearly above the tab bar, the iPhone home indicator and Safari's
+     toolbar (safe-area insets need viewport-fit=cover in index.html). */
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --bottom-nav-space: calc(var(--tabbar-height) + var(--safe-bottom) + var(--space-8));
   --content-max: 1240px;
   --touch: 44px;                /* minimum touch target on phones */
 
