@@ -352,3 +352,86 @@ describe("Scheduled one-time expenses", () => {
     for (const m of ["2026-01", "2027-01", "2028-10"]) expect(ok(await month(m)).month).toMatchObject({ month: m, spent: 0, billsRemaining: 0, bills: [], payroll: [] });
   });
 });
+
+describe("Recurring bills: one occurrence per bill per period (no duplicates)", () => {
+  const MONTHS = ["2026-10", "2026-11", "2026-12", "2027-01", "2027-02"];
+  const create = async (description, amount, cat, dueDate = OCT(17)) => ok(await api("schedule", u.carlo, { action: "create", payment: { description, category: cat, amount, dueDate, repeat: { every: "month", interval: 1 } } }), 201).scheduleId;
+  const pay = (sid, key, day = OCT(17)) => api("schedule", u.carlo, { action: "markPaid", scheduleId: sid, payment: { method: "cash", paidDate: day, final: true, key } });
+  const rows = (m) => m.bills.map((b) => `${b.description} ${b.dueDate}`).sort();
+  const months = async () => Object.fromEntries(await Promise.all(MONTHS.map(async (mm) => [mm, ok(await month(mm)).month])));
+
+  it("Parking / Meralco / Assoc Dues monthly: exactly one occurrence each in Oct 2026 … Feb 2027; viewing / reloading months creates nothing", async () => {
+    at("2026-10-17");
+    const util = await category("Utilities");
+    await create("Parking", 450000, util);
+    await create("Meralco", 923800, util);
+    await create("Assoc Dues", 530000, util);
+    const before = under("scheduledPayments").length;
+    for (let pass = 0; pass < 3; pass++) {
+      const all = await months();
+      for (const mm of MONTHS) {
+        expect(rows(all[mm]), `${mm} pass ${pass}`).toEqual([`Assoc Dues ${mm}-17`, `Meralco ${mm}-17`, `Parking ${mm}-17`]);
+        expect(all[mm].billsRemaining).toBe(450000 + 923800 + 530000);
+      }
+    }
+    expect(under("scheduledPayments")).toHaveLength(before); // projections are never stored
+    expect(under("scheduledPayments").every((s) => s.recurringId === s.id)).toBe(true);
+  });
+
+  it("paying makes the next one once (retry safe); Mark unpaid + pay again makes no second next; months stay single", async () => {
+    at("2026-10-17");
+    const util = await category("Utilities");
+    const sid = await create("Meralco", 923800, util);
+    const r1 = ok(await pay(sid, "kmeralcooct01"));
+    const r2 = ok(await pay(sid, "kmeralcooct01"));
+    expect(r2.alreadyPaid).toBe(true);
+    expect(under("scheduledPayments")).toHaveLength(2);
+    expect(docAt(`scheduledPayments/${r1.nextScheduleId}`)).toMatchObject({ dueDate: "2026-11-17", recurringId: sid, previousId: sid });
+    // Mark unpaid (the expense is removed) -> October reopens; paying it again reuses November.
+    ok(await api("expenses", u.carlo, { action: "remove", expenseId: r1.expenseId, reason: "Marked unpaid" }));
+    const all = await months();
+    expect(rows(all["2026-10"])).toEqual(["Meralco 2026-10-17"]);
+    for (const mm of ["2026-11", "2026-12", "2027-01", "2027-02"]) expect(rows(all[mm]), mm).toEqual([`Meralco ${mm}-17`]);
+    const r3 = ok(await pay(sid, "kmeralcooct02"));
+    expect(r3.nextScheduleId).toBeUndefined();
+    expect(under("scheduledPayments")).toHaveLength(2);
+    expect(under("expenses").filter((e) => e.scheduleId === sid && e.status === "active")).toHaveLength(1);
+  });
+
+  it("if the next occurrence already exists for that date, paying reuses it", async () => {
+    at("2026-10-17");
+    const util = await category("Utilities");
+    const sid = await create("Parking", 450000, util);
+    // An older Parking chain record already sitting on Nov 17 (same bill).
+    world.db.docs.set(`businesses/${H}/scheduledPayments/parkingNov00001`, { ...docAt(`scheduledPayments/${sid}`), dueDate: "2026-11-17", previousId: null, revision: 1 });
+    const r = ok(await pay(sid, "kparkingoct01"));
+    expect(r).toMatchObject({ nextScheduleId: "parkingNov00001", nextExisted: true });
+    expect(under("scheduledPayments").filter((s) => s.description === "Parking")).toHaveLength(2);
+    expect(docAt(`scheduledPayments/${sid}`).nextId).toBe("parkingNov00001");
+  });
+
+  it("the pilot's case: moving the next occurrence back onto a date the bill already has is refused", async () => {
+    at("2026-10-17");
+    const util = await category("Utilities");
+    const sid = await create("Assoc Dues", 530000, util);
+    const next = ok(await pay(sid, "kassococt0001")).nextScheduleId;
+    const r = await api("schedule", u.carlo, { action: "update", scheduleId: next, changes: { dueDate: OCT(17) } });
+    expect(r.status).toBe(400);
+    expect(r.body.message).toMatch(/already has a bill due 2026-10-17/);
+    expect(docAt(`scheduledPayments/${next}`).dueDate).toBe("2026-11-17");
+    // Another date is fine.
+    ok(await api("schedule", u.carlo, { action: "update", scheduleId: next, changes: { dueDate: "2026-11-20" } }));
+  });
+
+  it("older data with duplicates (two unpaid occurrences of one bill): every month still lists it once and Bills remaining counts it once", async () => {
+    at("2026-10-17");
+    const util = await category("Utilities");
+    const sid = await create("Parking", 450000, util);
+    world.db.docs.set(`businesses/${H}/scheduledPayments/parkingDup00001`, { ...docAt(`scheduledPayments/${sid}`) }); // same bill, same date
+    const all = await months();
+    for (const mm of MONTHS) {
+      expect(rows(all[mm]), mm).toEqual([`Parking ${mm}-17`]);
+      expect(all[mm].billsRemaining, mm).toBe(450000);
+    }
+  });
+});

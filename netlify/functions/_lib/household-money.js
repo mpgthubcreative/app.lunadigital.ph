@@ -78,21 +78,37 @@ export async function householdMonth({ db, tenant, business, uid = null, month =
   //     listed, never in Bills remaining, Spent only once paid
   const current = m === today.slice(0, 7);
   const monthBills = [];
-  for (const d of bills.docs) {
-    const s = { id: d.id, ...d.data() };
+  // One recurring bill = one chain (recurringId; older records: their own
+  // id). Later months are projected from the chain's LATEST unpaid
+  // occurrence only, and the same bill + date is listed once.
+  const stored = bills.docs.map((d) => ({ id: d.id, ...d.data() }));
+  const chainOf = (s) => s.recurringId ?? s.id;
+  const latest = new Map();
+  for (const s of stored) if (s.repeat && typeof s.dueDate === "string" && (!latest.has(chainOf(s)) || s.dueDate > latest.get(chainOf(s)).dueDate)) latest.set(chainOf(s), s);
+  const ids = new Set(stored.map((s) => s.id));
+  const seen = new Set();
+  const once = (s, due) => {
+    const k = `${chainOf(s)}|${due}`;
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  };
+  for (const s of stored) {
     if (typeof s.dueDate !== "string") continue;
     const base = { scheduleId: s.id, description: s.description, category: s.category, categoryName: s.categoryName ?? null, payee: s.payee ?? null, repeat: s.repeat ?? null, changesByPeriod: Array.isArray(s.amountSchedule) && s.amountSchedule.length > 1 };
     if (scheduleKind(s) === "scheduled") {
       if (s.dueDate >= start && s.dueDate <= end) monthBills.push({ ...base, id: s.id, kind: "scheduled", amount: upcomingPart(s), dueDate: s.dueDate, projected: false });
       continue;
     }
-    if (s.dueDate <= end && (current || s.dueDate >= start) && upcomingPart(s) > 0) monthBills.push({ ...base, id: s.id, kind: "bill", amount: upcomingPart(s), dueDate: s.dueDate, projected: false });
-    if (s.repeat) {
+    if (s.dueDate <= end && (current || s.dueDate >= start) && upcomingPart(s) > 0 && once(s, s.dueDate)) monthBills.push({ ...base, id: s.id, kind: "bill", amount: upcomingPart(s), dueDate: s.dueDate, projected: false });
+    // Project only from the chain's latest occurrence (an older reopened one
+    // whose next one exists would project the same months again).
+    if (s.repeat && latest.get(chainOf(s)) === s && !(s.nextId && ids.has(s.nextId))) {
       let due = s.dueDate;
       for (let i = 0; i < 400; i++) {
         due = nextDueDate(due, s.repeat, s.repeatDay ?? null);
         if (due > end) break;
-        if (due >= start) monthBills.push({ ...base, id: `${s.id}@${due}`, kind: "bill", amount: amountOn(s.amountSchedule, due) ?? s.amount, dueDate: due, projected: true });
+        if (due >= start && once(s, due)) monthBills.push({ ...base, id: `${s.id}@${due}`, kind: "bill", amount: amountOn(s.amountSchedule, due) ?? s.amount, dueDate: due, projected: true });
       }
     }
   }

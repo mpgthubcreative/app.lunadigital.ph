@@ -113,7 +113,7 @@ export const SAMPLE_BILLS = Object.freeze([
 ]);
 const nameKey = (t) => String(t || "").trim().toLocaleLowerCase("en");
 // One row per bill: the unpaid occurrences of the same bill (a reopened one
-// and the next one already made, linked by nextId) show once, as the latest.
+// and the next one already made) show once, as the latest.
 export function billRows(rows) {
   const upcoming = rows.filter((r) => r.status === "upcoming" && isBill(r));
   const byId = new Map(upcoming.map((r) => [r.id, r]));
@@ -122,14 +122,16 @@ export function billRows(rows) {
     for (let i = 0; i < 50 && x.nextId && byId.has(x.nextId); i++) x = byId.get(x.nextId);
     return x;
   };
+  // The same recurring bill = the same recurringId (older records: linked by nextId).
   const groups = new Map();
   for (const r of upcoming) {
-    const h = head(r);
-    const g = groups.get(h.id) || { bill: h, occurrences: [] };
+    const key = r.recurringId ?? head(r).id;
+    const g = groups.get(key) || { occurrences: [] };
     g.occurrences.push(r);
-    groups.set(h.id, g);
+    groups.set(key, g);
   }
-  return [...groups.values()].sort((a, b) => a.bill.description.localeCompare(b.bill.description));
+  // The row shows the latest occurrence (the bill as it is now).
+  return [...groups.values()].map((g) => ({ ...g, bill: g.occurrences.reduce((x, y) => (y.dueDate > x.dueDate ? y : x)) })).sort((a, b) => a.bill.description.localeCompare(b.bill.description));
 }
 
 export function mount(container, session, { data = defaultData, toast = defaultToast, confirm = confirmDialog, now = () => new Date() } = {}) {
