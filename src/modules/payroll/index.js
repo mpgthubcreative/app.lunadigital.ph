@@ -237,6 +237,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     let calc = false; // "View calculation" open
     let correcting = false; // Owner-pilot polish: Correct payroll mode (paid)
     let detailsOpen = false;
+    let releasing = false; // the Pay salary form is open (one at a time)
     const staffRec = () => state.staff.find((s) => s.id === p?.staffId) || { payCycle: p?.payCycle || "semi_monthly" };
     const close = () => {
       backdrop.remove();
@@ -550,6 +551,11 @@ export function mount(container, session, { data = defaultData, toast = defaultT
           toast(err.message || "Something went wrong", "danger");
         }
       } else if (x === "release") {
+        // Step 2 (review / payment form). Only its own "Pay salary" button
+        // pays; one form at a time; the button arms after a moment so the tap
+        // that opened it can't press it.
+        if (releasing || p.status !== "draft") return undefined;
+        releasing = true;
         const ongoing = today < p.periodEnd;
         // Upcoming days of the period (after today) that can be paid now.
         const upcoming = ongoing ? daysIn({ start: addDays(today, 1), end: p.periodEnd }) : [];
@@ -567,7 +573,8 @@ export function mount(container, session, { data = defaultData, toast = defaultT
             { name: "proof", label: "Proof (screenshot or PDF, optional)", type: "file", accept: "image/jpeg,image/png,image/webp,application/pdf" },
             { name: "reference", label: "Reference no. (optional)", more: true },
           ],
-          submitLabel: "Mark paid",
+          submitLabel: "Pay salary",
+          armMs: 700,
           onSubmit: async (v) => {
             const proof = v.proof ? await prepareProof(v.proof, { pdf: true }) : null;
             const payment = { method: v.method, ...(v.reference ? { reference: v.reference } : {}), paidDate: v.paidDate || today, ...(ongoing && Number(v.prepaidDays) > 0 ? { prepaidDays: Number(v.prepaidDays) } : {}) };
@@ -575,6 +582,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
             return data.payrollApi({ action: "release", ...target, payment, expectedNetPay: p.netPay, ...(proof ? { proof } : {}) });
           },
         });
+        releasing = false;
         if (r) {
           payrollId = r.payrollId || payrollId;
           link = r.receiptToken ? receiptUrl(r.receiptToken) : null;

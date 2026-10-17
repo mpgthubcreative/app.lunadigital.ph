@@ -263,6 +263,7 @@ describe("Payroll", () => {
     await flush();
     const form = lastForm();
     form.elements.method.value = "gcash";
+    await new Promise((r) => setTimeout(r, 750)); // the Pay salary button arms after a moment
     submit(form);
     await until(() => document.querySelector('[data-role="link-text"]'));
     expect(data.payrollApi).toHaveBeenCalledWith({ action: "release", payrollId: "staffMaria0001_2026-10-01", payment: { method: "gcash", paidDate: "2026-10-16" }, expectedNetPay: 670000 });
@@ -270,6 +271,43 @@ describe("Payroll", () => {
     document.querySelector('[data-x="copy"]').click();
     await until(() => copy.mock.calls.length);
     expect(copy).toHaveBeenCalledWith(receiptUrl("tokTOKtokTOKtokTOKtokTOKtokTOKto"));
+  });
+
+  it("strict pay flow: Pay opens the review / payment form only; nothing is paid until Pay salary is deliberately pressed; Cancel leaves it unpaid; one form at a time; a double tap pays once", async () => {
+    const data = fakeData();
+    mountPayroll(container, home(), { data, now: NOW, toast: () => {} });
+    await flush();
+    const released = () => data.payrollApi.mock.calls.filter((c) => c[0].action === "release").length;
+    // Step 1 -> Step 2 from the row's Pay.
+    container.querySelector('[data-act="pay"]').click();
+    await until(() => document.querySelectorAll(".modal-backdrop form").length === 1);
+    let form = lastForm();
+    const btn = form.querySelector('[data-action="submit"]');
+    expect(btn.textContent).toBe("Pay salary");
+    expect(btn.disabled).toBe(true); // arming: the opening tap can't press it
+    submit(form); // a tap carried over from the list
+    await flush();
+    expect(released()).toBe(0);
+    expect(document.querySelector('[data-role="link-text"]')).toBeNull(); // no success
+    // The panel's own Pay salary while the form is open: still one form.
+    document.querySelector('[data-role="payroll-view"] [data-x="release"]').click();
+    await flush();
+    expect(document.querySelectorAll(".modal-backdrop form")).toHaveLength(1);
+    // Cancel: still unpaid; reopening shows the form again, unpaid.
+    form.querySelector('[data-action="cancel"]').click();
+    await flush();
+    expect(released()).toBe(0);
+    expect(document.querySelector('[data-role="payroll-view"] [data-x="release"]')).toBeTruthy();
+    document.querySelector('[data-role="payroll-view"] [data-x="release"]').click();
+    await flush();
+    form = lastForm();
+    await new Promise((r) => setTimeout(r, 750));
+    expect(form.querySelector('[data-action="submit"]').disabled).toBe(false);
+    // Step 3 only after the deliberate press; a double tap pays once.
+    submit(form);
+    submit(form);
+    await until(() => document.querySelector('[data-role="link-text"]'));
+    expect(released()).toBe(1);
   });
 
   it("a household member without payroll.release can't pay; an advance deduction offers its plan actions", async () => {
@@ -555,6 +593,7 @@ describe("Payroll: automatic pay periods (Owner-pilot batch)", () => {
     expect(opts[0]).toBe("No, only what's earned so far");
     expect(opts[3]).toBe("3 upcoming days (Oct 17–19): +₱1,800.00");
     form.elements.prepaidDays.value = "3";
+    await new Promise((r) => setTimeout(r, 750));
     submit(form);
     await until(() => data.payrollApi.mock.calls.some((c) => c[0].action === "release"));
     expect(data.payrollApi).toHaveBeenCalledWith({ action: "release", staffId: maria.id, periodStart: "2026-10-16", payment: { method: "cash", paidDate: "2026-10-16", prepaidDays: 3 }, expectedNetPay: 60000 });

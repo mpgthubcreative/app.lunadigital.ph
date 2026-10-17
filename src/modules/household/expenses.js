@@ -19,7 +19,7 @@
 // method, reference, notes, receipt.
 
 import { html, render } from "../../lib/html.js";
-import { pageHeader, emptyState, badge, skeleton, kpiStrip } from "../../components/ui.js";
+import { pageHeader, emptyState, badge, skeleton } from "../../components/ui.js";
 import { formDialog } from "../../components/form-dialog.js";
 import { toast as defaultToast, confirmDialog } from "../../components/feedback.js";
 import { formatCentavos, formatDayId } from "../../lib/format.js";
@@ -188,14 +188,14 @@ export function mount(container, session, { data = defaultData, toast = defaultT
         ${state.error
           ? html`<section class="card">${emptyState({ title: "Couldn't load", body: state.error })}</section>`
           : html`
-            ${s ? kpiStrip([{ id: "spent", label: "Spent", value: money(s.spent) }, { id: "bills", label: "Bills remaining", value: money(s.billsRemaining) }], { role: "month-summary" }) : state.loading ? skeleton(1) : ""}
+            ${s ? html`<div class="hx-sum" data-role="month-summary"><div class="hx-sum-item" data-widget="spent"><span class="kpi-label">Spent</span><b class="kpi-value">${money(s.spent)}</b></div><div class="hx-sum-item" data-widget="bills"><span class="kpi-label">Bills remaining</span><b class="kpi-value">${money(s.billsRemaining)}</b></div></div>` : state.loading ? skeleton(1) : ""}
             ${state.loading
               ? skeleton(4)
               : !groups.length
                 ? html`<p class="stat-hint wl-none" data-role="none">No expenses this month yet.</p>`
                 : groups.map(
                     (g) => html`<section class="wl-section hx-group" data-group="${g.key}">
-                      <h2 class="wl-cat-head hx-group-head"><span class="wl-group-title">${g.name}</span><span class="hx-group-total" data-role="group-total">${money(g.total)}</span></h2>
+                      <h2 class="wl-cat-head hx-group-head"><span class="wl-group-title">${g.name}</span></h2>
                       <ul class="wl-list" data-role="group-rows">${g.rows.map(row)}</ul>
                     </section>`
                   )}

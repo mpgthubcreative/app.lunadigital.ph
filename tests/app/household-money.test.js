@@ -102,21 +102,19 @@ describe("Expenses (household statement)", () => {
   it("categories ARE the list: groups by total (largest first), each with its rows; the category isn't repeated in rows", async () => {
     await mountExp();
     const heads = $$(".hx-group-head").map(flat);
-    expect(heads).toEqual(["Utilities₱7,500.00", "Groceries₱5,750.00", "Household Staff₱5,565.00"]);
+    // Plain headings (no total on the header line), still ordered by the category's total.
+    expect(heads).toEqual(["Utilities", "Groceries", "Household Staff"]);
+    expect($('[data-role="group-total"]')).toBeNull();
     expect($$('[data-group="catUtilities01"] .wl-name').map((e) => e.textContent)).toEqual(["Meralco", "Parking"]);
     expect($$('[data-group="catGroceries01"] .wl-name').map((e) => e.textContent)).toEqual(["Puregold", "SM Supermarket"]);
     for (const r of $$(".hx-row")) expect(r.querySelector(".wl-name").textContent).not.toMatch(/^(Utilities|Groceries)$/);
   });
 
-  it("each group total = the sum of its visible rows; all groups = Spent + Bills remaining", async () => {
+  it("the visible rows add up to Spent + Bills remaining (nothing hidden, nothing twice); two equal summary boxes", async () => {
     await mountExp();
-    let all = 0;
-    for (const g of $$(".hx-group")) {
-      const rows = [...g.querySelectorAll(".hx-amt")].reduce((t, e) => t + peso(e.textContent), 0);
-      expect(peso(g.querySelector('[data-role="group-total"]').textContent), g.dataset.group).toBe(rows);
-      all += rows;
-    }
+    const all = $$(".hx-group .hx-amt").reduce((t, e) => t + peso(e.textContent), 0);
     expect(all).toBe(MONTH.spent + MONTH.billsRemaining);
+    expect($$('[data-role="month-summary"] .hx-sum-item')).toHaveLength(2);
   });
 
   it("payroll: one read-only row under Household Staff (no ⋯)", async () => {

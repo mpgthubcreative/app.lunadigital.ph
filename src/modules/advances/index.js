@@ -349,6 +349,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
             { name: "reference", label: "Reference (optional)", more: true },
           ],
           submitLabel: "Mark given",
+          armMs: 700, // a money step: only a deliberate press gives it
           onSubmit: async (v) => {
             const proof = v.proof ? await prepareProof(v.proof, { pdf: true }) : null;
             return api({ action: "markPaid", advanceId: a.id, release: { paidDate: v.paidDate || today, method: v.method, ...(v.reference ? { reference: v.reference } : {}) }, ...(proof ? { proof } : {}) });
