@@ -588,6 +588,21 @@ The accepted Bridal design (Money | Tasks | Guests | More) is unchanged; this pa
   - **Phone fix found during the checks:** Crew Meals rows now show meals and place under the name.
 - **Content source:** the reference sheets weren't available here, so requirements, roles and crew lists were built from the item lists in the Owner's notes. Items are short, editable labels.
 
+### 2026-10-17 · Phone: content ends above the bottom tab bar (ea07b13)
+
+- **Owner report:** on a phone (the Tasks Sample Checklist), rows went behind the bottom menu.
+- **Cause:** the page had no iPhone safe-area support (`viewport-fit=cover` was missing, so `env(safe-area-inset-*)` was always 0), and the shell used `100vh`, which is Safari's height with its toolbar hidden.
+  - **Not reproducible in desktop Chrome:** without an inset, every screen already cleared the bar.
+- **Fix: one global rule, no per-page patches.**
+  - **Bottom space:** a shared `--bottom-nav-space` (tab bar + safe area + a 32px gap) is used for the phone page padding and for `scroll-padding-bottom`.
+  - **Safe areas:** `viewport-fit=cover`; the top bar, tab bar, content and More sheet use the insets, and toasts sit above the safe area.
+  - **Heights:** `100dvh` / `80dvh`.
+  - **Guest category boxes:** they now let the page keep scrolling at their end (no trapped finger).
+  - **Unchanged:** the tab bar's height and the compact layout.
+- **Check (staging, 390px, with and without a simulated 34px iPhone home-indicator inset): 24/24.**
+  - **Screens:** Tasks (My Tasks, Sample Checklist), Money (My Money, Sample Budget), Guests (RSVP, Seating, Roles), Wedding Setup, Music & Program, Crew Meals and the More sheet.
+  - **Result:** on every one, the last row ends 33–600px above the tab bar after scrolling to the bottom.
+
 ## Plan (decisions made from the brief)
 
 ### Stage 1: Distributor
