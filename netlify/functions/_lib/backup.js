@@ -6,7 +6,9 @@
 // (nested values as JSON, timestamps as ISO text). Plus Export Info, Users /
 // Memberships and the Audit log; a wedding also gets Wedding Setup, Guest
 // Categories, RSVP History, Tables, Seating Assignments and Music & Program
-// as readable sheets.
+// as readable sheets; Luna Household gets Expenses, Bills, Recurring Items,
+// Categories and Budget under those names (+ readable Recurring Items and
+// Budget sheets).
 //
 // Never exported: credentials. Fields whose name says token / secret / hash
 // / password are dropped, and the invitation links live in a server-only
@@ -39,6 +41,9 @@ const NAMES = {
   budgets: "Budget totals", expenseCategories: "Budget", scheduledPayments: "Payment schedule", providers: "Providers", weddingSuppliers: "Suppliers", supplierPayments: "Supplier Payments", weddingTasks: "Tasks", guests: "Guests", settings: "Settings",
 };
 // Bridal sheet order (what the couple expects to find first).
+// Luna Household names for the shared money collections, and sheet order.
+const HOUSEHOLD_NAMES = { scheduledPayments: "Bills", expenseCategories: "Categories", budgets: "Budget record" };
+const HOUSEHOLD_ORDER = ["Export Info", "Staff", "Attendance", "Attendance requests", "Payroll", "Advances", "Expenses", "Bills", "Recurring Items", "Categories", "Budget", "Budget record", "Users & Memberships", "Audit log"];
 const WEDDING_ORDER = ["Export Info", "Wedding Setup", "Budget", "Budget totals", "Suppliers", "Supplier Payments", "Expenses", "Tasks", "Guest Categories", "Guests", "RSVP History", "Tables", "Seating Assignments", "Party Members", "Wedding Roles", "Music & Program", "Crew Meals", "Invitation Design", "Users & Memberships", "Audit log"];
 
 const iso = (v) => (v && typeof v.toDate === "function" ? v.toDate().toISOString() : v instanceof Date ? v.toISOString() : null);
@@ -90,6 +95,7 @@ const sheet = (name, rows) => ({ name, rows: rows.length ? rows : [["(none)"]], 
 export async function buildBackup({ db, tenant, business, entitlements, FieldPath, actor, now = new Date() }) {
   const template = getWorkspaceTemplate(entitlements?.workspaceTemplateId);
   const wedding = template?.id === "bridal-expense";
+  const home = template?.id === "household-payroll";
   const budget = { rows: 0 };
   const collections = [];
   for (const id of template?.modules || []) {
@@ -105,7 +111,7 @@ export async function buildBackup({ db, tenant, business, entitlements, FieldPat
   const data = {};
   for (const c of collections) {
     data[c] = await readAll(tenant.collection(c), FieldPath, budget);
-    add(NAMES[c] || c, tableOf(data[c]));
+    add((home && HOUSEHOLD_NAMES[c]) || NAMES[c] || c, tableOf(data[c]));
   }
   const members = await readAll(tenant.collection("members"), FieldPath, budget);
   add("Users & Memberships", tableOf(members));
@@ -153,6 +159,16 @@ export async function buildBackup({ db, tenant, business, entitlements, FieldPat
     add("Seating Assignments", [["Guest id", "Guest", "Attending seats", "Table id", "Table"], ...plan.tables.flatMap((t) => t.guests.map((g) => [g.id, g.name, g.confirmed ?? 0, t.id, t.name])), ...plan.unassigned.map((g) => [g.id, g.name, g.confirmed ?? 0, "", "Unassigned"])]);
   }
 
+  if (home && data.scheduledPayments) {
+    const names = Object.fromEntries((data.expenseCategories || []).map((c) => [c.id, c.data.name]));
+    const peso = (c) => (Number.isSafeInteger(c) ? c / 100 : null);
+    const every = (r) => (!r ? "" : r.interval > 1 ? `Every ${r.interval} ${r.every}s` : `Every ${r.every}`);
+    // The repeating bills still to pay: what comes back each period.
+    add("Recurring Items", [["Bill id", "Bill", "Repeats", "Next due", "Amount (PHP)", "Category", "Paid to", "Notes"], ...data.scheduledPayments.filter((s) => s.data.repeat && s.data.status === "upcoming").map((s) => [s.id, s.data.description, every(s.data.repeat), s.data.dueDate, peso(s.data.amount), names[s.data.category] ?? s.data.categoryName ?? "", s.data.payee ?? "", s.data.notes ?? ""])]);
+    const b = (data.budgets || []).find((x) => x.id === "current")?.data ?? {};
+    add("Budget", [["Item", "Value"], ["Monthly budget (PHP)", peso(b.total) ?? "Not set"], ...(data.expenseCategories || []).map((c) => [`Category: ${c.data.name}${c.data.status === "active" ? "" : " (hidden)"}`, peso(c.data.budget) ?? ""])]);
+  }
+
   const info = [
     ["Luna Master Backup", ""],
     ["Business", business.name || ""],
@@ -168,6 +184,7 @@ export async function buildBackup({ db, tenant, business, entitlements, FieldPat
     ...counts,
   ];
   const all = [{ name: "Export Info", rows: info, header: false }, ...sheets];
+  if (home) all.sort((a, b) => (HOUSEHOLD_ORDER.indexOf(a.name) + 1 || 99) - (HOUSEHOLD_ORDER.indexOf(b.name) + 1 || 99));
   if (wedding) all.sort((a, b) => (WEDDING_ORDER.indexOf(a.name) + 1 || 99) - (WEDDING_ORDER.indexOf(b.name) + 1 || 99));
   const bytes = writeXlsx(all, { title: `Luna Master Backup — ${business.name || ""}`, created: now });
   const day = now.toISOString().slice(0, 10);

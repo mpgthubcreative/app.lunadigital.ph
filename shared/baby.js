@@ -59,6 +59,9 @@ export const CATEGORY_STATUSES = Object.freeze({ active: { label: "Active" }, in
 
 // Offered once, on an empty workspace ("Add suggested categories"). Tenant
 // data from then on: renamed, reordered, deactivated like any other.
+// Luna Household (household-payroll v3): the household's own editable
+// categories. Baby and Pets are categories here, not separate products.
+export const SUGGESTED_HOUSEHOLD_CATEGORIES = Object.freeze(["Groceries", "Utilities", "Household Supplies", "Dining / Food", "Transportation", "Medical", "Baby", "Pets", "Household Staff", "Maintenance / Repairs", "Rent / Mortgage / Condo", "Subscriptions", "Education", "Personal", "Miscellaneous"]);
 export const SUGGESTED_CATEGORIES = Object.freeze(["Medical", "Nursery / Furniture", "Clothing", "Feeding", "Diapers / Hygiene", "Gear / Equipment", "Transportation", "Documents", "Celebration", "Childcare", "Other"]);
 
 function text(value, { field, max, required = false }) {
@@ -152,7 +155,34 @@ export function validateProviderInput(input, { partial = false } = {}) {
 export const SCHEDULE_STATUSES = Object.freeze({ upcoming: { label: "Upcoming" }, paid: { label: "Paid" }, cancelled: { label: "Cancelled" } });
 export const SCHEDULE_STATUS_IDS = Object.freeze(Object.keys(SCHEDULE_STATUSES));
 
-const SCHEDULE_FIELDS = ["description", "category", "providerId", "payee", "amount", "dueDate", "notes"];
+const SCHEDULE_FIELDS = ["description", "category", "providerId", "payee", "amount", "dueDate", "notes", "repeat"];
+// Recurring bills (Luna Household): { every: "week" | "month" | "year",
+// interval: 1..12 } or null. Generic so custom rules can come later; when a
+// repeating payment is paid in full, the next one is scheduled with it.
+export const REPEAT_UNITS = Object.freeze({ week: { label: "week", plural: "weeks" }, month: { label: "month", plural: "months" }, year: { label: "year", plural: "years" } });
+export function validateRepeat(v) {
+  if (v === null || v === undefined) return null;
+  if (!v || typeof v !== "object" || Array.isArray(v) || Object.keys(v).some((k) => !["every", "interval"].includes(k))) throw new BabyError("invalid-input", "Invalid repeat");
+  if (!Object.hasOwn(REPEAT_UNITS, v.every)) throw new BabyError("invalid-input", "Repeat every week, month or year");
+  const interval = v.interval ?? 1;
+  if (!Number.isSafeInteger(interval) || interval < 1 || interval > 12) throw new BabyError("invalid-input", "Repeat every 1 to 12");
+  return { every: v.every, interval };
+}
+export const repeatLabel = (r) => (!r ? "" : r.interval === 1 ? `Every ${REPEAT_UNITS[r.every].label}` : `Every ${r.interval} ${REPEAT_UNITS[r.every].plural}`);
+// The next due date. anchorDay keeps a monthly bill on its own day: due the
+// 31st → Feb 28 → Mar 31 (never drifting to the 28th).
+export function nextDueDate(dayId, r, anchorDay = null) {
+  const [y, m, d0] = dayId.split("-").map(Number);
+  const d = Number.isSafeInteger(anchorDay) && anchorDay >= 1 && anchorDay <= 31 && r.every !== "week" ? anchorDay : d0;
+  if (r.every === "week") {
+    const t = new Date(Date.UTC(y, m - 1, d + 7 * r.interval));
+    return t.toISOString().slice(0, 10);
+  }
+  const months = r.every === "year" ? 12 * r.interval : r.interval;
+  const first = new Date(Date.UTC(y, m - 1 + months, 1));
+  const last = new Date(Date.UTC(first.getUTCFullYear(), first.getUTCMonth() + 1, 0)).getUTCDate();
+  return new Date(Date.UTC(first.getUTCFullYear(), first.getUTCMonth(), Math.min(d, last))).toISOString().slice(0, 10);
+}
 export function validateScheduleInput(input, { partial = false } = {}) {
   only(input, SCHEDULE_FIELDS, "scheduled payment");
   const has = (k) => !partial || Object.hasOwn(input, k);
@@ -177,6 +207,7 @@ export function validateScheduleInput(input, { partial = false } = {}) {
     out.dueDate = input.dueDate;
   }
   if (has("notes")) out.notes = text(input.notes, { field: "Notes", max: 500 });
+  if (Object.hasOwn(input, "repeat")) out.repeat = validateRepeat(input.repeat);
   if (partial && !Object.keys(out).length) throw new BabyError("invalid-input", "Nothing to change");
   return out;
 }

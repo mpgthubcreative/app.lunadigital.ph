@@ -30,7 +30,7 @@ import { applyRollup, expenseContribution, diffRollup } from "./reports.js";
 import { validateExpenseInput, ExpenseError, EXPENSE_SCHEMA_VERSION, expenseCategoryLabel, expenseProfile, EXPENSE_METHODS } from "../../../shared/expenses.js";
 import { businessDate } from "../../../shared/metrics.js";
 import { recordDailyMetrics } from "./metrics.js";
-import { babySpendingSink } from "./baby-spending.js";
+import { babySpendingSink, householdSpendingSink } from "./baby-spending.js";
 import { weddingSpendingSink } from "./wedding-spending.js";
 import { meterActivity } from "./metering.js";
 
@@ -92,7 +92,7 @@ const distributorSink = {
   },
 };
 
-const SINKS = { distributor: distributorSink, "baby-expense": babySpendingSink, "bridal-expense": weddingSpendingSink };
+const SINKS = { distributor: distributorSink, "baby-expense": babySpendingSink, "bridal-expense": weddingSpendingSink, "household-payroll": householdSpendingSink };
 
 // The workspace's profile + sink, or a refusal (no workspace default).
 function profileOf(workspace) {
@@ -135,7 +135,9 @@ export async function prepareExpenseCreate(tx, { tenant, business, workspace, in
   const data = validateExpenseInput(input, { today, profile });
   for (const k of ["date", "category", "amount", "method"]) if (data[k] === undefined) throw new ExpenseError("invalid-input", `${k} is required`);
   const ref = expenseId ? expenseRef(tenant, expenseId) : tenant.collection("expenses").doc();
-  const after = { id: ref.id, ...data, ...(profile.ref ? { [profile.ref]: data[profile.ref] ?? null, [profile.link]: link?.[profile.link] ?? null } : {}) };
+  // The link (scheduleId / supplierPaymentId) is kept even without a ref
+  // field (Luna Household: a bill paid, no provider).
+  const after = { id: ref.id, ...data, ...(profile.ref ? { [profile.ref]: data[profile.ref] ?? null } : {}), ...(profile.link ? { [profile.link]: link?.[profile.link] ?? null } : {}) };
   const s = await sink.prepare(tx, { tenant, business, before: null, after, actor, now, upcomingDelta });
   const rec = { ...after, ...s.fields };
   return {
@@ -156,7 +158,8 @@ export async function prepareExpenseCreate(tx, { tenant, business, workspace, in
         amount: rec.amount,
         payee,
         payeeLower: payee ? payee.toLocaleLowerCase("en") : null,
-        ...(profile.ref ? { [profile.ref]: rec[profile.ref] ?? null, [profile.link]: rec[profile.link] ?? null } : {}),
+        ...(profile.ref ? { [profile.ref]: rec[profile.ref] ?? null } : {}),
+        ...(profile.link ? { [profile.link]: rec[profile.link] ?? null } : {}),
         method: rec.method,
         reference: rec.reference ?? null,
         notes: rec.notes ?? null,

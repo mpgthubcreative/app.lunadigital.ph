@@ -18,7 +18,7 @@
 // second request can't make a second expense. The payment leaves Upcoming
 // and the expense counts as spent in the same transaction.
 
-import { BabyError, BABY_SCHEMA_VERSION, BUDGET_DOC_ID, MAX_CATEGORIES, SUGGESTED_CATEGORIES, CATEGORY_STATUSES, PROVIDER_STATUSES, PROVIDER_TYPES, isValidRecordId, validateCategoryInput, validateBudgetTotal, validateProviderInput, validateScheduleInput, validatePaidBy, thresholdLevel, totalFromCategories, upcomingPart } from "../../../shared/baby.js";
+import { BabyError, BABY_SCHEMA_VERSION, BUDGET_DOC_ID, MAX_CATEGORIES, SUGGESTED_CATEGORIES, CATEGORY_STATUSES, PROVIDER_STATUSES, PROVIDER_TYPES, isValidRecordId, validateCategoryInput, validateBudgetTotal, validateProviderInput, validateScheduleInput, validatePaidBy, thresholdLevel, totalFromCategories, upcomingPart, SUGGESTED_HOUSEHOLD_CATEGORIES, nextDueDate, repeatLabel } from "../../../shared/baby.js";
 import { partsOf } from "./baby-spending.js";
 import { EXPENSE_METHODS } from "../../../shared/expenses.js";
 import { businessDate, isDayId } from "../../../shared/metrics.js";
@@ -139,7 +139,7 @@ function newCategory(FieldValue, actor, { name, budget = null, order, planned = 
 // "Add suggested categories" on an empty budget: once. The list follows the
 // workspace (the budget primitive is shared by Baby and, Phase 16, Wedding).
 export async function setupSuggestedCategories({ db, tenant, FieldValue, actor, workspace = "baby-expense" }) {
-  const suggested = workspace === "bridal-expense" ? SUGGESTED_WEDDING_CATEGORIES : SUGGESTED_CATEGORIES;
+  const suggested = workspace === "bridal-expense" ? SUGGESTED_WEDDING_CATEGORIES : workspace === "household-payroll" ? SUGGESTED_HOUSEHOLD_CATEGORIES : SUGGESTED_CATEGORIES;
   return db.runTransaction(async (tx) => {
     const b = await loadBudget(tx, tenant);
     const existing = await tx.get(categoriesRef(tenant).limit(1));
@@ -380,6 +380,10 @@ export async function createScheduledPayment({ db, tenant, FieldValue, input, ac
       dueDate: data.dueDate,
       status: "upcoming",
       notes: data.notes ?? null,
+      // Luna Household bills: { every, interval } or null; repeatDay keeps a
+      // monthly bill on its own day (the 31st stays the 31st where it can).
+      repeat: data.repeat ?? null,
+      repeatDay: data.repeat ? Number(data.dueDate.slice(8)) : null,
       expenseId: null,
       paidDate: null,
       paidAmount: null,
@@ -410,9 +414,10 @@ export async function updateScheduledPayment({ db, tenant, FieldValue, scheduleI
     const s = snap.data();
     if (s.status !== "upcoming") throw new BabyError("not-upcoming", "Only an Upcoming payment can be edited");
     checkRevision(expectedRevision, s.revision);
-    const diff = Object.fromEntries(Object.entries(data).filter(([k, v]) => (s[k] ?? null) !== (v ?? null)));
+    const diff = Object.fromEntries(Object.entries(data).filter(([k, v]) => (k === "repeat" ? JSON.stringify(s.repeat ?? null) !== JSON.stringify(v ?? null) : (s[k] ?? null) !== (v ?? null))));
     if (!Object.keys(diff).length) return { scheduleId, unchanged: true, revision: s.revision };
     const next = { ...s, ...diff };
+    if ("repeat" in diff || ("dueDate" in diff && next.repeat)) diff.repeatDay = next.repeat ? Number(next.dueDate.slice(8)) : null;
     if ("amount" in diff && diff.amount < int(s.paidAmount)) throw new BabyError("invalid-amount", `${peso(int(s.paidAmount))} is already paid: the amount can't be less than that`);
     if ("payee" in diff && next.providerId && !("providerId" in diff)) throw new BabyError("invalid-input", "This payment is linked to a saved provider: change the provider instead of the payee");
     const links = await resolveLinks(tx, tenant, next, s);
@@ -420,8 +425,8 @@ export async function updateScheduledPayment({ db, tenant, FieldValue, scheduleI
     if (links.categoryName !== undefined) update.categoryName = links.categoryName;
     if ("providerId" in diff && next.providerId) update.payee = links.providerName;
     const labels = Object.keys(update)
-      .filter((k) => k !== "categoryName" && k !== "providerId")
-      .map((k) => (k === "notes" ? "Notes updated" : `${{ description: "Description", category: "Category", payee: "Payee", amount: "Amount", dueDate: "Due date" }[k]} changed ${k === "amount" ? peso(s.amount) : k === "category" ? s.categoryName : s[k] || "—"} → ${k === "amount" ? peso(update.amount) : k === "category" ? update.categoryName : update[k] || "—"}`));
+      .filter((k) => k !== "categoryName" && k !== "providerId" && k !== "repeatDay")
+      .map((k) => (k === "notes" ? "Notes updated" : k === "repeat" ? `Repeats: ${repeatLabel(update.repeat) || "no"}` : `${{ description: "Description", category: "Category", payee: "Payee", amount: "Amount", dueDate: "Due date" }[k]} changed ${k === "amount" ? peso(s.amount) : k === "category" ? s.categoryName : s[k] || "—"} → ${k === "amount" ? peso(update.amount) : k === "category" ? update.categoryName : update[k] || "—"}`));
     const stamp = FieldValue.serverTimestamp();
     tx.update(sRef, { ...update, history: append(s.history, entry(actor, labels.join(" · ") || "Updated")), revision: s.revision + 1, updatedBy: who(actor), updatedAt: stamp });
     if (links.catRef) tx.update(links.catRef, { useCount: FieldValue.increment(1) });
@@ -516,6 +521,10 @@ async function markPaidOnce({ db, tenant, FieldValue, business, workspace, sched
     const final = payment.final === false ? amount >= unpaid : true;
     if (!final && !payment.key) throw new BabyError("invalid-input", "Invalid payment");
     const paidBy = paidByInput ?? null;
+    // A repeating bill's next one is created once: a bill paid again after
+    // its expense was removed (nextId already set) doesn't make another.
+    const repeatsNow = Boolean(final && s.repeat && !s.nextId);
+    const nextRef = repeatsNow ? tenant.collection("scheduledPayments").doc() : null;
     const plan = await prepareExpenseCreate(tx, {
       tenant,
       business,
@@ -525,14 +534,16 @@ async function markPaidOnce({ db, tenant, FieldValue, business, workspace, sched
       expenseId,
       link: { scheduleId, label: final ? `Paid scheduled payment ${s.description} ${peso(amount)}` : `Part payment for ${s.description} ${peso(amount)}` },
       // Leaves Upcoming in the same budgets/current write as the spending:
-      // all of the unpaid part when final, otherwise the part just paid.
-      upcomingDelta: final ? { amount: -unpaid, count: -1, category: s.category } : { amount: -Math.min(amount, unpaid), count: 0, category: s.category },
+      // all of the unpaid part when final, otherwise the part just paid. A
+      // repeating bill paid in full adds its next one to Upcoming at once.
+      upcomingDelta: final ? { amount: -unpaid + (repeatsNow ? s.amount : 0), count: repeatsNow ? 0 : -1, category: s.category } : { amount: -Math.min(amount, unpaid), count: 0, category: s.category },
       input: {
         date: paidDate,
         category: s.category,
         amount,
         method: payment.method,
-        ...(s.providerId ? { providerId: s.providerId, ...(s.payee ? { payee: s.payee } : {}) } : { providerId: null, ...(s.payee ? { payee: s.payee } : {}) }),
+        ...(workspace === "baby-expense" ? (s.providerId ? { providerId: s.providerId } : { providerId: null }) : {}),
+        ...(s.payee ? { payee: s.payee } : {}),
         ...(payment.reference ? { reference: payment.reference } : {}),
         ...(paidBy ? { paidBy: paidBy.map(({ name, amount: a }) => ({ name, amount: a })) } : {}),
         notes: `Scheduled payment: ${s.description}`,
@@ -546,6 +557,7 @@ async function markPaidOnce({ db, tenant, FieldValue, business, workspace, sched
       parts: nextParts,
       paidAmount,
       ...(final ? { status: "paid", expenseId, paidDate, method: payment.method, reference: plan.record.reference ?? null } : {}),
+      ...(nextRef ? { nextId: nextRef.id } : {}),
       history: append(
         s.history,
         entry(actor, final ? `Marked paid ${peso(amount)} on ${paidDate} (${EXPENSE_METHODS[payment.method].label})${parts.length ? ` · ${peso(paidAmount)} paid in ${nextParts.length} parts` : ""}` : `Part payment ${peso(amount)} on ${paidDate} (${EXPENSE_METHODS[payment.method].label}) · ${peso(Math.max(0, s.amount - paidAmount))} still to pay`)
@@ -554,7 +566,15 @@ async function markPaidOnce({ db, tenant, FieldValue, business, workspace, sched
       updatedBy: who(actor),
       updatedAt: FieldValue.serverTimestamp(),
     });
-    return { scheduleId, expenseId, paid: final, partPaid: !final, paidAmount, remaining: final ? 0 : Math.max(0, s.amount - paidAmount) };
+    let nextScheduleId = null;
+    if (nextRef) {
+      const r = nextRef;
+      nextScheduleId = r.id;
+      const due = nextDueDate(s.dueDate, s.repeat, s.repeatDay ?? null);
+      const stamp = FieldValue.serverTimestamp();
+      tx.create(r, { schemaVersion: BABY_SCHEMA_VERSION, description: s.description, category: s.category, categoryName: s.categoryName ?? null, providerId: s.providerId ?? null, payee: s.payee ?? null, amount: s.amount, dueDate: due, status: "upcoming", notes: s.notes ?? null, repeat: s.repeat, repeatDay: s.repeatDay ?? null, previousId: scheduleId, expenseId: null, paidDate: null, paidAmount: null, method: null, reference: null, attempt: 0, history: [entry(actor, `Scheduled ${s.description} ${peso(s.amount)} due ${due} (${repeatLabel(s.repeat).toLowerCase()})`)], revision: 1, createdBy: who(actor), createdAt: stamp, updatedBy: who(actor), updatedAt: stamp });
+    }
+    return { scheduleId, expenseId, paid: final, partPaid: !final, paidAmount, remaining: final ? 0 : Math.max(0, s.amount - paidAmount), ...(nextScheduleId ? { nextScheduleId } : {}) };
   }, TX_OPTIONS);
 }
 

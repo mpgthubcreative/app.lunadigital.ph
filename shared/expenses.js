@@ -80,6 +80,10 @@ export const EXPENSE_PROFILES = Object.freeze({
   distributor: Object.freeze({ id: "distributor", categories: "fixed", fields: EXPENSE_FIELDS, ref: null, link: null }),
   // Phase 18.6: Baby expenses also record who paid (paidBy, split shares).
   "baby-expense": Object.freeze({ id: "baby-expense", categories: "tenant", fields: Object.freeze([...EXPENSE_FIELDS, "providerId", "paidBy"]), ref: "providerId", refLabel: "provider", link: "scheduleId", payers: true }),
+  // Luna Household (household-payroll v3): household spending on the same
+  // budget primitive as Baby (no providers, no payers); bills come from the
+  // Payment Schedule ("Bills").
+  "household-payroll": Object.freeze({ id: "household-payroll", categories: "tenant", fields: EXPENSE_FIELDS, ref: null, link: "scheduleId" }),
   // Phase 16: Wedding Expenses.
   "bridal-expense": Object.freeze({ id: "bridal-expense", categories: "tenant", fields: Object.freeze([...EXPENSE_FIELDS, "supplierId"]), ref: "supplierId", refLabel: "supplier", link: "supplierPaymentId" }),
 });

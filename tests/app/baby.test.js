@@ -62,8 +62,11 @@ describe("navigation: Baby has its own screens; others never do", () => {
   it("Baby staff: dashboard only (conservative default)", () => {
     for (const p of buildRoutes(baby("staff")).map((r) => r.path)) expect(["/", "/notifications"]).toContain(p);
   });
-  it("Distributor / Household never get Budget, Payment Schedule or Providers; Bridal gets the shared Budget only (Phase 16)", () => {
-    for (const t of ["distributor", "household-payroll"]) for (const p of ["/budget", "/payment-schedule", "/providers"]) expect(buildRoutes(sessionFixture({ workspaceTemplateId: t })).map((r) => r.path), `${t}${p}`).not.toContain(p);
+  it("Distributor never gets Budget, Payment Schedule or Providers; Luna Household gets Budget + Bills (the schedule), never Providers; Bridal gets the shared Budget only (Phase 16)", () => {
+    for (const p of ["/budget", "/payment-schedule", "/providers"]) expect(buildRoutes(sessionFixture({ workspaceTemplateId: "distributor" })).map((r) => r.path), p).not.toContain(p);
+    const home = buildRoutes(sessionFixture({ workspaceTemplateId: "household-payroll" })).map((r) => r.path);
+    expect(home).toEqual(expect.arrayContaining(["/budget", "/payment-schedule"]));
+    expect(home).not.toContain("/providers");
     const bridal = buildRoutes(sessionFixture({ workspaceTemplateId: "bridal-expense" })).map((r) => r.path);
     expect(bridal).toContain("/budget");
     for (const p of ["/payment-schedule", "/providers"]) expect(bridal).not.toContain(p);

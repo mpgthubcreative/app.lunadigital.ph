@@ -18,7 +18,8 @@ const MB = 1024 ** 2;
 
 // Every sellable module, off; a personal plan turns on its own.
 const ALL_SELLABLE_OFF = Object.freeze({ orders: false, payments: false, inventory: false, customers: false, reports: false, imports: false, expenses: false, suppliers: false, production: false, returns: false, household: false, attendance: false, payroll: false, advances: false, budget: false, schedule: false, providers: false, vendors: false, vendorpayments: false, tasks: false, guests: false });
-const HOUSEHOLD_MODULES = ["household", "attendance", "payroll", "advances"];
+// Luna Household: payroll + household money (Expenses, Budget, Bills).
+const HOUSEHOLD_MODULES = ["household", "attendance", "payroll", "advances", "expenses", "budget", "schedule"];
 const BABY_MODULES = ["expenses", "budget", "schedule", "providers"];
 const BRIDAL_MODULES = ["expenses", "budget", "vendors", "vendorpayments", "tasks", "guests"];
 function personalPlan({ id, name, workspace, monthly, sortOrder, users, storage, modules, plus = false }) {
@@ -210,7 +211,7 @@ export const PLAN_SEED = Object.freeze({
   // PRICING HYPOTHESES, not final prices. Each plan enables only its own
   // workspace's modules; limits use the shared vocabulary (orders and imports
   // are 0: those modules don't exist in personal workspaces).
-  "household-basic": personalPlan({ id: "household-basic", name: "Household Basic", workspace: "household-payroll", monthly: 14900, sortOrder: 11, users: 3, storage: 500 * MB, modules: HOUSEHOLD_MODULES }),
+  "household-basic": personalPlan({ id: "household-basic", name: "Luna Household", workspace: "household-payroll", monthly: 14900, sortOrder: 11, users: 3, storage: 500 * MB, modules: HOUSEHOLD_MODULES }),
   "household-plus": personalPlan({ id: "household-plus", name: "Household Plus", workspace: "household-payroll", monthly: 29900, sortOrder: 12, users: 6, storage: 2 * GB, modules: HOUSEHOLD_MODULES, plus: true }),
   "baby-basic": personalPlan({ id: "baby-basic", name: "Baby Basic", workspace: "baby-expense", monthly: 14900, sortOrder: 21, users: 2, storage: 500 * MB, modules: BABY_MODULES }),
   "baby-plus": personalPlan({ id: "baby-plus", name: "Baby Plus", workspace: "baby-expense", monthly: 24900, sortOrder: 22, users: 5, storage: 2 * GB, modules: BABY_MODULES, plus: true }),

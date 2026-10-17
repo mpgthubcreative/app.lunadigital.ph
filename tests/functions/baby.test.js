@@ -359,14 +359,16 @@ describe("access: workspace, permissions, tenants", () => {
     expect((await api("expenses", u.yaya, { action: "create", expense: {} })).status).toBe(403);
   });
 
-  it("Distributor and Household can't reach any Baby endpoint, even as owner", async () => {
-    for (const [uid, biz] of [[world.uids.ownera, "biz-a"], [u.home, "biz-home"]]) {
+  it("Distributor can't reach any Baby endpoint; Luna Household reaches Budget + Bills (the shared primitives) but never Providers", async () => {
+    expect((await api("providers", u.home, { action: "create", provider: { name: "X", type: "other" } }, "biz-home")).status).toBe(403);
+    expect((await api("budget", u.home, { action: "setTotal", total: 100 }, "biz-home")).status).toBe(200);
+    for (const [uid, biz] of [[world.uids.ownera, "biz-a"]]) {
       expect((await api("budget", uid, { action: "setTotal", total: 100 }, biz)).status).toBe(403);
       expect((await api("providers", uid, { action: "create", provider: { name: "X", type: "other" } }, biz)).status).toBe(403);
       expect((await api("schedule", uid, { action: "create", payment: {} }, biz)).status).toBe(403);
     }
-    // Household has no Expenses at all.
-    expect((await api("expenses", u.home, { action: "create", expense: {} }, "biz-home")).status).toBe(403);
+    // Luna Household has its own Expenses (an empty expense is just invalid).
+    expect((await api("expenses", u.home, { action: "create", expense: {} }, "biz-home")).status).toBe(400);
   });
 
   it("Baby A can't touch Baby B: a member of A selecting B is refused, and ids don't cross", async () => {

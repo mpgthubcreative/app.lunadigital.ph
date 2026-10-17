@@ -355,9 +355,8 @@ describe("Expenses page (Phase 10)", () => {
     expect(buildRoutes(sessionFixture({ roleTemplate: "staff" })).map((r) => r.path)).not.toContain("/expenses");
   });
 
-  it("household never gets it, even with the permission; Baby (15) and Bridal (16) have it as their own Expenses", () => {
-    expect(buildRoutes(sessionFixture({ workspaceTemplateId: "household-payroll" })).map((r) => r.path)).not.toContain("/expenses");
-    for (const t of ["baby-expense", "bridal-expense"]) expect(buildRoutes(sessionFixture({ workspaceTemplateId: t })).map((r) => r.path), t).toContain("/expenses");
+  it("Luna Household (v3), Baby (15) and Bridal (16) each have Expenses as their own screen", () => {
+    for (const t of ["household-payroll", "baby-expense", "bridal-expense"]) expect(buildRoutes(sessionFixture({ workspaceTemplateId: t })).map((r) => r.path), t).toContain("/expenses");
   });
 });
 

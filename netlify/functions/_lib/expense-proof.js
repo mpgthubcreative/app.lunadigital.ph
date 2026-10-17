@@ -26,9 +26,11 @@ function expenseRef(tenant, id) {
   if (typeof id !== "string" || !EXPENSE_ID.test(id)) throw new ExpenseError("invalid-expense", "Invalid expense");
   return tenant.doc("expenses", id);
 }
-// Wedding expenses only (other workspaces don't offer proofs on expenses).
+// Wedding and Luna Household expenses (other workspaces don't offer proofs
+// on expenses).
+const PROOF_WORKSPACES = new Set(["bridal-expense", "household-payroll"]);
 function requireWedding(workspace) {
-  if (workspace !== "bridal-expense") throw new ExpenseError("not-available", "Proofs aren't available for these expenses.");
+  if (!PROOF_WORKSPACES.has(workspace)) throw new ExpenseError("not-available", "Proofs aren't available for these expenses.");
 }
 function decode(proof) {
   try {

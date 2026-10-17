@@ -103,8 +103,10 @@ describe("Expense profiles: shared record rules, per-workspace meaning", () => {
     for (const p of Object.values(EXPENSE_PROFILES)) expect(code(() => validateExpenseInput({ date: "2026-10-17", amount: 1, method: "cash", category: p.categories === "fixed" ? "rent" : "abcdefgh12" }, { today: "2026-10-16", profile: p }))).toBe("invalid-input");
   });
 
-  it("no profile for Household / unknown workspaces (no default); Bridal has its own (Phase 16)", () => {
-    for (const w of ["household-payroll", "", null, "__proto__", "toString"]) expect(expenseProfile(w), String(w)).toBeNull();
+  it("no profile for unknown workspaces (no default); Bridal (16) and Luna Household (v3) have their own", () => {
+    for (const w of ["", null, "__proto__", "toString", "pets"]) expect(expenseProfile(w), String(w)).toBeNull();
+    expect(expenseProfile("household-payroll")).toMatchObject({ categories: "tenant", ref: null, link: "scheduleId" });
+    expect(expenseProfile("household-payroll").fields).not.toContain("providerId");
     expect(expenseProfile("bridal-expense")).toMatchObject({ categories: "tenant", ref: "supplierId", link: "supplierPaymentId" });
   });
 });

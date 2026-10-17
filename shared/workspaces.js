@@ -111,26 +111,34 @@ const TEMPLATES = [
   {
     id: "household-payroll",
     // v2 (Phase 14): Household Staff, Attendance, Payroll (deductions,
-    // salary release, receipt confirmation, history) and Advances. (v1
-    // snapshots were accepted via upgradingFrom only until every business
-    // was recomputed.)
-    version: 2,
-    name: "Household / Kasambahay Payroll",
-    description: "Pay household staff, record what was released and get each payment confirmed by the person who received it.",
+    // salary release, receipt confirmation, history) and Advances.
+    // v3 (Luna Household): + household money on the shared primitives:
+    // Expenses (the Expenses Core, Household profile), Budget & Categories
+    // (a MONTHLY budget) and the Payment Schedule as "Bills" (recurring).
+    // Payroll stays authoritative: paid salaries are summarized, never
+    // re-entered as expenses. v2 snapshots are accepted (upgradingFrom)
+    // until every Household business is recomputed; the same businessId
+    // and data throughout.
+    version: 3,
+    upgradingFrom: [2],
+    name: "Luna Household",
+    description: "Your household, organized: household staff, payroll, bills and household spending in one place.",
     status: "live",
-    modules: [...CORE, "household", "attendance", "payroll", "advances"],
-    // Owner-pilot UX (2026-10-17): no Dashboard in Household. Payroll is the
-    // home page ("/" opens it); what needs attention lives in the bell. The
-    // dashboard module itself stays (core) so it can come back.
-    navigation: ["payroll", "attendance", "advances", "household", "users", "settings"],
-    mobileTabs: ["payroll", "attendance", "advances", "household"],
+    modules: [...CORE, "household", "attendance", "payroll", "advances", "expenses", "budget", "schedule"],
+    // Owner-pilot UX: no Dashboard in Household. Payroll is the home page;
+    // what needs attention lives in the bell. Phone: Payroll, Attendance,
+    // Expenses + More (Advances, Household Staff, Bills, Export & Backup,
+    // Users, Subscription, Settings). Budget & Categories open from Expenses.
+    navigation: ["payroll", "attendance", "expenses", "advances", "household", "schedule", "budget", "users", "settings"],
+    mobileTabs: ["payroll", "attendance", "expenses"],
     navHidden: ["dashboard"],
+    menuHidden: ["budget"],
     home: "payroll",
     dashboard: {
       widgets: ["activeStaff", "attendanceToday", "payrollsToRelease", "awaitingReceipt", "advancesNotPaid", "advancesToDeduct"],
       empty: { title: "Your payroll workspace is ready", body: "Add your household staff to start marking attendance." },
     },
-    labels: { modules: { dashboard: "Payroll Dashboard" } },
+    labels: { modules: { dashboard: "Payroll Dashboard", expenses: "Expenses", schedule: "Bills", budget: "Budget & Categories", household: "Household Staff" } },
     settings: {},
     plannedModules: [{ id: "payroll-reports", name: "Payroll Reports" }],
   },

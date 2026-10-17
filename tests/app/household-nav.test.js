@@ -54,10 +54,10 @@ describe("Household navigation without a Dashboard", () => {
     for (const p of ["/payroll", "/attendance", "/advances", "/household-staff", "/users", "/notifications"]) expect(visit(home(), p).route?.path, p).toBe(p);
   });
 
-  it("sidebar: Payroll first, no Dashboard; phone tabs Payroll · Attendance · Advances · Staff + More", () => {
+  it("Luna Household: Payroll first, no Dashboard; phone tabs Payroll · Attendance · Expenses + More (Advances, Household Staff, Bills, Export & Backup, Users, Subscription, Settings)", () => {
     renderShell(document.getElementById("app"), home());
-    expect([...document.querySelectorAll(".nav-link")].map((a) => a.textContent.trim())).toEqual(["Payroll", "Attendance", "Advances", "Household Staff", "Export & Backup", "Users", "Subscription", "Settings"]);
-    expect([...document.querySelectorAll(".tabbar .tab-link")].map((a) => a.textContent.trim())).toEqual(["Payroll", "Attendance", "Advances", "Staff", "More"]);
+    expect([...document.querySelectorAll(".nav-link")].map((a) => a.textContent.trim())).toEqual(["Payroll", "Attendance", "Expenses", "Advances", "Household Staff", "Bills", "Export & Backup", "Users", "Subscription", "Settings"]);
+    expect([...document.querySelectorAll(".tabbar .tab-link")].map((a) => a.textContent.trim())).toEqual(["Payroll", "Attendance", "Expenses", "More"]);
     expect(document.querySelector('.nav-link[href="/"]')).toBeNull();
     expect(document.querySelector('.tab-link[href="/"]')).toBeNull();
   });

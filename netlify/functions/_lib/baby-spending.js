@@ -91,12 +91,18 @@ function resolvePaidBy(before, after) {
   throw new ExpenseError("paid-by-mismatch", `The shares add up to ${peso(sum)}, not the expense amount ${peso(after.amount)}. Update who paid.`);
 }
 
+// Luna Household: the same spending primitive; its budget is MONTHLY, so the
+// lifetime-spent threshold alerts don't apply (the month view shows it).
+export const householdSpendingSink = {
+  categoryLabel: (e) => e.categoryName ?? "Uncategorized",
+  prepare: (tx, args) => babySpendingSink.prepare(tx, { ...args, alerts: false }),
+};
 export const babySpendingSink = {
   categoryLabel: (e) => e.categoryName ?? "Uncategorized",
 
   // upcomingDelta: { amount, count, category } a Payment Schedule change made
   // in the same transaction, folded into the ONE budgets/current write.
-  async prepare(tx, { tenant, before, after, actor, upcomingDelta: extraUpcoming = null }) {
+  async prepare(tx, { tenant, before, after, actor, upcomingDelta: extraUpcoming = null, alerts: alertsOn = true }) {
     // A scheduled payment being paid may still use the category / provider
     // it was scheduled with, even if deactivated since; new expenses can't.
     const fromSchedule = !before && Boolean(after?.scheduleId);
@@ -165,7 +171,7 @@ export const babySpendingSink = {
 
     const budget = budgetSnap.exists ? budgetSnap.data() : null;
     const spentAfter = int(budget?.spent) + dSpent;
-    const { alerts, event } = alertsAfter(budget, spentAfter, { notify: dSpent > 0 });
+    const { alerts, event } = alertsAfter(budget, spentAfter, { notify: dSpent > 0 && alertsOn });
     const notes = await prepareNotifications(tx, { tenant, actor, events: event ? [event] : [] });
 
     // The scheduled payment this expense is a part of.

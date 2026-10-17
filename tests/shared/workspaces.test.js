@@ -116,7 +116,7 @@ describe("planned modules are roadmap metadata only", () => {
     expect(isModuleEnabled(old, "suppliers")).toBe(false);
     // Built, but not in the household template: a forged true grants nothing.
     const h = ent("household-payroll", "pro");
-    expect(isModuleEnabled({ ...h, modules: { ...h.modules, expenses: true } }, "expenses")).toBe(false);
+    expect(isModuleEnabled({ ...h, modules: { ...h.modules, providers: true } }, "providers")).toBe(false);
   });
 
   it("the future domains are recorded (payroll receipt confirmation, wedding tasks, guests/RSVP)", () => {
@@ -124,7 +124,7 @@ describe("planned modules are roadmap metadata only", () => {
     // Phase 14 built Household Staff, Attendance, Payroll (incl. salary payments,
     // receipt confirmation, deductions, history) and Advances; Reports stay planned.
     expect(ids("household-payroll")).toEqual(["payroll-reports"]);
-    expect(WORKSPACE_TEMPLATES["household-payroll"].modules).toEqual(["dashboard", "users", "settings", "household", "attendance", "payroll", "advances"]);
+    expect(WORKSPACE_TEMPLATES["household-payroll"].modules).toEqual(["dashboard", "users", "settings", "household", "attendance", "payroll", "advances", "expenses", "budget", "schedule"]);
     // Phase 16 built Wedding Budget / Expenses / Suppliers / Supplier Payments / Tasks / Guests & RSVP.
     expect(ids("bridal-expense")).toEqual(["wedding-reports"]);
     expect(WORKSPACE_TEMPLATES["bridal-expense"].modules).toEqual(["dashboard", "users", "settings", "expenses", "budget", "vendors", "vendorpayments", "tasks", "guests"]);
@@ -199,7 +199,7 @@ describe("effective modules = core + (template allows ∩ (override ?? plan))", 
 
   it("an override can't lift the template ceiling, and can't name unknown modules", () => {
     expect(() => ent("bridal-expense", "pro", { modules: { orders: true } })).toThrow(/isn't allowed in the bridal-expense workspace/);
-    expect(() => ent("household-payroll", "pro", { modules: { expenses: true } })).toThrow(/isn't allowed/);
+    expect(() => ent("household-payroll", "pro", { modules: { providers: true } })).toThrow(/isn't allowed/);
     expect(() => ent("distributor", "pro", { modules: { teleport: true } })).toThrow(/unknown module/);
     expect(() => ent("distributor", "pro", { modules: { "wedding-tasks": true } })).toThrow(/unknown module/);
   });
@@ -210,8 +210,9 @@ describe("effective modules = core + (template allows ∩ (override ?? plan))", 
     expect(computeEntitlements(lite, { modules: { payments: true } }, "distributor").modules.payments).toBe(true);
   });
 
-  it("household: Expenses isn't in the template, so it's false in the snapshot; Baby (15) and Bridal (16) have it", () => {
-    expect(ent("household-payroll", "pro").modules.expenses).toBe(false);
+  it("Luna Household (v3), Baby (15) and Bridal (16) have Expenses; Household never Providers", () => {
+    expect(ent("household-payroll", "pro").modules.expenses).toBe(true);
+    expect(ent("household-payroll", "pro").modules.providers).toBe(false);
     expect(ent("bridal-expense", "pro").modules.expenses).toBe(true);
     const baby = ent("baby-expense", "pro").modules;
     for (const m of ["expenses", "budget", "schedule", "providers"]) expect(baby[m], m).toBe(true);
@@ -219,7 +220,8 @@ describe("effective modules = core + (template allows ∩ (override ?? plan))", 
   });
 
   it("Baby-only modules never reach Distributor, Household Payroll or Bridal snapshots (budget is the shared primitive: Bridal has it, Phase 16)", () => {
-    for (const t of ["distributor", "household-payroll"]) for (const m of ["budget", "schedule", "providers"]) expect(ent(t, "pro").modules[m], `${t}/${m}`).toBe(false);
+    for (const m of ["budget", "schedule", "providers"]) expect(ent("distributor", "pro").modules[m], m).toBe(false);
+    expect(ent("household-payroll", "pro").modules.providers).toBe(false); // Household: Budget + Bills, no Providers
     for (const m of ["schedule", "providers"]) expect(ent("bridal-expense", "pro").modules[m], m).toBe(false);
     expect(ent("bridal-expense", "pro").modules.budget).toBe(true);
   });
@@ -283,12 +285,12 @@ describe("stored snapshot validation fails closed", () => {
     expect(v({ ...s, workspaceTemplateVersion: 4 }, "growth", "distributor").ok).toBe((WORKSPACE_TEMPLATES.distributor.upgradingFrom ?? []).includes(4));
   });
 
-  it("Phase 14 strict: household-payroll v2 is the only accepted version; stale or malformed snapshots fail closed", () => {
-    expect(WORKSPACE_TEMPLATES["household-payroll"].upgradingFrom).toBeUndefined();
+  it("Luna Household compatible step: v3 is current, v2 still accepted while businesses are recomputed; stale or malformed snapshots fail closed", () => {
+    expect(WORKSPACE_TEMPLATES["household-payroll"].upgradingFrom).toEqual([2]);
     const s = ent("household-payroll", "growth");
-    expect(s.workspaceTemplateVersion).toBe(2);
+    expect(s.workspaceTemplateVersion).toBe(3);
     expect(v(s, "growth", "household-payroll")).toEqual({ ok: true, problems: [] });
-    for (const bad of [1, 0, 3, 99, "2", null, 2.5]) expect(v({ ...s, workspaceTemplateVersion: bad }, "growth", "household-payroll").ok, String(bad)).toBe(false);
+    for (const bad of [1, 0, 4, 99, "3", null, 2.5]) expect(v({ ...s, workspaceTemplateVersion: bad }, "growth", "household-payroll").ok, String(bad)).toBe(false);
     const noVersion = structuredClone(s);
     delete noVersion.workspaceTemplateVersion;
     expect(v(noVersion, "growth", "household-payroll").ok).toBe(false);
@@ -325,7 +327,7 @@ describe("stored snapshot validation fails closed", () => {
   it("Phase 15 strict: Baby modules forged into Distributor, Household or Bridal snapshots are refused", () => {
     for (const t of ["distributor", "household-payroll", "bridal-expense"]) {
       // (Bridal legitimately has the shared budget primitive since Phase 16.)
-      for (const m of t === "bridal-expense" ? ["schedule", "providers"] : ["budget", "schedule", "providers"]) {
+      for (const m of t === "bridal-expense" ? ["schedule", "providers"] : t === "household-payroll" ? ["providers"] : ["budget", "schedule", "providers"]) {
         const s = structuredClone(ent(t, "growth"));
         s.modules[m] = true;
         expect(v(s, "growth", t).ok, `${t}/${m}`).toBe(false);
@@ -441,7 +443,7 @@ describe("navigation", () => {
     expect(nav("bridal-expense", "owner")).toEqual(["/wedding-suppliers Money", "/wedding-tasks Tasks", "/guests Guests", "/budget Budget", "/expenses Wedding Expenses", "/supplier-payments Supplier Payments", "/users Users", "/settings Settings"]);
     expect(nav("baby-expense", "owner")).toEqual(["/ Baby Dashboard", "/budget Budget & Categories", "/expenses Baby Expenses", "/payment-schedule Payment Schedule", "/providers Providers / Vendors", "/users Users", "/settings Settings"]);
     // Owner-pilot UX (2026-10-17): no Dashboard in Household; Payroll first (home).
-    expect(nav("household-payroll", "owner")).toEqual(["/payroll Payroll", "/attendance Attendance", "/advances Advances", "/household-staff Household Staff", "/users Users", "/settings Settings"]);
+    expect(nav("household-payroll", "owner")).toEqual(["/payroll Payroll", "/attendance Attendance", "/expenses Expenses", "/advances Advances", "/household-staff Household Staff", "/payment-schedule Bills", "/budget Budget & Categories", "/users Users", "/settings Settings"]);
   });
 
   it("Household hides the Dashboard (still an allowed, entitled module) and names Payroll its home; the validator holds the rules", () => {

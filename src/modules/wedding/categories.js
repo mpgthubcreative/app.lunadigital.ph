@@ -13,10 +13,11 @@ const key = (s) => (s || "").trim().replace(/\s+/g, " ").toLocaleLowerCase("en")
 export const categoryNameOf = (categories, id) => categories.find((c) => c.id === id)?.name ?? "";
 
 // The typed field (a text box with suggestions; any name allowed).
-export function categoryField(categories, { value = "", label = "Category", more = false, hint = "" } = {}) {
+// suggested / placeholder: Luna Household passes its own list.
+export function categoryField(categories, { value = "", label = "Category", more = false, hint = "", suggested = SUGGESTED_WEDDING_CATEGORIES, placeholder = "e.g. Venue" } = {}) {
   const own = categories.filter((c) => c.status === "active").map((c) => c.name);
   const seen = new Set(own.map(key));
-  return { name: "category", label, value, placeholder: "e.g. Venue", suggestions: [...own, ...SUGGESTED_WEDDING_CATEGORIES.filter((n) => !seen.has(key(n)))], hint, more };
+  return { name: "category", label, value, placeholder, suggestions: [...own, ...suggested.filter((n) => !seen.has(key(n)))], hint, more };
 }
 
 // The category id for a typed name, creating / reactivating it if needed.

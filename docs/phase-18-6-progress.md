@@ -661,6 +661,41 @@ The accepted Bridal design (Money | Tasks | Guests | More) is unchanged; this pa
     - **Downgrade:** Standard shows and the design is kept. Upgrading again brings it back without re-publishing.
     - **Unchanged:** the guest's identity, members, roles and token lookups. No sideways scrolling.
 
+### 2026-10-17 · Luna Household: Expenses, Bills (recurring), monthly Budget and the month summary (household-payroll v3)
+
+- **Products:** Luna Household (`household-basic` "Luna Household", `household-plus`), Luna Bridal / Luna Bridal+ (done, 33f0a70), Luna Business / Distributor (unchanged). Baby code is untouched and still its own workspace; no separate Baby / Pet products. Pricing is not hardcoded anywhere new (plan records keep their prices).
+- **Template:** `household-payroll` v3 (compatible step, `upgradingFrom: [2]`; rules accept 2 and 3).
+  - **Modules:** adds `expenses`, `budget` and `schedule` (shown as "Bills").
+  - **Same business:** same businessId and data; nothing is rebuilt.
+  - **Navigation:** Payroll · Attendance · Expenses + More. More has Advances, Household Staff, Bills, Export & Backup, Users, Subscription and Settings. Budget & Categories opens from Expenses (`menuHidden`).
+- **Reused primitives (no new financial records):**
+  - **Expenses:** the Expenses Core with a Household profile (`EXPENSE_PROFILES["household-payroll"]`): tenant categories, no providers or payers, linked to bills by `scheduleId`.
+  - **Bills:** `scheduledPayments`, plus `repeat` ({every: week | month | year, interval 1..12}) and `repeatDay`.
+  - **Budget:** `budgets/current` (`total` = the MONTHLY budget, typed) and `spendingMetrics/{YYYY-MM}`. Household spending sends no lifetime budget alerts.
+- **Bills, paying one:**
+  - **Payment:** paying records ONE expense in the same transaction (idempotent key; a retry returns it). Part payments keep the bill unpaid with only the rest counted.
+  - **Next bill:** paying a repeating bill in full also creates the next one (`previousId`, `nextId`) and keeps Upcoming at one bill.
+  - **Day kept:** the 31st → Feb 28 → Mar 31.
+  - **Corrections:** removing the expense reopens the bill. Paying it again doesn't make a second next bill.
+- **Fix found while building:** an expense now keeps its `scheduleId` link even on a profile without a ref field. Baby, Bridal and Distributor behaviour is unchanged.
+- **Month summary:** `GET /api/household-money?month=`, budget.view, Household only; computed, nothing stored.
+  - **Spent** = expenses in the month + salaries RELEASED in the month (`payrolls.salary.paidDate`).
+  - **Bills remaining** = the unpaid part of bills due by month end.
+  - **Payroll due** (current month) = the Household summary's to-pay + overdue.
+  - **Budget left** = budget − spent − bills remaining − payroll due.
+  - **By category:** salaries appear under "Household Staff". Payroll stays the record for salaries, so no expense is created for a salary. Advances are not spending.
+- **Screens:** `src/modules/household/{expenses,bills,budget,money-data}.js` (the loaders pick them for household-payroll).
+  - **Expenses:** a month switcher; the four figures; By category; and this month's expenses.
+  - **+ Add expense:** Amount, Category (typed: the household's own, then the 15 defaults) and Date up front. More details holds Paid to, method, reference, notes and proof.
+  - **Bills:** Unpaid / Paid / Cancelled views; repeat options; Pay (with optional proof).
+  - **Budget & Categories:** the monthly budget, plus categories with an optional monthly budget and this month's spending (Edit / Hide / Delete).
+- **Default categories (editable):** Groceries, Utilities, Household Supplies, Dining / Food, Transportation, Medical, Baby, Pets, Household Staff, Maintenance / Repairs, Rent / Mortgage / Condo, Subscriptions, Education, Personal, Miscellaneous.
+- **Proofs:** expense proofs are now allowed for Household (the Bridal pipeline: private storage, metered, served only through the API).
+- **Access:** Owner and Admin (manager) only. A kasambahay account (household_staff) has no expenses, budget or schedule permission. The API refuses them (403), the rules deny them, and they get no routes.
+- **Master Backup (Household):** Expenses, Bills, Recurring Items (repeating unpaid bills), Categories, Budget (monthly + per category) and the raw Budget record, in household order.
+- **Tests:** unit 1568 pass (25 new: tests/functions/household-money.test.js, tests/app/household-money.test.js). Rules (emulator, 4 foreground batches) 2842 pass; 4 old tests that assumed Household had no Expenses were updated, plus a new check that a v2 snapshot keeps working during the compatible step.
+- **Staging:** rules deployed first; then the code; then only the two Household plan records (modules + the household-basic name) and a recompute of the Household businesses. The Bridal plan display names stay "Bridal Basic / Plus" until seed:plans is approved.
+
 ## Plan (decisions made from the brief)
 
 ### Stage 1: Distributor

@@ -82,8 +82,8 @@ describe("reading expenses", () => {
     await assertSucceeds(get("owner@exp-baby-expense", `businesses/exp-baby-expense/expenses/${EID}`));
   });
 
-  it("a household snapshot forged to claim Expenses still can't read them (template ceiling in the rules)", async () => {
-    await assertFails(get("owner@exp-forged", `businesses/exp-forged/expenses/${EID}`));
+  it("Luna Household (v3) has Expenses: its owner reads them (the template ceiling now includes them)", async () => {
+    await assertSucceeds(get("owner@exp-forged", `businesses/exp-forged/expenses/${EID}`));
   });
 
   it("signed out, outsiders and collection-group queries: nothing", async () => {

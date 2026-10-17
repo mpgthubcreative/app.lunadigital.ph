@@ -34,8 +34,9 @@ beforeAll(async () => {
       "home-old": (e) => { for (const k of ["household", "attendance", "payroll", "advances"]) delete e.modules[k]; e.workspaceTemplateVersion = 1; },
       "home-v1": (e) => { e.workspaceTemplateVersion = 1; },
       "home-nover": (e) => { delete e.workspaceTemplateVersion; },
-      "home-v3": (e) => { e.workspaceTemplateVersion = 3; },
-      "home-vstr": (e) => { e.workspaceTemplateVersion = "2"; },
+      "home-v4": (e) => { e.workspaceTemplateVersion = 4; },
+      "home-v2": (e) => { e.workspaceTemplateVersion = 2; for (const k of ["expenses", "budget", "schedule"]) e.modules[k] = false; },
+      "home-vstr": (e) => { e.workspaceTemplateVersion = "3"; },
       "home-nokeys": (e) => { delete e.modules.payroll; },
     };
     for (const [bid, mutate] of Object.entries(STALE)) {
@@ -98,12 +99,17 @@ describe("reading household payroll data", () => {
     await assertSucceeds(dbAs(env, `owner@${H}`).doc(`businesses/${H}/payrolls/d1`).get());
   });
 
-  for (const [bid, what] of [["home-old", "pre-Phase-14 (v1, no household keys)"], ["home-v1", "v1 with every key"], ["home-nover", "missing version"], ["home-v3", "unknown future version"], ["home-vstr", "version as a string"], ["home-nokeys", "v2 missing the payroll key"]]) {
+  for (const [bid, what] of [["home-old", "pre-Phase-14 (v1, no household keys)"], ["home-v1", "v1 with every key"], ["home-nover", "missing version"], ["home-v4", "unknown future version"], ["home-vstr", "version as a string"], ["home-nokeys", "v2 missing the payroll key"]]) {
     it(`strict: ${what} snapshot fails closed (payroll AND settings)`, async () => {
       await assertFails(dbAs(env, `owner@${bid}`).doc(`businesses/${bid}/payrolls/d1`).get());
       await assertFails(dbAs(env, `owner@${bid}`).doc(`businesses/${bid}/settings/general`).get());
     });
   }
+
+  it("compatible step (Luna Household v3): a v2 snapshot still works until its business is recomputed", async () => {
+    await assertSucceeds(dbAs(env, "owner@home-v2").doc("businesses/home-v2/payrolls/d1").get());
+    await assertSucceeds(dbAs(env, "owner@home-v2").doc("businesses/home-v2/settings/general").get());
+  });
 
   it("strict: household modules forged into a Distributor snapshot open no payroll data", async () => {
     for (const c of Object.keys(COLLECTIONS)) await assertFails(dbAs(env, "owner@dist-forged").doc(`businesses/dist-forged/${c}/d1`).get());

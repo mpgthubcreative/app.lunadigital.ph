@@ -231,15 +231,15 @@ describe("POST /api/expenses", () => {
     expect((await call(world.uids.owners, { ...create }, "biz-s")).body.error).toBe("read-only");
   });
 
-  it("a workspace without Expenses (Household Payroll): refused although the code exists", async () => {
+  it("Luna Household (v3) has Expenses with its own profile: the household's own categories (a fixed Distributor category is refused)", async () => {
     await createBusiness({ ...world, name: "Home", planId: "household-plus", workspaceTemplateId: "household-payroll", businessId: "biz-w" });
     const u = await ensureAuthUser({ auth: world.auth, email: "home@t.test", name: "Home" });
     await addMember({ ...world, businessId: "biz-w", uid: u.uid, email: u.email, name: "Home", roleTemplate: "owner", isAccountOwner: true });
-    expect(docAt("businesses/biz-w").entitlements.modules.expenses).toBe(false);
+    expect(docAt("businesses/biz-w").entitlements.modules.expenses).toBe(true);
     const r = await call(u.uid, create, "biz-w");
-    expect(r).toMatchObject({ status: 403, body: { error: "forbidden" } });
-    // A forged snapshot flag doesn't help: the validator rejects it (503).
-    docAt("businesses/biz-w").entitlements.modules.expenses = true;
+    expect(r.status).toBe(400);
+    // A forged snapshot flag for a module the template doesn't allow is refused (503).
+    docAt("businesses/biz-w").entitlements.modules.providers = true;
     expect((await call(u.uid, create, "biz-w")).status).toBe(503);
   });
 

@@ -69,7 +69,7 @@ describe("plans and invoices", () => {
     expect(docAt("businesses/biz-home").subscription.monthlyAmount).toBe(14900);
     expect(docAt("subscriptionInvoices/biz-home_2026-10").amountDue).toBe(29900);
     await ensureInvoice({ db: world.db, FieldValue: FV(), businessId: "biz-home", period: "2026-11" });
-    expect(docAt("subscriptionInvoices/biz-home_2026-11")).toMatchObject({ amountDue: 14900, planName: "Household Basic" });
+    expect(docAt("subscriptionInvoices/biz-home_2026-11")).toMatchObject({ amountDue: 14900, planName: "Luna Household" });
   });
 });
 
