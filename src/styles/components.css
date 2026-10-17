@@ -3700,3 +3700,7 @@ tr.is-saving {
 .ws-link-copied { color: var(--success); font-size: var(--text-sm); }
 .wl-sample-note { margin: 0 0 var(--space-1); }
 .wl-sample-sub { padding: var(--space-2) var(--space-3) 2px; font-size: var(--text-xs); font-weight: 600; color: var(--text-muted); border-top: 1px solid var(--border); list-style: none; }
+
+/* Owner-pilot Bridal: Crew Meals. Name | B · L · D | Place | ⋯ (phone: meals · place under the name). */
+.wl-crew-meals { flex: none; min-width: 9rem; font-variant-numeric: tabular-nums; font-size: var(--text-sm); }
+.wl-crew-place { flex: none; min-width: 6rem; color: var(--text-muted); font-size: var(--text-sm); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 10rem; }

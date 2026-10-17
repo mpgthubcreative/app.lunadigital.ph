@@ -46,7 +46,7 @@ describe("navigation", () => {
   it("Bridal: Money / Tasks / Guests; More = Wedding Setup, Music & Program, Export & Backup, Users, Subscription, Settings (no Budget page: it's in Money)", () => {
     renderShell(document.getElementById("app"), bridal());
     // Owner-pilot Bridal UX: Wedding Expenses, Supplier Payments and Budget open from Money (no menu entry).
-    expect(navOf()).toEqual(["/wedding-suppliers Money", "/wedding-tasks Tasks", "/guests Guests", "/wedding-setup Wedding Setup", "/wedding-program Music & Program", "/export Export & Backup", "/users Users", "/subscription Subscription", "/settings Settings"]);
+    expect(navOf()).toEqual(["/wedding-suppliers Money", "/wedding-tasks Tasks", "/guests Guests", "/wedding-setup Wedding Setup", "/wedding-program Music & Program", "/wedding-crew-meals Crew Meals", "/export Export & Backup", "/users Users", "/subscription Subscription", "/settings Settings"]);
     // The Budget page keeps its route (data and Money behaviour unchanged).
     expect(buildRoutes(bridal()).some((r) => r.path === "/budget")).toBe(true);
   });

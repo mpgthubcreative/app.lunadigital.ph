@@ -44,4 +44,5 @@ export const MODULE_LOADERS = {
   downloads: () => import("./downloads/index.js"),
   weddingsetup: () => import("./wedding/setup.js"),
   weddingprogram: () => import("./wedding/program.js"),
+  weddingcrew: () => import("./wedding/crew.js"),
 };

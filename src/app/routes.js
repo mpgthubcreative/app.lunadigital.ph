@@ -37,6 +37,9 @@ export const SETUP_ROUTE = Object.freeze({ path: "/wedding-setup", label: "Weddi
 // Owner-pilot Bridal: Music & Program (ceremony / reception sequence and songs), under More.
 export const PROGRAM_ROUTE = Object.freeze({ path: "/wedding-program", label: "Music & Program", moduleId: "weddingprogram" });
 export const canSeeWeddingProgram = (session) => snapshotWorkspaceTemplateId(session?.entitlements) === "bridal-expense" && session?.member?.permissions?.["tasks.view"] === true && canUseModule(accessOf(session), "tasks");
+// Owner-pilot Bridal: Crew Meals (who eats, how many meals, where), under More.
+export const CREW_ROUTE = Object.freeze({ path: "/wedding-crew-meals", label: "Crew Meals", moduleId: "weddingcrew" });
+export const canSeeCrewMeals = (session) => snapshotWorkspaceTemplateId(session?.entitlements) === "bridal-expense" && session?.member?.permissions?.["vendors.view"] === true && canUseModule(accessOf(session), "vendors");
 export const canSeeWeddingSetup = (session) => snapshotWorkspaceTemplateId(session?.entitlements) === "bridal-expense" && session?.member?.permissions?.["guests.view"] === true && canUseModule(accessOf(session), "guests");
 
 export function buildRoutes(session) {
@@ -48,6 +51,7 @@ export function buildRoutes(session) {
   if (showExportPage(session)) routes.push({ ...EXPORT_ROUTE });
   if (canSeeWeddingSetup(session)) routes.push({ ...SETUP_ROUTE });
   if (canSeeWeddingProgram(session)) routes.push({ ...PROGRAM_ROUTE });
+  if (canSeeCrewMeals(session)) routes.push({ ...CREW_ROUTE });
   // Owner-pilot UX: a workspace whose home isn't the Dashboard (Household:
   // Payroll) sends "/" (sign-in, old links) there.
   const home = getWorkspaceTemplate(snapshotWorkspaceTemplateId(session.entitlements))?.home;
@@ -62,6 +66,7 @@ export function routeAllowed(session, route) {
   if (route && route.moduleId === EXPORT_ROUTE.moduleId) return showExportPage(session);
   if (route && route.moduleId === SETUP_ROUTE.moduleId) return canSeeWeddingSetup(session);
   if (route && route.moduleId === PROGRAM_ROUTE.moduleId) return canSeeWeddingProgram(session);
+  if (route && route.moduleId === CREW_ROUTE.moduleId) return canSeeCrewMeals(session);
   return Boolean(route && route.moduleId) && canUseModule(accessOf(session), route.moduleId);
 }
 

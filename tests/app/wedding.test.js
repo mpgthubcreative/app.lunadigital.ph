@@ -10,6 +10,7 @@ import { mount as mountExpenses, parseWeddingExpense } from "../../src/modules/w
 import { mount as mountSuppliers, toSupplierInput, paidState, moneySummary, shortPeso, moneyRows } from "../../src/modules/wedding/suppliers.js";
 import { mount as mountSetup } from "../../src/modules/wedding/setup.js";
 import { mount as mountProgram } from "../../src/modules/wedding/program.js";
+import { mount as mountCrewMeals } from "../../src/modules/wedding/crew.js";
 import { openInvitePreview } from "../../src/modules/wedding/invite-preview.js";
 import { renderInvitePage, inviteTokenFrom } from "../../src/app/invite.js";
 import { guessService } from "../../src/modules/wedding/categories.js";
@@ -1392,5 +1393,76 @@ describe("Owner-pilot Bridal: Guests → Roles", () => {
     container.querySelector('[data-role-guest="principal_sponsor|gRyan000001"] .wl-main').click();
     const d = document.querySelector('[data-role="details"]');
     expect([...d.querySelectorAll("dt")].find((x) => x.textContent === "Role").nextElementSibling.textContent).toBe("Principal Sponsor");
+  });
+});
+
+describe("Owner-pilot Bridal: Crew Meals (More)", () => {
+  const CREW = [
+    { id: "c1", name: "HMUA team", breakfast: 3, lunch: 3, dinner: 0, location: "Hotel", supplierId: null, supplierName: null, remarks: null },
+    { id: "c2", name: "Photo team", breakfast: 3, lunch: 3, dinner: 3, location: "Hotel", supplierId: SUP.id, supplierName: "ABC Photo Studio", remarks: "Halal x1" },
+  ];
+  const crewApi = (prices = {}) => vi.fn(async (_p, { body }) => (body.action === "list" ? { items: CREW, prices } : body.action === "create" ? { itemId: "cNew" } : {}));
+  const mountCrew = async (api, session = wedding()) => {
+    mountCrewMeals(container, session, { api, toast: () => {}, confirm: async () => true, activeSuppliers: async () => [SUP] });
+    await flush();
+  };
+
+  it("summary Breakfast · Lunch · Dinner from the list; one compact line per crew: name | B · L · D | place | ⋯ (Edit / Details / Remove)", async () => {
+    await mountCrew(crewApi());
+    expect(container.querySelector('[data-role="crew-summary"]').textContent.replace(/\s+/g, " ").trim()).toBe("Breakfast 6 · Lunch 6 · Dinner 3 Meal prices");
+    const rows = [...container.querySelectorAll('[data-role="crew"] .wl-crew')].map((r) => [r.querySelector(".wl-name").textContent, r.querySelector('[data-role="meals"]').textContent, r.querySelector('[data-role="place"]').textContent, r.querySelector('[data-role="sub"]').textContent]);
+    expect(rows).toEqual([["HMUA team", "B 3 · L 3", "Hotel", "B 3 · L 3 · Hotel"], ["Photo team", "B 3 · L 3 · D 3", "Hotel", "B 3 · L 3 · D 3 · Hotel"]]);
+    expect([...container.querySelectorAll('[data-crew="c2"] .menu-item')].map((b) => b.textContent)).toEqual(["Edit", "Details", "Remove"]);
+    container.querySelector('[data-crew="c2"] [data-act="view"]').click();
+    const d = document.querySelector('[data-role="details"]');
+    expect([...d.querySelectorAll("dt")].find((x) => x.textContent === "Linked supplier").nextElementSibling.textContent).toBe("ABC Photo Studio");
+  });
+
+  it("+ Add: Crew / person, Breakfast, Lunch, Dinner, Location up front; supplier link and remarks under More options; optional prices give an estimate", async () => {
+    const api = crewApi({ breakfast: 15000, lunch: 25000 });
+    await mountCrew(api);
+    expect(container.querySelector('[data-role="crew-summary"]').textContent).toContain("Est. ₱2,400");
+    container.querySelector('[data-act="new"]').click();
+    const f = lastForm();
+    const main = [...f.querySelectorAll(".field")].filter((x) => !x.closest(".form-more")).map((x) => x.querySelector("input,select,textarea").name);
+    expect(main).toEqual(["name", "breakfast", "lunch", "dinner", "location"]);
+    expect([...f.elements.supplierId.options].map((o) => o.textContent)).toEqual(["— None —", "ABC Photo Studio"]);
+    f.elements.name.value = "Video team";
+    f.elements.breakfast.value = "4";
+    f.elements.lunch.value = "4";
+    f.elements.location.value = "Reception";
+    f.elements.supplierId.value = SUP.id;
+    submit(f);
+    await flush();
+    expect(api).toHaveBeenCalledWith("wedding-crew-meals", { method: "POST", body: { action: "create", item: { name: "Video team", breakfast: 4, lunch: 4, dinner: 0, location: "Reception", supplierId: SUP.id, remarks: null } } });
+    container.querySelector('[data-act="prices"]').click();
+    lastForm().elements.dinner.value = "300";
+    submit(lastForm());
+    await flush();
+    expect(api).toHaveBeenCalledWith("wedding-crew-meals", { method: "POST", body: { action: "setPrices", prices: { breakfast: 15000, lunch: 25000, dinner: 30000 } } });
+  });
+
+  it("Sample list: common crews, nothing added by itself; + Add opens the form with the name filled in", async () => {
+    const api = crewApi();
+    await mountCrew(api);
+    container.querySelector('[data-act="seg"][data-value="sample"]').click();
+    await flush();
+    const names = [...container.querySelectorAll(".wl-sample .wl-name")].map((x) => x.textContent);
+    expect(names).toEqual(["Photo team", "Video team", "HMUA team", "Coordinator", "Lights & sounds crew", "Photobooth crew", "Host / emcee", "Drivers", "Church assistants", "Reception staff"]);
+    const line = (t) => [...container.querySelectorAll(".wl-sample")].find((li) => li.querySelector(".wl-name").textContent === t);
+    expect(line("Photo team").querySelector('[data-role="added"]').textContent).toBe("Added ✓");
+    expect(api.mock.calls.filter(([, o]) => o.body.action === "create")).toEqual([]);
+    line("Drivers").querySelector('[data-act="sample-add"]').click();
+    await flush();
+    expect(lastForm().elements.name.value).toBe("Drivers");
+  });
+
+  it("without vendors.manage: read only", async () => {
+    const s = wedding("manager");
+    delete s.member.permissions["vendors.manage"];
+    await mountCrew(crewApi(), s);
+    expect(container.querySelector('[data-act="new"]')).toBeNull();
+    expect(container.querySelector('[data-act="prices"]')).toBeNull();
+    expect([...container.querySelectorAll('[data-crew="c1"] .menu-item')].map((b) => b.textContent)).toEqual(["Details"]);
   });
 });
