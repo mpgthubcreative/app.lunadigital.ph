@@ -24,6 +24,7 @@ import { businessDate, isDayId } from "../../../shared/metrics.js";
 import { prepareNotifications } from "./notifications.js";
 import { tenantDb } from "./tenant-db.js";
 import { guestTotalsWrite } from "./wedding.js";
+import { roleLabel } from "../../../shared/wedding-roles.js";
 
 const TX_OPTIONS = { maxAttempts: 10 };
 const MAX_HISTORY = 200;
@@ -192,7 +193,8 @@ export async function viewInvite({ db, token, now = new Date() }) {
   return {
     wedding: publicSetup(setup),
     hero: h.exists ? h.data().dataUrl : null,
-    guest: { name: r.guest.name, seats: int(r.guest.partySize), rsvp: r.guest.rsvp, confirmed: int(r.guest.confirmed) },
+    // roles: ready for personal wording later ("…one of our Principal Sponsors"); not shown yet.
+    guest: { name: r.guest.name, seats: int(r.guest.partySize), rsvp: r.guest.rsvp, confirmed: int(r.guest.confirmed), roles: (Array.isArray(r.guest.roles) ? r.guest.roles : []).map((x) => roleLabel(x)) },
     rsvpOpen: rsvpOpen(setup, today),
     // The canonical address (current wedding link): an older link moves to it.
     path: invitePath(setup.weddingSlug, token),

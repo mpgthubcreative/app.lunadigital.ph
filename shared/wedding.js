@@ -191,7 +191,11 @@ export const TASK_PRIORITY_IDS = Object.freeze(Object.keys(TASK_PRIORITIES));
 export const SUGGESTED_TASK_CATEGORIES = Object.freeze(["Venue", "Ceremony / Church", "Suppliers", "Attire", "Invitations", "Documents", "Reception", "Styling", "Photo / Video", "Honeymoon", "Other"]);
 export const DUE_SOON_DAYS = 7;
 
-const TASK_FIELDS = ["title", "category", "assignee", "dueDate", "priority", "notes"];
+// Owner-pilot Bridal requirements (optional on any task): source = where to
+// get it; forWhom = bride / groom / both (both: each one's done mark is kept
+// in parts { bride, groom }; both done = Done).
+export const TASK_FOR = Object.freeze({ bride: { label: "Bride" }, groom: { label: "Groom" }, both: { label: "Bride & Groom" } });
+const TASK_FIELDS = ["title", "category", "assignee", "dueDate", "priority", "notes", "source", "forWhom"];
 export function validateTaskInput(input, { partial = false } = {}) {
   only(input, TASK_FIELDS, "task");
   const has = (k) => !partial || Object.hasOwn(input, k);
@@ -210,6 +214,11 @@ export function validateTaskInput(input, { partial = false } = {}) {
     out.priority = input.priority;
   }
   if (has("notes")) out.notes = text(input.notes, { field: "Notes", max: 500 });
+  if (Object.hasOwn(input, "source")) out.source = text(input.source, { field: "Where to get it", max: 120 });
+  if (Object.hasOwn(input, "forWhom")) {
+    if (input.forWhom !== null && input.forWhom !== "" && !Object.hasOwn(TASK_FOR, input.forWhom)) throw new WeddingError("invalid-input", "Choose Bride, Groom or Both");
+    out.forWhom = input.forWhom || null;
+  }
   if (partial && !Object.keys(out).length) throw new WeddingError("invalid-input", "Nothing to change");
   return out;
 }

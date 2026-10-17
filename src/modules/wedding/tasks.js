@@ -37,11 +37,20 @@ const taskFields = (t = {}) => [
   { name: "category", label: "Category", value: t.category ?? "", suggestions: SUGGESTED_TASK_CATEGORIES, more: true },
   { name: "assignee", label: "Assigned to", value: t.assignee ?? "", hint: "Anyone (no Luna account needed)", more: true },
   { name: "priority", label: "Priority", type: "select", options: PRIORITY_OPTIONS, value: t.priority ?? "normal", more: true, default: true },
+  // Requirements (optional on any task): for whom, and where to get it.
+  { name: "forWhom", label: "For", type: "select", options: FOR_OPTIONS, value: t.forWhom ?? "", more: true, default: true },
+  { name: "source", label: "Where to get it", value: t.source ?? "", placeholder: "e.g. San Jose Parish, PSA online", more: true },
   { name: "notes", label: "Notes", type: "textarea", value: t.notes ?? "", more: true },
 ];
+const FOR_OPTIONS = [{ value: "", label: "—" }, { value: "bride", label: "Bride" }, { value: "groom", label: "Groom" }, { value: "both", label: "Bride & Groom (each one's own)" }];
+// "Bride ✓ · Groom —" for a Bride & Groom requirement; "Bride" / "Groom" otherwise.
+export function forLine(t) {
+  if (t.forWhom === "both") return `Bride ${t.parts?.bride ? "✓" : "—"} · Groom ${t.parts?.groom ? "✓" : "—"}`;
+  return t.forWhom === "bride" ? "Bride" : t.forWhom === "groom" ? "Groom" : "";
+}
 
 export function toTaskInput(v) {
-  return { title: v.title.trim(), category: (v.category || "").trim() || null, assignee: (v.assignee || "").trim() || null, dueDate: v.dueDate || null, priority: v.priority || "normal", notes: (v.notes || "").trim() || null };
+  return { title: v.title.trim(), category: (v.category || "").trim() || null, assignee: (v.assignee || "").trim() || null, dueDate: v.dueDate || null, priority: v.priority || "normal", notes: (v.notes || "").trim() || null, ...(v.forWhom !== undefined ? { forWhom: v.forWhom || null } : {}), ...(v.source !== undefined ? { source: (v.source || "").trim() || null } : {}) };
 }
 
 // Unfinished by due date (no due date last, then by title); done last, newest first.
@@ -94,10 +103,11 @@ export function mount(container, session, { data = defaultData, toast = defaultT
       : html`<span class="wl-chip" data-tone="${STATUS_TONE[t.status] || ""}">${STATUS_WORDS[t.status] ?? t.status}</span>`;
   };
   const row = (t) => html`<li class="wl-row wl-task${isOpenStatus(t.status) ? "" : " is-done"}" data-task="${t.id}">
-    <button type="button" class="wl-main" data-act="view" data-id="${t.id}"><span class="wl-name">${t.title}</span></button>
+    <button type="button" class="wl-main" data-act="view" data-id="${t.id}"><span class="wl-name">${t.title}</span>${t.forWhom ? html`<span class="wl-sub" data-role="for">${forLine(t)}</span>` : ""}</button>
     ${statusControl(t)}
     ${taskTiming(t, today()) === "overdue" ? html`<span class="wl-due is-over" data-role="due" title="Overdue"><span class="visually-hidden">Overdue, due </span>${short(t.dueDate)}</span>` : html`<span class="wl-due" data-role="due">${t.dueDate ? short(t.dueDate) : ""}</span>`}
     <details class="line-menu"><summary class="btn btn-compact btn-ghost" aria-label="More for ${t.title}">⋯</summary><div class="line-menu-list" role="menu">
+      ${canManage && t.forWhom === "both" ? ["bride", "groom"].map((w) => html`<button type="button" class="menu-item" role="menuitem" data-act="part" data-who="${w}" data-id="${t.id}">${w === "bride" ? "Bride" : "Groom"}: ${t.parts?.[w] ? "mark not done" : "mark done"}</button>`) : ""}
       ${canManage ? html`<button type="button" class="menu-item" role="menuitem" data-act="edit" data-id="${t.id}">Edit</button><button type="button" class="menu-item" role="menuitem" data-act="due" data-id="${t.id}">Change due date</button>` : ""}
       <button type="button" class="menu-item" role="menuitem" data-act="view" data-id="${t.id}">Details &amp; history</button>
       ${canManage ? html`<div class="menu-sep" role="separator"></div><button type="button" class="menu-item menu-danger" role="menuitem" data-act="delete" data-id="${t.id}">Delete</button>` : ""}
@@ -163,7 +173,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     detailsDialog({
       title: t.title,
       badgeHtml: html`<span class="wl-chip" data-tone="${STATUS_TONE[t.status] || ""}">${STATUS_WORDS[t.status] ?? t.status}</span>`,
-      rows: [["Due date", t.dueDate ? formatDayId(t.dueDate) : null], ["Category", t.category], ["Assigned to", t.assignee], ["Priority", t.priority && t.priority !== "normal" ? TASK_PRIORITIES[t.priority]?.label : null], ["Completed", t.completedDate ? `${formatDayId(t.completedDate)}${t.completedBy?.name ? ` · ${t.completedBy.name}` : ""}` : null], ["Notes", t.notes]],
+      rows: [["Due date", t.dueDate ? formatDayId(t.dueDate) : null], ["Category", t.category], ["For", forLine(t) || null], ["Where to get it", t.source], ["Assigned to", t.assignee], ["Priority", t.priority && t.priority !== "normal" ? TASK_PRIORITIES[t.priority]?.label : null], ["Completed", t.completedDate ? `${formatDayId(t.completedDate)}${t.completedBy?.name ? ` · ${t.completedBy.name}` : ""}` : null], ["Notes", t.notes]],
       activity: activityLines(t.history, timezone),
       actions: canManage ? [{ act: "delete", label: "Delete", danger: true }, { act: "edit", label: "Edit" }] : [],
       onAction: async (act) => {
@@ -205,7 +215,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
           if (!pick) return;
           el.disabled = true;
           // A normal task: the sample's title, its group as the category.
-          await data.tasksApi({ action: "create", task: toTaskInput({ title: pick.item.title, category: pick.group.label, priority: "normal" }) });
+          await data.tasksApi({ action: "create", task: { ...toTaskInput({ title: pick.item.title, category: pick.group.label, priority: "normal" }), ...(pick.item.both ? { forWhom: "both" } : {}) } });
           toast(`Added to My Tasks: ${pick.item.title}`, "success");
           load();
           return;
@@ -215,6 +225,12 @@ export function mount(container, session, { data = defaultData, toast = defaultT
           return;
         case "due":
           if (t) saved(await dueDialog(t));
+          return;
+        case "part":
+          if (t) {
+            await data.tasksApi({ action: "setPart", taskId: t.id, person: el.dataset.who, done: !t.parts?.[el.dataset.who] });
+            load();
+          }
           return;
         case "delete":
           if (t) await remove(t);

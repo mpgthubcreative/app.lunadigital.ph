@@ -519,7 +519,9 @@ describe("Tasks (Owner-pilot Bridal UX): a compact checklist", () => {
     form.elements.dueDate.value = "2026-11-05";
     submit(form);
     await flush();
-    expect(data.tasksApi).toHaveBeenCalledWith({ action: "create", task: { title: "Book florist", category: null, assignee: null, dueDate: "2026-11-05", priority: "normal", notes: null } });
+    expect(data.tasksApi).toHaveBeenCalledWith({ action: "create", task: { title: "Book florist", category: null, assignee: null, dueDate: "2026-11-05", priority: "normal", notes: null, forWhom: null, source: null } });
+    // Requirement details (For / Where to get it) sit under More options.
+    expect(["forWhom", "source"].every((n) => form.elements[n].closest(".form-more"))).toBe(true);
   });
 });
 
@@ -1008,27 +1010,55 @@ it("Wedding link / hashtag: suggested from the couple names, cleaned as typed (#
 });
 
 describe("Owner-pilot Bridal: Sample Checklist (Tasks) and Sample Budget (Money)", () => {
-  it("Tasks: My Tasks | Sample Checklist; read-only groups; optional marked; already-added shown; + Add makes ONE normal task", async () => {
-    const data = fakeData({ listTasks: vi.fn(async () => ({ rows: [{ ...TASKS[0], title: "CENOMAR" }], hasMore: false })), tasksApi: vi.fn(async () => ({ taskId: "t9" })) });
+  it("Tasks: My Tasks | Sample Checklist; read-only groups (church + civil requirements with their notes); optional / Bride & Groom marked; already-added shown; + Add makes ONE normal task", async () => {
+    const data = fakeData({ listTasks: vi.fn(async () => ({ rows: [{ ...TASKS[0], title: "CENOMAR (Certificate of No Marriage)" }], hasMore: false })), tasksApi: vi.fn(async () => ({ taskId: "t9" })) });
     mountTasks(container, wedding(), { data, now: NOW, toast: () => {}, confirm: async () => true });
     await flush();
     expect([...container.querySelectorAll('[data-role="seg-view"] .seg-btn')].map((b) => b.textContent)).toEqual(["My Tasks", "Sample Checklist"]);
     container.querySelector('[data-act="seg"][data-value="sample"]').click();
     await flush();
     const heads = [...container.querySelectorAll(".wl-sample-group .wl-group-title")].map((h) => h.textContent);
-    expect(heads).toEqual(["Documents", "Ceremony", "Entourage", "Reception", "Attire & HMUA", "Flowers", "Wedding Essentials", "Photo & Video", "Invitations", "Gifts & Souvenirs", "Prenup / Engagement Shoot"]);
+    expect(heads).toEqual(["Documents & Legal", "Church Requirements", "Civil / Marriage License", "Ceremony", "Reception", "Attire & HMUA", "Entourage", "Wedding Essentials", "Photo & Video", "Invitations", "Gifts & Souvenirs", "Prenup / Engagement Shoot"]);
+    const group = (id) => container.querySelector(`[data-sample-group="${id}"]`);
+    expect(group("church").querySelector('[data-role="sample-note"]').textContent).toMatch(/^Optional · requirements vary by church \/ parish/);
+    expect(group("church").querySelector('[data-role="sample-sub"]').textContent).toBe("Officiating priest (if not from the parish)");
+    expect(group("civil").querySelector('[data-role="sample-note"]').textContent).toBe("Requirements vary by city / municipality. Verify with your local civil registrar.");
     const line = (title) => [...container.querySelectorAll(".wl-sample")].find((li) => li.querySelector(".wl-name").textContent === title);
-    expect(line("CENOMAR").querySelector('[data-role="added"]').textContent).toBe("Added ✓");
-    expect(line("Baptismal certificates").querySelector(".wl-opt").textContent).toBe("Optional");
-    expect(line("Marriage license").querySelector(".wl-opt")).toBeNull();
-    // Veil appears once (attire); the ceremony's is the sponsors' unity veil.
-    expect([...container.querySelectorAll(".wl-sample .wl-name")].filter((n) => /veil/i.test(n.textContent)).map((n) => n.textContent)).toEqual(["Veil", "Unity veil (veil sponsors)"]);
+    expect(line("CENOMAR (Certificate of No Marriage)").querySelector('[data-role="added"]').textContent).toBe("Added ✓");
+    expect([...line("Baptismal certificate (for marriage purposes)").querySelectorAll(".wl-opt")].map((x) => x.textContent)).toEqual(["Bride & Groom"]);
+    expect(line("Priest's celebret / letter of good standing").querySelector(".wl-opt").textContent).toBe("Optional");
+    // Duplicates merged: PSA / CENOMAR once; Veil once (the ceremony one is the sponsors' unity veil).
+    const names = [...container.querySelectorAll(".wl-sample .wl-name")].map((n) => n.textContent);
+    expect(names.filter((n) => /PSA|CENOMAR/.test(n))).toEqual(["PSA birth certificate", "CENOMAR (Certificate of No Marriage)"]);
+    expect(names.filter((n) => n === "Veil" || n.startsWith("Unity veil"))).toEqual(["Veil", "Unity veil (veil sponsors)"]);
+    expect(names.filter((n) => /^veil$/i.test(n)).length).toBe(1);
     expect(data.tasksApi).not.toHaveBeenCalled(); // nothing is added by itself
-    line("Marriage license").querySelector('[data-act="sample-add"]').click();
+    line("Baptismal certificate (for marriage purposes)").querySelector('[data-act="sample-add"]').click();
     await flush();
     expect(data.tasksApi).toHaveBeenCalledTimes(1);
-    expect(data.tasksApi).toHaveBeenCalledWith({ action: "create", task: { title: "Marriage license", category: "Documents", assignee: null, dueDate: null, priority: "normal", notes: null } });
+    expect(data.tasksApi).toHaveBeenCalledWith({ action: "create", task: { title: "Baptismal certificate (for marriage purposes)", category: "Church Requirements", assignee: null, dueDate: null, priority: "normal", notes: null, forWhom: "both" } });
+    line("Marriage license application").querySelector('[data-act="sample-add"]').click();
+    await flush();
+    expect(data.tasksApi).toHaveBeenLastCalledWith({ action: "create", task: { title: "Marriage license application", category: "Civil / Marriage License", assignee: null, dueDate: null, priority: "normal", notes: null } });
     expect(container.querySelector('[data-act="seg"][data-value="sample"]').getAttribute("aria-pressed")).toBe("true"); // stays on the sample
+  });
+
+  it("a Bride & Groom requirement in My Tasks: one compact line 'Bride ✓ · Groom —'; ⋯ marks each one; details show For / Where to get it (no template note)", async () => {
+    const req = { ...TASKS[1], id: "taskBapt0001", title: "Baptismal certificate", category: "Church Requirements", forWhom: "both", parts: { bride: true, groom: false }, source: "San Jose Parish", status: "in_progress", dueDate: "2026-11-01" };
+    const data = fakeData({ listTasks: vi.fn(async () => ({ rows: [req], hasMore: false })), tasksApi: vi.fn(async () => ({})) });
+    mountTasks(container, wedding(), { data, now: NOW, toast: () => {}, confirm: async () => true });
+    await flush();
+    const row = container.querySelector('[data-task="taskBapt0001"]');
+    expect(row.querySelector('[data-role="for"]').textContent).toBe("Bride ✓ · Groom —");
+    expect([...row.querySelectorAll(".menu-item")].slice(0, 2).map((b) => b.textContent)).toEqual(["Bride: mark not done", "Groom: mark done"]);
+    row.querySelector('[data-act="part"][data-who="groom"]').click();
+    await flush();
+    expect(data.tasksApi).toHaveBeenCalledWith({ action: "setPart", taskId: "taskBapt0001", person: "groom", done: true });
+    container.querySelector('[data-task="taskBapt0001"] .wl-main').click();
+    const d = document.querySelector('[data-role="details"]');
+    const field = (k) => [...d.querySelectorAll("dt")].find((x) => x.textContent === k)?.nextElementSibling.textContent;
+    expect([field("For"), field("Where to get it")]).toEqual(["Bride ✓ · Groom —", "San Jose Parish"]);
+    expect(d.textContent).not.toMatch(/vary by/);
   });
 
   it("Tasks sample: no + Add without tasks.manage", async () => {
@@ -1275,5 +1305,92 @@ describe("Owner-pilot Bridal: Music & Program (More)", () => {
     await flush();
     expect(container.querySelector('[data-act="new"]')).toBeNull();
     expect([...container.querySelectorAll('[data-item="p2"] .menu-item')].map((b) => b.textContent)).toEqual(["Details"]);
+  });
+});
+
+describe("Owner-pilot Bridal: Guests → Roles", () => {
+  const G2 = [
+    { id: "gRyan000001", name: "Ryan Reyes", category: "sponsors", side: "groom", partySize: 2, rsvp: "attending", confirmed: 2, roles: [{ id: "principal_sponsor" }], roleKeys: ["principal_sponsor"], revision: 1, history: [] },
+    { id: "gShirley001", name: "Shirley Saragcon", category: "sponsors", side: "bride", partySize: 1, rsvp: "awaiting", confirmed: 0, roles: [{ id: "principal_sponsor" }], roleKeys: ["principal_sponsor"], revision: 1, history: [] },
+    { id: "gSarah00001", name: "Sarah Barnes", category: "entourage", side: "bride", partySize: 1, rsvp: "attending", confirmed: 1, roles: [{ id: "maid_of_honor" }], roleKeys: ["maid_of_honor"], revision: 1, history: [] },
+    { id: "gTan0000001", name: "Tan Family", category: "friends", side: "groom", partySize: 3, rsvp: "awaiting", confirmed: 0, revision: 1, history: [] },
+  ];
+  const mountRoles = async (extra = {}) => {
+    const data = fakeData({ listGuests: vi.fn(async () => ({ rows: G2, hasMore: false })), getSeating: vi.fn(async () => null), getWeddingSetup: vi.fn(async () => null), guestsApi: vi.fn(async () => ({ guestId: "gNew0000001" })), ...extra });
+    mountGuests(container, wedding(), { data, toast: () => {}, confirm: async () => true });
+    await flush();
+    container.querySelector('[data-act="seg"][data-value="roles"]').click();
+    await flush();
+    return data;
+  };
+
+  it("RSVP | Seating | Roles; roles grouped compactly (MAID / MATRON OF HONOR · 1, PRINCIPAL SPONSORS · 2), one line per guest; the rest under 'Not assigned yet'", async () => {
+    await mountRoles();
+    expect([...container.querySelectorAll('[data-role="seg-view"] .seg-btn')].map((b) => b.textContent)).toEqual(["RSVP", "Seating", "Roles"]);
+    const groups = [...container.querySelectorAll("[data-role-group]")].map((s) => [s.querySelector(".wl-group-title").textContent, s.querySelector(".wl-cat-counts").textContent, [...s.querySelectorAll(".wl-name")].map((n) => n.textContent)]);
+    expect(groups).toEqual([["Maid / Matron of Honor", "· 1", ["Sarah Barnes"]], ["Principal Sponsors", "· 2", ["Ryan Reyes", "Shirley Saragcon"]]]);
+    expect(container.querySelector('[data-role="roles-summary"]').textContent).toBe("3 people · 2 roles");
+    expect(container.querySelector('.page-header [data-act="role-new"]').textContent).toBe("+ Assign role");
+    expect(container.querySelector('[data-role="open-roles"] summary').textContent).toBe("Not assigned yet (15)");
+    const items = [...container.querySelectorAll('[data-role-guest="principal_sponsor|gRyan000001"] .menu-item')].map((b) => b.textContent);
+    expect(items).toEqual(["Change person", "Change role", "View guest", "Remove role"]);
+  });
+
+  it("+ Assign role picks an EXISTING guest (no retyping); or adds a new guest and assigns (sponsors category)", async () => {
+    const data = await mountRoles();
+    container.querySelector('.page-header [data-act="role-new"]').click();
+    let f = lastForm();
+    expect([...f.elements.guestId.options].map((o) => o.textContent)).toEqual(["— Choose a guest —", "Ryan Reyes", "Sarah Barnes", "Shirley Saragcon", "Tan Family", "+ Add guest and assign"]);
+    f.elements.role.value = "best_man";
+    f.elements.guestId.value = "gTan0000001";
+    submit(f);
+    await flush();
+    expect(data.guestsApi).toHaveBeenCalledWith({ action: "assignRole", guestId: "gTan0000001", role: { id: "best_man" } });
+    container.querySelector('.page-header [data-act="role-new"]').click();
+    f = lastForm();
+    f.elements.role.value = "candle_sponsor";
+    f.elements.guestId.value = "__new";
+    f.elements.newName.value = "Kris & Kenet Yamat";
+    f.elements.newSeats.value = "2";
+    submit(f);
+    await flush();
+    expect(data.guestsApi).toHaveBeenCalledWith({ action: "create", guest: expect.objectContaining({ name: "Kris & Kenet Yamat", category: "sponsors", partySize: 2 }) });
+    expect(data.guestsApi).toHaveBeenLastCalledWith({ action: "assignRole", guestId: "gNew0000001", role: { id: "candle_sponsor" } });
+    // A custom role.
+    container.querySelector('.page-header [data-act="role-new"]').click();
+    f = lastForm();
+    f.elements.role.value = "custom";
+    f.elements.customRole.value = "Program host";
+    f.elements.guestId.value = "gTan0000001";
+    submit(f);
+    await flush();
+    expect(data.guestsApi).toHaveBeenLastCalledWith({ action: "assignRole", guestId: "gTan0000001", role: { id: "custom", label: "Program host" } });
+  });
+
+  it("⋯ Change person / Change role / Remove role (the guest and RSVP stay); Details shows the role", async () => {
+    const asked = [];
+    const data = fakeData({ listGuests: vi.fn(async () => ({ rows: G2, hasMore: false })), getSeating: vi.fn(async () => null), getWeddingSetup: vi.fn(async () => null), guestsApi: vi.fn(async () => ({})) });
+    mountGuests(container, wedding(), { data, toast: () => {}, confirm: async (c) => (asked.push(c), true) });
+    await flush();
+    container.querySelector('[data-act="seg"][data-value="roles"]').click();
+    await flush();
+    container.querySelector('[data-role-guest="maid_of_honor|gSarah00001"] [data-act="role-person"]').click();
+    lastForm().elements.guestId.value = "gTan0000001";
+    submit(lastForm());
+    await flush();
+    expect(data.guestsApi).toHaveBeenCalledWith({ action: "moveRole", fromGuestId: "gSarah00001", toGuestId: "gTan0000001", role: { id: "maid_of_honor" } });
+    container.querySelector('[data-role-guest="principal_sponsor|gRyan000001"] [data-act="role-change"]').click();
+    lastForm().elements.role.value = "veil_sponsor";
+    submit(lastForm());
+    await flush();
+    expect(data.guestsApi).toHaveBeenCalledWith({ action: "moveRole", fromGuestId: "gRyan000001", role: { id: "principal_sponsor" }, toRole: { id: "veil_sponsor" } });
+    container.querySelector('[data-role-guest="principal_sponsor|gShirley001"] [data-act="role-remove"]').click();
+    await flush();
+    expect(asked[0].body).toBe("Only the role is removed. The guest, their RSVP, seats and table stay.");
+    expect(data.guestsApi).toHaveBeenCalledWith({ action: "unassignRole", guestId: "gShirley001", role: { id: "principal_sponsor" } });
+    expect(data.guestsApi).not.toHaveBeenCalledWith(expect.objectContaining({ action: "remove" }));
+    container.querySelector('[data-role-guest="principal_sponsor|gRyan000001"] .wl-main').click();
+    const d = document.querySelector('[data-role="details"]');
+    expect([...d.querySelectorAll("dt")].find((x) => x.textContent === "Role").nextElementSibling.textContent).toBe("Principal Sponsor");
   });
 });

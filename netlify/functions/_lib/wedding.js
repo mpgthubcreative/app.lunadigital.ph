@@ -23,7 +23,7 @@
 // the wedding sink applies the same cap to the expenses themselves.
 
 import { BUDGET_DOC_ID, isValidRecordId } from "../../../shared/baby.js";
-import { WeddingError, WEDDING_SCHEMA_VERSION, TOTALS_DOC_ID, SUPPLIER_SERVICES, SUPPLIER_STATUSES, TASK_STATUSES, TASK_PRIORITIES, RSVP_STATUSES, GUEST_SIDES, isOpenStatus, keyOf, validateSupplierInput, validateSupplierPaymentInput, validateTaskInput, validateGuestInput, validateRsvp, taskTotalsDelta, guestDelta, guestCategoryDelta, supplierBalance, SEATING_DOC_ID, MAX_TABLES, TABLE_ID, validateTableInput } from "../../../shared/wedding.js";
+import { WeddingError, WEDDING_SCHEMA_VERSION, TOTALS_DOC_ID, SUPPLIER_SERVICES, SUPPLIER_STATUSES, TASK_STATUSES, TASK_PRIORITIES, TASK_FOR, RSVP_STATUSES, GUEST_SIDES, isOpenStatus, keyOf, validateSupplierInput, validateSupplierPaymentInput, validateTaskInput, validateGuestInput, validateRsvp, taskTotalsDelta, guestDelta, guestCategoryDelta, supplierBalance, SEATING_DOC_ID, MAX_TABLES, TABLE_ID, validateTableInput } from "../../../shared/wedding.js";
 import { EXPENSE_METHODS } from "../../../shared/expenses.js";
 import { businessDate, isDayId } from "../../../shared/metrics.js";
 import { prepareExpenseCreate } from "./expenses.js";
@@ -404,7 +404,8 @@ export async function createTask({ db, tenant, FieldValue, input, actor }) {
     const r = tenant.collection("weddingTasks").doc();
     const stamp = FieldValue.serverTimestamp();
     const task = { title: data.title, category: data.category ?? null, categoryKey: keyOf(data.category), assignee: data.assignee ?? null, assigneeKey: keyOf(data.assignee), dueDate: data.dueDate ?? null, priority: data.priority ?? "normal", status: "not_started", open: true };
-    tx.create(r, { schemaVersion: WEDDING_SCHEMA_VERSION, ...task, notes: data.notes ?? null, completedAt: null, completedBy: null, completedDate: null, history: [entry(actor, `Added task${task.dueDate ? ` · due ${task.dueDate}` : ""}`)], revision: 1, createdBy: who(actor), createdAt: stamp, updatedBy: who(actor), updatedAt: stamp });
+    const req = { source: data.source ?? null, forWhom: data.forWhom ?? null, ...(data.forWhom === "both" ? { parts: { bride: false, groom: false } } : {}) };
+    tx.create(r, { schemaVersion: WEDDING_SCHEMA_VERSION, ...task, ...req, notes: data.notes ?? null, completedAt: null, completedBy: null, completedDate: null, history: [entry(actor, `Added task${task.dueDate ? ` · due ${task.dueDate}` : ""}`)], revision: 1, createdBy: who(actor), createdAt: stamp, updatedBy: who(actor), updatedAt: stamp });
     tx.set(taskTotalsRef(tenant), { schemaVersion: WEDDING_SCHEMA_VERSION, ...incTotals(FieldValue, taskTotalsDelta(null, task)), updatedAt: stamp }, { merge: true });
     return { taskId: r.id };
   }, TX_OPTIONS);
@@ -420,11 +421,42 @@ export async function updateTask({ db, tenant, FieldValue, taskId, changes, expe
     checkRevision(expectedRevision, t.revision);
     const diff = Object.fromEntries(Object.entries(data).filter(([k, v]) => (t[k] ?? null) !== (v ?? null)));
     if (!Object.keys(diff).length) return { taskId, unchanged: true, revision: t.revision };
-    const names = { title: "Task", category: "Category", assignee: "Assigned to", dueDate: "Due date", priority: "Priority" };
-    const show = (k, v) => (k === "priority" ? label(TASK_PRIORITIES, v) : v || "—");
-    const labels = Object.keys(diff).map((k) => (k === "notes" ? "Notes updated" : `${names[k]} changed ${show(k, t[k])} → ${show(k, diff[k])}`));
+    const names = { title: "Task", category: "Category", assignee: "Assigned to", dueDate: "Due date", priority: "Priority", source: "Where to get it", forWhom: "For" };
+    const show = (k, v) => (k === "priority" ? label(TASK_PRIORITIES, v) : k === "forWhom" ? TASK_FOR[v]?.label ?? "—" : v || "—");
+    // Becoming "both" starts each one's done mark from the task's status.
+    if (diff.forWhom === "both" && !t.parts) diff.parts = { bride: t.status === "completed", groom: t.status === "completed" };
+    const labels = Object.keys(diff).filter((k) => k !== "parts").map((k) => (k === "notes" ? "Notes updated" : `${names[k]} changed ${show(k, t[k])} → ${show(k, diff[k])}`));
     tx.update(tRef, { ...diff, ...("category" in diff ? { categoryKey: keyOf(diff.category) } : {}), ...("assignee" in diff ? { assigneeKey: keyOf(diff.assignee) } : {}), history: append(t.history, entry(actor, labels.join(" · "))), revision: t.revision + 1, updatedBy: who(actor), updatedAt: FieldValue.serverTimestamp() });
     return { taskId, revision: t.revision + 1 };
+  }, TX_OPTIONS);
+}
+
+// A Bride & Groom requirement: one person's done mark. Both done -> Done;
+// one undone after Done -> In progress; the first mark -> In progress.
+export async function setTaskPart({ db, tenant, FieldValue, business, taskId, person, done, actor, now = new Date() }) {
+  if (!["bride", "groom"].includes(person) || typeof done !== "boolean") throw new WeddingError("invalid-input", "Choose Bride or Groom");
+  const tRef = taskRef(tenant, taskId);
+  return db.runTransaction(async (tx) => {
+    const snap = await tx.get(tRef);
+    await tx.get(taskTotalsRef(tenant));
+    if (!snap.exists) throw new WeddingError("not-found", "Task not found");
+    const t = snap.data();
+    if (t.forWhom !== "both") throw new WeddingError("invalid-input", "This task isn't for both the bride and the groom");
+    const parts = { bride: Boolean(t.parts?.bride), groom: Boolean(t.parts?.groom), [person]: done };
+    if (Boolean(t.parts?.[person]) === done) return { taskId, unchanged: true, parts };
+    const status = t.status === "cancelled" ? "cancelled" : parts.bride && parts.groom ? "completed" : parts.bride || parts.groom ? "in_progress" : t.status === "completed" ? "in_progress" : t.status;
+    const stamp = FieldValue.serverTimestamp();
+    const text = `${person === "bride" ? "Bride" : "Groom"}: ${done ? "done" : "not done"}${status !== t.status ? ` · status ${label(TASK_STATUSES, t.status)} → ${label(TASK_STATUSES, status)}` : ""}`;
+    tx.update(tRef, {
+      parts,
+      ...(status !== t.status ? { status, open: isOpenStatus(status), ...(status === "completed" ? { completedAt: stamp, completedBy: who(actor), completedDate: businessDate(business.timezone, now) } : t.status === "completed" ? { completedAt: null, completedBy: null, completedDate: null } : {}) } : {}),
+      history: append(t.history, entry(actor, text, { part: person, done })),
+      revision: t.revision + 1,
+      updatedBy: who(actor),
+      updatedAt: stamp,
+    });
+    if (status !== t.status) tx.set(taskTotalsRef(tenant), { schemaVersion: WEDDING_SCHEMA_VERSION, ...incTotals(FieldValue, taskTotalsDelta(t, { ...t, status })), updatedAt: stamp }, { merge: true });
+    return { taskId, parts, status };
   }, TX_OPTIONS);
 }
 

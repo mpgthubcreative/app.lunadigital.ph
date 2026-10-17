@@ -11,6 +11,10 @@
 //   Invitations (Owner-pilot Bridal):
 //   { action: "inviteLink", guestId }       the guest's link (made on first use)
 //   { action: "regenerateInvite", guestId } a new link; the old one stops working
+//   Wedding roles (Owner-pilot Bridal; on the same guest record):
+//   { action: "assignRole", guestId, role: { id, label? } }
+//   { action: "unassignRole", guestId, role }               the guest and RSVP stay
+//   { action: "moveRole", fromGuestId, toGuestId?, role, toRole? }   change person / change role
 // Party size (invited) and confirmed attendees are kept apart; the RSVP
 // totals are computed by Luna. Reads go straight to Firestore (guests.view).
 
@@ -18,6 +22,7 @@ import { getAdmin } from "./_lib/firebase-admin.js";
 import { weddingActionHandler } from "./_lib/wedding-http.js";
 import { createGuest, updateGuest, setRsvp, removeGuest, createTable, updateTable, deleteTable, seatGuest } from "./_lib/wedding.js";
 import { inviteLink, issueInvite } from "./_lib/invitations.js";
+import { assignRole, unassignRole, moveRole } from "./_lib/wedding-roles.js";
 import { RequestError } from "./_lib/http.js";
 
 const guestIdOf = (b) => {
@@ -39,6 +44,9 @@ export const createGuestsHandler = (deps) =>
       deleteTable: { permission: M, fields: ["action", "tableId"], run: (c, b) => deleteTable({ ...c, tableId: b.tableId }) },
       inviteLink: { permission: M, fields: ["action", "guestId"], run: (c, b) => inviteLink({ ...c, guestId: guestIdOf(b) }) },
       regenerateInvite: { permission: M, fields: ["action", "guestId"], run: (c, b) => issueInvite({ ...c, guestId: guestIdOf(b) }) },
+      assignRole: { permission: M, fields: ["action", "guestId", "role"], run: (c, b) => assignRole({ ...c, guestId: guestIdOf(b), role: b.role }) },
+      unassignRole: { permission: M, fields: ["action", "guestId", "role"], run: (c, b) => unassignRole({ ...c, guestId: guestIdOf(b), role: b.role }) },
+      moveRole: { permission: M, fields: ["action", "fromGuestId", "toGuestId", "role", "toRole"], run: (c, b) => moveRole({ ...c, fromGuestId: b.fromGuestId, toGuestId: b.toGuestId ?? null, role: b.role, toRole: b.toRole ?? null }) },
       seat: { permission: M, fields: ["action", "guestId", "tableId"], run: (c, b) => seatGuest({ ...c, guestId: b.guestId, tableId: b.tableId ?? null }) },
     },
   });

@@ -31,6 +31,7 @@ import { RSVP_STATUSES, GUEST_SIDES, GUEST_CATEGORIES, GUEST_CATEGORY_IDS, rsvpS
 import { activityLines, detailsDialog } from "../baby/common.js";
 import * as defaultData from "./data.js";
 import { openInvitePreview, copyText, canShare } from "./invite-preview.js";
+import { WEDDING_ROLES, WEDDING_ROLE_IDS, rolesPlan, roleLabel, roleKey, categoryForRole } from "@shared/wedding-roles.js";
 
 const SIDE_OPTIONS = Object.entries(GUEST_SIDES).map(([value, s]) => ({ value, label: s.label }));
 // Simple words for the stored RSVP statuses.
@@ -180,22 +181,72 @@ export function mount(container, session, { data = defaultData, toast = defaultT
         : html`<p class="stat-hint wl-none" data-role="no-tables">No tables yet.${canManage ? " Add your reception tables, then assign guests." : ""}</p>`}`;
   }
 
+  // Roles: one group per role (PRINCIPAL SPONSORS · 8), one line per guest.
+  // The roles live on the guest records (no second list of names).
+  function rolesView(roles) {
+    const used = new Set(roles.map((r) => r.key));
+    const open = WEDDING_ROLE_IDS.filter((id) => !used.has(id));
+    const roleRow = (gr, g) => html`<li class="wl-row wl-guest" data-role-guest="${gr.key}|${g.id}"><button type="button" class="wl-main" data-act="view" data-id="${g.id}"><span class="wl-name">${g.name}</span></button><span class="wl-chip" data-tone="${RSVP_TONE[g.rsvp] || ""}">${RSVP_WORDS[g.rsvp] ?? g.rsvp}</span>${menu(`${gr.label}: ${g.name}`, [
+      ...(canManage ? [{ act: "role-person", id: `${gr.key}|${g.id}`, label: "Change person" }, { act: "role-change", id: `${gr.key}|${g.id}`, label: "Change role" }] : []),
+      { act: "view", id: g.id, label: "View guest" },
+      ...(canManage ? [{ act: "role-remove", id: `${gr.key}|${g.id}`, label: "Remove role", danger: true, sep: true }] : []),
+    ])}</li>`;
+    return html`
+      ${roles.length ? "" : html`<p class="stat-hint wl-none" data-role="no-roles">No roles yet. Assign the Maid of Honor, Best Man, sponsors and entourage from your guest list${canManage ? ": + Assign role" : ""}.</p>`}
+      ${roles.map((gr) => html`<section class="wl-section" data-role-group="${gr.key}"><h2 class="wl-cat-head"><span class="wl-group-title">${gr.label}</span><span class="wl-cat-counts">· ${gr.guests.length}</span></h2><ul class="wl-list wl-scroll" data-role="role-guests">${gr.guests.map((g) => roleRow(gr, g))}</ul></section>`)}
+      ${canManage && open.length ? html`<details class="wl-fold" data-role="open-roles"><summary>Not assigned yet (${open.length})</summary><ul class="wl-list">${open.map((id) => html`<li class="wl-row wl-sample"><span class="wl-main"><span class="wl-name">${WEDDING_ROLES[id].label}</span></span><button type="button" class="btn btn-compact" data-act="role-new" data-role-id="${id}">Assign</button></li>`)}</ul></details>` : ""}`;
+  }
+  const ROLE_OPTIONS = [...WEDDING_ROLE_IDS.map((id) => ({ value: id, label: WEDDING_ROLES[id].label })), { value: "custom", label: "Custom role…" }];
+  const guestOptions = () => [{ value: "", label: "— Choose a guest —" }, ...[...state.rows].sort((a, b) => a.name.localeCompare(b.name)).map((g) => ({ value: g.id, label: g.name })), { value: "__new", label: "+ Add guest and assign" }];
+  const roleOf = (v) => (v.role === "custom" ? { id: "custom", label: (v.customRole || "").trim() } : { id: v.role });
+  // Assign: a role (or a custom one) to an existing guest, or a new guest.
+  const assignDialog = (roleId = "") =>
+    formDialog({
+      title: "Assign a wedding role",
+      fields: [
+        { name: "role", label: "Role", type: "select", options: ROLE_OPTIONS, value: roleId || "maid_of_honor" },
+        { name: "customRole", label: "Custom role name", value: "", placeholder: "e.g. Program host", hint: "Only for Custom role." },
+        { name: "guestId", label: "Guest", type: "select", options: guestOptions(), value: "", hint: "Not on the list yet? Choose + Add guest and assign." },
+        { name: "newName", label: "New guest's name", value: "", hint: "Only for + Add guest and assign.", more: true },
+        { name: "newSeats", label: "Seats invited", value: "1", inputmode: "numeric", more: true },
+      ],
+      moreLabel: "New guest details",
+      submitLabel: "Assign",
+      onSubmit: async (v) => {
+        const role = roleOf(v);
+        if (role.id === "custom" && !role.label) throw new Error("Name the custom role");
+        let guestId = v.guestId;
+        if (guestId === "__new") {
+          const name = (v.newName || "").trim();
+          if (!name) throw new Error("Enter the new guest's name");
+          guestId = (await data.guestsApi({ action: "create", guest: toGuestInput({ name, category: categoryForRole(role), side: "both", partySize: v.newSeats || "1", contact: "", invitationSent: "", notes: "" }) })).guestId;
+        }
+        if (!guestId) throw new Error("Choose a guest");
+        return data.guestsApi({ action: "assignRole", guestId, role });
+      },
+    });
+  const roleFromKey = (key) => (key.startsWith("custom:") ? state.rows.flatMap((g) => g.roles || []).find((r) => roleKey(r) === key) : { id: key });
+
   function draw() {
     if (!alive) return;
     const t = rsvpSummary(state.totals);
     const seatingOn = state.view === "seating";
+    const rolesOn = state.view === "roles";
     const plan = seatingOn ? seatingPlan(state.rows, state.seating) : null;
+    const roles = rolesOn ? rolesPlan(state.rows) : null;
     render(
       container,
       html`
-        ${pageHeader({ title: "Guests", actions: canManage ? (seatingOn ? html`<button type="button" class="btn btn-primary" data-act="new-table">+ Add table</button>` : html`<button type="button" class="btn btn-primary" data-act="new">+ Add guest</button>`) : "" })}
+        ${pageHeader({ title: "Guests", actions: canManage ? (seatingOn ? html`<button type="button" class="btn btn-primary" data-act="new-table">+ Add table</button>` : rolesOn ? html`<button type="button" class="btn btn-primary" data-act="role-new">+ Assign role</button>` : html`<button type="button" class="btn btn-primary" data-act="new">+ Add guest</button>`) : "" })}
         ${state.loading || state.error
           ? ""
+          : rolesOn
+            ? html`<p class="wl-count" data-role="roles-summary">${fmt(new Set(roles.flatMap((r) => r.guests.map((g) => g.id))).size)} people · ${fmt(roles.length)} roles</p>`
           : seatingOn
             ? html`<p class="wl-count" data-role="seating-summary">${fmt(plan.attendingSeats)} attending · ${fmt(plan.seatedSeats)} seated · <strong class="${plan.unassignedSeats ? "is-warn" : ""}">${fmt(plan.unassignedSeats)} unassigned</strong></p>`
             : html`<p class="wl-count" data-role="rsvp-summary" title="People (seats), not invitations">${fmt(t.invitedSeats)} invited · ${fmt(t.attendingSeats)} attending · ${fmt(t.awaitingSeats)} waiting${t.declinedSeats ? ` · ${fmt(t.declinedSeats)} declined` : ""}</p>`}
-        <div class="wl-tools">${segmented("view", [["rsvp", "RSVP"], ["seating", "Seating"]], state.view, { label: "Guests view" })}</div>
-        ${seatingOn || !state.rows.length
+        <div class="wl-tools">${segmented("view", [["rsvp", "RSVP"], ["seating", "Seating"], ["roles", "Roles"]], state.view, { label: "Guests view" })}</div>
+        ${seatingOn || rolesOn || !state.rows.length
           ? ""
           : html`<div class="wl-tools wl-guest-tools">
               <input class="input wl-search" type="search" data-role="search" placeholder="Search guest" aria-label="Search guest" value="${state.search}">
@@ -207,7 +258,9 @@ export function mount(container, session, { data = defaultData, toast = defaultT
             ? skeleton(6)
             : seatingOn
               ? seatingView()
-              : rsvpView()}`
+              : rolesOn
+                ? rolesView(roles)
+                : rsvpView()}`
     );
   }
 
@@ -280,7 +333,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     detailsDialog({
       title: g.name,
       badgeHtml: html`<span class="wl-chip" data-tone="${RSVP_TONE[g.rsvp] || ""}">${RSVP_WORDS[g.rsvp] ?? g.rsvp}</span>`,
-      rows: [["Category", GUEST_CATEGORIES[g.category]?.label ?? "Not set"], ...(g.group ? [["Group (earlier note)", g.group]] : []), ["Seats invited", String(g.partySize)], ["Attending", g.rsvp === "attending" ? String(g.confirmed) : null], ["Table", table ? table.name : null], ["RSVP date", g.rsvpDate ? formatDayId(g.rsvpDate) : null], ["Side", GUEST_SIDES[g.side]?.label], ["Invitation sent", g.invitationSent ? formatDayId(g.invitationSent) : "Not sent"], ["Invitation link", g.invitation?.status === "active" ? "Created (⋯ → View / Copy invitation link)" : "Not created yet (⋯ → Create invitation link)"], ["Contact", g.contact], ["Notes", g.notes]],
+      rows: [["Category", GUEST_CATEGORIES[g.category]?.label ?? "Not set"], ...(g.group ? [["Group (earlier note)", g.group]] : []), ["Role", (g.roles || []).length ? g.roles.map((r) => roleLabel(r)).join(", ") : null], ["Seats invited", String(g.partySize)], ["Attending", g.rsvp === "attending" ? String(g.confirmed) : null], ["Table", table ? table.name : null], ["RSVP date", g.rsvpDate ? formatDayId(g.rsvpDate) : null], ["Side", GUEST_SIDES[g.side]?.label], ["Invitation sent", g.invitationSent ? formatDayId(g.invitationSent) : "Not sent"], ["Invitation link", g.invitation?.status === "active" ? "Created (⋯ → View / Copy invitation link)" : "Not created yet (⋯ → Create invitation link)"], ["Contact", g.contact], ["Notes", g.notes]],
       activity: activityLines(g.history, timezone),
       actions: canManage ? [{ act: "remove", label: "Remove guest", danger: true }, { act: "edit", label: "Edit" }] : [],
       onAction: async (act) => {
@@ -325,6 +378,29 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     const el = event.target.closest("[data-act]");
     if (!el || !container.contains(el) || el.dataset.act === "export" || el.dataset.act === "invite-setup") return;
     const a = el.dataset.act;
+    if (a.startsWith("role-")) {
+      el.closest("details.line-menu")?.removeAttribute("open");
+      try {
+        if (a === "role-new") return after("Role assigned.")(await assignDialog(el.dataset.roleId || ""));
+        const [key, gid] = (el.dataset.id || "").split("|");
+        const g = state.rows.find((r) => r.id === gid);
+        const role = roleFromKey(key);
+        if (!g || !role) return undefined;
+        if (a === "role-remove") {
+          if (!(await confirm({ title: `Remove ${roleLabel(role)} from ${g.name}?`, body: "Only the role is removed. The guest, their RSVP, seats and table stay.", confirmLabel: "Remove role", danger: true }))) return undefined;
+          return after("Role removed.")(await data.guestsApi({ action: "unassignRole", guestId: g.id, role }));
+        }
+        if (a === "role-person") {
+          return after("Role moved.")(await formDialog({ title: `${roleLabel(role)}: change person`, fields: [{ name: "guestId", label: "Guest", type: "select", options: guestOptions().filter((o) => o.value !== g.id && o.value !== "__new"), value: "" }], submitLabel: "Change", onSubmit: (v) => (v.guestId ? data.guestsApi({ action: "moveRole", fromGuestId: g.id, toGuestId: v.guestId, role }) : Promise.reject(new Error("Choose a guest"))) }));
+        }
+        if (a === "role-change") {
+          return after("Role changed.")(await formDialog({ title: `${g.name}: change role`, fields: [{ name: "role", label: "Role", type: "select", options: ROLE_OPTIONS, value: role.id }, { name: "customRole", label: "Custom role name", value: role.id === "custom" ? role.label : "", hint: "Only for Custom role." }], submitLabel: "Change", onSubmit: (v) => data.guestsApi({ action: "moveRole", fromGuestId: g.id, role, toRole: roleOf(v) }) }));
+        }
+      } catch (err) {
+        toast(err.message || "Something went wrong", "danger");
+      }
+      return undefined;
+    }
     if (a === "seg") {
       state[el.dataset.seg === "view" ? "view" : "filter"] = el.dataset.value;
       draw();
