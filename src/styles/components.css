@@ -3791,3 +3791,13 @@ tr.is-saving {
 .nav-arrange { margin-bottom: var(--space-3); }
 .nav-arrange .wl-end { flex-wrap: wrap; justify-content: flex-end; }
 .nav-arrange-actions { justify-content: flex-start; }
+/* Bridal Money in the Household Expenses layout: status under the label. */
+.wl-money-row .wl-main { flex-direction: column; align-items: flex-start; }
+.wl-state-word[data-tone="warning"] { color: var(--warning); }
+.wl-state-word[data-tone="success"] { color: var(--success); }
+.wl-state-word[data-tone="info"] { color: var(--luna-primary); }
+.wl-state-word.is-late { color: var(--danger); font-weight: 600; }
+.wl-budget-line { margin: -4px 0 var(--space-3); }
+@media (min-width: 720px) {
+  .wl-money-row .wl-main { flex-direction: row; align-items: baseline; gap: var(--space-3); }
+}

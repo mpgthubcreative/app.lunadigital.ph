@@ -1,7 +1,11 @@
-// Money (Owner-pilot Bridal UX; the Wedding Suppliers module): ONE list of
-// everything the wedding costs, so the bride never has to think about
-// which kind of record something is.
-//   Row       Category | Supplier / Payee | Total | Status | Remaining | ⋯
+// Money (Owner-pilot Bridal UX; the Wedding Suppliers module): everything
+// the wedding costs, laid out like Household Expenses (2026-10-18):
+//   Spent ₱470k | To pay ₱400k            (two boxes; the budget, if set, a quiet line)
+//   RECEPTION                              (category heading, no total)
+//     Admiral Hotel          ₱800k   ⋯     (supplier / payee / description)
+//     Partial · ₱330k left                (status + what's left, quiet)
+// Sample Budget is a secondary view (+ Add → From sample budget), not a tab.
+//   Row kinds
 //             supplier  a saved supplier: total = its contract (or what was
 //                       paid without one), Paid / Partial / Unpaid
 //             planned   a budget line (category with a budget) that has no
@@ -77,6 +81,23 @@ export function moneyRows({ suppliers = [], categories = [], budget = null, expe
   const rank = { supplier: 0, planned: 1, expense: 2 };
   return rows.sort((a, b) => (order.get(a.categoryId) ?? 999) - (order.get(b.categoryId) ?? 999) || rank[a.kind] - rank[b.kind] || (a.name || "").localeCompare(b.name || ""));
 }
+
+// Money rows grouped under their category (the heading), in category order.
+export function moneyGroups(rows) {
+  const groups = [];
+  const at = new Map();
+  for (const r of rows) {
+    const key = r.categoryId ?? "none";
+    if (!at.has(key)) {
+      at.set(key, groups.length);
+      groups.push({ key, name: r.category || "Other", rows: [] });
+    }
+    groups[at.get(key)].rows.push(r);
+  }
+  return groups;
+}
+// The row's label: supplier, payee or description; a plan line without a supplier says so.
+export const moneyLabel = (r) => r.name || (r.kind === "expense" ? r.record?.notes || "Expense" : "No supplier yet");
 
 // The Money figures (all in centavos; remaining null without a budget).
 export function moneySummary(budget, suppliers) {
@@ -209,44 +230,39 @@ export function mount(container, session, { data = defaultData, toast = defaultT
 
   function row(r) {
     const late = r.kind === "supplier" && upcomingOf(r.record).some((p) => p.dueDate < today());
-    const who = r.name || (r.kind === "planned" ? "No supplier yet" : "—");
-    const left = r.remaining === null ? "Amount not set" : `${shortPeso(r.remaining)} left`;
+    const who = moneyLabel(r);
     const total = r.total === null ? "—" : shortPeso(r.total);
+    const left = r.status === "paid" ? "" : r.remaining === null ? "amount not set" : `${shortPeso(r.remaining)} left`;
     const menu = menuItems(r);
-    return html`<li class="wl-row wl-money" data-kind="${r.kind}" data-${r.kind === "supplier" ? "supplier" : r.kind === "planned" ? "planned" : "expense"}="${r.id}" data-state="${r.status}">
-      <button type="button" class="wl-main" data-act="open" data-kind="${r.kind}" data-id="${r.id}">
-        <span class="wl-cat-col d-only">${r.category || "—"}</span>
-        ${r.kind === "supplier" || r.name
-          ? html`<span class="wl-name">${who}</span>`
-          : html`<span class="wl-name m-title-only">${r.category || who}</span><span class="wl-name-d is-quiet">${who}</span>`}
-        <span class="wl-sub m-only-inline" data-role="sub">${[r.kind === "supplier" || r.name ? r.category : r.kind === "planned" ? "No supplier yet" : "", r.total === null ? "" : total].filter(Boolean).join(" · ")}</span>
+    return html`<li class="wl-row hx-row wl-money-row" data-kind="${r.kind}" data-${r.kind === "supplier" ? "supplier" : r.kind === "planned" ? "planned" : "expense"}="${r.id}" data-state="${r.status}">
+      <button type="button" class="wl-main hx-main" data-act="open" data-kind="${r.kind}" data-id="${r.id}">
+        <span class="wl-name">${who}</span>
+        <span class="wl-sub hx-sub" data-role="status"><span class="wl-state-word${late ? " is-late" : ""}" data-tone="${late ? "danger" : STATUS_TONE[r.status]}">${late ? "Overdue" : STATUS[r.status]}</span>${left ? ` · ${left}` : ""}</span>
       </button>
-      <span class="wl-col wl-num d-only" data-role="total">${total}</span>
-      <span class="wl-state" data-role="status"><span class="wl-chip" data-tone="${late ? "danger" : STATUS_TONE[r.status]}">${late ? "Overdue" : STATUS[r.status]}</span><small class="m-only-inline" data-role="left-m">${left}</small></span>
-      <span class="wl-col wl-num d-only" data-role="left">${left}</span>
+      <span class="wl-amt hx-amt" data-role="total">${total}</span>
       ${menu.length ? html`<details class="line-menu"><summary class="btn btn-compact btn-ghost" aria-label="More for ${who}">⋯</summary><div class="line-menu-list" role="menu">${menu.map((i) => html`${i.danger ? html`<div class="menu-sep" role="separator"></div>` : ""}<button type="button" class="menu-item${i.danger ? " menu-danger" : ""}" role="menuitem" data-act="menu" data-kind="${r.kind}" data-x="${i.x}" data-id="${r.id}">${i.label}</button>`)}</div></details>` : html`<span class="wl-menu-gap"></span>`}
     </li>`;
   }
+  const groupsHtml = (rows, role) => moneyGroups(rows).map((g) => html`<section class="wl-section hx-group" data-group="${g.key}"><h2 class="wl-cat-head hx-group-head"><span class="wl-group-title">${g.name}</span></h2><ul class="wl-list" data-role="${role}">${g.rows.map(row)}</ul></section>`);
 
   const addItems = () => [
-    ...(canPay ? [{ x: "expense", label: "Expense" }] : []),
+    ...(canPay ? [{ x: "expense", label: "Expense (paid)" }] : []),
     ...(canManage ? [{ x: "supplier", label: "Supplier" }] : []),
     ...(canCategory ? [{ x: "budget", label: "Budget item" }] : []),
+    ...(canCategory ? [{ x: "sample", label: "From sample budget" }] : []),
   ];
 
+  // Two boxes (Spent / To pay); a set budget is a quiet line under them.
   function summary() {
     if (!seesBudget) return "";
-    if (state.loading) return html`<div class="wl-figs" data-role="money-summary-loading">${skeleton(1)}</div>`;
+    if (state.loading) return skeleton(1);
     const sum = moneySummary(state.budget, [...state.rows, ...state.inactive]);
-    const fig = (k, label, value, title, cls = "") => html`<span class="wl-fig ${cls}" data-k="${k}" title="${title}"><span>${label}</span> <b>${value}</b></span>`;
-    return html`<p class="wl-figs" data-role="money-summary">
-      ${fig("budget", "Budget", sum.budget === null ? "—" : shortPeso(sum.budget), sum.budget === null ? "No budget yet: + Add → Budget item" : money(sum.budget))}<span class="wl-dot">·</span>${fig("spent", "Spent", shortPeso(sum.spent), money(sum.spent))}<span class="wl-dot">·</span>${fig("still", "To pay", shortPeso(sum.stillToPay), money(sum.stillToPay), sum.stillToPay ? "is-warn" : "")}<span class="wl-dot">·</span>${fig("remaining", "Left", sum.remaining === null ? "—" : shortPeso(sum.remaining), sum.remaining === null ? "Set a budget to see what's left" : money(sum.remaining), sum.remaining !== null && sum.remaining < 0 ? "is-over" : "")}
-    </p>`;
+    return html`<div class="hx-sum" data-role="money-summary"><div class="hx-sum-item" data-k="spent" title="${money(sum.spent)}"><span class="kpi-label">Spent</span><b class="kpi-value">${shortPeso(sum.spent)}</b></div><div class="hx-sum-item" data-k="still" title="${money(sum.stillToPay)}"><span class="kpi-label">To pay</span><b class="kpi-value">${shortPeso(sum.stillToPay)}</b></div></div>
+      ${sum.budget !== null ? html`<p class="stat-hint wl-budget-line" data-role="budget-line">Budget ${shortPeso(sum.budget)} · ${sum.remaining < 0 ? `over by ${shortPeso(-sum.remaining)}` : `${shortPeso(sum.remaining)} left`}</p>` : ""}`;
   }
 
   function draw() {
     if (!alive) return;
-    const list = shown();
     const add = addItems();
     render(
       container,
@@ -255,25 +271,19 @@ export function mount(container, session, { data = defaultData, toast = defaultT
           title: "Money",
           actions: add.length ? html`<details class="line-menu wl-add" data-role="add"><summary class="btn btn-primary" aria-label="Add">+ Add</summary><div class="line-menu-list" role="menu">${add.map((i) => html`<button type="button" class="menu-item" role="menuitem" data-act="add" data-x="${i.x}">${i.label}</button>`)}</div></details>` : "",
         })}
-        <div class="wl-tools">${segmented("view", [["mine", "My Money"], ["sample", "Sample Budget"]], state.view, { label: "Money view" })}</div>
         ${state.error
           ? html`<section class="card">${emptyState({ title: "Couldn't load", body: state.error })}</section>`
           : state.view === "sample"
-            ? state.loading
-              ? skeleton(5)
-              : sampleList({ groups: SAMPLE_BUDGET, added: new Set(allRows().map((r) => sampleKey(r.category))), canAdd: canCategory, role: "sample-money", intro: "A starter list of what weddings usually pay for. It doesn't count in your totals: tap + Add to put a line on My Money (Planned, amount later)." })
+            ? html`<p class="wl-links"><button type="button" class="btn btn-compact btn-ghost" data-act="sample-back">‹ Money</button></p>
+                <h2 class="section-title">Sample budget</h2>
+                ${state.loading ? skeleton(5) : sampleList({ groups: SAMPLE_BUDGET, added: new Set(allRows().map((r) => sampleKey(r.category))), canAdd: canCategory, role: "sample-money", intro: "A starter list of what weddings usually pay for. It doesn't count in your totals: tap + Add to put a line on Money (Planned, amount later)." })}`
           : html`
             ${summary()}
             ${state.loading
               ? skeleton(5)
               : !allRows().length
-                ? emptyState({ iconName: "budget", title: "Nothing here yet", body: "Tap + Add for an expense, a supplier or a budget item, or pick lines from the Sample Budget above." })
-                : html`
-                  <div class="wl-tools">
-                    <label class="wl-pick"><span class="visually-hidden">Show</span><select class="select select-compact" data-role="filter" aria-label="Show">${FILTERS.map(([v, l]) => html`<option value="${v}" ${v === state.filter ? "selected" : ""}>${l}</option>`)}</select></label>
-                    ${allRows().length > 8 || state.search ? html`<input class="input wl-search" type="search" data-role="search" placeholder="Search" aria-label="Search money" value="${state.search}">` : ""}
-                  </div>
-                  ${list.length ? html`<ul class="wl-list" data-role="money">${list.map(row)}</ul>` : html`<p class="stat-hint wl-none">Nothing ${state.filter === "all" ? "" : STATUS[state.filter].toLowerCase() + " "}${state.search ? `matching "${state.search}"` : "here"}.</p>`}
+                ? emptyState({ iconName: "budget", title: "Nothing here yet", body: "Tap + Add for an expense, a supplier or a budget item, or pick lines from the sample budget." })
+                : html`${groupsHtml(allRows(), "money")}
                   ${state.otherMore ? html`<p class="wl-links"><a href="/expenses" data-link>All expenses ›</a></p>` : ""}`}
             ${state.inactive.length ? html`<details class="wl-fold"><summary>Removed from the list (${state.inactive.length})</summary><ul class="wl-list" data-role="suppliers-inactive">${moneyRows({ suppliers: state.inactive, categories: state.categories }).map(row)}</ul></details>` : ""}`}`
     );
@@ -560,7 +570,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
       if (c.status !== "active") await data.budgetApi({ action: "setCategoryStatus", categoryId: c.id, status: "active" });
       await data.budgetApi({ action: "updateCategory", categoryId: c.id, changes: { planned: true } });
     }
-    toast(`Added to My Money: ${name} (Planned)`, "success");
+    toast(`Added to Money: ${name} (Planned)`, "success");
     load();
   }
   const onClick = async (event) => {
@@ -574,6 +584,15 @@ export function mount(container, session, { data = defaultData, toast = defaultT
         if (x === "supplier") saved("Supplier added.")(await addSupplierDialog());
         else if (x === "expense") exp.done("Expense added")(await exp.addDialog());
         else if (x === "budget") saved("Budget item added.")(await budgetItemDialog());
+        else if (x === "sample") {
+          state.view = "sample";
+          draw();
+        }
+        return;
+      }
+      if (a === "sample-back") {
+        state.view = "mine";
+        draw();
         return;
       }
       if (a === "open") return await openRow(el.dataset.kind, el.dataset.id);
