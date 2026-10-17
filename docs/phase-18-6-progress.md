@@ -710,6 +710,36 @@ The accepted Bridal design (Money | Tasks | Guests | More) is unchanged; this pa
   - **Snapshots:** demo-bridal-a, p186b-wed-tmp and pinv-wed-tmp were recomputed (planName only). veah-bridal (the user's own wedding) was NOT written; it shows "Bridal Plus" until the user approves a recompute.
 - **Household v2:** compatibility is KEPT (template upgradingFrom [2], rules accept 2 and 3). Retire it in a dedicated cleanup commit only after: the new production stack exists, v3 is deployed there, rules/security tests pass, Household end-to-end production checks pass, and no real workspace depends on v2.
 
+### 2026-10-17 · Luna Household Grocery List (household-payroll v4; 0781ea6, 01ab1a5)
+
+- **Data:** `groceryItems/{id}` (name, nameLower, qty, category, bought, boughtAt, boughtBy, source manual|sample, createdAt/By, updatedAt/By) and `groceryLists/current` (staffCanAdd).
+  - **Reads:** straight from Firestore under the rules (grocery.view).
+  - **Writes:** only through `/api/grocery` (add, addMany, update, check, remove, clearBought, settings).
+  - **Duplicates:** adding an item already on the active list returns it instead of a copy.
+  - **Limits:** up to 300 items; 60 per Add selected.
+  - **Clear bought** deletes the bought items (a checklist, not a spending record).
+- **Module:** `grocery` is rolling out (`ROLLING_OUT_MODULE_IDS`). Snapshots without the key read it as off, so no non-Household business needed a recompute (veah-bridal untouched).
+  - **Template:** `household-payroll` v4, `upgradingFrom [2, 3]`; the rules accept 2, 3 and 4.
+- **Permissions:**
+  - **Owner and Admin:** grocery.view, .check, .manage (add, edit, delete, samples, clear bought, the "Helpers can add items" switch). Record grocery expense needs expenses.create.
+  - **household_staff:** grocery.view + grocery.check; adding only while the Owner's switch is on.
+  - **Separate from money:** the staff role still has no expenses / budget / schedule permission (API 403, rules deny).
+- **UI:**
+  - **Owner:** Grocery List under More (phone tabs unchanged: Payroll · Attendance · Expenses + More). My Grocery List | Sample Grocery List. One line per item (checkbox · item · qty · category · ⋯ Edit / Delete). Ticking moves an item into the folded "Bought (n)" with Record grocery expense and Clear bought.
+  - **Samples:** 14 groups, each item with + Add, or tick several → Add selected.
+  - **Kasambahay:** a Grocery tab in the portal; tick only. Portal tabs are compact on phones so five fit.
+- **Expenses:** ticking never records money. "Record grocery expense" opens Expenses (`/expenses?add=groceries`) with Groceries and today, and the Owner types the trip's total: ONE expense.
+- **Later (not built):** Frequently bought / Buy again can come from the same records; no recurring grocery schedules.
+- **Master Backup:** a readable "Grocery List" sheet (Item, Qty, Category, Bought, Created, Created by, Bought on, Bought by, Updated by) plus the raw records.
+- **Tests:**
+  - **Unit:** 1589 pass (21 new).
+  - **Rules:** all 25 files pass (new tests/rules/grocery.test.js).
+  - **Live on staging (temporary `pgl-home-tmp`, removed):** 14/14 API, and 26/27 browser checks at 390 / 1280 with the kasambahay portal at 390. The one failure was the portal's fifth tab cut off at 390; fixed in 01ab1a5 and re-checked 5/5.
+- **Staging:**
+  - **Rules:** deployed first.
+  - **Plan records:** household-basic and household-plus modules only (+ grocery).
+  - **Recomputed to v4 + permissions resynced:** demo-household-a, demo-household-b, rwp-d419 (the kasambahay logins gained grocery.view / grocery.check).
+
 ## Plan (decisions made from the brief)
 
 ### Stage 1: Distributor
