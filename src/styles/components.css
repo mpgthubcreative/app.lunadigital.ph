@@ -3704,3 +3704,8 @@ tr.is-saving {
 /* Owner-pilot Bridal: Crew Meals. Name | B · L · D | Place | ⋯ (phone: meals · place under the name). */
 .wl-crew-meals { flex: none; min-width: 9rem; font-variant-numeric: tabular-nums; font-size: var(--text-sm); }
 .wl-crew-place { flex: none; min-width: 6rem; color: var(--text-muted); font-size: var(--text-sm); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 10rem; }
+.wl-crew .d-only { display: none; }
+@media (min-width: 720px) {
+  .wl-crew .d-only { display: inline-block; }
+  .wl-crew .m-only-inline { display: none; }
+}
