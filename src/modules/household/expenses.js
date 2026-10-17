@@ -94,6 +94,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
       ],
       { role: "month-summary" }
     )}
+    <p class="stat-hint" data-role="cash-flow">Spent ${money(s.spent)} · Advances released ${money(s.advancesReleased ?? 0)} · <strong>Cash out ${money(s.cashOut ?? s.spent)}</strong>${s.advancesReleased ? " (advances are repaid through payroll, so they aren't spending)" : ""}</p>
     ${can.category ? html`<div class="page-actions"><button type="button" class="btn btn-compact" data-act="set-budget">${s.budget === null ? "Set monthly budget" : "Change monthly budget"}</button><a class="btn btn-compact btn-ghost" href="/budget" data-link>Categories</a></div>` : ""}`;
   }
 

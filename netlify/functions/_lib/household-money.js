@@ -10,7 +10,15 @@
 //                      the month's end: their unpaid part
 //   budget             budgets/current.total = the MONTHLY household budget
 //   left               budget − spent − staff paid − bills remaining − payroll due
-// Cash advances aren't household spending (they're repaid through payroll).
+// Cash advances aren't household spending (they're repaid through payroll),
+// but they are cash that left the household:
+//   advances released  advances RELEASED in the month (advances status
+//                      "paid" = released, by paidDate; voided ones are moved
+//                      out of the collection)
+//   cash out           spent + advances released
+// A later payroll deduction lowers the salary paid (salary.amount is what
+// was actually paid), so the repayment is never negative spending and the
+// advance is never counted twice.
 // "Household Staff" in the breakdown = that expense category (if any) plus
 // the salaries paid, so payroll shows once.
 
@@ -31,13 +39,22 @@ export async function householdMonth({ db, tenant, business, uid = null, month =
   if (!MONTH.test(m)) throw Object.assign(new Error("Choose a month like 2026-10"), { code: "invalid-input" });
   const start = `${m}-01`;
   const end = monthEnd(m);
-  const [metric, budget, cats, payrolls, bills] = await Promise.all([
+  const [metric, budget, cats, payrolls, bills, advances] = await Promise.all([
     tenant.doc("spendingMetrics", m).get(),
     tenant.doc("budgets", BUDGET_DOC_ID).get(),
     tenant.collection("expenseCategories").limit(200).get(),
     tenant.collection("payrolls").where("status", "==", "released").limit(1000).get(),
     tenant.collection("scheduledPayments").where("status", "==", "upcoming").limit(500).get(),
+    tenant.collection("advances").where("status", "==", "paid").limit(1000).get(),
   ]);
+  let advancesReleased = 0;
+  let advanceCount = 0;
+  for (const a of advances.docs.map((d) => d.data())) {
+    if (typeof a.paidDate === "string" && a.paidDate >= start && a.paidDate <= end) {
+      advancesReleased += int(a.amount);
+      advanceCount += 1;
+    }
+  }
   const names = Object.fromEntries(cats.docs.map((d) => [d.id, d.data().name]));
   const mt = metric.exists ? metric.data() : {};
   const spent = int(mt.spent);
@@ -81,6 +98,9 @@ export async function householdMonth({ db, tenant, business, uid = null, month =
     payrollDue,
     budget: total,
     left: total === null ? null : total - spentTotal - billsRemaining - payrollDue,
+    advancesReleased,
+    advanceCount,
+    cashOut: spentTotal + advancesReleased,
     categories,
     // Expenses only, by category id (the Budget & Categories screen).
     byCategory: Object.fromEntries(Object.entries(byCategory).filter(([, a]) => int(a))),

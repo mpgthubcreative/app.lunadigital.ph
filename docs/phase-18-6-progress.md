@@ -700,6 +700,16 @@ The accepted Bridal design (Money | Tasks | Guests | More) is unchanged; this pa
   - **Found and fixed:** section titles flush to the card edge (now the shared section header).
   - **Recomputed to v3:** demo-household-a, demo-household-b and rwp-d419 (entitlements only; no data changed; permissions already in sync).
 
+### 2026-10-17 · Household cash flow; Bridal plan names; Household v2 kept
+
+- **Cash flow (month summary):** Spent · Advances released · **Cash out** (= Spent + advances released in the month, by the advance's release date).
+  - **Unchanged:** advances stay out of Spent, out of the category totals and out of expense records. A later payroll deduction only lowers the salary actually paid, so it's never negative spending and never counted twice.
+  - **Tests:** unit 1568 pass.
+- **Bridal plan names (staging, targeted):** plans/bridal-basic "Bridal Basic" → "Luna Bridal"; plans/bridal-plus "Bridal Plus" → "Luna Bridal+".
+  - **Plan records:** name only; ids, modules, limits, features and pricing unchanged. Staging plans now match shared/plans.seed.js exactly.
+  - **Snapshots:** demo-bridal-a, p186b-wed-tmp and pinv-wed-tmp were recomputed (planName only). veah-bridal (the user's own wedding) was NOT written; it shows "Bridal Plus" until the user approves a recompute.
+- **Household v2:** compatibility is KEPT (template upgradingFrom [2], rules accept 2 and 3). Retire it in a dedicated cleanup commit only after: the new production stack exists, v3 is deployed there, rules/security tests pass, Household end-to-end production checks pass, and no real workspace depends on v2.
+
 ## Plan (decisions made from the brief)
 
 ### Stage 1: Distributor

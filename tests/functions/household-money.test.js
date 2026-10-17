@@ -189,6 +189,11 @@ describe("The month: payroll counted once, advances excluded", () => {
     // The ₱250 advance appears nowhere in the money.
     expect(m.categories.reduce((t, c) => t + c.amount, 0)).toBe(m.spent);
     expect(m.byCategory).toEqual({ [g]: 300000, [staffCat]: 50000 });
+    // Cash flow: the ₱250 advance released this month is cash out, not spending.
+    expect(m).toMatchObject({ advancesReleased: 25000, advanceCount: 1, cashOut: m.spent + 25000 });
+    // The salary was paid net of the advance deduction: no negative spending, nothing counted twice.
+    expect(docAt(`payrolls/${pid}`).deductions.some((d) => d.type === "advance")).toBe(true);
+    expect(m.staffPaid).toBe(docAt(`payrolls/${pid}`).salary.amount);
   });
 
   it("another month: only its own expenses and salaries; payroll due only for the current month", async () => {
@@ -196,7 +201,7 @@ describe("The month: payroll counted once, advances excluded", () => {
     const g = await category("Groceries");
     await spend(g, 120000, "2026-09-28");
     const sep = ok(await month("2026-09")).month;
-    expect(sep).toMatchObject({ month: "2026-09", current: false, expensesSpent: 120000, staffPaid: 0, payrollDue: 0, budget: null, left: null });
+    expect(sep).toMatchObject({ month: "2026-09", current: false, expensesSpent: 120000, staffPaid: 0, payrollDue: 0, budget: null, left: null, advancesReleased: 0, cashOut: 120000 });
     expect((await month("2026-13")).status).toBe(400);
   });
 });

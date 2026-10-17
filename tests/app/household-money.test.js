@@ -31,7 +31,7 @@ const CATS = [
   { id: "catUtilities01", name: "Utilities", budget: 600000, status: "active", useCount: 0, revision: 1 },
 ];
 const EXP = { id: "expense0000001", date: "2026-10-05", category: "catGroceries01", amount: 250000, payee: "SM Supermarket", method: "cash", status: "active", revision: 1, history: [] };
-const MONTH = { month: "2026-10", current: true, spent: 806500, expensesSpent: 250000, staffPaid: 556500, staffPayments: 1, billsRemaining: 450000, billsDue: 1, payrollDue: 500000, budget: 3000000, left: 1243500, categories: [{ name: "Household Staff", amount: 556500, payroll: 556500 }, { name: "Groceries", amount: 250000 }], byCategory: { catGroceries01: 250000 } };
+const MONTH = { month: "2026-10", current: true, spent: 806500, expensesSpent: 250000, staffPaid: 556500, staffPayments: 1, billsRemaining: 450000, billsDue: 1, payrollDue: 500000, budget: 3000000, left: 1243500, advancesReleased: 300000, advanceCount: 1, cashOut: 1106500, categories: [{ name: "Household Staff", amount: 556500, payroll: 556500 }, { name: "Groceries", amount: 250000 }], byCategory: { catGroceries01: 250000 } };
 const BILL = { id: "sched000000001", description: "Meralco", category: "catUtilities01", amount: 450000, dueDate: "2026-10-20", status: "upcoming", repeat: { every: "month", interval: 1 }, revision: 1, history: [] };
 
 function fakeData(extra = {}) {
@@ -73,6 +73,9 @@ describe("Expenses", () => {
     const kpis = container.querySelector('[data-role="month-summary"]').textContent;
     for (const t of ["Spent", "₱8,065", "staff pay", "Bills remaining", "₱4,500", "Payroll due", "₱5,000", "Budget left", "₱12,435", "of ₱30,000"]) expect(kpis).toContain(t);
     expect(container.querySelector('[data-role="category-bars"]').textContent).toContain("Household Staff (incl. payroll)");
+    const flow = container.querySelector('[data-role="cash-flow"]').textContent;
+    for (const t of ["Spent ₱8,065", "Advances released ₱3,000", "Cash out ₱11,065"]) expect(flow).toContain(t);
+    expect(container.querySelector('[data-role="category-bars"]').textContent).not.toContain("Advance");
     expect(container.querySelector('[data-role="expenses"]').textContent).toContain("SM Supermarket");
     expect(container.querySelector('[data-role="month"]').textContent).toBe("October 2026");
     expect(container.querySelector('[data-act="month-next"]').disabled).toBe(true);
