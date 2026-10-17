@@ -848,6 +848,25 @@ it("Wedding link / hashtag: suggested from the couple names, cleaned as typed (#
     expect(api).toHaveBeenLastCalledWith("wedding-setup", { method: "POST", body: { action: "save", setup: expect.objectContaining({ coupleNames: "Carlo & Yanie", weddingSlug: null }) } });
   });
 
+  it("Wedding Setup cover photo: the current photo is shown with Change / Remove (no bare 'No file chosen' box)", async () => {
+    const PHOTO = "data:image/jpeg;base64,QUJD";
+    const api = vi.fn(async (_p, { body }) => (body.action === "get" ? { setup: FULL, hasHero: true, hero: PHOTO } : body.action === "hero" ? { hero: Boolean(body.dataUrl) } : { saved: true, setup: body.setup }));
+    mountSetup(container, wedding(), { api, toast: () => {}, shrink: async () => "data:image/jpeg;base64,TkVX" });
+    await flush();
+    expect(container.querySelector('[data-role="hero-preview"]').getAttribute("src")).toBe(PHOTO);
+    const pick = container.querySelector('[data-role="hero"]');
+    expect(pick.classList.contains("visually-hidden")).toBe(true);
+    expect(pick.closest("label").textContent).toBe("Change photo");
+    pick.dispatchEvent(new Event("change", { bubbles: true }));
+    await flush();
+    expect(container.querySelector('[data-role="hero-preview"]').getAttribute("src")).toBe("data:image/jpeg;base64,TkVX");
+    container.querySelector('[data-act="hero-remove"]').click();
+    await flush();
+    expect(container.querySelector('[data-role="hero-preview"]')).toBeNull();
+    expect(container.querySelector('[data-role="hero"]').closest("label").textContent).toBe("Choose photo");
+    expect(container.querySelector('[data-role="hero-state"]').textContent).toMatch(/No photo/);
+  });
+
   const guestMenuItems = () => [...container.querySelectorAll('[data-guest="guestPrado001"] .menu-item')].map((b) => b.textContent);
   it("Guest ⋯ before Wedding Setup is complete: 'complete Wedding Setup first →' links to it (not hidden)", async () => {
     const data = fakeData({ listGuests: vi.fn(async () => ({ rows: [{ ...GUEST, category: "family" }], hasMore: false })), getSeating: vi.fn(async () => null), getWeddingSetup: vi.fn(async () => ({ setup: { coupleNames: "Camille & Carlo" } })) });
@@ -901,6 +920,88 @@ it("Wedding link / hashtag: suggested from the couple names, cleaned as typed (#
     await flush();
     expect(data.guestsApi).toHaveBeenCalledWith({ action: "regenerateInvite", guestId: GUEST.id });
     expect(toast).toHaveBeenCalledWith("New link for Prado Family copied.", "success");
+  });
+});
+
+describe("Owner-pilot Bridal: Sample Checklist (Tasks) and Sample Budget (Money)", () => {
+  it("Tasks: My Tasks | Sample Checklist; read-only groups; optional marked; already-added shown; + Add makes ONE normal task", async () => {
+    const data = fakeData({ listTasks: vi.fn(async () => ({ rows: [{ ...TASKS[0], title: "CENOMAR" }], hasMore: false })), tasksApi: vi.fn(async () => ({ taskId: "t9" })) });
+    mountTasks(container, wedding(), { data, now: NOW, toast: () => {}, confirm: async () => true });
+    await flush();
+    expect([...container.querySelectorAll('[data-role="seg-view"] .seg-btn')].map((b) => b.textContent)).toEqual(["My Tasks", "Sample Checklist"]);
+    container.querySelector('[data-act="seg"][data-value="sample"]').click();
+    await flush();
+    const heads = [...container.querySelectorAll(".wl-sample-group .wl-group-title")].map((h) => h.textContent);
+    expect(heads).toEqual(["Documents", "Ceremony", "Entourage", "Reception", "Attire & HMUA", "Flowers", "Wedding Essentials", "Photo & Video", "Invitations", "Gifts & Souvenirs", "Prenup / Engagement Shoot"]);
+    const line = (title) => [...container.querySelectorAll(".wl-sample")].find((li) => li.querySelector(".wl-name").textContent === title);
+    expect(line("CENOMAR").querySelector('[data-role="added"]').textContent).toBe("Added ✓");
+    expect(line("Baptismal certificates").querySelector(".wl-opt").textContent).toBe("Optional");
+    expect(line("Marriage license").querySelector(".wl-opt")).toBeNull();
+    // Veil appears once (attire); the ceremony's is the sponsors' unity veil.
+    expect([...container.querySelectorAll(".wl-sample .wl-name")].filter((n) => /veil/i.test(n.textContent)).map((n) => n.textContent)).toEqual(["Veil", "Unity veil (veil sponsors)"]);
+    expect(data.tasksApi).not.toHaveBeenCalled(); // nothing is added by itself
+    line("Marriage license").querySelector('[data-act="sample-add"]').click();
+    await flush();
+    expect(data.tasksApi).toHaveBeenCalledTimes(1);
+    expect(data.tasksApi).toHaveBeenCalledWith({ action: "create", task: { title: "Marriage license", category: "Documents", assignee: null, dueDate: null, priority: "normal", notes: null } });
+    expect(container.querySelector('[data-act="seg"][data-value="sample"]').getAttribute("aria-pressed")).toBe("true"); // stays on the sample
+  });
+
+  it("Tasks sample: no + Add without tasks.manage", async () => {
+    const s = wedding("staff");
+    s.member.permissions["tasks.view"] = true;
+    delete s.member.permissions["tasks.manage"];
+    mountTasks(container, s, { data: fakeData(), now: NOW, toast: () => {}, confirm: async () => true });
+    await flush();
+    container.querySelector('[data-act="seg"][data-value="sample"]').click();
+    await flush();
+    expect(container.querySelectorAll(".wl-sample").length).toBeGreaterThan(50);
+    expect(container.querySelector('[data-act="sample-add"]')).toBeNull();
+  });
+
+  it("Money: My Money | Sample Budget; the sample doesn't touch totals; + Add makes a Planned line (no supplier, no amount); an existing / archived category is reused", async () => {
+    const cats = [...CATS, { id: "catCater0001", name: "catering", budget: null, status: "inactive", order: 90, revision: 3 }];
+    const data = fakeData({ listCategories: vi.fn(async () => cats), listSuppliers: vi.fn(async (_b, f) => ({ rows: f.status === "inactive" ? [] : [SUP], hasMore: false })), budgetApi: vi.fn(async () => ({ categoryId: "catNew000001" })) });
+    mountSuppliers(container, wedding(), { data, now: NOW, toast: () => {}, confirm: async () => true });
+    await flush();
+    expect([...container.querySelectorAll('[data-role="seg-view"] .seg-btn')].map((b) => b.textContent)).toEqual(["My Money", "Sample Budget"]);
+    container.querySelector('[data-act="seg"][data-value="sample"]').click();
+    await flush();
+    expect(container.querySelector('[data-role="money-summary"]')).toBeNull();
+    expect([...container.querySelectorAll(".wl-sample-group .wl-group-title")].map((h) => h.textContent)).toEqual(["Venue & Ceremony", "Food & Drinks", "Photo & Video", "Attire & HMUA", "Flowers & Styling", "Entertainment", "Rings & Essentials", "Guests", "Transportation", "Other"]);
+    const add = (title) => [...container.querySelectorAll(".wl-sample")].find((li) => li.querySelector(".wl-name").textContent === title).querySelector('[data-act="sample-add"]');
+    expect(data.budgetApi).not.toHaveBeenCalled();
+    add("Lights & sounds").click();
+    await flush();
+    expect(data.budgetApi).toHaveBeenCalledWith({ action: "createCategory", category: { name: "Lights & sounds", budget: null, planned: true } });
+    container.querySelector('[data-act="seg"][data-value="sample"]').click();
+    await flush();
+    add("Catering").click();
+    await flush();
+    expect(data.budgetApi).toHaveBeenCalledWith({ action: "setCategoryStatus", categoryId: "catCater0001", status: "active" });
+    expect(data.budgetApi).toHaveBeenCalledWith({ action: "updateCategory", categoryId: "catCater0001", changes: { planned: true } });
+  });
+
+  it("a Planned line with no amount yet: '—', 'Amount not set', ⋯ Set amount; Remove from budget takes it off the plan; lines already in My Money show Added ✓", async () => {
+    const planned = { id: "catLights001", name: "Lights & sounds", budget: null, planned: true, status: "active", order: 60, revision: 2 };
+    const rows = moneyRows({ suppliers: [], categories: [planned], budget: null });
+    expect(rows).toEqual([expect.objectContaining({ kind: "planned", category: "Lights & sounds", total: null, status: "planned", remaining: null })]);
+    expect(moneyRows({ categories: [{ ...planned, planned: false }] })).toEqual([]); // a bare category isn't a line
+    const data = fakeData({ listCategories: vi.fn(async () => [...CATS, planned]), listSuppliers: vi.fn(async (_b, f) => ({ rows: f.status === "inactive" ? [] : [SUP], hasMore: false })), budgetApi: vi.fn(async () => ({})) });
+    mountSuppliers(container, wedding(), { data, now: NOW, toast: () => {}, confirm: async () => true });
+    await flush();
+    const row = container.querySelector('[data-planned="catLights001"]');
+    expect(row.querySelector('[data-role="total"]').textContent).toBe("—");
+    expect(row.querySelector('[data-role="left"]').textContent).toBe("Amount not set");
+    expect(row.querySelector('[data-role="status"] .wl-chip').textContent).toBe("Planned");
+    expect([...row.querySelectorAll(".menu-item")].map((b) => b.textContent)).toContain("Set amount");
+    row.querySelector('[data-x="unplan"]').click();
+    await flush();
+    expect(data.budgetApi).toHaveBeenCalledWith({ action: "updateCategory", categoryId: "catLights001", expectedRevision: 2, changes: { budget: null, planned: false } });
+    container.querySelector('[data-act="seg"][data-value="sample"]').click();
+    await flush();
+    const line = [...container.querySelectorAll(".wl-sample")].find((li) => li.querySelector(".wl-name").textContent === "Lights & sounds");
+    expect(line.querySelector('[data-role="added"]').textContent).toBe("Added ✓");
   });
 });
 

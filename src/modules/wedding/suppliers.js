@@ -25,7 +25,9 @@
 // creates it if new (./categories.js). Downloads live under More.
 
 import { html, render } from "../../lib/html.js";
-import { pageHeader, emptyState, badge, skeleton } from "../../components/ui.js";
+import { pageHeader, emptyState, badge, skeleton, segmented } from "../../components/ui.js";
+import { SAMPLE_BUDGET, sampleKey } from "@shared/wedding-samples.js";
+import { sampleList, sampleItem } from "./samples.js";
 import { formDialog } from "../../components/form-dialog.js";
 import { toast as defaultToast, confirmDialog } from "../../components/feedback.js";
 import { formatCentavos, formatDayId } from "../../lib/format.js";
@@ -64,8 +66,9 @@ export function moneyRows({ suppliers = [], categories = [], budget = null, expe
   }
   const withSupplier = new Set(suppliers.filter((s) => s.status === "active").map((s) => s.categoryId));
   for (const c of categories) {
-    if (c.status !== "active" || !(c.budget > 0) || withSupplier.has(c.id)) continue;
-    rows.push({ kind: "planned", id: c.id, categoryId: c.id, category: c.name, name: null, total: c.budget, status: "planned", remaining: Math.max(0, c.budget - (spentBy[c.id] ?? 0)), record: c });
+    if (c.status !== "active" || !(c.budget > 0 || c.planned === true) || withSupplier.has(c.id)) continue;
+    const amount = c.budget > 0 ? c.budget : null; // null: on the plan, amount not set yet
+    rows.push({ kind: "planned", id: c.id, categoryId: c.id, category: c.name, name: null, total: amount, status: "planned", remaining: amount === null ? null : Math.max(0, amount - (spentBy[c.id] ?? 0)), record: c });
   }
   for (const e of expenses) {
     if (e.supplierId) continue;
@@ -132,7 +135,8 @@ export function mount(container, session, { data = defaultData, toast = defaultT
   const currency = session.business.currency || "PHP";
   const timezone = session.business.timezone;
   const today = () => businessDate(timezone, now());
-  const state = { filter: "all", search: "", rows: [], inactive: [], other: [], otherMore: false, budget: null, categories: [], upcoming: [], loading: true, error: null };
+  // view: "mine" (My Money) | "sample" (the read-only Sample Budget).
+  const state = { view: "mine", filter: "all", search: "", rows: [], inactive: [], other: [], otherMore: false, budget: null, categories: [], upcoming: [], loading: true, error: null };
   let alive = true;
   let focus = new URLSearchParams(loc?.search || "").get("supplier");
   const money = (c) => (c === null || c === undefined ? "—" : formatCentavos(c, currency));
@@ -199,7 +203,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     } else {
       if (canManage) items.push({ x: "supplier", label: "Add supplier" });
       if (canPay) items.push({ x: "expense", label: "Add expense" });
-      if (canCategory) items.push({ x: "amount", label: "Change amount" }, { x: "unplan", label: "Remove from budget", danger: true });
+      if (canCategory) items.push({ x: "amount", label: r.total === null ? "Set amount" : "Change amount" }, { x: "unplan", label: "Remove from budget", danger: true });
     }
     return items;
   }
@@ -207,7 +211,8 @@ export function mount(container, session, { data = defaultData, toast = defaultT
   function row(r) {
     const late = r.kind === "supplier" && upcomingOf(r.record).some((p) => p.dueDate < today());
     const who = r.name || (r.kind === "planned" ? "No supplier yet" : "—");
-    const left = `${shortPeso(r.remaining)} left`;
+    const left = r.remaining === null ? "Amount not set" : `${shortPeso(r.remaining)} left`;
+    const total = r.total === null ? "—" : shortPeso(r.total);
     const menu = menuItems(r);
     return html`<li class="wl-row wl-money" data-kind="${r.kind}" data-${r.kind === "supplier" ? "supplier" : r.kind === "planned" ? "planned" : "expense"}="${r.id}" data-state="${r.status}">
       <button type="button" class="wl-main" data-act="open" data-kind="${r.kind}" data-id="${r.id}">
@@ -215,9 +220,9 @@ export function mount(container, session, { data = defaultData, toast = defaultT
         ${r.kind === "supplier" || r.name
           ? html`<span class="wl-name">${who}</span>`
           : html`<span class="wl-name m-title-only">${r.category || who}</span><span class="wl-name-d is-quiet">${who}</span>`}
-        <span class="wl-sub m-only-inline" data-role="sub">${[r.kind === "supplier" || r.name ? r.category : r.kind === "planned" ? "No supplier yet" : "", shortPeso(r.total)].filter(Boolean).join(" · ")}</span>
+        <span class="wl-sub m-only-inline" data-role="sub">${[r.kind === "supplier" || r.name ? r.category : r.kind === "planned" ? "No supplier yet" : "", r.total === null ? "" : total].filter(Boolean).join(" · ")}</span>
       </button>
-      <span class="wl-col wl-num d-only" data-role="total">${shortPeso(r.total)}</span>
+      <span class="wl-col wl-num d-only" data-role="total">${total}</span>
       <span class="wl-state" data-role="status"><span class="wl-chip" data-tone="${late ? "danger" : STATUS_TONE[r.status]}">${late ? "Overdue" : STATUS[r.status]}</span><small class="m-only-inline" data-role="left-m">${left}</small></span>
       <span class="wl-col wl-num d-only" data-role="left">${left}</span>
       ${menu.length ? html`<details class="line-menu"><summary class="btn btn-compact btn-ghost" aria-label="More for ${who}">⋯</summary><div class="line-menu-list" role="menu">${menu.map((i) => html`${i.danger ? html`<div class="menu-sep" role="separator"></div>` : ""}<button type="button" class="menu-item${i.danger ? " menu-danger" : ""}" role="menuitem" data-act="menu" data-kind="${r.kind}" data-x="${i.x}" data-id="${r.id}">${i.label}</button>`)}</div></details>` : html`<span class="wl-menu-gap"></span>`}
@@ -251,14 +256,19 @@ export function mount(container, session, { data = defaultData, toast = defaultT
           title: "Money",
           actions: add.length ? html`<details class="line-menu wl-add" data-role="add"><summary class="btn btn-primary" aria-label="Add">+ Add</summary><div class="line-menu-list" role="menu">${add.map((i) => html`<button type="button" class="menu-item" role="menuitem" data-act="add" data-x="${i.x}">${i.label}</button>`)}</div></details>` : "",
         })}
+        <div class="wl-tools">${segmented("view", [["mine", "My Money"], ["sample", "Sample Budget"]], state.view, { label: "Money view" })}</div>
         ${state.error
           ? html`<section class="card">${emptyState({ title: "Couldn't load", body: state.error })}</section>`
+          : state.view === "sample"
+            ? state.loading
+              ? skeleton(5)
+              : sampleList({ groups: SAMPLE_BUDGET, added: new Set(allRows().map((r) => sampleKey(r.category))), canAdd: canCategory, role: "sample-money", intro: "A starter list of what weddings usually pay for. It doesn't count in your totals: tap + Add to put a line on My Money (Planned, amount later)." })
           : html`
             ${summary()}
             ${state.loading
               ? skeleton(5)
               : !allRows().length
-                ? emptyState({ iconName: "budget", title: "Nothing here yet", body: "Tap + Add for an expense, a supplier or a budget item." })
+                ? emptyState({ iconName: "budget", title: "Nothing here yet", body: "Tap + Add for an expense, a supplier or a budget item, or pick lines from the Sample Budget above." })
                 : html`
                   <div class="wl-tools">
                     <label class="wl-pick"><span class="visually-hidden">Show</span><select class="select select-compact" data-role="filter" aria-label="Show">${FILTERS.map(([v, l]) => html`<option value="${v}" ${v === state.filter ? "selected" : ""}>${l}</option>`)}</select></label>
@@ -467,6 +477,19 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     else if (canCategory) saved("Budget saved.")(await budgetItemDialog(r.record));
   }
 
+  // Sample Budget + Add: a normal Planned line (category = the item, no
+  // supplier, no amount yet). An existing category of that name is reused
+  // (brought back if archived) and put on the plan.
+  async function addSampleLine(name) {
+    const c = state.categories.find((x) => sampleKey(x.name) === sampleKey(name));
+    if (!c) await data.budgetApi({ action: "createCategory", category: { name, budget: null, planned: true } });
+    else {
+      if (c.status !== "active") await data.budgetApi({ action: "setCategoryStatus", categoryId: c.id, status: "active" });
+      await data.budgetApi({ action: "updateCategory", categoryId: c.id, changes: { planned: true } });
+    }
+    toast(`Added to My Money: ${name} (Planned)`, "success");
+    load();
+  }
   const onClick = async (event) => {
     const el = event.target.closest("[data-act]");
     if (!el || !container.contains(el)) return;
@@ -481,6 +504,18 @@ export function mount(container, session, { data = defaultData, toast = defaultT
         return;
       }
       if (a === "open") return await openRow(el.dataset.kind, el.dataset.id);
+      if (a === "seg") {
+        state.view = el.dataset.value === "sample" ? "sample" : "mine";
+        draw();
+        return;
+      }
+      if (a === "sample-add") {
+        const pick = sampleItem(SAMPLE_BUDGET, el);
+        if (!pick) return;
+        el.disabled = true;
+        await addSampleLine(pick.item.title);
+        return;
+      }
       if (a !== "menu") return;
       const r = findRow(el.dataset.kind, el.dataset.id);
       if (!r) return;
@@ -520,7 +555,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
         else if (x === "amount") saved("Budget saved.")(await budgetItemDialog(c));
         else if (x === "unplan") {
           if (!(await confirm({ title: `Remove ${c.name} from the budget?`, body: "Its budget amount is cleared. Anything already paid stays.", confirmLabel: "Remove", danger: true }))) return;
-          saved("Removed from the budget.")(await data.budgetApi({ action: "updateCategory", categoryId: c.id, ...(c.revision ? { expectedRevision: c.revision } : {}), changes: { budget: null } }));
+          saved("Removed from the budget.")(await data.budgetApi({ action: "updateCategory", categoryId: c.id, ...(c.revision ? { expectedRevision: c.revision } : {}), changes: { budget: null, ...(c.planned ? { planned: false } : {}) } }));
         }
       }
     } catch (err) {

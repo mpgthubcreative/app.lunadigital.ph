@@ -3662,3 +3662,18 @@ tr.is-saving {
   .wl-money .m-title-only { display: none; }
   .wl-money .wl-name-d { display: block; font-weight: 500; color: var(--text-muted); }
 }
+
+/* Owner-pilot Bridal: Sample Checklist / Sample Budget (read-only starter lists). */
+.wl-sample { min-height: 44px; }
+.wl-sample .wl-main { flex-direction: row; align-items: center; gap: var(--space-2); cursor: default; }
+.wl-sample .wl-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wl-opt { flex: none; color: var(--text-muted); font-size: var(--text-xs); }
+.wl-added { flex: none; padding: 0 var(--space-2); color: var(--success); font-size: var(--text-sm); white-space: nowrap; }
+.wl-sample .btn-compact { flex: none; }
+.wl-sample-intro { margin: 0 0 var(--space-2); }
+
+/* Wedding Setup: the current cover photo, then Change / Remove. */
+.ws-hero-thumb { display: block; width: 100%; max-width: 320px; aspect-ratio: 16 / 10; object-fit: cover; border-radius: var(--radius-sm); border: 1px solid var(--border); margin-bottom: var(--space-2); }
+.ws-hero-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.ws-hero-actions label.btn { cursor: pointer; }
+.ws-hero-actions label.btn:focus-within { outline: 2px solid var(--focus, currentColor); outline-offset: 2px; }

@@ -116,7 +116,7 @@ async function nameTaken(tx, tenant, name, exceptId = null) {
   return snap.docs.some((d) => d.id !== exceptId);
 }
 
-function newCategory(FieldValue, actor, { name, budget = null, order }) {
+function newCategory(FieldValue, actor, { name, budget = null, order, planned = false }) {
   const stamp = FieldValue.serverTimestamp();
   return {
     schemaVersion: BABY_SCHEMA_VERSION,
@@ -125,8 +125,9 @@ function newCategory(FieldValue, actor, { name, budget = null, order }) {
     status: "active",
     budget,
     order,
+    ...(planned ? { planned: true } : {}),
     useCount: 0,
-    history: [entry(actor, budget === null ? `Added category ${name}` : `Added category ${name} (budget ${peso(budget)})`)],
+    history: [entry(actor, `${budget === null ? `Added category ${name}` : `Added category ${name} (budget ${peso(budget)})`}${planned ? " · on the plan" : ""}`)],
     revision: 1,
     createdBy: who(actor),
     createdAt: stamp,
@@ -162,7 +163,7 @@ export async function createCategory({ db, tenant, FieldValue, input, actor, wor
     const existing = autoTotal(workspace) ? await categoriesOf(tx, tenant) : null;
     const r = categoriesRef(tenant).doc();
     const order = data.order ?? (int(b.categoryCount) + 1) * 10;
-    tx.create(r, newCategory(FieldValue, actor, { name: data.name, budget: data.budget ?? null, order }));
+    tx.create(r, newCategory(FieldValue, actor, { name: data.name, budget: data.budget ?? null, order, planned: data.planned === true }));
     tx.set(
       budgetRef(tenant),
       {
@@ -196,6 +197,7 @@ export async function updateCategory({ db, tenant, FieldValue, categoryId, chang
     if ("name" in diff) labels.push(`Renamed ${c.name} → ${diff.name}`);
     if ("budget" in diff) labels.push(`Budget changed ${peso(c.budget ?? null)} → ${peso(diff.budget)}`);
     if ("order" in diff) labels.push("Position changed");
+    if ("planned" in diff) labels.push(diff.planned ? "Added to the plan" : "Removed from the plan");
     const stamp = FieldValue.serverTimestamp();
     tx.update(cRef, { ...diff, ...("name" in diff ? { nameLower: lower(diff.name) } : {}), history: append(c.history, entry(actor, labels.join(" · "))), revision: c.revision + 1, updatedBy: who(actor), updatedAt: stamp });
     if ("budget" in diff) {

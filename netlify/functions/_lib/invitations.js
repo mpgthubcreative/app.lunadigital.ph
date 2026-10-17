@@ -56,7 +56,9 @@ const BAD_LINK = () => new WeddingError("invalid-link", "This invitation link is
 // ---- Wedding Setup (Owner side, guests.manage) ----
 export async function readSetup({ tenant }) {
   const [s, h] = await Promise.all([setupRef(tenant).get(), heroRef(tenant).get()]);
-  return { setup: s.exists ? s.data() : {}, hasHero: h.exists && typeof h.data().dataUrl === "string" };
+  const hero = h.exists && typeof h.data().dataUrl === "string" ? h.data().dataUrl : null;
+  // hero: the current cover photo, so the Owner sees what's set.
+  return { setup: s.exists ? s.data() : {}, hasHero: Boolean(hero), hero };
 }
 // The wedding link (slug) is unique in Luna: weddingSlugs/{slug} =
 // { businessId } (top level, server-only; rules deny all). Blank = made

@@ -72,7 +72,7 @@ export function readSetupForm(form) {
 
 export function mount(container, session, { api = defaultApi, toast = defaultToast, shrink = shrinkPhoto } = {}) {
   const canEdit = session.member.permissions["guests.manage"] === true;
-  const state = { setup: null, draft: null, hasHero: false, error: null, saving: false, status: null };
+  const state = { setup: null, draft: null, hasHero: false, hero: null, error: null, saving: false, status: null };
   let alive = true;
   const field = (name, label, placeholder, value, type = "text") =>
     html`<div class="field"><label for="ws-${name}">${label}</label><input class="input" id="ws-${name}" name="${name}" type="${type}" value="${value ?? ""}" ${placeholder ? html`placeholder="${placeholder}"` : ""} ${canEdit ? "" : "disabled"}></div>`;
@@ -98,9 +98,12 @@ export function mount(container, session, { api = defaultApi, toast = defaultToa
       ? html`<p class="form-error" role="alert" data-role="save-state" data-state="error">${st.text}</p>`
       : html`<p class="save-state" role="status" data-role="save-state" data-state="${st.state}">${st.text}</p>`;
   };
+  // The current photo is shown (a browser file box always says "No file
+  // chosen" after a reload, which looked like the photo was lost).
   const heroBox = () =>
-    html`<p class="stat-hint" data-role="hero-state">${state.hasHero ? "A photo is set." : "No photo: the invitation shows a soft colour instead."}</p>
-      ${canEdit ? html`<input class="input" type="file" accept="image/jpeg,image/png,image/webp" data-role="hero" aria-label="Cover photo">${state.hasHero ? html` <button type="button" class="btn btn-ghost" data-act="hero-remove">Remove photo</button>` : ""}` : ""}`;
+    html`${state.hero ? html`<img class="ws-hero-thumb" src="${state.hero}" alt="Current cover photo" data-role="hero-preview">` : ""}
+      <p class="stat-hint" data-role="hero-state">${state.hasHero ? "A photo is set." : "No photo: the invitation shows a soft colour instead."}</p>
+      ${canEdit ? html`<div class="ws-hero-actions"><label class="btn btn-compact">${state.hasHero ? "Change photo" : "Choose photo"}<input class="visually-hidden" type="file" accept="image/jpeg,image/png,image/webp" data-role="hero" aria-label="Cover photo"></label>${state.hasHero ? html`<button type="button" class="btn btn-compact btn-ghost" data-act="hero-remove">Remove photo</button>` : ""}</div>` : ""}`;
   // Partial redraws: the photo part, and the Save button + status.
   const drawHero = () => {
     const box = container.querySelector('[data-role="hero-box"]');
@@ -154,6 +157,7 @@ export function mount(container, session, { api = defaultApi, toast = defaultToa
       const r = await api("wedding-setup", { method: "POST", body: { action: "get" } });
       state.setup = r.setup || {};
       state.hasHero = Boolean(r.hasHero);
+      state.hero = typeof r.hero === "string" && r.hero.startsWith("data:image/") ? r.hero : null;
     } catch (err) {
       state.error = err.message || "Couldn't load the setup.";
     }
@@ -215,6 +219,7 @@ export function mount(container, session, { api = defaultApi, toast = defaultToa
       const dataUrl = await shrink(event.target.files[0]);
       await api("wedding-setup", { method: "POST", body: { action: "hero", dataUrl } });
       state.hasHero = true;
+      state.hero = dataUrl;
       toast("Cover photo saved.", "success");
       drawHero(); // only the photo part: the typed details stay as they are
     } catch (err) {
@@ -226,6 +231,7 @@ export function mount(container, session, { api = defaultApi, toast = defaultToa
     try {
       await api("wedding-setup", { method: "POST", body: { action: "hero", dataUrl: null } });
       state.hasHero = false;
+      state.hero = null;
       toast("Cover photo removed.", "success");
       drawHero();
     } catch (err) {

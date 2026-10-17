@@ -85,13 +85,19 @@ function budgetAmount(value, field) {
   return value;
 }
 
-const CATEGORY_FIELDS = ["name", "budget", "order"];
+// planned (Owner-pilot Bridal): a line the couple put on their Money plan
+// (e.g. from the Sample Budget) before knowing the amount.
+const CATEGORY_FIELDS = ["name", "budget", "order", "planned"];
 export function validateCategoryInput(input, { partial = false } = {}) {
   only(input, CATEGORY_FIELDS, "category");
   const has = (k) => !partial || Object.hasOwn(input, k);
   const out = {};
   if (has("name")) out.name = text(input.name, { field: "Category name", max: 40, required: true });
   if (has("budget")) out.budget = input.budget === undefined ? null : budgetAmount(input.budget, "Category budget");
+  if (Object.hasOwn(input, "planned")) {
+    if (typeof input.planned !== "boolean") throw new BabyError("invalid-input", "Invalid planned flag");
+    out.planned = input.planned;
+  }
   if (has("order") && input.order !== undefined) {
     if (!Number.isSafeInteger(input.order) || input.order < 0 || input.order > 1000) throw new BabyError("invalid-input", "Invalid position");
     out.order = input.order;

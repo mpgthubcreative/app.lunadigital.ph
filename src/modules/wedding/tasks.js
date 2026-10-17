@@ -14,7 +14,9 @@
 // Delete sit under ⋯.
 
 import { html, render } from "../../lib/html.js";
-import { pageHeader, emptyState, skeleton } from "../../components/ui.js";
+import { pageHeader, emptyState, skeleton, segmented } from "../../components/ui.js";
+import { SAMPLE_CHECKLIST, sampleKey } from "@shared/wedding-samples.js";
+import { sampleList, sampleItem } from "./samples.js";
 import { formDialog } from "../../components/form-dialog.js";
 import { toast as defaultToast, confirmDialog } from "../../components/feedback.js";
 import { formatDayId } from "../../lib/format.js";
@@ -56,7 +58,8 @@ export function mount(container, session, { data = defaultData, toast = defaultT
   const businessId = session.business.id;
   const timezone = session.business.timezone;
   const today = () => businessDate(timezone, now());
-  const state = { rows: [], loading: true, error: null, showDone: false };
+  // view: "mine" (My Tasks) | "sample" (the read-only Sample Checklist).
+  const state = { rows: [], loading: true, error: null, showDone: false, view: "mine" };
   let alive = true;
   let focus = new URLSearchParams(loc?.search || "").get("task");
 
@@ -109,12 +112,15 @@ export function mount(container, session, { data = defaultData, toast = defaultT
       container,
       html`
         ${pageHeader({ title: "Tasks", actions: canManage ? html`<button type="button" class="btn btn-primary" data-act="new">+ Add task</button>` : "" })}
+        <div class="wl-tools">${segmented("view", [["mine", "My Tasks"], ["sample", "Sample Checklist"]], state.view, { label: "Tasks view" })}</div>
         ${state.error
           ? html`<section class="card">${emptyState({ title: "Couldn't load", body: state.error })}</section>`
           : state.loading
             ? skeleton(5)
+            : state.view === "sample"
+              ? sampleList({ groups: SAMPLE_CHECKLIST, added: new Set(state.rows.map((t) => sampleKey(t.title))), canAdd: canManage, role: "sample-tasks", intro: "A starter checklist of what weddings usually need. Tap + Add for what applies to yours; it joins My Tasks." })
             : !state.rows.length
-              ? emptyState({ iconName: "tasks", title: "No tasks yet", body: "Add the wedding to-dos: requirements, fittings, tastings, deadlines." })
+              ? emptyState({ iconName: "tasks", title: "No tasks yet", body: "Add your wedding to-dos, or pick them from the Sample Checklist above." })
               : html`
                 ${open ? html`<ul class="wl-list wl-section" data-role="tasks">${g.active.map(row)}</ul>` : html`<p class="stat-hint wl-none">Everything is done.</p>`}
                 ${g.done.length
@@ -190,6 +196,20 @@ export function mount(container, session, { data = defaultData, toast = defaultT
         case "view":
           if (t) openView(t);
           return;
+        case "seg":
+          state.view = el.dataset.value === "sample" ? "sample" : "mine";
+          draw();
+          return;
+        case "sample-add": {
+          const pick = sampleItem(SAMPLE_CHECKLIST, el);
+          if (!pick) return;
+          el.disabled = true;
+          // A normal task: the sample's title, its group as the category.
+          await data.tasksApi({ action: "create", task: toTaskInput({ title: pick.item.title, category: pick.group.label, priority: "normal" }) });
+          toast(`Added to My Tasks: ${pick.item.title}`, "success");
+          load();
+          return;
+        }
         case "edit":
           if (t) saved(await editDialog(t));
           return;

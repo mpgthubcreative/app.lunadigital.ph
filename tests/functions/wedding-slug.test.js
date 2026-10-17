@@ -184,3 +184,29 @@ describe("reserved seats vs actually attending", () => {
     expect(plan().tables[0].used).toBe(3); // 3 of 2 → shown "over by 1" on Seating
   });
 });
+
+describe("Sample Budget lines and the cover photo (server)", () => {
+  it("a Planned line with no amount: createCategory { planned: true } stores it without touching the budget total; planned must be true/false; removing it from the plan is logged", async () => {
+    const { createBudgetHandler } = await import("../../netlify/functions/budget.js");
+    const budget = async (body) => {
+      const res = await createBudgetHandler(deps())({ ...request({ uid: u.carlo, businessId: W, method: "POST" }), body: JSON.stringify(body) });
+      return { status: res.statusCode, body: JSON.parse(res.body) };
+    };
+    const id = ok(await budget({ action: "createCategory", category: { name: "Lights & sounds", budget: null, planned: true } }), 201).categoryId;
+    expect(docAt(`expenseCategories/${id}`)).toMatchObject({ name: "Lights & sounds", budget: null, planned: true, status: "active" });
+    expect(docAt(`expenseCategories/${id}`).history.at(-1).label).toBe("Added category Lights & sounds · on the plan");
+    expect(docAt("budgets/current")?.total ?? null).toBe(null);
+    expect((await budget({ action: "createCategory", category: { name: "Catering", planned: "yes" } })).status).toBe(400);
+    ok(await budget({ action: "updateCategory", categoryId: id, changes: { budget: null, planned: false } }));
+    expect(docAt(`expenseCategories/${id}`).planned).toBe(false);
+    expect(docAt(`expenseCategories/${id}`).history.at(-1).label).toBe("Removed from the plan");
+  });
+
+  it("Wedding Setup get returns the current cover photo so the Owner sees it", async () => {
+    const PHOTO = "data:image/jpeg;base64,QUJD";
+    ok(await api("setup", u.carlo, { action: "hero", dataUrl: PHOTO }));
+    expect(ok(await api("setup", u.carlo, { action: "get" }))).toMatchObject({ hasHero: true, hero: PHOTO });
+    ok(await api("setup", u.carlo, { action: "hero", dataUrl: null }));
+    expect(ok(await api("setup", u.carlo, { action: "get" }))).toMatchObject({ hasHero: false, hero: null });
+  });
+});
