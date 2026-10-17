@@ -145,6 +145,8 @@ describe("Bills: recurring, paid -> one expense, next bill", () => {
     const r = ok(await api("schedule", u.carlo, { action: "markPaid", scheduleId: sid, payment: { method: "cash", amount: 150000, paidDate: OCT(13) } }));
     expect(r.nextScheduleId).toBeUndefined();
     expect(docAt("budgets/current")).toMatchObject({ upcoming: 0, upcomingCount: 0, spent: 150000 });
+    // No payee on the bill: its expense is named after the bill.
+    expect(docAt(`expenses/${r.expenseId}`)).toMatchObject({ payee: "Aircon cleaning", scheduleId: sid });
   });
 
   it("repeat can be set, changed and cleared on edit", async () => {

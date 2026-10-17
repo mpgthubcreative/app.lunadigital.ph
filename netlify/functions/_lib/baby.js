@@ -543,7 +543,8 @@ async function markPaidOnce({ db, tenant, FieldValue, business, workspace, sched
         amount,
         method: payment.method,
         ...(workspace === "baby-expense" ? (s.providerId ? { providerId: s.providerId } : { providerId: null }) : {}),
-        ...(s.payee ? { payee: s.payee } : {}),
+        // Luna Household: a bill with no payee shows as its own name ("Water").
+        ...(s.payee ? { payee: s.payee } : workspace === "household-payroll" ? { payee: s.description } : {}),
         ...(payment.reference ? { reference: payment.reference } : {}),
         ...(paidBy ? { paidBy: paidBy.map(({ name, amount: a }) => ({ name, amount: a })) } : {}),
         notes: `Scheduled payment: ${s.description}`,
