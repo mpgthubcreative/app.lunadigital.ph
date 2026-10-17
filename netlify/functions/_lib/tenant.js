@@ -113,6 +113,8 @@ async function evaluateCandidate(db, uid, businessId) {
         staffId: typeof member.staffId === "string" ? member.staffId : null,
         // Their own notification choices (Phase 13), for the settings screen.
         notificationPreferences: member.notificationPreferences && typeof member.notificationPreferences === "object" ? member.notificationPreferences : {},
+        // Their own phone navigation arrangement (shared/navigation-prefs.js), or null.
+        navigationPreference: member.navigationPreference && Array.isArray(member.navigationPreference.primary) ? { primary: member.navigationPreference.primary.filter((x) => typeof x === "string").slice(0, 3) } : null,
       },
       permissions: effectivePermissions(member.permissions, policy),
       subscription: {

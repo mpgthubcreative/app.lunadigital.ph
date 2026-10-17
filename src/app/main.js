@@ -193,6 +193,12 @@ async function startApp() {
   }
 }
 
+// Settings → Arrange navigation saved: reload the session so the tab bar
+// follows it (the page stays where it is).
+window.addEventListener("luna:session-changed", () => {
+  if (router) startApp();
+});
+
 function boot() {
   // Phase 14: the employee's salary receipt page needs no login (the token
   // in the URL fragment is the only credential, checked by the server).

@@ -34,3 +34,4 @@ export * from "./wedding.js";
 export * from "./operators.js";
 export * from "./tenant-config.js";
 export * from "./metering.js";
+export * from "./navigation-prefs.js";

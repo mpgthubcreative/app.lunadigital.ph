@@ -17,6 +17,7 @@
 import { accessPolicy, MODULES, FEATURE_DEFINITIONS, LIMIT_KEYS, LIMIT_METER, LIMIT_DEFINITIONS, METERS, MONTHLY_METER_IDS, isEnforced, meterApplies } from "@shared/index.js";
 import { html, render } from "../../lib/html.js";
 import { pageHeader, card, meter, badge } from "../../components/ui.js";
+import { canArrange, mountArrangeNav } from "./arrange-nav.js";
 import { formatBytes, formatNumber } from "../../lib/format.js";
 import { api } from "../../lib/api.js";
 
@@ -127,8 +128,12 @@ export function mount(container, session) {
         })}
         <div data-role="package" class="grid-span">${seesPackage ? packageCards(session) : ""}</div>
       </div>
+      <div data-role="arrange-host"></div>
     `
   );
+  // Settings → Arrange navigation (this person's phone tabs).
+  const arrangeHost = container.querySelector('[data-role="arrange-host"]');
+  if (arrangeHost && canArrange(session)) mountArrangeNav(arrangeHost, session);
   // Fresh figures from the server (an export or upload since sign-in shows now).
   if (seesPackage)
     Promise.resolve()

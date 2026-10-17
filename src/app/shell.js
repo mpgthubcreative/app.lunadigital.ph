@@ -34,22 +34,34 @@ const MANAGE = new Set(["users", "settings", "imports", "subscription", "downloa
 export const navGroup = (id) => (id === "dashboard" ? "overview" : id === "reports" ? "analyze" : MANAGE.has(id) ? "manage" : "work");
 const GROUP_LABELS = { overview: "Overview", work: "Work", analyze: "Analyze", manage: "Manage" };
 // One-word labels for the phone tab bar (display only; ids never change).
-const SHORT = { dashboard: "Dashboard", tasks: "Tasks", guests: "Guests", vendors: "Money", vendorpayments: "Payments", expenses: "Expenses", budget: "Budget", schedule: "Schedule", providers: "Providers", household: "Staff", attendance: "Attendance", payroll: "Payroll", advances: "Advances", orders: "Orders", inventory: "Inventory", payments: "Payments", customers: "Customers" };
+const SHORT = { dashboard: "Dashboard", tasks: "Tasks", guests: "Guests", vendors: "Money", vendorpayments: "Payments", expenses: "Expenses", budget: "Budget", schedule: "Schedule", providers: "Providers", grocery: "Grocery", household: "Staff", attendance: "Attendance", payroll: "Payroll", advances: "Advances", orders: "Orders", inventory: "Inventory", payments: "Payments", customers: "Customers" };
 // Tenant terminology (Phase 17) always wins over the short label.
-export const shortLabel = (m, terms = {}) => terms[m.id] ?? SHORT[m.id] ?? m.label;
+// A template that renames a page (Household: the schedule is "Bills") keeps its own short name.
+export const shortLabel = (m, terms = {}) => terms[m.id] ?? (m.id === "schedule" && m.label !== "Payment Schedule" ? m.label : SHORT[m.id]) ?? m.label;
 
 // Dashboard + up to three phone tabs: the template's choice, filtered by
 // what this member can open, topped up from the navigation order.
 const NAV_HIDDEN = new Set(["vendorpayments"]);
 
-export function mobileTabs(nav, templateId) {
+// Pages a member may put on the phone's main tabs: the work pages (never
+// the Dashboard, Users, Settings…).
+export const arrangeable = (nav) => nav.filter((m) => m.id !== "dashboard" && navGroup(m.id) === "work");
+
+// preference (shared/navigation-prefs.js): the member's own order for the
+// main tabs; pages they can't open are skipped and the template's default
+// fills the rest. More always comes last (rendered by the shell).
+export function mobileTabs(nav, templateId, preference = null) {
   const usable = new Map(nav.map((m) => [m.id, m]));
+  const eligible = new Set(arrangeable(nav).map((m) => m.id));
   const wanted = getWorkspaceTemplate(templateId)?.mobileTabs || [];
-  const picked = wanted.filter((id) => usable.has(id));
+  const mine = Array.isArray(preference?.primary) ? preference.primary.filter((id) => eligible.has(id)) : [];
+  const picked = [...new Set([...mine, ...(mine.length ? [] : wanted.filter((id) => usable.has(id)))])];
   // Owner-pilot UX: a workspace without a Dashboard (Household) gets four
   // work tabs instead (+ More), never five or six squeezed in; Bridal asks
   // for three (Money, Tasks, Guests) and gets three.
   const room = usable.has("dashboard") ? 3 : Math.min(4, wanted.length || 4);
+  // Top up: the template's default first, then the navigation order.
+  for (const id of wanted) if (picked.length < room && usable.has(id) && !picked.includes(id)) picked.push(id);
   for (const m of nav) if (picked.length < room && m.id !== "dashboard" && navGroup(m.id) === "work" && !picked.includes(m.id)) picked.push(m.id);
   return [...(usable.has("dashboard") ? ["dashboard"] : []), ...picked.slice(0, room)].map((id) => usable.get(id));
 }
@@ -67,9 +79,9 @@ function businessSwitcher(session, id = "businessSelect") {
   `;
 }
 
-// handlers: { onSignOut(), onSwitchBusiness(businessId) }
-export function renderShell(root, session, handlers = {}) {
-  // Tenant terminology (Phase 17) may relabel a module; ids and paths never change.
+// Every page this member can open, in the template's order (the sidebar,
+// the phone tabs and More, and Settings → Arrange navigation use it).
+export function shellNavigation(session) {
   const labels = terminologyLabels(session.config);
   // Phase 18.6: Supplier Payments is run from the Wedding Suppliers rows; its
   // page stays reachable (payment history) but leaves the menu.
@@ -105,13 +117,21 @@ export function renderShell(root, session, handlers = {}) {
     const at = nav.findIndex((m) => m.id === "users");
     nav.splice(at < 0 ? nav.length : at, 0, { id: "downloads", path: "/export", label: "Export & Backup", icon: "download" });
   }
+  return nav;
+}
+
+// handlers: { onSignOut(), onSwitchBusiness(businessId) }
+export function renderShell(root, session, handlers = {}) {
+  // Tenant terminology (Phase 17) may relabel a module; ids and paths never change.
+  const labels = terminologyLabels(session.config);
+  const nav = shellNavigation(session);
   const notifications = canUseNotifications({ entitlements: session.entitlements, permissions: session.member.permissions });
   if (bell) bell.stop();
   bell = null;
   const policy = accessPolicy(session.subscription.status);
   const envLabel = ENVIRONMENT_LABELS[normalizeEnvironment(session.environment)];
   const workspace = snapshotWorkspaceTemplateId(session.entitlements) || "";
-  const tabs = mobileTabs(nav, workspace);
+  const tabs = mobileTabs(nav, workspace, session.member.navigationPreference);
   const rest = nav.filter((m) => !tabs.includes(m));
   const groups = Object.keys(GROUP_LABELS)
     .map((g) => ({ id: g, label: GROUP_LABELS[g], items: nav.filter((m) => navGroup(m.id) === g) }))
