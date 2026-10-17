@@ -603,6 +603,29 @@ The accepted Bridal design (Money | Tasks | Guests | More) is unchanged; this pa
   - **Screens:** Tasks (My Tasks, Sample Checklist), Money (My Money, Sample Budget), Guests (RSVP, Seating, Roles), Wedding Setup, Music & Program, Crew Meals and the More sheet.
   - **Result:** on every one, the last row ends 33–600px above the tab bar after scrolling to the bottom.
 
+### 2026-10-17 · Bridal: party members are real people; roles are person ↔ role (2499b26)
+
+- **Model:** a guest record is the party and its primary person.
+  - **Companions:** `members: [{ id, name, roles, attending? }]` holds the named companions, at most party size − 1. Unnamed seats stay a count only.
+  - **Person key:** `guestId` (primary) or `guestId:memberId`. Ids never change on rename, so roles, attending marks and seating stay with the person.
+  - **`roleKeys`:** lists every role key in the party.
+- **Roles:** person ↔ role, many-to-many.
+  - **Any number of people per role:** there's no longer a single Maid of Honor or Best Man.
+  - **Several roles per person** are allowed; only the exact same person + role twice is refused.
+- **RSVP and invitations:** still party-based and by count, with one secure link per party ("3 of 5").
+  - **Optional attending marks** per named person, never more than the confirmed count. They're cleared when an RSVP change no longer fits.
+  - **Seating** counts confirmed seats and shows who's coming ("Sanrah, Anna + 1 unnamed").
+- **Screens:**
+  - **Main row:** unchanged.
+  - **Details:** the party sheet, with + Add name per unnamed seat, Rename, Remove (warns when the person is linked), and Mark attending.
+  - **Roles:** lists people, including party members. "Not assigned yet" lists only named people without a role.
+  - **Backup:** a Party Members sheet and a person-based Wedding Roles sheet.
+- **Migration:** none needed. Existing guests have no `members`, and their roles become the primary person's roles, unchanged.
+  - **Behaviour change:** the old "one Best Man / one Maid of Honor" rule is gone, as asked.
+- **Tests:**
+  - **Unit:** 1527 pass.
+  - **Live on staging (390px and 1280px):** 22/22 — the party sheet, 4 names added (no new guest records), 3/5 on the row with no names, companions in Assign, two Maids of Honor and two Best Men, a duplicate refused, "Not assigned yet" named people only, Seating 3 seats with names, rename keeping roles, and removal warning when linked.
+
 ## Plan (decisions made from the brief)
 
 ### Stage 1: Distributor

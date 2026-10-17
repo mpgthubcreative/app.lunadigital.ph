@@ -3717,3 +3717,4 @@ tr.is-saving {
 .wl-member:first-child { border-top: 0; }
 .wl-member-name { flex: 1 1 8rem; min-width: 0; }
 .wl-mark.is-on { color: var(--success); }
+[data-role="party-figures"] { margin-bottom: var(--space-3); }
