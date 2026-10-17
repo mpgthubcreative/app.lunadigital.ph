@@ -45,6 +45,13 @@ export function createRouter({ routes, onRoute, notFound, base = "" }) {
   document.addEventListener("click", onClick);
   window.addEventListener("popstate", resolve);
 
+  // Swap the current URL for another page (no new history entry): used when
+  // the URL holds a page the current workspace doesn't have.
+  function replace(path) {
+    window.history.replaceState({}, "", base + path);
+    resolve();
+  }
+
   // Removes listeners — call before creating a new router (e.g. after
   // switching business) so handlers never stack up.
   function stop() {
@@ -52,5 +59,5 @@ export function createRouter({ routes, onRoute, notFound, base = "" }) {
     window.removeEventListener("popstate", resolve);
   }
 
-  return { start: resolve, navigate, stop };
+  return { start: resolve, navigate, replace, stop };
 }

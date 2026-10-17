@@ -7,7 +7,7 @@
 // requireTenant() on the server, so a tampered session or URL reveals
 // nothing; this just keeps the screen honest.
 
-import { resolveNavigation, canUseModule, canUseNotifications, terminologyLabels, getWorkspaceTemplate, snapshotWorkspaceTemplateId } from "@shared/index.js";
+import { resolveNavigation, canUseModule, canUseNotifications, terminologyLabels, getWorkspaceTemplate, snapshotWorkspaceTemplateId, MODULES, getModule } from "@shared/index.js";
 import { EXPORT_DATASETS } from "@shared/export-datasets.js";
 import { canExport } from "@shared/exports.js";
 import { html, render } from "../lib/html.js";
@@ -80,4 +80,44 @@ export function renderPageNotAvailable(container) {
       ${card({ body: emptyState({ title: "This page isn't available", body: "It doesn't exist, or it isn't enabled for your account." }) })}
     `
   );
+}
+
+// ---------- Workspace switching (owner pilot, 2026-10-17) ----------
+// Switching business must land on a valid page at once, never on "Page not
+// available" for the previous workspace's route.
+
+// Every page the tenant app knows, whatever the workspace.
+const EXTRA_ROUTES = [NOTIFICATIONS_ROUTE, SUBSCRIPTION_ROUTE, EXPORT_ROUTE, SETUP_ROUTE, PROGRAM_ROUTE, CREW_ROUTE];
+const KNOWN_PATHS = new Set(["/", ...MODULES.filter((m) => m.available).map((m) => m.path), ...EXTRA_ROUTES.map((r) => r.path)]);
+export const isKnownAppPath = (path) => KNOWN_PATHS.has(path);
+
+// The pages THIS workspace's template has (whatever this user may open).
+export function workspacePaths(session) {
+  const template = getWorkspaceTemplate(snapshotWorkspaceTemplateId(session.entitlements));
+  const paths = new Set(["/", NOTIFICATIONS_ROUTE.path, SUBSCRIPTION_ROUTE.path, EXPORT_ROUTE.path]);
+  for (const id of template?.modules || []) {
+    const m = getModule(id);
+    if (m?.available) paths.add(m.path);
+  }
+  if (template?.id === "bridal-expense") for (const r of [SETUP_ROUTE, PROGRAM_ROUTE, CREW_ROUTE]) paths.add(r.path);
+  return paths;
+}
+
+// The workspace's landing page: "/" (the Dashboard, or the template's home
+// via its alias: Household -> Payroll, Bridal -> Money), else the first page.
+export const homePath = (routes) => (routes.some((r) => r.path === "/") ? "/" : routes.find((r) => !r.redirect)?.path ?? "/");
+
+// What to do with a path in this session:
+//   "home"            a page of ANOTHER workspace (left in the URL by a switch,
+//                     back / forward or an old bookmark), or any page this
+//                     membership can't open right after a switch
+//   "not-available"   an unknown path, or a page of this workspace this person
+//                     may not open (unchanged)
+//   "ok"              open it
+export function pathDisposition(session, routes, path, { justSwitched = false } = {}) {
+  const route = routes.find((r) => r.path === path);
+  if (route && (route.redirect || routeAllowed(session, route))) return "ok";
+  if (!isKnownAppPath(path)) return "not-available";
+  if (justSwitched || !workspacePaths(session).has(path)) return "home";
+  return "not-available";
 }

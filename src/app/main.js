@@ -19,8 +19,8 @@ import { setTokenProvider, setBusinessSelector } from "../lib/api.js";
 import { watchUser, signIn, signOutUser, currentIdToken, friendlyAuthError, sendPasswordReset } from "./auth.js";
 import { loadSession, setPreferredBusinessId } from "./session.js";
 import { renderShell } from "./shell.js";
-import { createRouter } from "./router.js";
-import { buildRoutes, routeAllowed, renderPageNotAvailable } from "./routes.js";
+import { createWorkspaceRouter } from "./workspace-router.js";
+import { buildRoutes, renderPageNotAvailable } from "./routes.js";
 import { renderLogin, renderAccessProblem, renderBoot } from "./screens.js";
 import { MODULE_LOADERS } from "../modules/loaders.js";
 import { render } from "../lib/html.js";
@@ -47,6 +47,9 @@ let pendingLoginNotice = "";
 setTokenProvider(currentIdToken);
 
 let currentShell = null;
+// Set by the business switcher: the next mount checks the URL against the
+// NEW membership and lands on that workspace's home if it can't be opened.
+let justSwitched = false;
 
 function stopRouter() {
   if (router) router.stop();
@@ -118,6 +121,9 @@ function mountApp(session) {
   // Phase 18.6: a household staff account gets its own simple screen
   // (lazy-loaded), not the Owner's app.
   if (isStaffPortalSession(session)) {
+    // The portal has no pages of its own: drop another workspace's URL.
+    justSwitched = false;
+    if (window.location.pathname !== "/") window.history.replaceState({}, "", "/");
     import("../staff/portal.js").then((m) => m.mountStaffPortal(root, session, { onSignOut: () => handleSignOut() }));
     stopRevalidation();
     revalidateTimer = setInterval(revalidate, REVALIDATE_MS);
@@ -128,6 +134,7 @@ function mountApp(session) {
     onSignOut: () => handleSignOut(),
     onSwitchBusiness: (businessId) => {
       setPreferredBusinessId(businessId);
+      justSwitched = true;
       startApp();
     },
   });
@@ -140,17 +147,18 @@ function mountApp(session) {
     shell.setActive({ path: null, label: "Not available" });
     renderPageNotAvailable(shell.content);
   };
+  const switched = justSwitched;
+  justSwitched = false;
 
-  router = createRouter({
+  // Switching business opens a valid page at once (./workspace-router.js).
+  router = createWorkspaceRouter({
+    session,
     routes,
+    justSwitched: switched,
     async onRoute(route) {
       const token = ++navToken;
       if (typeof cleanup === "function") cleanup();
       cleanup = null;
-      if (!routeAllowed(session, route)) {
-        showNotAvailable();
-        return;
-      }
       shell.setActive(route);
       try {
         const mod = await MODULE_LOADERS[route.moduleId](session);
@@ -162,7 +170,12 @@ function mountApp(session) {
       }
       shell.content.focus({ preventScroll: true });
     },
-    notFound: showNotAvailable,
+    onNotAvailable: () => {
+      ++navToken;
+      if (typeof cleanup === "function") cleanup();
+      cleanup = null;
+      showNotAvailable();
+    },
   });
   router.start();
 
