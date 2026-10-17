@@ -695,6 +695,10 @@ The accepted Bridal design (Money | Tasks | Guests | More) is unchanged; this pa
 - **Master Backup (Household):** Expenses, Bills, Recurring Items (repeating unpaid bills), Categories, Budget (monthly + per category) and the raw Budget record, in household order.
 - **Tests:** unit 1568 pass (25 new: tests/functions/household-money.test.js, tests/app/household-money.test.js). Rules (emulator, 4 foreground batches) 2842 pass; 4 old tests that assumed Household had no Expenses were updated, plus a new check that a v2 snapshot keeps working during the compatible step.
 - **Staging:** rules deployed first; then the code; then only the two Household plan records (modules + the household-basic name) and a recompute of the Household businesses. The Bridal plan display names stay "Bridal Basic / Plus" until seed:plans is approved.
+- **Live on staging (0d127aa + ef5decb, CI green):** 16/16 API checks and 28/28 browser checks at 390px and 1280px on a temporary Household business (`phm-home-tmp`, removed afterwards).
+  - **Checked:** v3 snapshot; 15 categories; proof; bill paid → one linked expense + next bill (Nov 17) and a retry records nothing; released salary counted once under Household Staff, not as an expense; advance excluded; helper refused by API (403) and rules (403) while /api/me works; Backup sheets; tabs Payroll · Attendance · Expenses · More; More list; Add expense shows Amount / Category / Date only.
+  - **Found and fixed:** section titles flush to the card edge (now the shared section header).
+  - **Recomputed to v3:** demo-household-a, demo-household-b and rwp-d419 (entitlements only; no data changed; permissions already in sync).
 
 ## Plan (decisions made from the brief)
 
