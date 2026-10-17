@@ -27,7 +27,7 @@ import { pageHeader, emptyState, skeleton, segmented } from "../../components/ui
 import { formDialog } from "../../components/form-dialog.js";
 import { confirmDialog, toast as defaultToast } from "../../components/feedback.js";
 import { formatDayId } from "../../lib/format.js";
-import { RSVP_STATUSES, GUEST_SIDES, GUEST_CATEGORIES, GUEST_CATEGORY_IDS, rsvpSummary, seatingPlan, MAX_TABLE_CAPACITY } from "@shared/index.js";
+import { RSVP_STATUSES, GUEST_SIDES, GUEST_CATEGORIES, GUEST_CATEGORY_IDS, rsvpSummary, seatingPlan, MAX_TABLE_CAPACITY, setupMissing } from "@shared/index.js";
 import { activityLines, detailsDialog } from "../baby/common.js";
 import * as defaultData from "./data.js";
 
@@ -88,7 +88,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
   const canManage = session.member.permissions["guests.manage"] === true;
   const businessId = session.business.id;
   const timezone = session.business.timezone;
-  const state = { view: "rsvp", filter: "all", search: "", rows: [], totals: null, seating: null, loading: true, error: null, invites: false };
+  const state = { view: "rsvp", filter: "all", search: "", rows: [], totals: null, seating: null, loading: true, error: null, setupMissing: null };
   let alive = true;
 
   async function load() {
@@ -96,8 +96,9 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     draw();
     try {
       const [totals, page, seating, setup] = await Promise.all([data.getGuestTotals(businessId), data.listGuests(businessId, {}, { pageSize: MAX_GUESTS }), data.getSeating ? data.getSeating(businessId).catch(() => null) : null, canManage && data.getWeddingSetup ? data.getWeddingSetup().catch(() => null) : null]);
-      // Invitation links once the couple has set up their invitation.
-      state.invites = Boolean(setup?.setup && (setup.setup.coupleNames || setup.setup.rsvpEnabled));
+      // What Wedding Setup still needs before links can be made ([] = ready;
+      // null = couldn't tell: the server decides and explains).
+      state.setupMissing = setup?.setup ? setupMissing(setup.setup) : null;
       state.totals = totals;
       state.rows = page.rows;
       state.seating = seating;
@@ -113,18 +114,25 @@ export function mount(container, session, { data = defaultData, toast = defaultT
   const fmt = (n) => Number(n || 0).toLocaleString("en-PH");
   const menu = (label, items) =>
     items.length
-      ? html`<details class="line-menu"><summary class="btn btn-compact btn-ghost" aria-label="${label}">⋯</summary><div class="line-menu-list" role="menu">${items.map((i) => html`${i.sep ? html`<div class="menu-sep" role="separator"></div>` : ""}<button type="button" class="menu-item${i.danger ? " menu-danger" : ""}" role="menuitem" data-act="${i.act}" data-id="${i.id}">${i.label}</button>`)}</div></details>`
+      ? html`<details class="line-menu"><summary class="btn btn-compact btn-ghost" aria-label="${label}">⋯</summary><div class="line-menu-list" role="menu">${items.map((i) => html`${i.sep ? html`<div class="menu-sep" role="separator"></div>` : ""}${i.href ? html`<a class="menu-item menu-hint" role="menuitem" href="${i.href}" data-link data-act="${i.act}" data-id="${i.id}">${i.label}</a>` : html`<button type="button" class="menu-item${i.danger ? " menu-danger" : ""}" role="menuitem" data-act="${i.act}" data-id="${i.id}">${i.label}</button>`}`)}</div></details>`
       : "";
   const rsvpControl = (g) =>
     canManage
       ? html`<select class="select select-chip wl-status" data-role="rsvp" data-id="${g.id}" data-tone="${RSVP_TONE[g.rsvp] || ""}" aria-label="RSVP for ${g.name}">${Object.keys(RSVP_STATUSES).map((k) => html`<option value="${k}" ${k === g.rsvp ? "selected" : ""}>${RSVP_WORDS[k]}</option>`)}</select>`
       : html`<span class="wl-chip" data-tone="${RSVP_TONE[g.rsvp] || ""}">${RSVP_WORDS[g.rsvp] ?? g.rsvp}</span>`;
   const seats = (g, text = seatsText(g)) => html`<span class="wl-seats" data-role="seats" aria-label="${text} seats">${text}</span>`;
+  // Invitation link actions, always visible to the Owner: Create (no link
+  // yet), View / Copy / Regenerate (a link exists), or why not yet.
+  const inviteItems = (g) => {
+    if (state.setupMissing?.length) return [{ act: "invite-setup", id: g.id, href: "/wedding-setup", label: "Invitation: complete Wedding Setup first →" }];
+    if (g.invitation?.status !== "active") return [{ act: "invite-create", id: g.id, label: "Create invitation link" }];
+    return [{ act: "invite-view", id: g.id, label: "View invitation" }, { act: "invite-copy", id: g.id, label: "Copy invitation link" }, { act: "invite-new", id: g.id, label: "Regenerate invitation link" }];
+  };
   const guestMenu = (g) =>
     menu(`More for ${g.name}`, [
       ...(canManage && g.rsvp === "attending" && g.partySize > 1 ? [{ act: "count", id: g.id, label: "Change number attending" }] : []),
       ...(canManage ? [{ act: "edit", id: g.id, label: "Edit" }] : []),
-      ...(canManage && state.invites ? [{ act: "invite-view", id: g.id, label: "View invitation" }, { act: "invite-copy", id: g.id, label: "Copy invitation link" }, { act: "invite-new", id: g.id, label: "Regenerate invitation link" }] : []),
+      ...(canManage ? inviteItems(g) : []),
       { act: "view", id: g.id, label: "Details & history" },
       ...(canManage ? [{ act: "remove", id: g.id, label: "Remove guest", danger: true, sep: true }] : []),
     ]);
@@ -271,7 +279,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     detailsDialog({
       title: g.name,
       badgeHtml: html`<span class="wl-chip" data-tone="${RSVP_TONE[g.rsvp] || ""}">${RSVP_WORDS[g.rsvp] ?? g.rsvp}</span>`,
-      rows: [["Category", GUEST_CATEGORIES[g.category]?.label ?? "Not set"], ...(g.group ? [["Group (earlier note)", g.group]] : []), ["Seats invited", String(g.partySize)], ["Attending", g.rsvp === "attending" ? String(g.confirmed) : null], ["Table", table ? table.name : null], ["RSVP date", g.rsvpDate ? formatDayId(g.rsvpDate) : null], ["Side", GUEST_SIDES[g.side]?.label], ["Invitation sent", g.invitationSent ? formatDayId(g.invitationSent) : "Not sent"], ["Contact", g.contact], ["Notes", g.notes]],
+      rows: [["Category", GUEST_CATEGORIES[g.category]?.label ?? "Not set"], ...(g.group ? [["Group (earlier note)", g.group]] : []), ["Seats invited", String(g.partySize)], ["Attending", g.rsvp === "attending" ? String(g.confirmed) : null], ["Table", table ? table.name : null], ["RSVP date", g.rsvpDate ? formatDayId(g.rsvpDate) : null], ["Side", GUEST_SIDES[g.side]?.label], ["Invitation sent", g.invitationSent ? formatDayId(g.invitationSent) : "Not sent"], ["Invitation link", g.invitation?.status === "active" ? "Created (⋯ → View / Copy invitation link)" : "Not created yet (⋯ → Create invitation link)"], ["Contact", g.contact], ["Notes", g.notes]],
       activity: activityLines(g.history, timezone),
       actions: canManage ? [{ act: "remove", label: "Remove guest", danger: true }, { act: "edit", label: "Edit" }] : [],
       onAction: async (act) => {
@@ -286,10 +294,10 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     });
   }
 
-  async function copyLink(url, name, fresh = false) {
+  async function copyLink(url, name, fresh = false, created = false) {
     try {
       await navigator.clipboard.writeText(url);
-      toast(`${fresh ? "New link" : "Link"} for ${name} copied.`, "success");
+      toast(created ? `Invitation link for ${name} created and copied.` : `${fresh ? "New link" : "Link"} for ${name} copied.`, "success");
     } catch {
       // No clipboard access: show the link to copy by hand.
       await formDialog({ title: `Invitation link for ${name}`, fields: [{ name: "url", label: "Copy this link", value: url }], submitLabel: "Done", onSubmit: () => true });
@@ -297,7 +305,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
   }
   const onClick = async (event) => {
     const el = event.target.closest("[data-act]");
-    if (!el || !container.contains(el) || el.dataset.act === "export") return;
+    if (!el || !container.contains(el) || el.dataset.act === "export" || el.dataset.act === "invite-setup") return;
     const a = el.dataset.act;
     if (a === "seg") {
       state[el.dataset.seg === "view" ? "view" : "filter"] = el.dataset.value;
@@ -321,7 +329,11 @@ export function mount(container, session, { data = defaultData, toast = defaultT
       else if (a === "count") after("RSVP saved.")(await rsvpDialog(g));
       else if (a === "seat") after(g.tableId ? "Moved." : "Seated.")(await seatDialog(g));
       else if (a === "unseat") after("Unassigned.")(await data.guestsApi({ action: "seat", guestId: g.id, tableId: null }));
-      else if (a === "invite-view" || a === "invite-copy") {
+      else if (a === "invite-create") {
+        const r = await data.guestsApi({ action: "inviteLink", guestId: g.id });
+        await copyLink(`${location.origin}${r.path}`, g.name, false, true);
+        load();
+      } else if (a === "invite-view" || a === "invite-copy") {
         // Open the window first (a popup must start from the tap), then fill it in.
         const win = a === "invite-view" ? window.open("about:blank", "_blank") : null;
         const r = await data.guestsApi({ action: "inviteLink", guestId: g.id });

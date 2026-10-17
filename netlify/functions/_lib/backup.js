@@ -37,6 +37,10 @@ const NAMES = {
 const WEDDING_ORDER = ["Export Info", "Wedding Setup", "Budget", "Budget totals", "Suppliers", "Supplier Payments", "Expenses", "Tasks", "Guest Categories", "Guests", "RSVP History", "Tables", "Seating Assignments", "Users & Memberships", "Audit log"];
 
 const iso = (v) => (v && typeof v.toDate === "function" ? v.toDate().toISOString() : v instanceof Date ? v.toISOString() : null);
+// A stored proof file (expense / payment / payroll): safe facts only (type,
+// size, when, who). Never the file itself, its storage path or ledger id.
+const isStoredFile = (v) => v && typeof v === "object" && typeof v.path === "string" && typeof v.contentType === "string";
+export const proofSummary = (p) => ({ file: p.contentType === "application/pdf" ? "PDF" : "Image", contentType: p.contentType, bytes: Number.isSafeInteger(p.size) ? p.size : null, uploadedAt: iso(p.uploadedAt), uploadedBy: p.uploadedBy?.name ?? null });
 // One cell: text / number / ISO time / JSON for nested values.
 export function cellOf(v) {
   if (v === null || v === undefined) return null;
@@ -46,7 +50,8 @@ export function cellOf(v) {
   const t = iso(v);
   if (t) return t;
   try {
-    return JSON.stringify(v, (k, x) => (k && SECRET.test(k) ? undefined : iso(x) ?? x)).slice(0, 32000);
+    if (isStoredFile(v)) v = proofSummary(v);
+    return JSON.stringify(v, (k, x) => (k && SECRET.test(k) ? undefined : isStoredFile(x) ? proofSummary(x) : iso(x) ?? x)).slice(0, 32000);
   } catch {
     return String(v).slice(0, 32000);
   }
@@ -132,6 +137,7 @@ export async function buildBackup({ db, tenant, business, entitlements, FieldPat
     ["Created by", actor?.name || actor?.email || actor?.uid || ""],
     ["Contents", "Every record Luna keeps for this business, including removed, voided and inactive ones. One sheet per kind of record; every field is a column (nested values as JSON, times in UTC)."],
     ["Not included", "Passwords, sign-in and invitation links (secrets), and totals Luna recalculates."],
+    ["Proof files", "Receipts / screenshots aren't inside this file: each record lists its proof (Image or PDF, size, when and who uploaded it). Open them in Luna."],
     ["", ""],
     ["Sheet", "Rows"],
     ...counts,

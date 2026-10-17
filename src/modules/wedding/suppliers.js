@@ -15,8 +15,12 @@
 //   + Add     one button: Expense / Supplier / Budget item
 //   ⋯         supplier: Record payment, View payments, Edit, Change
 //             category, Payment schedule, Archive (Delete when nothing was
-//             recorded); expense: Details, Change category, Remove; planned:
-//             Add supplier, Add expense, Change amount, Remove from budget
+//             recorded); expense: Details, View / Add / Replace proof,
+//             Change category, Remove; planned: Add supplier, Add expense,
+//             Change amount, Remove from budget
+//   Proof     a receipt photo or PDF on an expense (a supplier payment is
+//             an expense): under ⋯, in Details and in View payments; never
+//             a column. Record payment / Add expense take one too (More options).
 // No budget category is needed first: forms take a category NAME and Luna
 // creates it if new (./categories.js). Downloads live under More.
 
@@ -25,7 +29,7 @@ import { pageHeader, emptyState, badge, skeleton } from "../../components/ui.js"
 import { formDialog } from "../../components/form-dialog.js";
 import { toast as defaultToast, confirmDialog } from "../../components/feedback.js";
 import { formatCentavos, formatDayId } from "../../lib/format.js";
-import { expenseActions } from "./expenses.js";
+import { expenseActions, proofField } from "./expenses.js";
 import { SUPPLIER_SERVICES, SUPPLIER_STATUSES, EXPENSE_METHODS, EXPENSE_METHOD_IDS, supplierBalance, businessDate, parseCentavos, weddingSummary } from "@shared/index.js";
 import { parseBudget } from "../baby/budget.js";
 import { activityLines, detailsDialog, categoryName } from "../baby/common.js";
@@ -114,7 +118,7 @@ export function toSupplierInput(v) {
   return out;
 }
 
-export function mount(container, session, { data = defaultData, toast = defaultToast, now = () => new Date(), confirm = confirmDialog, location: loc = globalThis.location } = {}) {
+export function mount(container, session, { data = defaultData, toast = defaultToast, now = () => new Date(), confirm = confirmDialog, location: loc = globalThis.location, prepareProof } = {}) {
   const perms = session.member.permissions;
   const canManage = perms["vendors.manage"] === true;
   const canSchedule = perms["vendorpayments.manage"] === true;
@@ -189,6 +193,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
       if (canManage) items.push(!(s.paid > 0) && !(s.upcomingCount > 0) ? { x: "delete", label: "Delete", danger: true } : { x: "archive", label: active ? "Archive" : "Bring back", danger: active });
     } else if (r.kind === "expense") {
       items.push({ x: "view", label: "Details" });
+      items.push(...exp.proofItems(r.record));
       if (can.update) items.push({ x: "category", label: "Change category" });
       if (can.remove) items.push({ x: "remove", label: "Remove", danger: true });
     } else {
@@ -352,9 +357,22 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     const paint = (body) =>
       render(backdrop, html`<div class="modal" role="dialog" aria-modal="true" aria-label="Payments to ${s.name}" data-role="supplier-payments"><div class="modal-header"><h2 class="card-title">${s.name} · Payments</h2></div><div class="modal-body">${body}</div><div class="modal-footer">${seesPayments ? html`<a class="btn btn-ghost" href="/supplier-payments" data-link data-x="close">Payment history</a>` : ""}<button type="button" class="btn" data-x="close">Close</button></div></div>`);
     paint(html`<p class="stat-hint">Loading…</p>`);
-    backdrop.addEventListener("click", (ev) => {
+    let paid = [];
+    backdrop.addEventListener("click", async (ev) => {
       const x = ev.target.closest("[data-x]");
       if (ev.target === backdrop || x?.dataset.x === "close") return close();
+      // A paid line's proof: View, or Add when there's none yet.
+      if (x?.dataset.x?.startsWith("proof-")) {
+        const e = paid.find((y) => y.id === x.dataset.id);
+        if (!e) return undefined;
+        if (x.dataset.x !== "proof-view") close();
+        try {
+          await exp.proofAction(x.dataset.x, e);
+        } catch (err) {
+          toast(err.message || "Something went wrong", "danger");
+        }
+        return undefined;
+      }
       if (x?.dataset.x === "scheduled") {
         const p = state.upcoming.find((y) => y.id === x.dataset.id);
         close();
@@ -363,10 +381,11 @@ export function mount(container, session, { data = defaultData, toast = defaultT
       return undefined;
     });
     try {
-      const paid = seesExpenses ? (await data.listWeddingExpenses(businessId, { status: "active", supplierId: s.id }, { pageSize: 100 })).rows : [];
+      paid = seesExpenses ? (await data.listWeddingExpenses(businessId, { status: "active", supplierId: s.id }, { pageSize: 100 })).rows : [];
       const list = upcomingOf(s);
+      const proofButton = (e) => (e.proof ? html`<button type="button" class="btn btn-compact btn-ghost" data-x="proof-view" data-id="${e.id}" aria-label="View proof of the ${whole(e.amount)} payment">View proof</button>` : can.update ? html`<button type="button" class="btn btn-compact btn-ghost" data-x="proof-add" data-id="${e.id}" aria-label="Add proof to the ${whole(e.amount)} payment">Add proof</button>` : "");
       paint(html`
-        <ul class="slip" data-role="paid-list">${paid.length ? paid.map((e) => html`<li><span class="slip-what">${whole(e.amount)} paid ${short(e.date)}${e.reference ? html`<small>${e.reference}</small>` : ""}</span><span class="slip-amt"></span><span class="slip-act"></span></li>`) : html`<li><span class="slip-what stat-hint">Nothing paid yet.</span></li>`}</ul>
+        <ul class="slip" data-role="paid-list">${paid.length ? paid.map((e) => html`<li data-expense="${e.id}"><span class="slip-what">${whole(e.amount)} paid ${short(e.date)}${e.reference ? html`<small>${e.reference}</small>` : ""}</span><span class="slip-amt"></span><span class="slip-act">${proofButton(e)}</span></li>`) : html`<li><span class="slip-what stat-hint">Nothing paid yet.</span></li>`}</ul>
         ${list.length
           ? html`<h3 class="slip-head">Scheduled</h3><ul class="wl-list" data-role="scheduled-list">${list.map(
               (p) => html`<li class="wl-row"><button type="button" class="wl-main" data-x="scheduled" data-id="${p.id}"><span class="wl-name">${whole(p.amount)} ${p.dueDate < today() ? "was due" : "due"} ${short(p.dueDate)}</span><span class="wl-sub">${p.description}</span></button></li>`
@@ -396,6 +415,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
         { ...categoryField(state.categories, { value: categoryNameOf(state.categories, s.categoryId) }), more: true },
         { name: "method", label: "Payment method", type: "select", options: METHOD_OPTIONS, value: "bank_transfer", more: true, default: true },
         { name: "reference", label: "Reference (OR no., invoice, transfer ref)", value: "", more: true },
+        proofField(),
       ],
       moreLabel: "More options",
       submitLabel: "Record payment",
@@ -403,12 +423,14 @@ export function mount(container, session, { data = defaultData, toast = defaultT
         const amount = parseCentavos(v.amount);
         if (!(amount > 0)) throw new Error("Enter an amount more than ₱0");
         const category = await categoryFor(v.category);
-        return data.expensesApi({ action: "create", idempotencyKey, expense: { date: v.date, category, amount, supplierId: s.id, method: v.method, ...(v.reference.trim() ? { reference: v.reference.trim() } : {}) } });
+        const r = await data.expensesApi({ action: "create", idempotencyKey, expense: { date: v.date, category, amount, supplierId: s.id, method: v.method, ...(v.reference.trim() ? { reference: v.reference.trim() } : {}) } });
+        await exp.attachAfter(r, v.proof);
+        return r;
       },
     });
   }
 
-  const exp = expenseActions({ data, currency, timezone, can, toast, getCtx: () => ({ today: today(), categories: state.categories, suppliers: state.rows }), reload: () => load() });
+  const exp = expenseActions({ data, currency, timezone, can, toast, getCtx: () => ({ today: today(), categories: state.categories, suppliers: state.rows }), reload: () => load(), ...(prepareProof ? { prepareProof } : {}) });
 
   const recorded = (r) => {
     if (r) {
@@ -486,6 +508,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
       } else if (r.kind === "expense") {
         const e = r.record;
         if (x === "view" || x === "remove") exp.openView(e);
+        else if (x.startsWith("proof-")) await exp.proofAction(x, e);
         else if (x === "category") {
           const c = await categoryDialog("Expense category", r.category);
           if (c && c.categoryId !== e.category) saved("Category changed.")(await data.expensesApi({ action: "update", expenseId: e.id, expectedRevision: e.revision, changes: { category: c.categoryId } }));

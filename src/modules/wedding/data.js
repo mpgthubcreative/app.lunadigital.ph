@@ -40,3 +40,7 @@ export const guestsApi = (body) => post("guests", body);
 export const getSeating = (businessId) => getOne(businessId, "guestTotals", "seating");
 // Owner-pilot Bridal: the invitation / RSVP setup (read through the API).
 export const getWeddingSetup = () => post("wedding-setup", { action: "get" });
+// Owner-pilot Bridal: an expense's proof (receipt photo or PDF), stored
+// privately and served only through the API.
+export const attachExpenseProof = (expenseId, proof) => post("expenses", { action: "attachProof", expenseId, proof });
+export const expenseProof = (expenseId) => post("expenses", { action: "proof", expenseId });

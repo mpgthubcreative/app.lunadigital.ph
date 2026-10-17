@@ -3,6 +3,9 @@
 //     idempotencyKey (Phase 18.6): a retry with the same key returns the first expense (alreadyRecorded)
 //   { action: "update", expenseId, expectedRevision?, changes: { ...any of the above } }                       expenses.update
 //   { action: "remove", expenseId, reason }                                                                     expenses.delete
+//   Owner-pilot Bridal (wedding expenses only):
+//   { action: "attachProof", expenseId, proof: { contentType, dataBase64 } }   expenses.update: add / replace the receipt (image or PDF)
+//   { action: "proof", expenseId } -> { proof: { contentType, dataBase64 } }   expenses.view: read it (never a public URL)
 // amount is integer centavos (> 0); date is the business-local day. The
 // totals (Distributor operating-expense metrics, or the Baby budget),
 // createdBy and timestamps are always set by the server; the browser can't
@@ -13,6 +16,8 @@ import { respond, withErrorHandling, requireMethod, parseJsonBody, RequestError 
 import { getAdmin } from "./_lib/firebase-admin.js";
 import { requireTenant } from "./_lib/tenant.js";
 import { createExpense, updateExpense, removeExpense } from "./_lib/expenses.js";
+import { attachExpenseProof, readExpenseProof } from "./_lib/expense-proof.js";
+import { MeteringError } from "../../shared/metering.js";
 import { actorOf, only } from "./_lib/inventory-http.js";
 import { ExpenseError } from "../../shared/expenses.js";
 
@@ -20,6 +25,8 @@ const ACTIONS = {
   create: { permission: "expenses.create", fields: ["action", "expense", "idempotencyKey"] },
   update: { permission: "expenses.update", fields: ["action", "expenseId", "expectedRevision", "changes"] },
   remove: { permission: "expenses.delete", fields: ["action", "expenseId", "reason"] },
+  attachProof: { permission: "expenses.update", fields: ["action", "expenseId", "proof"] },
+  proof: { permission: "expenses.view", write: false, fields: ["action", "expenseId"] },
 };
 
 const STATUS = {
@@ -36,6 +43,10 @@ const STATUS = {
   "invalid-supplier": 400,
   "over-agreed": 409,
   "not-available": 403,
+  // Owner-pilot Bridal (proofs)
+  "invalid-proof": 400,
+  "proof-too-large": 413,
+  "storage-limit-reached": 409,
 };
 
 export function createExpensesHandler({ getAdmin: loadAdmin, now = () => new Date() }) {
@@ -50,8 +61,8 @@ export function createExpensesHandler({ getAdmin: loadAdmin, now = () => new Dat
       bodyError = err;
     }
     const action = (body && ACTIONS[body.action]) || null;
-    const { db, auth, admin } = await loadAdmin();
-    const ctx = await requireTenant(event, { db, auth, permission: action ? action.permission : "expenses.create", write: true });
+    const { db, auth, admin, bucket } = await loadAdmin();
+    const ctx = await requireTenant(event, { db, auth, permission: action ? action.permission : "expenses.create", write: action?.write !== false });
     if (bodyError) throw bodyError;
     if (!action) throw new RequestError("invalid-request", "Unknown action.", 400);
     only(body, action.fields);
@@ -66,11 +77,15 @@ export function createExpensesHandler({ getAdmin: loadAdmin, now = () => new Dat
           return respond(201, { success: true, ...(await createExpense({ ...common, input: body.expense, idempotencyKey: body.idempotencyKey ?? null, now: now() })) });
         case "update":
           return respond(200, { success: true, ...(await updateExpense({ ...common, expenseId: body.expenseId, changes: body.changes, expectedRevision: body.expectedRevision ?? null, now: now() })) });
+        case "attachProof":
+          return respond(200, { success: true, ...(await attachExpenseProof({ ...common, bucket, expenseId: body.expenseId, proof: body.proof, now: now() })) });
+        case "proof":
+          return respond(200, { success: true, proof: await readExpenseProof({ tenant: ctx.tenant, bucket, workspace: ctx.workspace.templateId, expenseId: body.expenseId }) });
         default:
           return respond(200, { success: true, ...(await removeExpense({ ...common, expenseId: body.expenseId, reason: body.reason, now: now() })) });
       }
     } catch (err) {
-      if (err instanceof ExpenseError) throw new RequestError(err.code, err.message, STATUS[err.code] || 400);
+      if (err instanceof ExpenseError || err instanceof MeteringError) throw new RequestError(err.code, err.message, STATUS[err.code] || 400);
       throw err;
     }
   });

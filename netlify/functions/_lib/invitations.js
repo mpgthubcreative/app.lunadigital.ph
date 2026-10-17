@@ -15,7 +15,7 @@
 // link stops working at once. Every bad / revoked link gets the same answer.
 
 import { createHash, randomBytes } from "node:crypto";
-import { WeddingError, WEDDING_SCHEMA_VERSION, TOTALS_DOC_ID, RSVP_STATUSES, validateRsvp, validateWeddingSetup, rsvpOpen } from "../../../shared/wedding.js";
+import { WeddingError, WEDDING_SCHEMA_VERSION, TOTALS_DOC_ID, RSVP_STATUSES, validateRsvp, validateWeddingSetup, rsvpOpen, setupMissing } from "../../../shared/wedding.js";
 import { businessDate, isDayId } from "../../../shared/metrics.js";
 import { prepareNotifications } from "./notifications.js";
 import { tenantDb } from "./tenant-db.js";
@@ -49,7 +49,9 @@ export async function readSetup({ tenant }) {
 export async function saveSetup({ db, tenant, FieldValue, input, actor }) {
   const data = validateWeddingSetup(input || {});
   await setupRef(tenant).set({ schemaVersion: WEDDING_SCHEMA_VERSION, ...data, updatedBy: who(actor), updatedAt: FieldValue.serverTimestamp() }, { merge: true });
-  return { saved: true };
+  // Read back: the Owner sees what was really stored.
+  const back = await setupRef(tenant).get();
+  return { saved: true, setup: back.exists ? back.data() : {} };
 }
 export async function saveHero({ tenant, FieldValue, dataUrl, actor }) {
   if (dataUrl === null) {
@@ -62,10 +64,18 @@ export async function saveHero({ tenant, FieldValue, dataUrl, actor }) {
 }
 
 // ---- Links (Owner side, guests.manage) ----
+// A link needs a set-up invitation: the couple's names and the date.
+async function requireSetup(tenant) {
+  const s = await setupRef(tenant).get();
+  const missing = setupMissing(s.exists ? s.data() : {});
+  if (missing.length) throw new WeddingError("setup-incomplete", `Complete Wedding Setup first (More → Wedding Setup): add ${missing.join(" and ")}.`);
+}
 // Creates the guest's link, or a new one replacing (revoking) the old.
 export async function issueInvite({ db, tenant, guestId, actor, now = new Date() }) {
   const gRef = tenant.doc("guests", guestId);
   const iRef = tenant.doc("guestInvites", guestId);
+  if (!(await gRef.get()).exists) throw new WeddingError("not-found", "Guest not found");
+  await requireSetup(tenant);
   const token = newToken();
   const hash = hashInviteToken(token);
   await db.runTransaction(async (tx) => {
@@ -77,12 +87,12 @@ export async function issueInvite({ db, tenant, guestId, actor, now = new Date()
     const gd = g.data();
     tx.update(gRef, { invitation: { status: "active", issuedAt: now, regenerated: prev.exists }, history: append(gd.history, { at: now, actor: who(actor), label: prev.exists ? "Invitation link replaced (the old link no longer works)" : "Invitation link created" }) });
   }, TX_OPTIONS);
-  return { token, path: `/invite/${token}` };
+  return { token, path: `/invite/${token}`, created: true };
 }
 // The current link (made on first use).
 export async function inviteLink({ db, tenant, guestId, actor, now }) {
   const i = await tenant.doc("guestInvites", guestId).get();
-  if (i.exists && i.data().token) return { token: i.data().token, path: `/invite/${i.data().token}` };
+  if (i.exists && i.data().token) return { token: i.data().token, path: `/invite/${i.data().token}`, created: false };
   return issueInvite({ db, tenant, guestId, actor, now });
 }
 

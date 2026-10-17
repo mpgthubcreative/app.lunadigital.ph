@@ -286,6 +286,86 @@ describe("Money (Owner-pilot Bridal): ONE list of everything the wedding costs",
     expect(document.querySelector('[data-role="details"] .card-title').textContent).toContain("Second payment");
   });
 
+  // Owner-pilot Bridal fix pass: proof (receipt photo or PDF) under ⋯, never a column.
+  const PREP = { contentType: "image/jpeg", dataBase64: "AAAA" };
+  const pickFile = (form, file = { name: "receipt.jpg", type: "image/jpeg" }) => Object.defineProperty(form.elements.proof, "files", { value: [file], configurable: true });
+  const proofMoney = (extra = {}) => money({ attachExpenseProof: vi.fn(async () => ({ hasProof: true })), expenseProof: vi.fn(async () => ({ proof: { contentType: "image/png", dataBase64: "iVBORw0KGgo=" } })), ...extra });
+  const mountProofMoney = async (data) => {
+    mountSuppliers(container, wedding(), { data, now: NOW, toast: () => {}, confirm: async () => true, prepareProof: vi.fn(async () => PREP) });
+    await flush();
+    return data;
+  };
+
+  it("expense ⋯: Add proof uploads a photo / PDF to THAT expense; with a proof: View proof / Replace proof; the row stays one line (no proof column)", async () => {
+    const data = await mountProofMoney(proofMoney());
+    const items = () => [...container.querySelectorAll(`[data-expense="${OTHER.id}"] .menu-item`)].map((b) => b.textContent);
+    expect(items()).toEqual(["Details", "Add proof", "Change category", "Remove"]);
+    const visible = container.querySelector(`[data-expense="${OTHER.id}"]`).cloneNode(true);
+    visible.querySelector("details").remove();
+    expect(visible.textContent).not.toMatch(/proof/i);
+    rowOf(`[data-expense="${OTHER.id}"] [data-x="proof-add"]`).click();
+    await flush();
+    const form = lastForm();
+    expect(form.elements.proof.getAttribute("accept")).toBe("image/jpeg,image/png,image/webp,application/pdf");
+    pickFile(form);
+    submit(form);
+    await flush();
+    expect(data.attachExpenseProof).toHaveBeenCalledWith(OTHER.id, PREP);
+
+    document.body.innerHTML = '<main id="content"></main>';
+    container = document.getElementById("content");
+    const withProof = { ...OTHER, proof: { contentType: "image/png", size: 200 } };
+    const d2 = await mountProofMoney(proofMoney({ listWeddingExpenses: vi.fn(async () => ({ rows: [withProof], hasMore: false })) }));
+    expect(items()).toEqual(["Details", "View proof", "Replace proof", "Change category", "Remove"]);
+    rowOf(`[data-expense="${OTHER.id}"] [data-x="proof-view"]`).click();
+    await flush();
+    expect(d2.expenseProof).toHaveBeenCalledWith(OTHER.id);
+    expect(document.querySelector('[data-role="proof-viewer"] img').getAttribute("src")).toBe("data:image/png;base64,iVBORw0KGgo=");
+  });
+
+  it("supplier ⋯ View payments: each paid line has View proof / Add proof; Record payment takes an optional proof (More options)", async () => {
+    const data = proofMoney({
+      listWeddingExpenses: vi.fn(async (_b, f) => ({ rows: f.supplierId ? [{ id: "e1aaaaaaaa", date: "2026-10-01", amount: 1500000, supplierId: SUP.id, status: "active", proof: { contentType: "application/pdf" } }, { id: "e2aaaaaaaa", date: "2026-10-10", amount: 500000, supplierId: SUP.id, status: "active" }] : [], hasMore: false })),
+      expensesApi: vi.fn(async () => ({ expenseId: "e3aaaaaaaa" })),
+    });
+    await mountProofMoney(data);
+    rowOf('[data-supplier="supABCphoto01"] [data-x="payments"]').click();
+    await flush();
+    const box = document.querySelector('[data-role="supplier-payments"]');
+    expect([...box.querySelectorAll('[data-role="paid-list"] .slip-act')].map((x) => x.textContent.trim())).toEqual(["View proof", "Add proof"]);
+    box.querySelector('[data-x="proof-add"][data-id="e2aaaaaaaa"]').click();
+    await flush();
+    pickFile(lastForm(), { name: "transfer.pdf", type: "application/pdf" });
+    submit(lastForm());
+    await flush();
+    expect(data.attachExpenseProof).toHaveBeenCalledWith("e2aaaaaaaa", PREP);
+
+    rowOf('[data-supplier="supABCphoto01"] [data-x="record"]').click();
+    await flush();
+    const form = lastForm();
+    form.elements.amount.value = "5000";
+    pickFile(form);
+    submit(form);
+    await flush();
+    expect(data.expensesApi).toHaveBeenCalledWith(expect.objectContaining({ action: "create", expense: expect.objectContaining({ amount: 500000, supplierId: SUP.id }) }));
+    expect(data.attachExpenseProof).toHaveBeenLastCalledWith("e3aaaaaaaa", PREP);
+  });
+
+  it("a failed proof upload after Record payment keeps the payment and says how to add the proof later", async () => {
+    const toast = vi.fn();
+    const data = proofMoney({ expensesApi: vi.fn(async () => ({ expenseId: "e3aaaaaaaa" })), attachExpenseProof: vi.fn(async () => { throw new Error("Proofs must be under 2.5 MB"); }) });
+    mountSuppliers(container, wedding(), { data, now: NOW, toast, confirm: async () => true, prepareProof: vi.fn(async () => PREP) });
+    await flush();
+    rowOf('[data-supplier="supABCphoto01"] [data-x="record"]').click();
+    await flush();
+    lastForm().elements.amount.value = "5000";
+    pickFile(lastForm());
+    submit(lastForm());
+    await flush();
+    expect(toast).toHaveBeenCalledWith("Saved, but the proof didn't upload (Proofs must be under 2.5 MB). Add it from ⋯ → Add proof.", "danger");
+    expect(toast).toHaveBeenCalledWith("Payment recorded.", "success");
+  });
+
   it("permissions: no record / schedule / add expense without the right; no hidden action is offered", async () => {
     const s = wedding("manager");
     delete s.member.permissions["expenses.create"];
@@ -629,18 +709,147 @@ describe("Bridal More: Wedding Setup and Export & Backup", () => {
     expect(api).toHaveBeenLastCalledWith("wedding-setup", { method: "POST", body: { action: "save", setup: expect.objectContaining({ coupleNames: "Camille & Carlo", weddingDate: "2027-12-12", ceremonyTime: "15:00", ceremonyVenue: "Example Church", rsvpDeadline: "2027-11-15", dressCode: "Formal", rsvpEnabled: true, closeAfterDeadline: true }) } });
   });
 
-  it("Guest ⋯ (invitation set up): View invitation / Copy invitation link / Regenerate invitation link", async () => {
-    const data = fakeData({ listGuests: vi.fn(async () => ({ rows: [{ ...GUEST, category: "family" }], hasMore: false })), getSeating: vi.fn(async () => null), getWeddingSetup: vi.fn(async () => ({ setup: { coupleNames: "Camille & Carlo", rsvpEnabled: true } })), guestsApi: vi.fn(async () => ({ path: "/invite/" + "a".repeat(32) })) });
+  const FULL = { coupleNames: "Camille & Carlo", ceremonyVenue: "Example Church", ceremonyAddress: "Taguig City", receptionVenue: "Example Garden", receptionAddress: "Pasig City", dressCode: "Formal", welcomeMessage: "Join us!", weddingDate: "2027-12-12", rsvpDeadline: "2027-11-15", ceremonyTime: "15:00", receptionTime: "17:30", ceremonyMap: "https://maps.app.goo.gl/church", receptionMap: "https://maps.app.goo.gl/garden", rsvpEnabled: true, closeAfterDeadline: false };
+  const fill = (f, v) => {
+    for (const [k, x] of Object.entries(v)) {
+      if (typeof x === "boolean") f.elements[k].checked = x;
+      else f.elements[k].value = x;
+      f.elements[k].dispatchEvent(new Event("input", { bubbles: true }));
+    }
+  };
+
+  it("Wedding Setup: every field is sent; Saving… then Saved ✓ shows what the server stored (read back)", async () => {
+    let release;
+    const api = vi.fn(async (_p, { body }) => {
+      if (body.action === "get") return { setup: {}, hasHero: false };
+      await new Promise((r) => (release = r));
+      return { saved: true, setup: { ...body.setup, coupleNames: "Camille & Carlo (stored)" } };
+    });
+    mountSetup(container, wedding(), { api, toast: () => {} });
+    await flush();
+    const f = container.querySelector('[data-role="setup"]');
+    fill(f, FULL);
+    expect(container.querySelector('[data-role="save-state"]').dataset.state).toBe("dirty");
+    submit(f);
+    await flush();
+    const btn = container.querySelector('[data-role="setup"] button[type="submit"]');
+    expect(btn.disabled).toBe(true);
+    expect(btn.textContent).toBe("Saving…");
+    expect(container.querySelector('[data-role="save-state"]').textContent).toBe("Saving…");
+    expect(api).toHaveBeenLastCalledWith("wedding-setup", { method: "POST", body: { action: "save", setup: FULL } });
+    release();
+    await flush();
+    expect(container.querySelector('[data-role="save-state"]').dataset.state).toBe("saved");
+    expect(container.querySelector('[data-role="save-state"]').textContent).toMatch(/Saved ✓/);
+    expect(container.querySelector('[data-role="setup"]').elements.coupleNames.value).toBe("Camille & Carlo (stored)");
+    expect(container.querySelector('[data-role="setup"] button[type="submit"]').disabled).toBe(false);
+  });
+
+  it("Wedding Setup: choosing a cover photo keeps what was typed (the pilot bug: Save then stored blanks)", async () => {
+    const api = vi.fn(async (_p, { body }) => (body.action === "get" ? { setup: {}, hasHero: false } : body.action === "hero" ? { hero: true } : { saved: true, setup: body.setup }));
+    mountSetup(container, wedding(), { api, toast: () => {}, shrink: async () => "data:image/jpeg;base64,AAAA" });
+    await flush();
+    const f = container.querySelector('[data-role="setup"]');
+    fill(f, FULL);
+    container.querySelector('[data-role="hero"]').dispatchEvent(new Event("change", { bubbles: true }));
+    await flush();
+    expect(api).toHaveBeenCalledWith("wedding-setup", { method: "POST", body: { action: "hero", dataUrl: "data:image/jpeg;base64,AAAA" } });
+    expect(container.querySelector('[data-role="hero-state"]').textContent).toBe("A photo is set.");
+    const same = container.querySelector('[data-role="setup"]');
+    expect(same.elements.coupleNames.value).toBe("Camille & Carlo");
+    expect(same.elements.weddingDate.value).toBe("2027-12-12");
+    submit(same);
+    await flush();
+    expect(api).toHaveBeenLastCalledWith("wedding-setup", { method: "POST", body: { action: "save", setup: FULL } });
+  });
+
+  it("Wedding Setup: a failed save says so (role=alert), keeps the typed values and lets the Owner retry; a bad map link isn't sent", async () => {
+    let fail = true;
+    const toast = vi.fn();
+    const api = vi.fn(async (_p, { body }) => {
+      if (body.action === "get") return { setup: {}, hasHero: false };
+      if (fail) throw new Error("Network error");
+      return { saved: true, setup: body.setup };
+    });
+    mountSetup(container, wedding(), { api, toast });
+    await flush();
+    const f = container.querySelector('[data-role="setup"]');
+    fill(f, { ...FULL, ceremonyMap: "maps.google.com/x" });
+    submit(f);
+    await flush();
+    expect(api).toHaveBeenCalledTimes(1);
+    expect(container.querySelector('[role="alert"][data-role="save-state"]').textContent).toMatch(/ceremony map link must start with https:\/\//);
+    fill(f, { ceremonyMap: FULL.ceremonyMap });
+    submit(f);
+    await flush();
+    expect(container.querySelector('[role="alert"][data-role="save-state"]').textContent).toMatch(/Not saved: Network error/);
+    expect(toast).toHaveBeenCalledWith("Network error", "danger");
+    expect(container.querySelector('[data-role="setup"]').elements.coupleNames.value).toBe("Camille & Carlo");
+    expect(container.querySelector('[data-role="setup"] button[type="submit"]').disabled).toBe(false);
+    fail = false;
+    submit(container.querySelector('[data-role="setup"]'));
+    await flush();
+    expect(container.querySelector('[data-role="save-state"]').dataset.state).toBe("saved");
+  });
+
+  it("Wedding Setup: reopening the page (reload / next sign-in) shows every saved value", async () => {
+    const api = vi.fn(async () => ({ setup: FULL, hasHero: true }));
+    mountSetup(container, wedding(), { api, toast: () => {} });
+    await flush();
+    const f = container.querySelector('[data-role="setup"]');
+    for (const [k, v] of Object.entries(FULL)) expect(typeof v === "boolean" ? f.elements[k].checked : f.elements[k].value, k).toBe(v);
+    expect(container.querySelector('[data-role="hero-state"]').textContent).toBe("A photo is set.");
+  });
+
+  const guestMenuItems = () => [...container.querySelectorAll('[data-guest="guestPrado001"] .menu-item')].map((b) => b.textContent);
+  it("Guest ⋯ before Wedding Setup is complete: 'complete Wedding Setup first →' links to it (not hidden)", async () => {
+    const data = fakeData({ listGuests: vi.fn(async () => ({ rows: [{ ...GUEST, category: "family" }], hasMore: false })), getSeating: vi.fn(async () => null), getWeddingSetup: vi.fn(async () => ({ setup: { coupleNames: "Camille & Carlo" } })) });
+    mountGuests(container, wedding(), { data, toast: () => {}, confirm: async () => true });
+    await flush();
+    expect(guestMenuItems()).toContain("Invitation: complete Wedding Setup first →");
+    expect(guestMenuItems()).not.toContain("Create invitation link");
+    const link = container.querySelector('[data-guest="guestPrado001"] [data-act="invite-setup"]');
+    expect(link.tagName).toBe("A");
+    expect(link.getAttribute("href")).toBe("/wedding-setup");
+    expect(link.hasAttribute("data-link")).toBe(true);
+  });
+
+  it("Guest ⋯ with Wedding Setup done and no link yet: Create invitation link creates, copies and refreshes", async () => {
+    const data = fakeData({ listGuests: vi.fn(async () => ({ rows: [{ ...GUEST, category: "family" }], hasMore: false })), getSeating: vi.fn(async () => null), getWeddingSetup: vi.fn(async () => ({ setup: FULL })), guestsApi: vi.fn(async () => ({ path: "/invite/" + "a".repeat(32), created: true })) });
     Object.assign(navigator, { clipboard: { writeText: vi.fn(async () => {}) } });
     const toast = vi.fn();
     mountGuests(container, wedding(), { data, toast, confirm: async () => true });
     await flush();
-    const items = [...container.querySelectorAll('[data-guest="guestPrado001"] .menu-item')].map((b) => b.textContent);
-    expect(items).toEqual(expect.arrayContaining(["View invitation", "Copy invitation link", "Regenerate invitation link"]));
+    expect(guestMenuItems()).toContain("Create invitation link");
+    expect(guestMenuItems()).not.toContain("Regenerate invitation link");
+    const loads = data.listGuests.mock.calls.length;
+    container.querySelector('[data-guest="guestPrado001"] [data-act="invite-create"]').click();
+    await flush();
+    expect(data.guestsApi).toHaveBeenCalledWith({ action: "inviteLink", guestId: GUEST.id });
+    expect(navigator.clipboard.writeText).toHaveBeenCalledWith(`${location.origin}/invite/${"a".repeat(32)}`);
+    expect(toast).toHaveBeenCalledWith("Invitation link for Prado Family created and copied.", "success");
+    expect(data.listGuests.mock.calls.length).toBeGreaterThan(loads);
+  });
+
+  it("Guest ⋯ with a link: View invitation / Copy invitation link / Regenerate invitation link", async () => {
+    const data = fakeData({ listGuests: vi.fn(async () => ({ rows: [{ ...GUEST, category: "family", invitation: { status: "active" } }], hasMore: false })), getSeating: vi.fn(async () => null), getWeddingSetup: vi.fn(async () => ({ setup: FULL })), guestsApi: vi.fn(async () => ({ path: "/invite/" + "a".repeat(32) })) });
+    Object.assign(navigator, { clipboard: { writeText: vi.fn(async () => {}) } });
+    const toast = vi.fn();
+    mountGuests(container, wedding(), { data, toast, confirm: async () => true });
+    await flush();
+    expect(guestMenuItems()).toEqual(expect.arrayContaining(["View invitation", "Copy invitation link", "Regenerate invitation link"]));
+    expect(guestMenuItems()).not.toContain("Create invitation link");
     container.querySelector('[data-guest="guestPrado001"] [data-act="invite-copy"]').click();
     await flush();
     expect(data.guestsApi).toHaveBeenCalledWith({ action: "inviteLink", guestId: GUEST.id });
     expect(navigator.clipboard.writeText).toHaveBeenCalledWith(`${location.origin}/invite/${"a".repeat(32)}`);
+    const win = { location: { href: "" } };
+    const open = vi.spyOn(window, "open").mockReturnValue(win);
+    container.querySelector('[data-guest="guestPrado001"] [data-act="invite-view"]').click();
+    await flush();
+    expect(open).toHaveBeenCalledWith("about:blank", "_blank");
+    expect(win.location.href).toBe(`${location.origin}/invite/${"a".repeat(32)}`);
+    open.mockRestore();
     container.querySelector('[data-guest="guestPrado001"] [data-act="invite-new"]').click();
     await flush();
     expect(data.guestsApi).toHaveBeenCalledWith({ action: "regenerateInvite", guestId: GUEST.id });

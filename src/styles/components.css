@@ -935,6 +935,14 @@ a.item:hover {
   color: var(--danger);
 }
 
+/* A menu line that explains why an action isn't available yet (and links to the fix). */
+.menu-hint {
+  color: var(--text-muted);
+  text-decoration: none;
+  white-space: normal;
+  max-width: 260px;
+}
+
 .activity li + li {
   margin-top: var(--space-2);
 }
@@ -1651,6 +1659,19 @@ a.item:hover {
     font-size: var(--text-md);
     min-height: var(--touch);
   }
+}
+
+/* Wedding Setup: Saving… / Saved ✓ / Not saved yet, next to Save. */
+.save-state {
+  margin-top: var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+}
+.save-state[data-state="saved"] {
+  color: var(--success);
+}
+.save-state[data-state="dirty"] {
+  color: var(--warning);
 }
 
 .form-error {

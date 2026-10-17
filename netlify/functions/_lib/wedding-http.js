@@ -25,6 +25,7 @@ export const WEDDING_STATUS = {
   "invalid-supplier": 400,
   "not-available": 403,
   removed: 409,
+  "setup-incomplete": 409,
 };
 
 const FORBIDDEN = () => new RequestError("forbidden", "This feature isn't available for your account.", 403);

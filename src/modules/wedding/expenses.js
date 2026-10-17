@@ -16,6 +16,19 @@ import { EXPENSE_METHODS, EXPENSE_METHOD_IDS, parseCentavos, businessDate } from
 import { categoryName, optionsOf, activityLines, detailsDialog } from "../baby/common.js";
 import * as defaultData from "./data.js";
 import { categoryField, resolveCategory } from "./categories.js";
+import { prepareProof as defaultPrepareProof } from "../../lib/image.js";
+import { viewProof } from "../../components/proof-viewer.js";
+
+// Owner-pilot Bridal: a receipt photo / screenshot or a PDF on an expense.
+const PROOF_ACCEPT = "image/jpeg,image/png,image/webp,application/pdf";
+export const proofField = (label = "Proof: receipt photo or PDF (optional)") => ({ name: "proof", label, type: "file", accept: PROOF_ACCEPT, more: true });
+const proofWord = (p) => (p?.contentType === "application/pdf" ? "PDF" : "Photo");
+// "Photo · added Oct 17, 2026" (uploadedAt is a Firestore Timestamp).
+export function proofLine(p, timezone) {
+  if (!p) return "None";
+  const at = p.uploadedAt && typeof p.uploadedAt.toDate === "function" ? p.uploadedAt.toDate() : p.uploadedAt ? new Date(p.uploadedAt) : null;
+  return `${proofWord(p)}${at && !Number.isNaN(at.getTime()) ? ` · added ${formatDayId(businessDate(timezone, at))}` : ""}`;
+}
 
 const methodLabel = (id) => EXPENSE_METHODS[id]?.label ?? id;
 const METHOD_OPTIONS = EXPENSE_METHOD_IDS.map((id) => ({ value: id, label: EXPENSE_METHODS[id].label }));
@@ -179,9 +192,40 @@ export function mount(container, session, { data = defaultData, toast = defaultT
 
 // Owner-pilot Bridal UX: the add / view / edit / remove dialogs, shared with
 // Money (its "Other expenses" section). can: { create, update, remove }.
-export function expenseActions({ data, currency, timezone, can, toast, getCtx, reload }) {
+export function expenseActions({ data, currency, timezone, can, toast, getCtx, reload, prepareProof = defaultPrepareProof }) {
   const ctx = getCtx;
   const names = () => new Map(getCtx().categories.map((c) => [c.id, c.name]));
+  // ---- Proof (one per expense; under ⋯ and in Details, never a column) ----
+  const sendProof = async (expenseId, file) => data.attachExpenseProof(expenseId, await prepareProof(file, { pdf: true }));
+  // After a new expense / payment is saved: attach the chosen file. The
+  // money is already recorded, so a failed upload only warns.
+  const attachAfter = async (result, file) => {
+    if (!file || !result?.expenseId || result.alreadyRecorded) return;
+    try {
+      await sendProof(result.expenseId, file);
+    } catch (err) {
+      toast(`Saved, but the proof didn't upload (${err.message || "error"}). Add it from ⋯ → Add proof.`, "danger");
+    }
+  };
+  const proofDialog = (e) =>
+    formDialog({
+      title: e.proof ? "Replace proof" : "Add proof",
+      intro: e.proof ? "The new file replaces the current one." : "A receipt photo or screenshot, or a PDF (up to 2.5 MB).",
+      fields: [{ ...proofField("Proof (photo or PDF)"), more: false }],
+      submitLabel: e.proof ? "Replace proof" : "Upload proof",
+      onSubmit: async (v) => {
+        if (!v.proof) throw new Error("Choose a photo or PDF");
+        return sendProof(e.id, v.proof);
+      },
+    });
+  const showProof = (e) => viewProof({ title: `Proof · ${formatCentavos(e.amount, currency)}${e.payee ? ` · ${e.payee}` : ""}`, load: async () => (await data.expenseProof(e.id)).proof });
+  // ⋯ items for one expense (x: proof-view / proof-add / proof-replace).
+  const proofItems = (e) => [...(e.proof ? [{ x: "proof-view", label: "View proof" }] : []), ...(e.status === "active" && can.update ? [e.proof ? { x: "proof-replace", label: "Replace proof" } : { x: "proof-add", label: "Add proof" }] : [])];
+  const proofAction = async (x, e) => {
+    if (x === "proof-view") return showProof(e);
+    if (x === "proof-add" || x === "proof-replace") return done(e.proof ? "Proof replaced" : "Proof added")(await proofDialog(e));
+    return undefined;
+  };
   // Owner-pilot Bridal UX: Amount, Supplier / Payee, Category, Date; the
   // rest under More options. No budget category needed first: a new name
   // becomes a category (resolveCategory). Typing a saved supplier's name
@@ -198,6 +242,7 @@ export function expenseActions({ data, currency, timezone, can, toast, getCtx, r
         { name: "method", label: "Payment method", type: "select", options: METHOD_OPTIONS, value: "cash", more: true, default: true },
         { name: "reference", label: "Reference (OR no., invoice, transfer ref)", value: "", more: true },
         { name: "notes", label: "Notes", type: "textarea", value: "", more: true },
+        proofField(),
       ],
       moreLabel: "More options",
       submitLabel: "Add expense",
@@ -208,7 +253,9 @@ export function expenseActions({ data, currency, timezone, can, toast, getCtx, r
         const supplier = suppliers.find((s) => s.name.toLocaleLowerCase("en") === typed.toLocaleLowerCase("en"));
         const category = await resolveCategory(v.category, { categories, data, canCreate: can.category === true });
         const e = { date: v.date, category, amount, method: v.method, ...(supplier ? { supplierId: supplier.id } : typed ? { payee: typed } : {}), ...(v.reference.trim() ? { reference: v.reference.trim() } : {}), ...(v.notes.trim() ? { notes: v.notes.trim() } : {}) };
-        return data.expensesApi({ action: "create", expense: e });
+        const r = await data.expensesApi({ action: "create", expense: e });
+        await attachAfter(r, v.proof);
+        return r;
       },
     });
   };
@@ -257,11 +304,17 @@ export function expenseActions({ data, currency, timezone, can, toast, getCtx, r
         ["Recurring", e.recurring ? "Yes" : "No"],
         ["From a supplier payment", e.supplierPaymentId ? "Yes" : null],
         ["Notes", e.notes],
+        ["Proof", proofLine(e.proof, timezone)],
       ],
       activity: activityLines(e.history, timezone),
-      actions: [...(active && can.remove ? [{ act: "remove", label: "Remove expense", danger: true }] : []), ...(active && can.update ? [{ act: "edit", label: "Edit" }] : [])],
+      actions: [...(active && can.remove ? [{ act: "remove", label: "Remove expense", danger: true }] : []), ...proofItems(e).map((i) => ({ act: i.x, label: i.label })), ...(active && can.update ? [{ act: "edit", label: "Edit" }] : [])],
       onAction: async (act) => {
         try {
+          if (act === "proof-view") {
+            showProof(e);
+            return false;
+          }
+          if (act.startsWith("proof-")) return await proofAction(act, e);
           if (act === "edit") return done("Expense updated")(await editDialog(e));
           if (act === "remove") return done("Expense removed")(await removeDialog(e));
         } catch (err) {
@@ -272,5 +325,5 @@ export function expenseActions({ data, currency, timezone, can, toast, getCtx, r
     });
   }
 
-  return { addDialog, openView, done };
+  return { addDialog, openView, done, proofItems, proofAction, attachAfter };
 }

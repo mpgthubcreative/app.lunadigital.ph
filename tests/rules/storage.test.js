@@ -37,6 +37,26 @@ describe("same tenant: reads follow permissions", () => {
   it("areas outside the approved list are refused even to the owner", async () => {
     await assertFails(storageAs("ownerA").ref(`tenants/${A}/private/seed.txt`).getMetadata());
   });
+
+  // Owner-pilot Bridal: expense proofs (like payroll proofs) are served only
+  // through the API; the stored object is never readable from a browser.
+  it("expense / payroll proof files: no browser read, URL, list or write, even for the owner", async () => {
+    const proof = `tenants/${A}/expenses/proofs/exp12345678-ab12cd34.jpg`;
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await ctx.storage().ref(proof).putString("jpeg-bytes");
+    });
+    for (const uid of ["ownerA", "managerA", "staffA"]) {
+      const storage = storageAs(uid);
+      await assertFails(storage.ref(proof).getMetadata());
+      await assertFails(storage.ref(proof).getDownloadURL());
+      await assertFails(storage.ref(`tenants/${A}/expenses/proofs`).listAll());
+      await assertFails(storage.ref(`tenants/${A}/expenses/proofs/new.jpg`).putString("x"));
+      await assertFails(storage.ref(proof).delete());
+      await assertFails(storage.ref(`tenants/${A}/payroll/proofs/p1.jpg`).getMetadata());
+    }
+    await assertFails(storageAs("ownerB").ref(proof).getMetadata());
+    await assertFails(env.unauthenticatedContext().storage().ref(proof).getMetadata());
+  });
 });
 
 describe("cross tenant: A can never read, list or write B's files", () => {

@@ -445,6 +445,12 @@ export function validateWeddingSetup(input) {
   }
   return out;
 }
+// What Wedding Setup still needs before guests' invitation links can be
+// made (the invitation shows the couple and the date). [] = ready.
+export function setupMissing(setup) {
+  const s = setup && typeof setup === "object" ? setup : {};
+  return [...(typeof s.coupleNames === "string" && s.coupleNames.trim() ? [] : ["the couple's names"]), ...(isDayId(s.weddingDate) ? [] : ["the wedding date"])];
+}
 // Guests can answer while RSVP is on and (if set to close) the deadline
 // hasn't passed. The Owner can always change an RSVP in Luna.
 export function rsvpOpen(setup, today) {
