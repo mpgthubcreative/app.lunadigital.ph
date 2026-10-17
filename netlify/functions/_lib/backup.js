@@ -20,6 +20,7 @@ import { rsvpByCategory, seatingPlan, SEATING_DOC_ID, TOTALS_DOC_ID } from "../.
 import { programSection, formatDuration, PROGRAM_SECTIONS } from "../../../shared/wedding-program.js";
 import { rolesPlan, membersOf, roleLabel } from "../../../shared/wedding-roles.js";
 import { crewTotals } from "../../../shared/wedding-crew.js";
+import { invitationStatus } from "../../../shared/invitation-design.js";
 
 export class BackupError extends Error {
   constructor(code, message) {
@@ -38,7 +39,7 @@ const NAMES = {
   budgets: "Budget totals", expenseCategories: "Budget", scheduledPayments: "Payment schedule", providers: "Providers", weddingSuppliers: "Suppliers", supplierPayments: "Supplier Payments", weddingTasks: "Tasks", guests: "Guests", settings: "Settings",
 };
 // Bridal sheet order (what the couple expects to find first).
-const WEDDING_ORDER = ["Export Info", "Wedding Setup", "Budget", "Budget totals", "Suppliers", "Supplier Payments", "Expenses", "Tasks", "Guest Categories", "Guests", "RSVP History", "Tables", "Seating Assignments", "Party Members", "Wedding Roles", "Music & Program", "Crew Meals", "Users & Memberships", "Audit log"];
+const WEDDING_ORDER = ["Export Info", "Wedding Setup", "Budget", "Budget totals", "Suppliers", "Supplier Payments", "Expenses", "Tasks", "Guest Categories", "Guests", "RSVP History", "Tables", "Seating Assignments", "Party Members", "Wedding Roles", "Music & Program", "Crew Meals", "Invitation Design", "Users & Memberships", "Audit log"];
 
 const iso = (v) => (v && typeof v.toDate === "function" ? v.toDate().toISOString() : v instanceof Date ? v.toISOString() : null);
 // A stored proof file (expense / payment / payroll): safe facts only (type,
@@ -145,6 +146,10 @@ export async function buildBackup({ db, tenant, business, entitlements, FieldPat
     const prices = crewSettings.exists ? crewSettings.data().prices || {} : {};
     const ct = crewTotals(crew, prices);
     add("Crew Meals", [["Crew / person", "Linked supplier", "Breakfast", "Lunch", "Dinner", "Location", "Remarks", "Created", "Updated", "Entry id"], ...crew.map((c) => [c.name, c.supplierName ?? "", c.breakfast ?? 0, c.lunch ?? 0, c.dinner ?? 0, c.location ?? "", c.remarks ?? "", cellOf(c.createdAt), cellOf(c.updatedAt), c.id]), ...(crew.length ? [["Total", "", ct.breakfast, ct.lunch, ct.dinner, "", ct.cost === null ? "" : `Est. cost ₱${(ct.cost / 100).toLocaleString("en-PH")}`, "", "", ""]] : [])]);
+    const designDoc = await tenant.doc("invitationDesign", "current").get();
+    const dd = designDoc.exists ? designDoc.data() : null;
+    const ist = invitationStatus({ planId: business?.subscription?.planId ?? entitlements?.planId, design: dd });
+    add("Invitation Design", [["Setting", "Value"], ["Invitation level", ist.level], ["Guests see", ist.live], ["Published version", dd?.published?.version ?? ""], ["Published template", dd?.published?.config?.templateId ?? ""], ["Published config", dd?.published?.config ? JSON.stringify(dd.published.config) : ""], ["Draft state", dd?.draft?.state ?? ""], ["Draft config", dd?.draft?.config ? JSON.stringify(dd.draft.config) : ""], ["Saved versions", (dd?.history ?? []).map((h) => h.version).join(", ")]]);
     add("Seating Assignments", [["Guest id", "Guest", "Attending seats", "Table id", "Table"], ...plan.tables.flatMap((t) => t.guests.map((g) => [g.id, g.name, g.confirmed ?? 0, t.id, t.name])), ...plan.unassigned.map((g) => [g.id, g.name, g.confirmed ?? 0, "", "Unassigned"])]);
   }
 

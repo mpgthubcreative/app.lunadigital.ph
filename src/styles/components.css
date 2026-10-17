@@ -3718,3 +3718,17 @@ tr.is-saving {
 .wl-member-name { flex: 1 1 8rem; min-width: 0; }
 .wl-mark.is-on { color: var(--success); }
 [data-role="party-figures"] { margin-bottom: var(--space-3); }
+
+/* Wedding Setup → Invitation (Luna Bridal+ content). */
+.ws-faq { display: grid; gap: 6px; margin-bottom: 8px; }
+@media (min-width: 720px) { .ws-faq { grid-template-columns: 1fr 2fr; } }
+.ws-gallery { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin: 6px 0; }
+.ws-gallery-item { margin: 0; }
+.ws-gallery-item img { display: block; width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: var(--radius-sm); }
+
+/* Console: invitation design editor. */
+.design-section { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 6px 0; border-top: 1px solid var(--border); list-style: none; }
+.design-sec-name { flex: 1 1 10rem; font-weight: 600; font-size: var(--text-sm); }
+.input-compact { width: 6.5rem; padding: 4px 6px; min-height: 32px; }
+.design-asset { display: flex; align-items: center; gap: 8px; padding: 4px 0; list-style: none; }
+.design-asset img { width: 48px; height: 48px; object-fit: contain; background: var(--surface-muted); border-radius: var(--radius-sm); }

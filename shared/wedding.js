@@ -424,8 +424,11 @@ export function seatingPlan(guests, seatingDoc) {
 // One document per wedding (weddingSetup/current, written by the server,
 // read through the API). Controlled fields only: one elegant theme, no page
 // builder. The hero photo is kept apart (weddingSetup/hero).
-export const SETUP_TEXT = { coupleNames: 80, ceremonyVenue: 100, ceremonyAddress: 160, receptionVenue: 100, receptionAddress: 160, dressCode: 80, welcomeMessage: 600 };
-export const SETUP_FIELDS = [...Object.keys(SETUP_TEXT), "weddingDate", "ceremonyTime", "receptionTime", "ceremonyMap", "receptionMap", "rsvpDeadline", "rsvpEnabled", "closeAfterDeadline", "showTable", "weddingSlug"];
+// story / footerNote / faq: content for the sections a customized
+// (Luna Bridal+) invitation can show; the Standard invitation ignores them.
+export const SETUP_TEXT = { coupleNames: 80, ceremonyVenue: 100, ceremonyAddress: 160, receptionVenue: 100, receptionAddress: 160, dressCode: 80, welcomeMessage: 600, story: 1500, footerNote: 200 };
+export const SETUP_FIELDS = [...Object.keys(SETUP_TEXT), "weddingDate", "ceremonyTime", "receptionTime", "ceremonyMap", "receptionMap", "rsvpDeadline", "rsvpEnabled", "closeAfterDeadline", "showTable", "weddingSlug", "faq"];
+export const MAX_FAQ = 8;
 
 // The friendly part of a guest's link: /w/{weddingSlug}/invite/{token}.
 // Only cosmetic: the token alone identifies and authorizes the party, so a
@@ -472,6 +475,16 @@ export function validateWeddingSetup(input) {
     const v = input[k] === null || input[k] === "" ? null : String(input[k]).trim();
     if (v !== null && (v.length > 500 || !/^https:\/\/[^\s<>"]+$/.test(v))) throw new WeddingError("invalid-input", "A map link must start with https://");
     out[k] = v;
+  }
+  if (Object.hasOwn(input, "faq")) {
+    const list = input.faq === null ? [] : input.faq;
+    if (!Array.isArray(list) || list.length > MAX_FAQ) throw new WeddingError("invalid-input", `Up to ${MAX_FAQ} questions`);
+    out.faq = list
+      .map((x) => {
+        if (!x || typeof x !== "object" || Array.isArray(x) || Object.keys(x).some((k) => !["q", "a"].includes(k))) throw new WeddingError("invalid-input", "Invalid question");
+        return { q: text(x.q, { field: "Question", max: 150 }), a: text(x.a, { field: "Answer", max: 500 }) };
+      })
+      .filter((x) => x.q && x.a);
   }
   if (Object.hasOwn(input, "weddingSlug")) {
     const v = input.weddingSlug === null || input.weddingSlug === "" ? null : typeof input.weddingSlug === "string" ? input.weddingSlug.trim().toLowerCase() : input.weddingSlug;

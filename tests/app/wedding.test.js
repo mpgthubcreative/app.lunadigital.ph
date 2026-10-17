@@ -12,6 +12,7 @@ import { mount as mountSetup } from "../../src/modules/wedding/setup.js";
 import { mount as mountProgram } from "../../src/modules/wedding/program.js";
 import { mount as mountCrewMeals } from "../../src/modules/wedding/crew.js";
 import { openInvitePreview } from "../../src/modules/wedding/invite-preview.js";
+import { resolveDesign } from "../../shared/invitation-design.js";
 import { renderInvitePage, inviteTokenFrom } from "../../src/app/invite.js";
 import { guessService } from "../../src/modules/wedding/categories.js";
 import { mount as mountDownloads } from "../../src/modules/downloads/index.js";
@@ -1556,5 +1557,69 @@ describe("Owner-pilot Bridal: party members are real people (RSVP · Roles · Se
     submit(lastForm());
     await flush();
     expect(data.guestsApi).toHaveBeenCalledWith({ action: "moveRole", fromGuestId: "gSanrah0001", fromMemberId: "mAnna000001", toGuestId: "gMiguel0001", role: { id: "bridesmaid" } });
+  });
+});
+
+describe("Luna Bridal / Luna Bridal+ invitations (one engine, per-wedding design)", () => {
+  const TOKEN = "Abc123_-".repeat(4);
+  const WED = { coupleNames: "Carlo & Yanie", weddingDate: "2027-02-14", ceremonyTime: "15:00", ceremonyVenue: "San Agustin", receptionVenue: "Garden Pavilion", ceremonyMap: "https://maps.app.goo.gl/x", dressCode: "Formal", welcomeMessage: "Join us", story: "We met at a wedding.", faq: [{ q: "Parking?", a: "Yes" }], footerNote: "With love", rsvpDeadline: "2027-01-15" };
+  const mountInvite = async (invitation) => {
+    document.body.innerHTML = '<div id="root"></div>';
+    const root = document.getElementById("root");
+    await renderInvitePage(root, { token: TOKEN, fetchImpl: vi.fn(async () => ({ ok: true, status: 200, json: async () => ({ success: true, invitation }) })) });
+    return root;
+  };
+  const base = { wedding: WED, hero: null, guest: { name: "Sanrah", seats: 5, rsvp: "awaiting", confirmed: 0 }, rsvpOpen: true };
+
+  it("no design (Luna Bridal / not published): the Standard invitation, unchanged", async () => {
+    const root = await mountInvite({ ...base, design: null });
+    const page = root.querySelector(".inv-page");
+    expect(page.classList.contains("inv-designed")).toBe(false);
+    expect(page.style.getPropertyValue("--inv-accent")).toBe("");
+    expect(root.querySelector(".inv-names").textContent).toBe("Carlo & Yanie");
+    expect(root.textContent).not.toContain("We met at a wedding."); // story isn't a Standard section
+  });
+
+  it("a published design: its section order / visibility, colours and fonts as CSS variables, images, wording; RSVP still works by seat count", async () => {
+    const config = resolveDesign({ templateId: "garden", theme: { accent: "#4f6f52", headingFont: "Playfair Display" }, layout: { align: "left" }, sections: { order: ["hero", "story", "rsvp", "ceremony", "reception", "map", "faq", "footer", "welcome", "dressCode", "entourage", "gallery"], visible: { hero: true, story: true, ceremony: true, reception: true, map: true, faq: true, footer: true, welcome: false, dressCode: false, entourage: true, gallery: true, rsvp: true } }, assets: { ornamentTop: "orn0000001" }, texts: { scriptLine: "are tying the knot", rsvpTitle: "Kindly reply" } });
+    const root = await mountInvite({ ...base, design: { config, assets: { orn0000001: "data:image/png;base64,iVBORw0KGgo=" } }, gallery: ["data:image/jpeg;base64,/9j/4AAQ"], entourage: [{ label: "Principal Sponsors", names: ["Ryan", "Shirley"] }] });
+    const page = root.querySelector(".inv-page");
+    expect(page.classList.contains("inv-designed")).toBe(true);
+    expect([page.dataset.template, page.dataset.align]).toEqual(["garden", "left"]);
+    expect(page.style.getPropertyValue("--inv-accent")).toBe("#4f6f52");
+    expect(page.style.getPropertyValue("--inv-heading-font")).toContain("Playfair Display");
+    expect([...root.querySelectorAll("[data-section]")].map((s) => s.dataset.section)).toEqual(["hero", "story", "rsvp", "ceremony", "reception", "map", "faq", "footer", "entourage", "gallery"]);
+    expect(root.querySelector(".inv-script").textContent).toBe("are tying the knot");
+    expect(root.querySelector('[data-role="rsvp"] h2').textContent).toBe("Kindly reply");
+    expect(root.querySelector(".inv-ornament").getAttribute("src")).toBe("data:image/png;base64,iVBORw0KGgo=");
+    expect(root.querySelector(".inv-entourage").textContent).toContain("Ryan · Shirley");
+    expect(root.querySelectorAll(".inv-gallery img").length).toBe(1);
+    expect(root.textContent).not.toContain("Join us"); // welcome hidden by the design
+    expect([...document.querySelectorAll("link[data-invite-design-font]")].some((l) => l.href.includes("Playfair+Display"))).toBe(true);
+    root.querySelector('[data-act="accept"]').click();
+    expect([...root.querySelectorAll("[data-seats]")].map((b) => b.textContent)).toEqual(["1", "2", "3", "4", "5"]);
+  });
+
+  it("Wedding Setup → Invitation: Standard (Luna Bridal) with the upgrade note; Bridal+ Draft keeps Standard live; Live; extra content only on Bridal+", async () => {
+    const mountWith = async (invitation) => {
+      document.body.innerHTML = '<main id="content"></main>';
+      container = document.getElementById("content");
+      mountSetup(container, wedding(), { api: vi.fn(async (_p, { body }) => (body.action === "get" ? { setup: { coupleNames: "Carlo & Yanie" }, hasHero: false, gallery: [], invitation } : { design: null })), toast: () => {}, preview: vi.fn(async () => ({})) });
+      await flush();
+      return { name: container.querySelector('[data-role="invitation-name"]').textContent, line: container.querySelector('[data-role="invitation-line"]').textContent, state: container.querySelector('[data-role="invitation-state"]')?.textContent ?? null, plus: Boolean(container.querySelector('[data-role="plus-content"]')) };
+    };
+    expect(await mountWith({ level: "standard", live: "standard" })).toMatchObject({ name: "Standard Invitation", state: null, plus: false });
+    expect(container.textContent).toContain("Included with Luna Bridal");
+    expect((await mountWith({ level: "standard", live: "standard" })).line).toMatch(/Customized Invitation comes with Luna Bridal\+/);
+    const draft = await mountWith({ level: "custom", live: "standard", hasDraft: true, draftState: "draft" });
+    expect(draft).toMatchObject({ name: "Customized Invitation", state: "Draft", plus: true });
+    expect(draft.line).toBe("Draft · Your current Standard invitation remains live.");
+    expect(container.querySelector('[data-act="preview-draft"]')).not.toBeNull();
+    const live = await mountWith({ level: "custom", live: "custom", publishedVersion: 2, hasDraft: true, draftState: "draft" });
+    expect(live).toMatchObject({ state: "Live" });
+    expect(live.line).toMatch(/^Live \(version 2\)/);
+    // Only content fields for the couple: no design controls.
+    expect(container.querySelector('[name="story"]')).not.toBeNull();
+    expect(container.querySelector('[name="templateId"], [type="color"]')).toBeNull();
   });
 });

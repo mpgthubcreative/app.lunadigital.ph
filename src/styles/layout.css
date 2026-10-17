@@ -857,43 +857,52 @@ label.check {
 }
 
 /* ---------- Public wedding invitation (Owner-pilot Bridal) ----------
-   One elegant theme: ivory paper, a serif for the names, generous space.
-   Phone first; centred card on wider screens. */
+   ONE invitation engine. The Standard look is these defaults; a published
+   Luna Bridal+ design sets the --inv-* variables (through the CSSOM, never
+   inline HTML) and data-* layout choices on .inv-page. Phone first. */
 .inv-page {
   min-height: 100dvh;
   padding: 24px 16px 48px;
-  background: #f6f1ea;
-  color: #3b3430;
-  font-family: var(--font-sans);
+  background-color: var(--inv-bg, #f6f1ea);
+  background-image: var(--inv-page-image, none);
+  background-size: cover;
+  background-position: center top;
+  background-attachment: scroll;
+  color: var(--inv-text, #3b3430);
+  font-family: var(--inv-body-font, var(--font-sans));
 }
 .inv-card {
-  max-width: 560px;
+  max-width: var(--inv-card-width, 560px);
   margin: 0 auto;
-  padding: 40px 24px;
-  background: #fffdf9;
-  border: 1px solid #e8dccb;
-  border-radius: 4px;
+  padding: var(--inv-pad, 40px 24px);
+  background-color: var(--inv-card-bg, #fffdf9);
+  background-image: var(--inv-card-image, none);
+  background-size: cover;
+  background-position: center;
+  border: 1px solid var(--inv-border, #e8dccb);
+  border-radius: var(--inv-radius, 4px);
   box-shadow: 0 10px 30px rgba(80, 60, 30, 0.08);
-  text-align: center;
+  text-align: var(--inv-align, center);
 }
 .inv-head { margin-bottom: 24px; }
-.inv-names, .inv-script, .inv-guest, .inv-rsvp h2, .inv-venue h3 {
-  font-family: "Cormorant Garamond", Georgia, "Times New Roman", serif;
+.inv-names, .inv-guest, .inv-rsvp h2, .inv-venue h3, .inv-section h3 {
+  font-family: var(--inv-heading-font, "Cormorant Garamond", Georgia, "Times New Roman", serif);
 }
-.inv-names { margin: 0; font-size: clamp(2rem, 9vw, 3rem); font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; line-height: 1.1; overflow-wrap: anywhere; }
-.inv-script { margin: 6px 0; font-size: 1.35rem; font-style: italic; color: #8a6d4b; }
+.inv-script { font-family: var(--inv-script-font, "Cormorant Garamond", Georgia, "Times New Roman", serif); }
+.inv-names { margin: 0; font-size: clamp(2rem, 9vw, 3rem); font-weight: 600; letter-spacing: 0.08em; text-transform: var(--inv-names-case, uppercase); line-height: 1.1; overflow-wrap: anywhere; }
+.inv-script { margin: 6px 0; font-size: 1.35rem; font-style: italic; color: var(--inv-accent, #8a6d4b); }
 .inv-date { margin: 10px 0 0; font-size: 0.95rem; letter-spacing: 0.22em; text-transform: uppercase; }
 .inv-hero { display: block; width: 100%; aspect-ratio: 4 / 3; object-fit: cover; margin: 0 0 24px; border-radius: 2px; }
 .inv-hero-plain { background: radial-gradient(circle at 30% 30%, #f3e5d3, #e7d2b8 60%, #d9bf9f); }
 .inv-message { margin: 0 auto 28px; max-width: 26rem; line-height: 1.7; white-space: pre-line; }
 .inv-venues { display: grid; gap: 20px; margin-bottom: 20px; }
 @media (min-width: 560px) { .inv-venues { grid-template-columns: 1fr 1fr; } }
-.inv-venue h3 { margin: 0 0 4px; font-size: 1.15rem; font-weight: 600; letter-spacing: 0.18em; text-transform: uppercase; color: #8a6d4b; }
+.inv-venue h3, .inv-section h3 { margin: 0 0 4px; font-size: 1.15rem; font-weight: 600; letter-spacing: 0.18em; text-transform: uppercase; color: var(--inv-accent, #8a6d4b); }
 .inv-venue p { margin: 2px 0; }
-.inv-venue a { color: #8a6d4b; }
+.inv-venue a, .inv-section a { color: var(--inv-accent, #8a6d4b); }
 .inv-time { font-weight: 600; }
-.inv-quiet { color: #7b6f66; font-size: 0.92rem; }
-.inv-rsvp { margin-top: 28px; padding-top: 24px; border-top: 1px solid #e8dccb; }
+.inv-quiet { color: var(--inv-muted, #7b6f66); font-size: 0.92rem; }
+.inv-rsvp { margin-top: 28px; padding-top: 24px; border-top: 1px solid var(--inv-border, #e8dccb); }
 .inv-rsvp h2 { margin: 0 0 12px; font-size: 1.6rem; letter-spacing: 0.3em; }
 .inv-guest { margin: 2px 0; font-size: 1.7rem; font-weight: 600; overflow-wrap: anywhere; }
 .inv-actions { display: flex; justify-content: center; gap: 12px; margin: 16px 0 8px; flex-wrap: wrap; }
@@ -901,19 +910,50 @@ label.check {
   min-width: 8.5rem;
   min-height: 48px;
   padding: 0 20px;
-  border: 1px solid #8a6d4b;
-  border-radius: 999px;
+  border: 1px solid var(--inv-accent, #8a6d4b);
+  border-radius: var(--inv-btn-radius, 999px);
   background: transparent;
-  color: #6d5338;
+  color: var(--inv-accent, #6d5338);
   font: inherit;
   font-weight: 600;
   letter-spacing: 0.06em;
   cursor: pointer;
 }
 .inv-btn:disabled { opacity: 0.5; cursor: default; }
-.inv-primary { background: #8a6d4b; color: #fffdf9; }
+.inv-primary { background: var(--inv-accent, #8a6d4b); color: var(--inv-accent-text, #fffdf9); }
 .inv-seats { display: flex; justify-content: center; flex-wrap: wrap; gap: 8px; margin: 10px 0; }
-.inv-seat { width: 48px; height: 48px; border: 1px solid #c9b293; border-radius: 50%; background: #fffdf9; font: inherit; font-weight: 600; cursor: pointer; }
-.inv-seat.is-on { background: #8a6d4b; border-color: #8a6d4b; color: #fffdf9; }
+.inv-seat { width: 48px; height: 48px; border: 1px solid var(--inv-border, #c9b293); border-radius: 50%; background: var(--inv-card-bg, #fffdf9); color: var(--inv-text, inherit); font: inherit; font-weight: 600; cursor: pointer; }
+.inv-seat.is-on { background: var(--inv-accent, #8a6d4b); border-color: var(--inv-accent, #8a6d4b); color: var(--inv-accent-text, #fffdf9); }
 .inv-done { margin: 12px 0; }
 .inv-error { color: #a1301f; }
+
+/* Designed (Luna Bridal+) invitations: the shared components, arranged. */
+.inv-designed[data-align="left"] .inv-actions, .inv-designed[data-align="left"] .inv-seats { justify-content: flex-start; }
+.inv-designed[data-frame="full"] { padding: 0; }
+.inv-designed[data-frame="full"] .inv-card { border: 0; border-radius: 0; box-shadow: none; min-height: 100dvh; }
+.inv-section { margin: 0 0 var(--inv-gap, 24px); padding: var(--inv-section-pad, 0); background-color: var(--inv-section-bg, transparent); background-image: var(--inv-section-image, none); background-size: cover; background-position: center; color: var(--inv-section-text, inherit); border-radius: var(--inv-radius, 4px); }
+.inv-section[data-styled] { padding: 20px 16px; }
+.inv-section p { margin: 4px 0; line-height: 1.7; }
+.inv-story { white-space: pre-line; }
+.inv-ornament { display: block; max-width: 70%; max-height: 140px; margin: 0 auto 16px; object-fit: contain; }
+.inv-ornament-bottom { margin: 16px auto 0; }
+.inv-divider { display: block; max-width: 60%; max-height: 48px; margin: 0 auto var(--inv-gap, 24px); object-fit: contain; }
+.inv-hero-wrap { position: relative; margin: 0 0 24px; }
+.inv-hero-wrap .inv-hero { margin: 0; }
+.inv-hero-frame { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: fill; pointer-events: none; }
+.inv-designed[data-hero="framed"] .inv-hero-wrap { padding: 10px; border: 1px solid var(--inv-border, #e8dccb); background: var(--inv-card-bg, #fffdf9); }
+.inv-designed[data-hero="full-bleed"] .inv-hero-wrap { margin-left: calc(-1 * var(--inv-pad-x, 24px)); margin-right: calc(-1 * var(--inv-pad-x, 24px)); }
+.inv-designed[data-hero="full-bleed"] .inv-hero { aspect-ratio: 3 / 4; border-radius: 0; }
+.inv-gallery { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.inv-gallery img { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: var(--inv-radius, 4px); display: block; }
+.inv-gallery[data-style="stack"] { grid-template-columns: 1fr; }
+.inv-gallery[data-style="stack"] img { aspect-ratio: 4 / 3; }
+.inv-gallery[data-style="carousel"] { display: flex; overflow-x: auto; scroll-snap-type: x mandatory; gap: 8px; }
+.inv-gallery[data-style="carousel"] img { flex: 0 0 80%; scroll-snap-align: center; aspect-ratio: 4 / 5; }
+.inv-faq dt { font-weight: 600; margin-top: 10px; }
+.inv-faq dd { margin: 2px 0 0; color: var(--inv-muted, #7b6f66); }
+.inv-entourage { display: grid; gap: 12px; }
+.inv-entourage p { margin: 0; }
+.inv-map-links { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+.inv-designed[data-align="left"] .inv-map-links { justify-content: flex-start; }
+.inv-footer { margin-top: 28px; color: var(--inv-muted, #7b6f66); font-size: 0.92rem; }

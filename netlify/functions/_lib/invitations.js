@@ -26,6 +26,7 @@ import { tenantDb } from "./tenant-db.js";
 import { guestTotalsWrite } from "./wedding.js";
 import { roleLabel } from "../../../shared/wedding-roles.js";
 import { attendingMarksFor } from "./wedding-roles.js";
+import { liveDesignFor, ownerInvitationStatus, previewDesign } from "./invitation-design.js";
 
 const TX_OPTIONS = { maxAttempts: 10 };
 const MAX_HISTORY = 200;
@@ -56,12 +57,31 @@ const totalsRef = (tenant) => tenant.doc("guestTotals", TOTALS_DOC_ID);
 const BAD_LINK = () => new WeddingError("invalid-link", "This invitation link isn't valid. Please ask the couple for a new one.");
 
 // ---- Wedding Setup (Owner side, guests.manage) ----
-export async function readSetup({ tenant }) {
-  const [s, h] = await Promise.all([setupRef(tenant).get(), heroRef(tenant).get()]);
+export async function readSetup({ tenant, business }) {
+  const [s, h, g] = await Promise.all([setupRef(tenant).get(), heroRef(tenant).get(), galleryCol(tenant).orderBy("order").limit(MAX_GALLERY).get()]);
   const hero = h.exists && typeof h.data().dataUrl === "string" ? h.data().dataUrl : null;
   // hero: the current cover photo, so the Owner sees what's set.
-  return { setup: s.exists ? s.data() : {}, hasHero: Boolean(hero), hero };
+  // invitation: Standard (Luna Bridal) / Customized (Luna Bridal+) and its state.
+  return { setup: s.exists ? s.data() : {}, hasHero: Boolean(hero), hero, gallery: g.docs.map((d) => ({ id: d.id, dataUrl: d.data().dataUrl })), invitation: business ? await ownerInvitationStatus({ tenant, business }) : null };
 }
+// Gallery photos for a customized invitation (shrunk in the browser).
+const galleryCol = (tenant) => tenant.collection("weddingGallery");
+const MAX_GALLERY = 6;
+export async function addGalleryPhoto({ tenant, FieldValue, dataUrl, actor }) {
+  if (typeof dataUrl !== "string" || dataUrl.length > 400_000 || !/^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/.test(dataUrl)) throw new WeddingError("invalid-input", "Choose a JPEG, PNG or WebP photo (it's shrunk before upload)");
+  const all = await galleryCol(tenant).orderBy("order").limit(MAX_GALLERY + 1).get();
+  if (all.size >= MAX_GALLERY) throw new WeddingError("invalid-input", `Up to ${MAX_GALLERY} gallery photos`);
+  const last = all.docs.at(-1);
+  const ref = galleryCol(tenant).doc();
+  await ref.set({ dataUrl, order: (last ? last.data().order : 0) + 10, addedBy: who(actor), addedAt: FieldValue.serverTimestamp() });
+  return { photoId: ref.id };
+}
+export async function removeGalleryPhoto({ tenant, photoId }) {
+  if (typeof photoId !== "string" || !/^[A-Za-z0-9]{1,40}$/.test(photoId)) throw new WeddingError("invalid-input", "Invalid photo");
+  await galleryCol(tenant).doc(photoId).delete();
+  return { removed: true };
+}
+export const previewInvitation = ({ tenant, business, which }) => previewDesign({ tenant, business, which: which === "draft" ? "draft" : "live" });
 // The wedding link (slug) is unique in Luna: weddingSlugs/{slug} =
 // { businessId } (top level, server-only; rules deny all). Blank = made
 // from the couple's names ("carlo-and-yanie-wedding", then -2, -3… when
@@ -183,7 +203,7 @@ async function resolve(db, token) {
   if (!b.exists || !g.exists || b.data().entitlements?.workspaceTemplateId !== "bridal-expense") throw BAD_LINK();
   return { businessId, guestId, biz, business: b.data(), guest: g.data(), linkRef: link.ref };
 }
-const publicSetup = (s) => Object.fromEntries(["coupleNames", "weddingDate", "ceremonyTime", "ceremonyVenue", "ceremonyAddress", "ceremonyMap", "receptionTime", "receptionVenue", "receptionAddress", "receptionMap", "dressCode", "welcomeMessage", "rsvpDeadline"].map((k) => [k, s[k] ?? null]));
+const publicSetup = (s) => Object.fromEntries(["coupleNames", "weddingDate", "ceremonyTime", "ceremonyVenue", "ceremonyAddress", "ceremonyMap", "receptionTime", "receptionVenue", "receptionAddress", "receptionMap", "dressCode", "welcomeMessage", "rsvpDeadline", "story", "footerNote", "faq"].map((k) => [k, s[k] ?? null]));
 
 export async function viewInvite({ db, token, now = new Date() }) {
   const r = await resolve(db, token);
@@ -199,6 +219,9 @@ export async function viewInvite({ db, token, now = new Date() }) {
     rsvpOpen: rsvpOpen(setup, today),
     // The canonical address (current wedding link): an older link moves to it.
     path: invitePath(setup.weddingSlug, token),
+    // The published Luna Bridal+ design (or null = the Standard invitation),
+    // with the images / gallery / entourage its sections need.
+    ...((await liveDesignFor({ tenant: tenantDb(db, r.businessId), business: r.business })) ?? { design: null }),
   };
 }
 

@@ -214,8 +214,8 @@ export const PLAN_SEED = Object.freeze({
   "household-plus": personalPlan({ id: "household-plus", name: "Household Plus", workspace: "household-payroll", monthly: 29900, sortOrder: 12, users: 6, storage: 2 * GB, modules: HOUSEHOLD_MODULES, plus: true }),
   "baby-basic": personalPlan({ id: "baby-basic", name: "Baby Basic", workspace: "baby-expense", monthly: 14900, sortOrder: 21, users: 2, storage: 500 * MB, modules: BABY_MODULES }),
   "baby-plus": personalPlan({ id: "baby-plus", name: "Baby Plus", workspace: "baby-expense", monthly: 24900, sortOrder: 22, users: 5, storage: 2 * GB, modules: BABY_MODULES, plus: true }),
-  "bridal-basic": personalPlan({ id: "bridal-basic", name: "Bridal Basic", workspace: "bridal-expense", monthly: 19900, sortOrder: 31, users: 3, storage: 1 * GB, modules: BRIDAL_MODULES }),
-  "bridal-plus": personalPlan({ id: "bridal-plus", name: "Bridal Plus", workspace: "bridal-expense", monthly: 39900, sortOrder: 32, users: 6, storage: 5 * GB, modules: BRIDAL_MODULES, plus: true }),
+  "bridal-basic": personalPlan({ id: "bridal-basic", name: "Luna Bridal", workspace: "bridal-expense", monthly: 19900, sortOrder: 31, users: 3, storage: 1 * GB, modules: BRIDAL_MODULES }),
+  "bridal-plus": personalPlan({ id: "bridal-plus", name: "Luna Bridal+", workspace: "bridal-expense", monthly: 39900, sortOrder: 32, users: 6, storage: 5 * GB, modules: BRIDAL_MODULES, plus: true }),
 });
 
 // The workspace a plan belongs to (older stored plans had none: Distributor).

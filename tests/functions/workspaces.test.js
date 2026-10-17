@@ -45,7 +45,7 @@ describe("a bridal workspace can't reach Distributor APIs", () => {
     const s = await session(uid.owner, "biz-w");
     expect(s.status).toBe(200);
     expect(s.body.workspace).toEqual({ templateId: "bridal-expense", templateVersion: 2, name: "Bridal / Wedding Management Tracker" });
-    expect(s.body.plan).toEqual({ id: "bridal-plus", name: "Bridal Plus" });
+    expect(s.body.plan).toEqual({ id: "bridal-plus", name: "Luna Bridal+" });
     for (const m of ["orders", "payments", "inventory", "customers", "reports", "imports"]) expect(s.body.entitlements.modules[m], m).toBe(false);
     expect(s.body.entitlements.workspaceTemplateId).toBe("bridal-expense");
   });

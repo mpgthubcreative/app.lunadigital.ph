@@ -65,6 +65,17 @@ export function readSetupForm(form) {
   const f = form.elements;
   const setup = {};
   for (const n of VALUE_FIELDS) setup[n] = f[n].value.trim() || null;
+  // Luna Bridal+ content (only on the form when the plan includes it).
+  for (const n of ["story", "footerNote"]) if (f[n]) setup[n] = f[n].value.trim() || null;
+  if (f.faqQ0) {
+    const faq = [];
+    for (let i = 0; i < 8 && f[`faqQ${i}`]; i++) {
+      const q = f[`faqQ${i}`].value.trim();
+      const a = f[`faqA${i}`].value.trim();
+      if (q && a) faq.push({ q, a });
+    }
+    setup.faq = faq;
+  }
   if (setup.weddingSlug) setup.weddingSlug = cleanSlugInput(setup.weddingSlug).replace(/^-+|-+$/g, "") || null;
   setup.rsvpEnabled = f.rsvpEnabled.checked;
   setup.closeAfterDeadline = f.closeAfterDeadline.checked;
@@ -73,7 +84,7 @@ export function readSetupForm(form) {
 
 export function mount(container, session, { api = defaultApi, toast = defaultToast, shrink = shrinkPhoto, preview = openInvitePreview } = {}) {
   const canEdit = session.member.permissions["guests.manage"] === true;
-  const state = { setup: null, draft: null, hasHero: false, hero: null, error: null, saving: false, status: null };
+  const state = { setup: null, draft: null, hasHero: false, hero: null, gallery: [], invitation: null, error: null, saving: false, status: null };
   let alive = true;
   const field = (name, label, placeholder, value, type = "text") =>
     html`<div class="field"><label for="ws-${name}">${label}</label><input class="input" id="ws-${name}" name="${name}" type="${type}" value="${value ?? ""}" ${placeholder ? html`placeholder="${placeholder}"` : ""} ${canEdit ? "" : "disabled"}></div>`;
@@ -84,6 +95,38 @@ export function mount(container, session, { api = defaultApi, toast = defaultToa
   const slugPreview = (slug, names) => `Guests' links look like ${host()}/w/${slug || suggestWeddingSlug(names) || "your-names-wedding"}/invite/… (the private part after /invite/ is different for each guest).`;
   const slugField = (s) =>
     html`<div class="field"><label for="ws-weddingSlug">Wedding link / hashtag</label><input class="input" id="ws-weddingSlug" name="weddingSlug" type="text" autocapitalize="none" autocomplete="off" spellcheck="false" maxlength="60" value="${s.weddingSlug ?? ""}" placeholder="${suggestWeddingSlug(s.coupleNames) || "e.g. carlo-and-yanie-wedding"}" aria-describedby="ws-slug-hint" ${canEdit ? "" : "disabled"}><p class="stat-hint" id="ws-slug-hint" data-role="slug-preview">${slugPreview(s.weddingSlug, s.coupleNames)}</p><p class="stat-hint">Lowercase letters, numbers and hyphens, e.g. carloyanieforever. Leave blank to use the suggestion. Change it before sharing; links already sent keep working.</p></div>`;
+  // Wedding Setup → Invitation: Standard (Luna Bridal) or Customized (Luna
+  // Bridal+) with its state. The design itself is Luna's (Super Admin);
+  // the couple edits content only, so an approved design can't be broken.
+  const invitationBox = (s) => {
+    const inv = state.invitation || { level: "standard", live: "standard" };
+    const custom = inv.level === "custom";
+    const stateLine = !custom
+      ? inv.preservedCustom
+        ? "Your customized design is saved and comes back with Luna Bridal+."
+        : "Want an invitation designed just for your wedding? The Customized Invitation comes with Luna Bridal+. Ask Luna to upgrade: your guests, links and RSVPs stay exactly as they are."
+      : inv.live === "custom"
+        ? `Live${inv.publishedVersion ? ` (version ${inv.publishedVersion})` : ""}. All guest links show it.${inv.hasDraft && inv.draftState === "ready" ? " A new version is ready with Luna." : ""}`
+        : inv.hasDraft
+          ? `${inv.draftState === "ready" ? "Ready for publishing" : "Draft"} · Your current Standard invitation remains live.`
+          : "Luna is preparing your design. Your current Standard invitation remains live.";
+    const faq = Array.isArray(s.faq) ? s.faq : [];
+    return html`<fieldset class="wl-fieldset" data-role="invitation-level"><legend>Invitation</legend>
+      <p><strong data-role="invitation-name">${custom ? "Customized Invitation" : "Standard Invitation"}</strong> <span class="stat-hint">${custom ? "Luna Bridal+" : "Included with Luna Bridal"}</span>${custom ? html` <span class="wl-chip" data-role="invitation-state" data-tone="${inv.live === "custom" ? "success" : "warning"}">${inv.live === "custom" ? "Live" : inv.draftState === "ready" ? "Ready" : "Draft"}</span>` : ""}</p>
+      <p class="stat-hint" data-role="invitation-line">${stateLine}</p>
+      <div class="ws-link-actions"><button type="button" class="btn btn-compact" data-act="preview">Preview${custom && inv.live !== "custom" ? " (live: Standard)" : ""}</button>${custom && inv.hasDraft ? html`<button type="button" class="btn btn-compact" data-act="preview-draft">Preview draft design</button>` : ""}</div>
+      ${custom ? html`<details class="wl-fold" data-role="plus-content"><summary>More for your customized invitation</summary>
+        <div class="field"><label for="ws-story">Our story</label><textarea class="input" id="ws-story" name="story" rows="4" maxlength="1500" ${canEdit ? "" : "disabled"}>${s.story ?? ""}</textarea></div>
+        <p class="stat-hint">Questions & answers (leave a pair blank to skip it):</p>
+        ${Array.from({ length: Math.min(8, Math.max(3, faq.length + 1)) }, (_, i) => html`<div class="ws-faq"><input class="input" name="faqQ${i}" aria-label="Question ${i + 1}" placeholder="Question" maxlength="150" value="${faq[i]?.q ?? ""}" ${canEdit ? "" : "disabled"}><input class="input" name="faqA${i}" aria-label="Answer ${i + 1}" placeholder="Answer" maxlength="500" value="${faq[i]?.a ?? ""}" ${canEdit ? "" : "disabled"}></div>`)}
+        <div class="field"><label for="ws-footerNote">Closing line</label><input class="input" id="ws-footerNote" name="footerNote" maxlength="200" value="${s.footerNote ?? ""}" placeholder="e.g. With love, Carlo & Yanie" ${canEdit ? "" : "disabled"}></div>
+        <p class="stat-hint">Gallery photos (up to 6)</p>
+        <div class="ws-gallery" data-role="gallery">${state.gallery.map((g) => html`<figure class="ws-gallery-item"><img src="${g.dataUrl}" alt="Gallery photo">${canEdit ? html`<button type="button" class="btn btn-compact btn-ghost" data-act="gallery-remove" data-id="${g.id}" aria-label="Remove this photo">Remove</button>` : ""}</figure>`)}</div>
+        ${canEdit && state.gallery.length < 6 ? html`<label class="btn btn-compact">Add photo<input class="visually-hidden" type="file" accept="image/jpeg,image/png,image/webp" data-role="gallery-add" aria-label="Add a gallery photo"></label>` : ""}
+        <p class="stat-hint">Luna shows these where your design has a Story, FAQ, Gallery or Footer section. The design itself is set up by Luna.</p>
+      </details>` : ""}
+    </fieldset>`;
+  };
   // The wedding's own link (identity) vs each guest's private invitation.
   const origin = () => globalThis.location?.origin || "https://app.lunadigital.ph";
   const linkBox = () => {
@@ -160,6 +203,7 @@ export function mount(container, session, { api = defaultApi, toast = defaultToa
                   <label class="wl-check"><input type="checkbox" name="closeAfterDeadline" ${s.closeAfterDeadline === false ? "" : "checked"} ${canEdit ? "" : "disabled"}> Close guest RSVPs after the deadline (you can still change RSVPs in Luna)</label>
                 </fieldset>
                 <fieldset class="wl-fieldset"><legend>Cover photo</legend><div data-role="hero-box">${heroBox()}</div></fieldset>
+                ${invitationBox(s)}
                 ${canEdit ? html`<div class="page-actions"><button type="submit" class="btn btn-primary" ${state.saving ? "disabled" : ""}>${state.saving ? "Saving…" : "Save"}</button></div><div data-role="save-box">${statusLine()}</div>` : ""}
               </form>`}`
     );
@@ -171,6 +215,8 @@ export function mount(container, session, { api = defaultApi, toast = defaultToa
       state.setup = r.setup || {};
       state.hasHero = Boolean(r.hasHero);
       state.hero = typeof r.hero === "string" && r.hero.startsWith("data:image/") ? r.hero : null;
+      state.gallery = Array.isArray(r.gallery) ? r.gallery.filter((g) => typeof g.dataUrl === "string" && g.dataUrl.startsWith("data:image/")) : [];
+      state.invitation = r.invitation || null;
     } catch (err) {
       state.error = err.message || "Couldn't load the setup.";
     }
@@ -215,7 +261,7 @@ export function mount(container, session, { api = defaultApi, toast = defaultToa
     }
   };
   const onInput = (event) => {
-    if (!event.target.closest('[data-role="setup"]') || event.target.dataset?.role === "hero" || state.saving) return;
+    if (!event.target.closest('[data-role="setup"]') || event.target.dataset?.role === "hero" || event.target.dataset?.role === "gallery-add" || state.saving) return;
     if (event.target.name === "weddingSlug") {
       const clean = cleanSlugInput(event.target.value);
       if (clean !== event.target.value) event.target.value = clean;
@@ -226,7 +272,31 @@ export function mount(container, session, { api = defaultApi, toast = defaultToa
       drawStatus();
     }
   };
+  async function reloadGallery() {
+    const r = await api("wedding-setup", { method: "POST", body: { action: "get" } });
+    state.gallery = Array.isArray(r.gallery) ? r.gallery.filter((g) => typeof g.dataUrl === "string" && g.dataUrl.startsWith("data:image/")) : [];
+    const box = container.querySelector('[data-role="invitation-level"]');
+    const open = container.querySelector('[data-role="plus-content"]')?.open;
+    if (box) {
+      state.draft = readSetupForm(form());
+      const holder = document.createElement("div");
+      render(holder, invitationBox(state.draft));
+      box.replaceWith(holder.firstElementChild);
+      if (open) container.querySelector('[data-role="plus-content"]')?.setAttribute("open", "");
+    }
+  }
   const onChange = async (event) => {
+    if (event.target.dataset?.role === "gallery-add") {
+      try {
+        const dataUrl = await shrink(event.target.files[0]);
+        await api("wedding-setup", { method: "POST", body: { action: "galleryAdd", dataUrl } });
+        toast("Photo added.", "success");
+        await reloadGallery();
+      } catch (err) {
+        toast(err.message || "Couldn't add the photo.", "danger");
+      }
+      return;
+    }
     if (event.target.dataset?.role !== "hero") return;
     try {
       const dataUrl = await shrink(event.target.files[0]);
@@ -248,13 +318,31 @@ export function mount(container, session, { api = defaultApi, toast = defaultToa
       if (ok) toast("Copied ✓ Wedding link", "success");
       return;
     }
-    if (act === "preview") {
-      // What a guest sees, from the details on screen now (not yet saved too).
+    if (act === "preview" || act === "preview-draft") {
+      // What a guest sees, from the details on screen now (not yet saved too),
+      // in the live design (or the draft one Luna is preparing).
       const now = form() ? readSetupForm(form()) : {};
       const w = { ...(state.setup || {}), ...now };
-      const invitation = { wedding: w, hero: state.hero, guest: { name: "Your guest's name", seats: 2, rsvp: "awaiting", confirmed: 0 }, rsvpOpen: rsvpOpen(w, new Date().toISOString().slice(0, 10)) };
+      let look = { design: null };
+      if (state.invitation?.level === "custom") {
+        try {
+          look = await api("wedding-setup", { method: "POST", body: { action: "preview", which: act === "preview-draft" ? "draft" : "live" } });
+        } catch (err) {
+          toast(err.message || "Couldn't load the design", "danger");
+        }
+      }
+      const invitation = { wedding: w, hero: state.hero, guest: { name: "Your guest's name", seats: 2, rsvp: "awaiting", confirmed: 0 }, rsvpOpen: rsvpOpen(w, new Date().toISOString().slice(0, 10)), design: look.design || null, gallery: look.gallery || state.gallery.map((g) => g.dataUrl), entourage: look.entourage || [] };
       const fetchImpl = async () => ({ ok: true, status: 200, json: async () => ({ success: true, invitation }) });
-      await preview({ token: "P".repeat(32), fetchImpl, note: "Preview: what your guests see (with a sample guest)" });
+      await preview({ token: "P".repeat(32), fetchImpl, note: act === "preview-draft" ? "Draft design (not live yet), with a sample guest" : "Preview: what your guests see (with a sample guest)" });
+      return;
+    }
+    if (act === "gallery-remove") {
+      try {
+        await api("wedding-setup", { method: "POST", body: { action: "galleryRemove", photoId: event.target.closest("[data-act]").dataset.id } });
+        await reloadGallery();
+      } catch (err) {
+        toast(err.message || "Couldn't remove the photo.", "danger");
+      }
       return;
     }
     if (!event.target.closest('[data-act="hero-remove"]')) return;

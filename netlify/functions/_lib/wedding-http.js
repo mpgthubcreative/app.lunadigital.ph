@@ -53,7 +53,7 @@ export function weddingActionHandler(name, { getAdmin: loadAdmin, now = () => ne
     if (!action) throw new RequestError("invalid-request", "Unknown action.", 400);
     only(body, action.fields);
     if (body.expectedRevision !== undefined && !Number.isSafeInteger(body.expectedRevision)) throw new RequestError("invalid-request", "Invalid revision.", 400);
-    const common = { db, tenant: ctx.tenant, FieldValue: admin.firestore.FieldValue, business: ctx.business, workspace: ctx.workspace.templateId, actor: actorOf(ctx), now: now() };
+    const common = { db, tenant: ctx.tenant, FieldValue: admin.firestore.FieldValue, business: { ...ctx.business, planId: ctx.entitlements?.planId ?? null }, workspace: ctx.workspace.templateId, actor: actorOf(ctx), now: now() };
     try {
       const out = await action.run(common, body, ctx);
       return respond(action.created ? 201 : 200, { success: true, ...out });

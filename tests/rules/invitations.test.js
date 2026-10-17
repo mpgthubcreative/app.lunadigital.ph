@@ -30,6 +30,9 @@ beforeAll(async () => {
     await seedMember(db, W, "staff@wed-inv-a", { role: "staff" });
     await db.doc(`invitations/h1`).set({ businessId: W, guestId: "g1" });
     await db.doc("weddingSlugs/carloyanieforever").set({ businessId: W });
+    await db.doc(`businesses/${W}/invitationDesign/current`).set({ live: "custom", published: { config: { templateId: "garden" } } });
+    await db.doc(`businesses/${W}/invitationAssets/asset0001`).set({ name: "bg.png", dataUrl: "data:image/png;base64,AAAA" });
+    await db.doc(`businesses/${W}/weddingGallery/photo0001`).set({ dataUrl: "data:image/jpeg;base64,AAAA", order: 10 });
   });
 });
 afterAll(async () => {
@@ -66,6 +69,16 @@ describe("invitation secrets are server-only", () => {
       await assertFails(db.doc("weddingSlugs/new-slug").set({ businessId: W2 }));
       await assertFails(db.doc("weddingSlugs/carloyanieforever").delete());
     }
+  });
+  it("invitation designs, design images and gallery photos are server-only (Super Admin / API), even for the wedding's Owner", async () => {
+    for (const db of [dbAs(env, `owner@${W}`), dbAs(env, `staff@${W}`), dbAnon(env)]) {
+      for (const p of [`businesses/${W}/invitationDesign/current`, `businesses/${W}/invitationAssets/asset0001`, `businesses/${W}/weddingGallery/photo0001`]) {
+        await assertFails(db.doc(p).get());
+        await assertFails(db.doc(p).set({ hacked: true }));
+      }
+      await assertFails(db.collection(`businesses/${W}/invitationAssets`).get());
+    }
+    await assertFails(dbAs(env, `owner@${W}`).doc(`businesses/${W}/invitationDesign/current`).update({ live: "standard" }));
   });
   it("seating: guests.view of THIS wedding only; anonymous / other wedding / staff denied", async () => {
     await assertSucceeds(dbAs(env, `owner@${W}`).doc(`businesses/${W}/guestTotals/seating`).get());

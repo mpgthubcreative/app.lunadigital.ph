@@ -10,6 +10,7 @@ import { formDialog } from "../components/form-dialog.js";
 import { formatMoney, planWorkspace, WORKSPACE_TEMPLATES, SUBSCRIPTION_LABELS, SUBSCRIPTION_ACTIONS, OVERRIDE_CHOICES, ROLE_TEMPLATES, METERS, MONTHLY_METER_IDS, overrideImpact } from "@shared/index.js";
 import { formatBytes, formatNumber } from "../lib/format.js";
 import { moneySections } from "./money.js";
+import { invitationDesignView } from "./design.js";
 
 const TONE = { active: "success", past_due: "warning", suspended: "danger", cancelled: "neutral" };
 const statusBadge = (s) => badge(SUBSCRIPTION_LABELS[s] ?? s ?? "—", TONE[s] || "neutral");
@@ -43,6 +44,7 @@ export async function overviewView(el, ctx) {
 
 export function businessesView(el, ctx) {
   const params = new URLSearchParams(ctx.search || "");
+  if (params.get("b") && params.get("design")) return invitationDesignView(el, ctx, params.get("b"));
   if (params.get("b")) return businessDetailView(el, ctx, params.get("b"));
   const state = { filters: {}, cursors: [null], page: null, error: null, loading: true };
   const opt = (v, l, sel) => html`<option value="${v}" ${sel === v ? "selected" : ""}>${l}</option>`;
@@ -200,6 +202,7 @@ export async function businessDetailView(el, ctx, businessId) {
             <button type="button" class="btn btn-compact" data-act="plan">Change plan</button>
             <button type="button" class="btn btn-compact" data-act="status">Subscription…</button>
             <button type="button" class="btn btn-compact" data-act="general">Edit name / timezone</button>
+            ${b.workspaceTemplateId === "bridal-expense" ? html`<a class="btn btn-compact" href="${ctx.base}/businesses?b=${b.id}&design=1" data-link data-role="design-link">Invitation design</a>` : ""}
           </div>`,
         })}
         ${card({
