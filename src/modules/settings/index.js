@@ -114,6 +114,7 @@ export function mount(container, session) {
     container,
     html`
       ${pageHeader({ title: "Settings", subtitle: "Business configuration and subscription." })}
+      <div data-role="arrange-host"></div>
       <div class="grid grid-2">
         ${card({
           title: "Subscription",
@@ -128,7 +129,6 @@ export function mount(container, session) {
         })}
         <div data-role="package" class="grid-span">${seesPackage ? packageCards(session) : ""}</div>
       </div>
-      <div data-role="arrange-host"></div>
     `
   );
   // Settings → Arrange navigation (this person's phone tabs).
