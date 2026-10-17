@@ -9,7 +9,7 @@
 // Cash advances aren't spending (they're repaid through payroll).
 
 import { html, render } from "../../lib/html.js";
-import { pageHeader, emptyState, badge, skeleton, mobileCell, openButton, bindRowOpen, kpiStrip, barRows } from "../../components/ui.js";
+import { pageHeader, emptyState, badge, skeleton, mobileCell, openButton, bindRowOpen, kpiStrip, barRows, section } from "../../components/ui.js";
 import { formDialog } from "../../components/form-dialog.js";
 import { toast as defaultToast } from "../../components/feedback.js";
 import { formatCentavos, formatDayId } from "../../lib/format.js";
@@ -101,10 +101,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     const s = state.summary;
     if (!s || !s.categories.length) return "";
     const top = Math.max(...s.categories.map((c) => c.amount), 1);
-    return html`<section class="card" data-section="by-category">
-      <h2 class="card-title">By category</h2>
-      ${barRows(s.categories.map((c, i) => ({ id: `c${i}`, label: c.payroll ? `${c.name} (incl. payroll)` : c.name, value: money(c.amount), pct: (c.amount / top) * 100 })), { role: "category-bars" })}
-    </section>`;
+    return section({ id: "by-category", title: "By category", body: barRows(s.categories.map((c, i) => ({ id: `c${i}`, label: c.payroll ? `${c.name} (incl. payroll)` : c.name, value: money(c.amount), pct: (c.amount / top) * 100 })), { role: "category-bars" }) });
   }
 
   function draw() {
@@ -123,9 +120,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
         </div>
         ${state.error ? "" : summaryHtml()}
         ${state.error ? "" : categoriesHtml()}
-        <section class="card">
-          <h2 class="card-title">Expenses this month</h2>
-          ${state.error
+        ${section({ id: "list", title: "Expenses this month", body: html`${state.error
             ? emptyState({ title: "Couldn't load", body: state.error })
             : state.loading
               ? skeleton(4)
@@ -141,8 +136,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
                         <td class="row-actions" data-m="more">${openButton(e.id, "View details", { act: "view" })}</td>
                       </tr>`
                     )}</tbody></table></div>
-                  ${state.cursors.length || state.hasMore ? html`<div class="pager"><button type="button" class="btn btn-ghost" data-act="prev" ${state.cursors.length ? "" : "disabled"}>‹ Previous</button><button type="button" class="btn btn-ghost" data-act="next" ${state.hasMore ? "" : "disabled"}>Next ›</button></div>` : ""}`}
-        </section>`
+                  ${state.cursors.length || state.hasMore ? html`<div class="pager"><button type="button" class="btn btn-ghost" data-act="prev" ${state.cursors.length ? "" : "disabled"}>‹ Previous</button><button type="button" class="btn btn-ghost" data-act="next" ${state.hasMore ? "" : "disabled"}>Next ›</button></div>` : ""}`}` })}`
     );
   }
 
