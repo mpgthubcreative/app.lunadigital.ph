@@ -12,6 +12,7 @@ import { html, render } from "../../lib/html.js";
 import { pageHeader, skeleton } from "../../components/ui.js";
 import { toast as defaultToast } from "../../components/feedback.js";
 import { api as defaultApi } from "../../lib/api.js";
+import { isWeddingSlug, suggestWeddingSlug } from "@shared/index.js";
 
 const TEXT = [
   ["coupleNames", "Couple names", "e.g. Camille & Carlo"],
@@ -23,7 +24,17 @@ const TEXT = [
   ["receptionMap", "Reception map link (https://…)", ""],
   ["dressCode", "Dress code", "e.g. Formal"],
 ];
-const VALUE_FIELDS = ["coupleNames", "ceremonyVenue", "ceremonyAddress", "receptionVenue", "receptionAddress", "dressCode", "welcomeMessage", "weddingDate", "rsvpDeadline", "ceremonyTime", "receptionTime", "ceremonyMap", "receptionMap"];
+const VALUE_FIELDS = ["coupleNames", "ceremonyVenue", "ceremonyAddress", "receptionVenue", "receptionAddress", "dressCode", "welcomeMessage", "weddingDate", "rsvpDeadline", "ceremonyTime", "receptionTime", "ceremonyMap", "receptionMap", "weddingSlug"];
+// What's typed in "Wedding link / hashtag", as a slug: "#CarloYanieForever"
+// -> "carloyanieforever", "carlo and yanie" -> "carlo-and-yanie".
+export const cleanSlugInput = (v) =>
+  String(v ?? "")
+    .toLowerCase()
+    .replace(/^#+/, "")
+    .replace(/[\s_]+/g, "-")
+    .replace(/[^a-z0-9-]/g, "")
+    .replace(/-{2,}/g, "-")
+    .slice(0, 60);
 
 // A photo shrunk in the browser to a small JPEG data URL (≤ 1200 px).
 export async function shrinkPhoto(file) {
@@ -53,6 +64,7 @@ export function readSetupForm(form) {
   const f = form.elements;
   const setup = {};
   for (const n of VALUE_FIELDS) setup[n] = f[n].value.trim() || null;
+  if (setup.weddingSlug) setup.weddingSlug = cleanSlugInput(setup.weddingSlug).replace(/^-+|-+$/g, "") || null;
   setup.rsvpEnabled = f.rsvpEnabled.checked;
   setup.closeAfterDeadline = f.closeAfterDeadline.checked;
   return setup;
@@ -65,6 +77,19 @@ export function mount(container, session, { api = defaultApi, toast = defaultToa
   const field = (name, label, placeholder, value, type = "text") =>
     html`<div class="field"><label for="ws-${name}">${label}</label><input class="input" id="ws-${name}" name="${name}" type="${type}" value="${value ?? ""}" ${placeholder ? html`placeholder="${placeholder}"` : ""} ${canEdit ? "" : "disabled"}></div>`;
   const form = () => container.querySelector('[data-role="setup"]');
+  // "Wedding link / hashtag": the friendly part of every guest's link
+  // (/w/{slug}/invite/{private code}). Blank = made from the couple's names.
+  const host = () => globalThis.location?.host || "app.lunadigital.ph";
+  const slugPreview = (slug, names) => `Guests' links look like ${host()}/w/${slug || suggestWeddingSlug(names) || "your-names-wedding"}/invite/… (the private part after /invite/ is different for each guest).`;
+  const slugField = (s) =>
+    html`<div class="field"><label for="ws-weddingSlug">Wedding link / hashtag</label><input class="input" id="ws-weddingSlug" name="weddingSlug" type="text" autocapitalize="none" autocomplete="off" spellcheck="false" maxlength="60" value="${s.weddingSlug ?? ""}" placeholder="${suggestWeddingSlug(s.coupleNames) || "e.g. carlo-and-yanie-wedding"}" aria-describedby="ws-slug-hint" ${canEdit ? "" : "disabled"}><p class="stat-hint" id="ws-slug-hint" data-role="slug-preview">${slugPreview(s.weddingSlug, s.coupleNames)}</p><p class="stat-hint">Lowercase letters, numbers and hyphens, e.g. carloyanieforever. Leave blank to use the suggestion. Change it before sharing; links already sent keep working.</p></div>`;
+  const syncSlug = () => {
+    const f = form();
+    if (!f) return;
+    f.elements.weddingSlug.placeholder = suggestWeddingSlug(f.elements.coupleNames.value) || "e.g. carlo-and-yanie-wedding";
+    const box = container.querySelector('[data-role="slug-preview"]');
+    if (box) box.textContent = slugPreview(cleanSlugInput(f.elements.weddingSlug.value).replace(/^-+|-+$/g, ""), f.elements.coupleNames.value);
+  };
   // Next to Save: Saving… / Saved ✓ / Not saved yet / the error.
   const statusLine = () => {
     const st = state.status;
@@ -107,6 +132,7 @@ export function mount(container, session, { api = defaultApi, toast = defaultToa
             : html`<form class="wl-form" data-role="setup" novalidate>
                 <p class="stat-hint">What your guests see on their invitation. After saving, make each guest's link from Guests → ⋯ → Create invitation link.</p>
                 ${field("coupleNames", "Couple names", "e.g. Camille & Carlo", s.coupleNames)}
+                ${slugField(s)}
                 ${field("weddingDate", "Wedding date", "", s.weddingDate, "date")}
                 <fieldset class="wl-fieldset"><legend>Ceremony</legend>${field("ceremonyTime", "Time", "", s.ceremonyTime, "time")}${TEXT.slice(1, 4).map(([n, l, p]) => field(n, l.replace("Ceremony ", "").replace(/^./, (c) => c.toUpperCase()), p, s[n], n.endsWith("Map") ? "url" : "text"))}</fieldset>
                 <fieldset class="wl-fieldset"><legend>Reception</legend>${field("receptionTime", "Time", "", s.receptionTime, "time")}${TEXT.slice(4, 7).map(([n, l, p]) => field(n, l.replace("Reception ", "").replace(/^./, (c) => c.toUpperCase()), p, s[n], n.endsWith("Map") ? "url" : "text"))}</fieldset>
@@ -140,6 +166,11 @@ export function mount(container, session, { api = defaultApi, toast = defaultToa
     if (state.saving) return;
     const setup = readSetupForm(event.target);
     state.draft = setup;
+    if (setup.weddingSlug && !isWeddingSlug(setup.weddingSlug)) {
+      state.status = { state: "error", text: "Not saved: the wedding link needs 3 to 60 lowercase letters, numbers or hyphens (e.g. carlo-and-yanie-wedding)." };
+      drawStatus();
+      return;
+    }
     const badMap = ["ceremonyMap", "receptionMap"].find((n) => setup[n] && !/^https:\/\/\S+$/.test(setup[n]));
     if (badMap) {
       state.status = { state: "error", text: `Not saved: the ${badMap === "ceremonyMap" ? "ceremony" : "reception"} map link must start with https:// (copy it from Google Maps → Share).` };
@@ -168,6 +199,11 @@ export function mount(container, session, { api = defaultApi, toast = defaultToa
   };
   const onInput = (event) => {
     if (!event.target.closest('[data-role="setup"]') || event.target.dataset?.role === "hero" || state.saving) return;
+    if (event.target.name === "weddingSlug") {
+      const clean = cleanSlugInput(event.target.value);
+      if (clean !== event.target.value) event.target.value = clean;
+    }
+    if (event.target.name === "weddingSlug" || event.target.name === "coupleNames") syncSlug();
     if (state.status?.state !== "dirty") {
       state.status = { state: "dirty", text: "Not saved yet: press Save to keep these changes." };
       drawStatus();

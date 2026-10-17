@@ -77,7 +77,7 @@ describe("Wedding Setup", () => {
 describe("invitation links: secure, revocable, tenant-safe", () => {
   it("a high-entropy token (not the guest id) opens THIS party only; only its hash is the lookup; Staff can't make links", async () => {
     const { g, token, path } = await maria();
-    expect(path).toBe(`/invite/${token}`);
+    expect(path).toBe(`/w/camille-and-carlo-wedding/invite/${token}`); // friendly slug from the couple names
     expect(token).toMatch(/^[A-Za-z0-9_-]{32}$/);
     expect(token).not.toContain(g);
     expect(world.db.docs.get(`invitations/${hashInviteToken(token)}`)).toMatchObject({ businessId: W, guestId: g });
@@ -123,11 +123,11 @@ describe("guest RSVP updates the SAME guest record", () => {
     expect(docAt(`guests/${g}`)).toMatchObject({ rsvp: "attending", confirmed: 2, rsvpSource: "guest", rsvpDate: "2026-10-16" });
     expect(rsvpSummary(docAt("guestTotals/current"))).toMatchObject({ attending: 1, attendingSeats: 2, awaiting: 0 });
     expect(docAt("guestTotals/current").byCategory.family).toMatchObject({ attendingSeats: 2, invitedSeats: 2 });
-    expect(docAt(`guests/${g}`).history.at(-1)).toMatchObject({ label: "Guest responded: Attending 2", source: "guest", from: { rsvp: "awaiting", confirmed: 0 }, to: { status: "attending", confirmed: 2 } });
+    expect(docAt(`guests/${g}`).history.at(-1)).toMatchObject({ label: "Guest responded: Attending · 2 of 2", source: "guest", from: { rsvp: "awaiting", confirmed: 0 }, to: { status: "attending", confirmed: 2 } });
     // Owner corrects it later: both lines stay.
     ok(await api("guests", u.camille, { action: "setRsvp", guestId: g, rsvp: { status: "attending", confirmed: 1 } }));
     const labels = docAt(`guests/${g}`).history.map((h) => h.label);
-    expect(labels.slice(-2)).toEqual(["Guest responded: Attending 2", "Owner changed: Attending 2 → Attending 1"]);
+    expect(labels.slice(-2)).toEqual(["Guest responded: Attending · 2 of 2", "Owner changed: Attending 2 → Attending 1"]);
     expect(docAt(`guests/${g}`).history.at(-1).source).toBe("owner");
   });
 
@@ -139,7 +139,7 @@ describe("guest RSVP updates the SAME guest record", () => {
     NOW = new Date("2026-10-17T04:00:00Z");
     ok(await guest({ action: "respond", token, rsvp: { status: "declined" } }));
     expect(docAt(`guests/${g}`)).toMatchObject({ rsvp: "declined", confirmed: 0, tableId: null });
-    expect(docAt(`guests/${g}`).history.at(-1).label).toBe("Guest responded: Declined (was Attending 2) · removed from their table");
+    expect(docAt(`guests/${g}`).history.at(-1).label).toBe("Guest changed RSVP: 2 of 2 → Declined · removed from their table");
     const inbox = [...world.db.docs.entries()].filter(([k, v]) => k.startsWith(`businesses/${W}/members/${u.camille}/inbox/`) && v.type === "guest.rsvp").map(([, v]) => v.title);
     expect(inbox).toEqual(expect.arrayContaining(["Maria Santos RSVP'd Attending · 2", "Maria Santos RSVP'd Declined"]));
     expect([...world.db.docs.keys()].some((k) => k.startsWith(`businesses/${W}/members/${u.helper}/inbox/`))).toBe(false); // staff: no guests.view
@@ -194,7 +194,7 @@ describe("Master Backup", () => {
     expect(expenses.rows[0]).toEqual(expect.arrayContaining(["id", "amount", "category", "status", "payee"]));
     expect(expenses.rows.slice(1).map((r) => r[expenses.rows[0].indexOf("status")])).toEqual(["removed"]); // historical kept
     const rsvp = readXlsx(bytes, { sheet: "RSVP History" }).rows;
-    expect(rsvp[1]).toEqual([g, "Maria Santos", "2026-10-16T04:00:00.000Z", "guest", "", "awaiting", "0", "attending", "2", "Guest responded: Attending 2"]);
+    expect(rsvp[1]).toEqual([g, "Maria Santos", "2026-10-16T04:00:00.000Z", "guest", "", "awaiting", "0", "attending", "2", "Guest responded: Attending · 2 of 2"]);
     const all = Buffer.from(bytes).toString("latin1");
     expect(all.includes(token)).toBe(false);
     expect(all.includes(hashInviteToken(token))).toBe(false);

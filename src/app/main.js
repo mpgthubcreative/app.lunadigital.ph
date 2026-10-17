@@ -189,7 +189,8 @@ function boot() {
   }
   // Owner-pilot Bridal: a guest's wedding invitation needs no login (the
   // token in the link is the only credential, checked by the server).
-  if (window.location.pathname.startsWith("/invite/")) {
+  // Also /w/{weddingSlug}/invite/{token}: the slug is only the friendly part.
+  if (window.location.pathname.startsWith("/invite/") || /^\/w\/[^/]+\/invite\//.test(window.location.pathname)) {
     import("./invite.js").then((m) => m.renderInvitePage(root));
     return;
   }

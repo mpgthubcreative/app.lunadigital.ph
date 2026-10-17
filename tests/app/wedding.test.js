@@ -558,6 +558,28 @@ describe("Guests (Owner-pilot Bridal UX): RSVP | Seating", () => {
     expect(data.guestsApi).toHaveBeenLastCalledWith({ action: "setRsvp", guestId: GUEST.id, rsvp: { status: "attending", confirmed: 3 } });
   });
 
+  it("2 invited, 1 coming: the row reads 1/2; FAMILY counts 1 attending; Seating takes 1 seat; when they become 2 the full table is flagged", async () => {
+    const maria = { id: "guestMaria01", name: "Maria Santos", category: "family", side: "bride", partySize: 2, rsvp: "attending", confirmed: 1, tableId: "tA1b2c3d4", revision: 1, history: [] };
+    const tan = { id: "guestTan0001", name: "Tan", category: "family", side: "groom", partySize: 1, rsvp: "attending", confirmed: 1, tableId: "tA1b2c3d4", revision: 1, history: [] };
+    const show = async (rows) => {
+      document.body.innerHTML = '<main id="content"></main>';
+      container = document.getElementById("content");
+      mountGuests(container, wedding(), { data: fakeData({ listGuests: vi.fn(async () => ({ rows, hasMore: false })), getSeating: vi.fn(async () => SEATING), getWeddingSetup: vi.fn(async () => null) }), toast: () => {}, confirm: async () => true });
+      await flush();
+    };
+    await show([maria, tan]);
+    expect(container.querySelector('[data-guest="guestMaria01"] [data-role="seats"]').textContent).toBe("1/2");
+    expect(container.querySelector('[data-category="family"] [data-role="cat-counts"]').textContent).toBe("· 2/3");
+    container.querySelector('[data-act="seg"][data-value="seating"]').click();
+    await flush();
+    const t1 = () => container.querySelector('[data-table="tA1b2c3d4"] [data-role="table-seats"]');
+    expect([t1().textContent.trim(), t1().classList.contains("is-over")]).toEqual(["· 2/2", false]);
+    await show([{ ...maria, confirmed: 2 }, tan]);
+    container.querySelector('[data-act="seg"][data-value="seating"]').click();
+    await flush();
+    expect([t1().textContent.trim(), t1().classList.contains("is-over")]).toEqual(["· 3/2 · over by 1", true]);
+  });
+
   it("Seating: attending · seated · unassigned (people); Unassigned first, then tables with seats used / capacity", async () => {
     mountGuests(container, wedding(), { data: guestsData(), toast: () => {} });
     await flush();
@@ -709,7 +731,7 @@ describe("Bridal More: Wedding Setup and Export & Backup", () => {
     expect(api).toHaveBeenLastCalledWith("wedding-setup", { method: "POST", body: { action: "save", setup: expect.objectContaining({ coupleNames: "Camille & Carlo", weddingDate: "2027-12-12", ceremonyTime: "15:00", ceremonyVenue: "Example Church", rsvpDeadline: "2027-11-15", dressCode: "Formal", rsvpEnabled: true, closeAfterDeadline: true }) } });
   });
 
-  const FULL = { coupleNames: "Camille & Carlo", ceremonyVenue: "Example Church", ceremonyAddress: "Taguig City", receptionVenue: "Example Garden", receptionAddress: "Pasig City", dressCode: "Formal", welcomeMessage: "Join us!", weddingDate: "2027-12-12", rsvpDeadline: "2027-11-15", ceremonyTime: "15:00", receptionTime: "17:30", ceremonyMap: "https://maps.app.goo.gl/church", receptionMap: "https://maps.app.goo.gl/garden", rsvpEnabled: true, closeAfterDeadline: false };
+  const FULL = { coupleNames: "Camille & Carlo", ceremonyVenue: "Example Church", ceremonyAddress: "Taguig City", receptionVenue: "Example Garden", receptionAddress: "Pasig City", dressCode: "Formal", welcomeMessage: "Join us!", weddingDate: "2027-12-12", rsvpDeadline: "2027-11-15", ceremonyTime: "15:00", receptionTime: "17:30", ceremonyMap: "https://maps.app.goo.gl/church", receptionMap: "https://maps.app.goo.gl/garden", rsvpEnabled: true, closeAfterDeadline: false, weddingSlug: "camilleandcarloforever" };
   const fill = (f, v) => {
     for (const [k, x] of Object.entries(v)) {
       if (typeof x === "boolean") f.elements[k].checked = x;
@@ -801,6 +823,31 @@ describe("Bridal More: Wedding Setup and Export & Backup", () => {
     expect(container.querySelector('[data-role="hero-state"]').textContent).toBe("A photo is set.");
   });
 
+it("Wedding link / hashtag: suggested from the couple names, cleaned as typed (#CarloYanieForever → carloyanieforever), checked before saving", async () => {
+    const api = vi.fn(async (_p, { body }) => (body.action === "get" ? { setup: {}, hasHero: false } : { saved: true, setup: body.setup }));
+    mountSetup(container, wedding(), { api, toast: () => {} });
+    await flush();
+    const f = container.querySelector('[data-role="setup"]');
+    expect(f.querySelector('label[for="ws-weddingSlug"]').textContent).toBe("Wedding link / hashtag");
+    fill(f, { coupleNames: "Carlo & Yanie" });
+    expect(f.elements.weddingSlug.placeholder).toBe("carlo-and-yanie-wedding");
+    expect(container.querySelector('[data-role="slug-preview"]').textContent).toContain("/w/carlo-and-yanie-wedding/invite/…");
+    f.elements.weddingSlug.value = "#CarloYanieForever";
+    f.elements.weddingSlug.dispatchEvent(new Event("input", { bubbles: true }));
+    expect(f.elements.weddingSlug.value).toBe("carloyanieforever");
+    expect(container.querySelector('[data-role="slug-preview"]').textContent).toContain("/w/carloyanieforever/invite/…");
+    f.elements.weddingSlug.value = "ab";
+    submit(f);
+    await flush();
+    expect(api).toHaveBeenCalledTimes(1);
+    expect(container.querySelector('[role="alert"][data-role="save-state"]').textContent).toMatch(/wedding link needs 3 to 60/);
+    f.elements.weddingSlug.value = "";
+    submit(f);
+    await flush();
+    // Blank = Luna makes one from the names (server side).
+    expect(api).toHaveBeenLastCalledWith("wedding-setup", { method: "POST", body: { action: "save", setup: expect.objectContaining({ coupleNames: "Carlo & Yanie", weddingSlug: null }) } });
+  });
+
   const guestMenuItems = () => [...container.querySelectorAll('[data-guest="guestPrado001"] .menu-item')].map((b) => b.textContent);
   it("Guest ⋯ before Wedding Setup is complete: 'complete Wedding Setup first →' links to it (not hidden)", async () => {
     const data = fakeData({ listGuests: vi.fn(async () => ({ rows: [{ ...GUEST, category: "family" }], hasMore: false })), getSeating: vi.fn(async () => null), getWeddingSetup: vi.fn(async () => ({ setup: { coupleNames: "Camille & Carlo" } })) });
@@ -883,12 +930,58 @@ describe("the guest's invitation page (/invite/{token}, no login)", () => {
     expect(root.querySelector('[data-role="seats"]').textContent).toBe("2 seats reserved");
     root.querySelector('[data-act="accept"]').click();
     expect([...root.querySelectorAll("[data-seats]")].map((b) => b.textContent)).toEqual(["1", "2"]);
+    // Reserved seats aren't assumed: nothing picked, Confirm RSVP waits.
+    expect(root.querySelector(".inv-seat.is-on")).toBeNull();
+    expect(root.querySelector('[data-act="send"]').textContent).toBe("Confirm RSVP");
+    expect(root.querySelector('[data-act="send"]').disabled).toBe(true);
     root.querySelector('[data-seats="1"]').click();
+    expect(root.querySelector('[data-act="send"]').disabled).toBe(false);
     root.querySelector('[data-act="send"]').click();
     await flush();
     expect(JSON.parse(fetchImpl.mock.calls.at(-1)[1].body)).toEqual({ action: "respond", token: TOKEN, rsvp: { status: "attending", confirmed: 1 } });
     expect(root.querySelector('[data-role="done"]').textContent).toContain("Thank you, Maria.");
-    expect(root.querySelector('[data-role="done"]').textContent).toContain("We've saved your RSVP for 1 guest.");
+    expect(root.querySelector('[data-role="done"]').textContent).toContain("We've saved your RSVP for 1 guest (1 of 2 reserved seats).");
+  });
+
+it("friendly link /w/{slug}/invite/{token}: the token is still required; an older address moves to the current one", async () => {
+    expect(inviteTokenFrom(`/w/carlo-and-yanie-wedding/invite/${TOKEN}`)).toBe(TOKEN);
+    expect(inviteTokenFrom(`/w/carloyanieforever/invite/${TOKEN}`)).toBe(TOKEN);
+    expect(inviteTokenFrom("/w/carlo-and-yanie-wedding")).toBe("");
+    expect(inviteTokenFrom("/w/carlo-and-yanie-wedding/invite/short")).toBe("");
+    expect(inviteTokenFrom("/w/carlo-and-yanie-wedding/invite/")).toBe("");
+    window.history.replaceState(null, "", `/invite/${TOKEN}`);
+    document.body.innerHTML = '<div id="root"></div>';
+    const root = document.getElementById("root");
+    const fetchImpl = vi.fn(async () => ({ ok: true, status: 200, json: async () => ({ success: true, invitation: { ...INV, path: `/w/carlo-and-yanie-wedding/invite/${TOKEN}` } }) }));
+    await renderInvitePage(root, { token: TOKEN, fetchImpl });
+    // Only the token is sent: the slug never identifies anyone.
+    expect(JSON.parse(fetchImpl.mock.calls[0][1].body)).toEqual({ action: "view", token: TOKEN });
+    expect(window.location.pathname).toBe(`/w/carlo-and-yanie-wedding/invite/${TOKEN}`);
+    // A path for some other token is never adopted.
+    window.history.replaceState(null, "", `/w/old-slug/invite/${TOKEN}`);
+    document.body.innerHTML = '<div id="root"></div>';
+    await renderInvitePage(document.getElementById("root"), { token: TOKEN, fetchImpl: vi.fn(async () => ({ ok: true, status: 200, json: async () => ({ success: true, invitation: { ...INV, path: `/w/x-wedding/invite/${"B".repeat(32)}` } }) })) });
+    expect(window.location.pathname).toBe(`/w/old-slug/invite/${TOKEN}`);
+    window.history.replaceState(null, "", "/");
+  });
+
+  it("2 reserved → 2 attending: both seats confirmed (2 of 2); an earlier answer is shown as 1 of 2", async () => {
+    document.body.innerHTML = '<div id="root"></div>';
+    const root = document.getElementById("root");
+    const fetchImpl = vi.fn(async (_u, { body }) => {
+      const b = JSON.parse(body);
+      const out = b.action === "view" ? { success: true, invitation: { ...INV, guest: { ...INV.guest, rsvp: "attending", confirmed: 1 } } } : { success: true, rsvp: "attending", confirmed: b.rsvp.confirmed, name: "Maria Santos" };
+      return { ok: true, status: 200, json: async () => out };
+    });
+    await renderInvitePage(root, { token: TOKEN, fetchImpl });
+    expect(root.querySelector('[data-role="current"]').textContent).toContain("Attending · 1 of 2");
+    root.querySelector('[data-act="accept"]').click();
+    expect(root.querySelector(".inv-seat.is-on").textContent).toBe("1"); // their current answer, not every seat
+    root.querySelector('[data-seats="2"]').click();
+    root.querySelector('[data-act="send"]').click();
+    await flush();
+    expect(JSON.parse(fetchImpl.mock.calls.at(-1)[1].body).rsvp).toEqual({ status: "attending", confirmed: 2 });
+    expect(root.querySelector('[data-role="done"]').textContent).toContain("2 guests (2 of 2 reserved seats)");
   });
 
   it("Decline thanks them; closed RSVPs say so; a bad link explains", async () => {

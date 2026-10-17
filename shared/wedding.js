@@ -416,7 +416,33 @@ export function seatingPlan(guests, seatingDoc) {
 // read through the API). Controlled fields only: one elegant theme, no page
 // builder. The hero photo is kept apart (weddingSetup/hero).
 export const SETUP_TEXT = { coupleNames: 80, ceremonyVenue: 100, ceremonyAddress: 160, receptionVenue: 100, receptionAddress: 160, dressCode: 80, welcomeMessage: 600 };
-export const SETUP_FIELDS = [...Object.keys(SETUP_TEXT), "weddingDate", "ceremonyTime", "receptionTime", "ceremonyMap", "receptionMap", "rsvpDeadline", "rsvpEnabled", "closeAfterDeadline", "showTable"];
+export const SETUP_FIELDS = [...Object.keys(SETUP_TEXT), "weddingDate", "ceremonyTime", "receptionTime", "ceremonyMap", "receptionMap", "rsvpDeadline", "rsvpEnabled", "closeAfterDeadline", "showTable", "weddingSlug"];
+
+// The friendly part of a guest's link: /w/{weddingSlug}/invite/{token}.
+// Only cosmetic: the token alone identifies and authorizes the party, so a
+// slug never opens anything by itself. Lowercase letters, digits, hyphens.
+export const WEDDING_SLUG = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+export const WEDDING_SLUG_MIN = 3;
+export const WEDDING_SLUG_MAX = 60;
+export const isWeddingSlug = (s) => typeof s === "string" && s.length >= WEDDING_SLUG_MIN && s.length <= WEDDING_SLUG_MAX && WEDDING_SLUG.test(s);
+export function slugify(text, max = 50) {
+  return String(text ?? "")
+    .normalize("NFKD")
+    .replace(/[̀-ͯ]/g, "")
+    .toLowerCase()
+    .replace(/&|\+/g, " and ")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, max)
+    .replace(/-+$/g, "");
+}
+// "Carlo & Yanie" -> "carlo-and-yanie-wedding" ("" without names).
+export function suggestWeddingSlug(coupleNames) {
+  const base = slugify(coupleNames);
+  return base ? `${base}-wedding` : "";
+}
+// A guest's link path (the plain /invite/{token} when there's no slug).
+export const invitePath = (slug, token) => (isWeddingSlug(slug) ? `/w/${slug}/invite/${token}` : `/invite/${token}`);
 const TIME = /^([01]\d|2[0-3]):[0-5]\d$/;
 export function validateWeddingSetup(input) {
   only(input, SETUP_FIELDS, "setup");
@@ -437,6 +463,11 @@ export function validateWeddingSetup(input) {
     const v = input[k] === null || input[k] === "" ? null : String(input[k]).trim();
     if (v !== null && (v.length > 500 || !/^https:\/\/[^\s<>"]+$/.test(v))) throw new WeddingError("invalid-input", "A map link must start with https://");
     out[k] = v;
+  }
+  if (Object.hasOwn(input, "weddingSlug")) {
+    const v = input.weddingSlug === null || input.weddingSlug === "" ? null : typeof input.weddingSlug === "string" ? input.weddingSlug.trim().toLowerCase() : input.weddingSlug;
+    if (v !== null && !isWeddingSlug(v)) throw new WeddingError("invalid-input", `The wedding link can use lowercase letters, numbers and hyphens (${WEDDING_SLUG_MIN}–${WEDDING_SLUG_MAX} characters), e.g. carlo-and-yanie-wedding`);
+    out.weddingSlug = v;
   }
   for (const k of ["rsvpEnabled", "closeAfterDeadline", "showTable"]) {
     if (!Object.hasOwn(input, k)) continue;

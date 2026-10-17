@@ -4,6 +4,7 @@
 // browser, not even the wedding's Owner or an anonymous guest, can read or
 // write them. Guests answer only through /api/invite. The seating document
 // (guestTotals/seating) follows guests.view like the other guest totals.
+// The friendly wedding links (top-level weddingSlugs/{slug}) are server-only too.
 
 import { afterAll, beforeAll, describe, it } from "vitest";
 import { assertFails, assertSucceeds } from "@firebase/rules-unit-testing";
@@ -28,6 +29,7 @@ beforeAll(async () => {
     }
     await seedMember(db, W, "staff@wed-inv-a", { role: "staff" });
     await db.doc(`invitations/h1`).set({ businessId: W, guestId: "g1" });
+    await db.doc("weddingSlugs/carloyanieforever").set({ businessId: W });
   });
 });
 afterAll(async () => {
@@ -55,6 +57,15 @@ describe("invitation secrets are server-only", () => {
     await assertFails(dbAs(env, `owner@${W}`).doc(`businesses/${W}/weddingSetup/current`).set({ rsvpEnabled: false }));
     await assertFails(dbAnon(env).doc(`businesses/${W}/guests/g1`).update({ rsvp: "attending", confirmed: 2 }));
     await assertFails(dbAs(env, `owner@${W}`).doc(`businesses/${W}/guests/g1`).update({ rsvp: "attending", confirmed: 2 }));
+  });
+  it("the wedding link registry (weddingSlugs) is server-only: no read, list, claim or takeover from a browser", async () => {
+    for (const db of [dbAs(env, `owner@${W}`), dbAs(env, `owner@${W2}`), dbAnon(env)]) {
+      await assertFails(db.doc("weddingSlugs/carloyanieforever").get());
+      await assertFails(db.collection("weddingSlugs").get());
+      await assertFails(db.doc("weddingSlugs/carloyanieforever").set({ businessId: W2 }));
+      await assertFails(db.doc("weddingSlugs/new-slug").set({ businessId: W2 }));
+      await assertFails(db.doc("weddingSlugs/carloyanieforever").delete());
+    }
   });
   it("seating: guests.view of THIS wedding only; anonymous / other wedding / staff denied", async () => {
     await assertSucceeds(dbAs(env, `owner@${W}`).doc(`businesses/${W}/guestTotals/seating`).get());

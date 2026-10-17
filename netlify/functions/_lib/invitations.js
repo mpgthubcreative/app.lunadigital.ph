@@ -10,12 +10,16 @@
 //   guestInvites/{guestId}        { token, hash, createdAt }  server-only
 //   invitations/{sha256(token)}   { businessId, guestId, createdAt }  top
 //                                 level, server-only (rules deny all)
+//   weddingSlugs/{slug}           { businessId }  the friendly part of the
+//                                 links (/w/{slug}/invite/{token}), unique,
+//                                 top level, server-only. Cosmetic: only
+//                                 the token opens an invitation.
 // The token is 24 random bytes (base64url), never derived from ids; the
 // lookup is by its SHA-256. Regenerating deletes the old lookup, so the old
 // link stops working at once. Every bad / revoked link gets the same answer.
 
 import { createHash, randomBytes } from "node:crypto";
-import { WeddingError, WEDDING_SCHEMA_VERSION, TOTALS_DOC_ID, RSVP_STATUSES, validateRsvp, validateWeddingSetup, rsvpOpen, setupMissing } from "../../../shared/wedding.js";
+import { WeddingError, WEDDING_SCHEMA_VERSION, TOTALS_DOC_ID, RSVP_STATUSES, validateRsvp, validateWeddingSetup, rsvpOpen, setupMissing, isWeddingSlug, suggestWeddingSlug, invitePath, WEDDING_SLUG_MIN, WEDDING_SLUG_MAX } from "../../../shared/wedding.js";
 import { businessDate, isDayId } from "../../../shared/metrics.js";
 import { prepareNotifications } from "./notifications.js";
 import { tenantDb } from "./tenant-db.js";
@@ -31,6 +35,14 @@ const int = (v) => (Number.isSafeInteger(v) ? v : 0);
 const who = (actor) => (actor ? { uid: actor.uid, name: actor.name } : null);
 const WORDS = { awaiting: "Waiting", attending: "Attending", declined: "Declined" };
 export const rsvpWords = (status, seats) => `${WORDS[status] ?? status}${status === "attending" ? ` ${seats}` : ""}`;
+// A guest's own answer in the history: "1 of 2" (attending of invited), "Declined".
+export const partyWords = (status, confirmed, invited) => (status === "attending" ? `${confirmed} of ${invited}` : WORDS[status] ?? status);
+// "Guest responded: Attending · 1 of 2" the first time; then
+// "Guest changed RSVP: 1 of 2 → 2 of 2".
+export function guestRsvpLabel(from, to, invited) {
+  if (from.rsvp === "awaiting") return `Guest responded: ${to.status === "attending" ? `Attending · ${partyWords(to.status, to.confirmed, invited)}` : WORDS[to.status]}`;
+  return `Guest changed RSVP: ${partyWords(from.rsvp, from.confirmed, invited)} → ${partyWords(to.status, to.confirmed, invited)}`;
+}
 const append = (list, e) => {
   const l = Array.isArray(list) ? list : [];
   if (l.length >= MAX_HISTORY) throw new WeddingError("history-full", "Too many changes on this record");
@@ -46,12 +58,71 @@ export async function readSetup({ tenant }) {
   const [s, h] = await Promise.all([setupRef(tenant).get(), heroRef(tenant).get()]);
   return { setup: s.exists ? s.data() : {}, hasHero: h.exists && typeof h.data().dataUrl === "string" };
 }
-export async function saveSetup({ db, tenant, FieldValue, input, actor }) {
+// The wedding link (slug) is unique in Luna: weddingSlugs/{slug} =
+// { businessId } (top level, server-only; rules deny all). Blank = made
+// from the couple's names ("carlo-and-yanie-wedding", then -2, -3… when
+// taken). A chosen slug that another wedding holds is refused. Changing it
+// frees the old one; old links keep working (the token decides) and the
+// page moves the address bar to the current slug.
+const slugRef = (db, slug) => db.collection("weddingSlugs").doc(slug);
+async function freeSlugFor(tx, db, businessId, base) {
+  for (let n = 1; n <= 20; n++) {
+    const candidate = n === 1 ? base : `${base.slice(0, WEDDING_SLUG_MAX - String(n).length - 1)}-${n}`;
+    const snap = await tx.get(slugRef(db, candidate));
+    if (!snap.exists || snap.data().businessId === businessId) return candidate;
+  }
+  return `${base.slice(0, WEDDING_SLUG_MAX - 7)}-${randomBytes(3).toString("hex")}`;
+}
+// In the caller's transaction (reads first): the slug to store, and the commit.
+async function prepareSlug(tx, { db, tenant, current, wanted, coupleNames, now }) {
+  const businessId = tenant.businessId;
+  let slug = wanted;
+  if (slug) {
+    const snap = await tx.get(slugRef(db, slug));
+    if (snap.exists && snap.data().businessId !== businessId) throw new WeddingError("slug-taken", `The wedding link "${slug}" is already used by another wedding. Try another, e.g. ${slug}-${new Date(now).getFullYear()}.`);
+  } else {
+    const base = suggestWeddingSlug(coupleNames);
+    slug = base.length >= WEDDING_SLUG_MIN ? await freeSlugFor(tx, db, businessId, base) : null;
+  }
+  const old = isWeddingSlug(current) && current !== slug ? await tx.get(slugRef(db, current)) : null;
+  return {
+    slug,
+    commit() {
+      if (slug) tx.set(slugRef(db, slug), { businessId, claimedAt: now });
+      if (old?.exists && old.data().businessId === businessId) tx.delete(old.ref);
+    },
+  };
+}
+export async function saveSetup({ db, tenant, FieldValue, input, actor, now = new Date() }) {
   const data = validateWeddingSetup(input || {});
-  await setupRef(tenant).set({ schemaVersion: WEDDING_SCHEMA_VERSION, ...data, updatedBy: who(actor), updatedAt: FieldValue.serverTimestamp() }, { merge: true });
+  await db.runTransaction(async (tx) => {
+    const cur = await tx.get(setupRef(tenant));
+    const before = cur.exists ? cur.data() : {};
+    const coupleNames = Object.hasOwn(data, "coupleNames") ? data.coupleNames : before.coupleNames;
+    // Not sent = keep the current one (or make one); blank = make one from the names.
+    const wanted = Object.hasOwn(data, "weddingSlug") ? data.weddingSlug : before.weddingSlug ?? null;
+    const plan = await prepareSlug(tx, { db, tenant, current: before.weddingSlug ?? null, wanted, coupleNames, now });
+    tx.set(setupRef(tenant), { schemaVersion: WEDDING_SCHEMA_VERSION, ...data, weddingSlug: plan.slug, updatedBy: who(actor), updatedAt: FieldValue.serverTimestamp() }, { merge: true });
+    plan.commit();
+  }, TX_OPTIONS);
   // Read back: the Owner sees what was really stored.
   const back = await setupRef(tenant).get();
   return { saved: true, setup: back.exists ? back.data() : {} };
+}
+// A wedding set up before links had a slug gets one on its next link.
+async function ensureSlug({ db, tenant, now = new Date() }) {
+  return db.runTransaction(async (tx) => {
+    const cur = await tx.get(setupRef(tenant));
+    const s = cur.exists ? cur.data() : {};
+    if (isWeddingSlug(s.weddingSlug)) {
+      const own = await tx.get(slugRef(db, s.weddingSlug));
+      if (own.exists && own.data().businessId === tenant.businessId) return s.weddingSlug;
+    }
+    const plan = await prepareSlug(tx, { db, tenant, current: null, wanted: null, coupleNames: s.coupleNames, now });
+    if (plan.slug) tx.set(setupRef(tenant), { weddingSlug: plan.slug }, { merge: true });
+    plan.commit();
+    return plan.slug;
+  }, TX_OPTIONS);
 }
 export async function saveHero({ tenant, FieldValue, dataUrl, actor }) {
   if (dataUrl === null) {
@@ -70,6 +141,7 @@ async function requireSetup(tenant) {
   const missing = setupMissing(s.exists ? s.data() : {});
   if (missing.length) throw new WeddingError("setup-incomplete", `Complete Wedding Setup first (More → Wedding Setup): add ${missing.join(" and ")}.`);
 }
+const slugOf = async ({ db, tenant, now }) => ensureSlug({ db, tenant, now });
 // Creates the guest's link, or a new one replacing (revoking) the old.
 export async function issueInvite({ db, tenant, guestId, actor, now = new Date() }) {
   const gRef = tenant.doc("guests", guestId);
@@ -87,12 +159,12 @@ export async function issueInvite({ db, tenant, guestId, actor, now = new Date()
     const gd = g.data();
     tx.update(gRef, { invitation: { status: "active", issuedAt: now, regenerated: prev.exists }, history: append(gd.history, { at: now, actor: who(actor), label: prev.exists ? "Invitation link replaced (the old link no longer works)" : "Invitation link created" }) });
   }, TX_OPTIONS);
-  return { token, path: `/invite/${token}`, created: true };
+  return { token, path: invitePath(await slugOf({ db, tenant, now }), token), created: true };
 }
-// The current link (made on first use).
+// The current link (made on first use), under the wedding's current slug.
 export async function inviteLink({ db, tenant, guestId, actor, now }) {
   const i = await tenant.doc("guestInvites", guestId).get();
-  if (i.exists && i.data().token) return { token: i.data().token, path: `/invite/${i.data().token}`, created: false };
+  if (i.exists && i.data().token) return { token: i.data().token, path: invitePath(await slugOf({ db, tenant, now }), i.data().token), created: false };
   return issueInvite({ db, tenant, guestId, actor, now });
 }
 
@@ -120,6 +192,8 @@ export async function viewInvite({ db, token, now = new Date() }) {
     hero: h.exists ? h.data().dataUrl : null,
     guest: { name: r.guest.name, seats: int(r.guest.partySize), rsvp: r.guest.rsvp, confirmed: int(r.guest.confirmed) },
     rsvpOpen: rsvpOpen(setup, today),
+    // The canonical address (current wedding link): an older link moves to it.
+    path: invitePath(setup.weddingSlug, token),
   };
 }
 
@@ -142,7 +216,7 @@ export async function respondInvite({ db, FieldValue, token, rsvp, now = new Dat
     if (v.status === g.rsvp && v.confirmed === int(g.confirmed)) return { rsvp: v.status, confirmed: v.confirmed, unchanged: true, name: g.name };
     const next = { ...g, rsvp: v.status, confirmed: v.confirmed };
     const unseat = v.status !== "attending" && Boolean(g.tableId);
-    const label = `Guest responded: ${rsvpWords(v.status, v.confirmed)}${g.rsvp !== "awaiting" ? ` (was ${rsvpWords(g.rsvp, int(g.confirmed))})` : ""}${unseat ? " · removed from their table" : ""}`;
+    const label = `${guestRsvpLabel({ rsvp: g.rsvp, confirmed: int(g.confirmed) }, v, int(g.partySize))}${unseat ? " · removed from their table" : ""}`;
     const notes = await prepareNotifications(tx, {
       tenant,
       events: [{ type: "guest.rsvp", key: `${r.guestId}-${now.getTime()}`, title: `${g.name} RSVP'd ${rsvpWords(v.status, v.confirmed).replace(/ (\d+)$/, " · $1")}`, message: `${g.name} answered their invitation: ${rsvpWords(v.status, v.confirmed).replace(/ (\d+)$/, " · $1")}.`, recordType: "guest", recordId: r.guestId }],
