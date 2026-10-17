@@ -30,6 +30,7 @@ import { formatDayId } from "../../lib/format.js";
 import { RSVP_STATUSES, GUEST_SIDES, GUEST_CATEGORIES, GUEST_CATEGORY_IDS, rsvpSummary, seatingPlan, MAX_TABLE_CAPACITY, setupMissing } from "@shared/index.js";
 import { activityLines, detailsDialog } from "../baby/common.js";
 import * as defaultData from "./data.js";
+import { openInvitePreview, copyText, canShare } from "./invite-preview.js";
 
 const SIDE_OPTIONS = Object.entries(GUEST_SIDES).map(([value, s]) => ({ value, label: s.label }));
 // Simple words for the stored RSVP statuses.
@@ -84,7 +85,7 @@ export function groupGuests(guests) {
   return [...by.entries()].filter(([, list]) => list.length).map(([id, list]) => ({ id: id || "none", label: id ? GUEST_CATEGORIES[id].label : "Not set", guests: list }));
 }
 
-export function mount(container, session, { data = defaultData, toast = defaultToast, confirm = confirmDialog } = {}) {
+export function mount(container, session, { data = defaultData, toast = defaultToast, confirm = confirmDialog, preview = openInvitePreview } = {}) {
   const canManage = session.member.permissions["guests.manage"] === true;
   const businessId = session.business.id;
   const timezone = session.business.timezone;
@@ -126,7 +127,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
   const inviteItems = (g) => {
     if (state.setupMissing?.length) return [{ act: "invite-setup", id: g.id, href: "/wedding-setup", label: "Invitation: complete Wedding Setup first →" }];
     if (g.invitation?.status !== "active") return [{ act: "invite-create", id: g.id, label: "Create invitation link" }];
-    return [{ act: "invite-view", id: g.id, label: "View invitation" }, { act: "invite-copy", id: g.id, label: "Copy invitation link" }, { act: "invite-new", id: g.id, label: "Regenerate invitation link" }];
+    return [{ act: "invite-view", id: g.id, label: "View invitation" }, { act: "invite-copy", id: g.id, label: "Copy invitation link" }, ...(canShare() ? [{ act: "invite-share", id: g.id, label: "Share invitation" }] : []), { act: "invite-new", id: g.id, label: "Regenerate link" }];
   };
   const guestMenu = (g) =>
     menu(`More for ${g.name}`, [
@@ -294,14 +295,31 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     });
   }
 
+  // The full friendly link: https://{host}/w/{wedding}/invite/{private code}.
   async function copyLink(url, name, fresh = false, created = false) {
+    if (await copyText(url)) toast(`Copied ✓ ${created ? "New invitation link" : fresh ? "New invitation link" : "Invitation link"} for ${name}${fresh ? " (the old one no longer works)" : ""}`, "success");
+    // No clipboard access: show the link to copy by hand.
+    else await formDialog({ title: `Invitation link for ${name}`, fields: [{ name: "url", label: "Copy this link", value: url }], submitLabel: "Done", onSubmit: () => true });
+  }
+  async function shareLink(url, name) {
     try {
-      await navigator.clipboard.writeText(url);
-      toast(created ? `Invitation link for ${name} created and copied.` : `${fresh ? "New link" : "Link"} for ${name} copied.`, "success");
-    } catch {
-      // No clipboard access: show the link to copy by hand.
-      await formDialog({ title: `Invitation link for ${name}`, fields: [{ name: "url", label: "Copy this link", value: url }], submitLabel: "Done", onSubmit: () => true });
+      await navigator.share({ title: "Wedding invitation", text: `${name}, you're invited! Open your personal invitation to RSVP:`, url });
+    } catch (err) {
+      if (err?.name === "AbortError") return; // closed the share sheet
+      await copyLink(url, name); // sharing not allowed here: copy instead
     }
+  }
+  const linkOf = async (g) => `${location.origin}${(await data.guestsApi({ action: "inviteLink", guestId: g.id })).path}`;
+  // View: the invitation inside Luna, with an Owner-only bar.
+  async function viewInvite(g) {
+    const url = await linkOf(g);
+    const token = url.split("/").pop();
+    await preview({
+      token,
+      note: `${g.name}'s invitation (preview)`,
+      actions: [{ id: "copy", label: "Copy guest link" }, ...(canShare() ? [{ id: "share", label: "Share" }] : []), { id: "open", label: "Open as guest ↗", href: url }],
+      onAction: (id) => (id === "copy" ? copyLink(url, g.name) : id === "share" ? shareLink(url, g.name) : undefined),
+    });
   }
   const onClick = async (event) => {
     const el = event.target.closest("[data-act]");
@@ -333,14 +351,10 @@ export function mount(container, session, { data = defaultData, toast = defaultT
         const r = await data.guestsApi({ action: "inviteLink", guestId: g.id });
         await copyLink(`${location.origin}${r.path}`, g.name, false, true);
         load();
-      } else if (a === "invite-view" || a === "invite-copy") {
-        // Open the window first (a popup must start from the tap), then fill it in.
-        const win = a === "invite-view" ? window.open("about:blank", "_blank") : null;
-        const r = await data.guestsApi({ action: "inviteLink", guestId: g.id });
-        const url = `${location.origin}${r.path}`;
-        if (win) win.location.href = url;
-        else await copyLink(url, g.name);
-      } else if (a === "invite-new") {
+      } else if (a === "invite-view") await viewInvite(g);
+      else if (a === "invite-copy") await copyLink(await linkOf(g), g.name);
+      else if (a === "invite-share") await shareLink(await linkOf(g), g.name);
+      else if (a === "invite-new") {
         if (!(await confirm({ title: `New invitation link for ${g.name}?`, body: "The link you sent before stops working. Send them the new one.", confirmLabel: "Make a new link" }))) return;
         const r = await data.guestsApi({ action: "regenerateInvite", guestId: g.id });
         await copyLink(`${location.origin}${r.path}`, g.name, true);

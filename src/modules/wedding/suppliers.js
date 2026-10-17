@@ -184,26 +184,25 @@ export function mount(container, session, { data = defaultData, toast = defaultT
   };
   const findRow = (kind, id) => allRows().find((r) => r.kind === kind && r.id === id) || (kind === "supplier" ? moneyRows({ suppliers: state.inactive, categories: state.categories }).find((r) => r.id === id) : null);
 
+  // Owner-pilot Bridal: ⋯ is just Edit / Details / Remove. Edit is the one
+  // place to change a Money line (category, supplier, total, payments,
+  // schedule); Details is read-only; Remove keeps any payment history.
   function menuItems(r) {
     const items = [];
     if (r.kind === "supplier") {
       const s = r.record;
       const active = s.status === "active";
-      if (active && canPay) items.push({ x: "record", label: "Record payment" });
-      if (seesExpenses || seesPayments) items.push({ x: "payments", label: "View payments" });
-      if (canManage) items.push({ x: "edit", label: "Edit" }, { x: "category", label: "Change category" });
-      if (active && canSchedule) items.push({ x: "schedule", label: "Payment schedule" });
+      if (canManage && active) items.push({ x: "edit", label: "Edit" });
       items.push({ x: "view", label: "Details" });
-      if (canManage) items.push(!(s.paid > 0) && !(s.upcomingCount > 0) ? { x: "delete", label: "Delete", danger: true } : { x: "archive", label: active ? "Archive" : "Bring back", danger: active });
+      if (canManage) items.push(active ? { x: "remove", label: "Remove", danger: true } : { x: "restore", label: "Bring back" });
     } else if (r.kind === "expense") {
+      if (can.update) items.push({ x: "edit", label: "Edit" });
       items.push({ x: "view", label: "Details" });
-      items.push(...exp.proofItems(r.record));
-      if (can.update) items.push({ x: "category", label: "Change category" });
       if (can.remove) items.push({ x: "remove", label: "Remove", danger: true });
     } else {
-      if (canManage) items.push({ x: "supplier", label: "Add supplier" });
-      if (canPay) items.push({ x: "expense", label: "Add expense" });
-      if (canCategory) items.push({ x: "amount", label: r.total === null ? "Set amount" : "Change amount" }, { x: "unplan", label: "Remove from budget", danger: true });
+      if (canCategory) items.push({ x: "edit", label: "Edit" });
+      items.push({ x: "view", label: "Details" });
+      if (canCategory) items.push({ x: "remove", label: "Remove", danger: true });
     }
     return items;
   }
@@ -276,7 +275,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
                   </div>
                   ${list.length ? html`<ul class="wl-list" data-role="money">${list.map(row)}</ul>` : html`<p class="stat-hint wl-none">Nothing ${state.filter === "all" ? "" : STATUS[state.filter].toLowerCase() + " "}${state.search ? `matching "${state.search}"` : "here"}.</p>`}
                   ${state.otherMore ? html`<p class="wl-links"><a href="/expenses" data-link>All expenses ›</a></p>` : ""}`}
-            ${state.inactive.length ? html`<details class="wl-fold"><summary>Archived suppliers (${state.inactive.length})</summary><ul class="wl-list" data-role="suppliers-inactive">${moneyRows({ suppliers: state.inactive, categories: state.categories }).map(row)}</ul></details>` : ""}`}`
+            ${state.inactive.length ? html`<details class="wl-fold"><summary>Removed from the list (${state.inactive.length})</summary><ul class="wl-list" data-role="suppliers-inactive">${moneyRows({ suppliers: state.inactive, categories: state.categories }).map(row)}</ul></details>` : ""}`}`
     );
   }
 
@@ -295,28 +294,26 @@ export function mount(container, session, { data = defaultData, toast = defaultT
       submitLabel: "Add supplier",
       onSubmit: async (v) => data.suppliersApi({ action: "create", supplier: toSupplierInput(await withCategory(v)) }),
     });
-  const editDialog = (s) =>
-    formDialog({
-      title: `Edit ${s.name}`,
-      fields: supplierFields(s, state.categories),
-      moreLabel: "More options",
-      onSubmit: async (v) => {
-        const next = toSupplierInput(await withCategory({ ...v, service: v.service || s.service }));
-        const changes = Object.fromEntries(Object.entries(next).filter(([k, val]) => (s[k] ?? null) !== (val ?? null)));
-        return Object.keys(changes).length ? data.suppliersApi({ action: "update", supplierId: s.id, expectedRevision: s.revision, changes }) : { unchanged: true };
-      },
-    });
-
-  function openView(s) {
+  // Details (read-only): what happened with this wedding expense.
+  async function openView(s) {
+    let paid = [];
+    try {
+      paid = seesExpenses ? (await data.listWeddingExpenses(businessId, { status: "active", supplierId: s.id }, { pageSize: 100 })).rows : [];
+    } catch {
+      paid = [];
+    }
+    const plan = upcomingOf(s);
     detailsDialog({
-      title: s.name,
-      badgeHtml: badge(SUPPLIER_STATUSES[s.status]?.label ?? s.status, s.status === "active" ? "success" : "neutral"),
+      title: `${categoryNameOf(state.categories, s.categoryId) || "Money"} · ${s.name}`,
+      badgeHtml: badge(s.status === "active" ? STATUS[paidState(s)] : "Removed from the list", s.status === "active" ? STATUS_TONE[paidState(s)] || "neutral" : "neutral"),
       rows: [
         ["Category", categoryNameOf(state.categories, s.categoryId) || null],
+        ["Supplier", s.name],
         ["Service", serviceLabel(s.service)],
-        ["Total / contract", s.agreedAmount === null || s.agreedAmount === undefined ? "Not set" : money(s.agreedAmount)],
+        ["Total", s.agreedAmount === null || s.agreedAmount === undefined ? "Not set" : money(s.agreedAmount)],
         ["Paid", money(s.paid ?? 0)],
-        ["Still due", money(supplierBalance(s))],
+        ["Remaining", money(supplierBalance(s))],
+        ["Status", STATUS[paidState(s)]],
         ["Scheduled", s.upcomingCount ? `${money(s.upcoming ?? 0)} (${s.upcomingCount} payment${s.upcomingCount === 1 ? "" : "s"})` : null],
         ["Next due", s.nextDue ? formatDayId(s.nextDue) : null],
         ["Contact person", s.contactPerson],
@@ -325,85 +322,162 @@ export function mount(container, session, { data = defaultData, toast = defaultT
         ["Address / location", s.location],
         ["Notes", s.notes],
       ],
+      sections: [
+        { title: "Payment history", lines: paid.map((e) => `${whole(e.amount)} paid ${formatDayId(e.date)}${e.method ? ` · ${EXPENSE_METHODS[e.method]?.label ?? e.method}` : ""}${e.reference ? ` · Ref ${e.reference}` : ""} · ${e.proof ? `proof: ${e.proof.contentType === "application/pdf" ? "PDF" : "photo"}` : "no proof"}`), empty: "Nothing paid yet." },
+        { title: "Payment schedule", lines: plan.map((p) => `${formatDayId(p.dueDate)} · ${whole(p.amount)}${p.description ? ` · ${p.description}` : ""}${p.dueDate < today() ? " · overdue" : ""}`), empty: "Nothing scheduled." },
+      ],
       activity: activityLines(s.history, timezone),
-      // Delete only shows for a supplier nothing was recorded against (the server re-checks).
-      actions: canManage ? [...(!(s.paid > 0) && !(s.upcomingCount > 0) ? [{ act: "delete", label: "Delete", danger: true }] : []), { act: "status", label: s.status === "active" ? "Deactivate" : "Reactivate" }, { act: "edit", label: "Edit" }] : [],
-      onAction: async (act) => {
-        try {
-          if (act === "edit") {
-            const r = await editDialog(s);
-            if (r && !r.unchanged) toast("Saved.", "success");
-            if (r) load();
-            return Boolean(r);
-          }
-          if (act === "delete") {
-            if (!(await confirm({ title: `Delete ${s.name}?`, body: "Only for a supplier added by mistake. Suppliers with payments or expenses can't be deleted; deactivate them instead so their history and balance stay.", confirmLabel: "Delete", danger: true }))) return false;
-            await data.suppliersApi({ action: "delete", supplierId: s.id });
-            toast(`${s.name} deleted.`, "success");
-            load();
-            return true;
-          }
-          if (act === "status") {
-            await data.suppliersApi({ action: "setStatus", supplierId: s.id, status: s.status === "active" ? "inactive" : "active" });
-            toast(s.status === "active" ? "Supplier deactivated. Its history and balance are kept." : "Supplier reactivated.", "success");
-            load();
-            return true;
-          }
-        } catch (err) {
-          toast(err.message || "Something went wrong", "danger");
-        }
-        return false;
-      },
+      actions: [],
+      onAction: async () => false,
     });
   }
 
-  // ⋯ View payments: what was paid (the supplier's expenses) and what's
-  // scheduled (open one to mark it paid, edit or cancel it).
-  async function viewPayments(s) {
+  // Edit (one sheet): Category, Supplier, Total, then Payments (Record
+  // payment, proofs) and Payment schedule; contact details folded.
+  async function editSheet(s) {
+    let paid = [];
+    try {
+      paid = seesExpenses ? (await data.listWeddingExpenses(businessId, { status: "active", supplierId: s.id }, { pageSize: 100 })).rows : [];
+    } catch {
+      paid = [];
+    }
+    const plan = upcomingOf(s);
+    const balance = supplierBalance(s);
     const backdrop = document.createElement("div");
-    backdrop.className = "modal-backdrop";
+    backdrop.className = "modal-backdrop is-panel";
     document.body.appendChild(backdrop);
     const close = () => backdrop.remove();
-    const paint = (body) =>
-      render(backdrop, html`<div class="modal" role="dialog" aria-modal="true" aria-label="Payments to ${s.name}" data-role="supplier-payments"><div class="modal-header"><h2 class="card-title">${s.name} · Payments</h2></div><div class="modal-body">${body}</div><div class="modal-footer">${seesPayments ? html`<a class="btn btn-ghost" href="/supplier-payments" data-link data-x="close">Payment history</a>` : ""}<button type="button" class="btn" data-x="close">Close</button></div></div>`);
-    paint(html`<p class="stat-hint">Loading…</p>`);
-    let paid = [];
+    const cats = state.categories.filter((c) => c.status === "active").map((c) => c.name);
+    const input = (name, label, value, extra = "") => html`<div class="field"><label for="me-${name}">${label}</label><input class="input" id="me-${name}" name="${name}" value="${value ?? ""}" ${extra}></div>`;
+    const proofBtn = (e) => (e.proof ? html`<button type="button" class="btn btn-compact btn-ghost" data-x="proof-view" data-id="${e.id}">View proof</button>` : can.update ? html`<button type="button" class="btn btn-compact btn-ghost" data-x="proof-add" data-id="${e.id}">Add proof</button>` : "");
+    render(
+      backdrop,
+      html`<div class="modal modal-wide" role="dialog" aria-modal="true" aria-label="Edit money item" data-role="money-edit">
+        <div class="modal-header"><h2 class="card-title">Edit money item</h2></div>
+        <div class="modal-body">
+          <form data-role="money-edit-form" novalidate>
+            <datalist id="me-cats">${cats.map((n) => html`<option value="${n}"></option>`)}</datalist>
+            ${input("category", "Category", categoryNameOf(state.categories, s.categoryId), 'list="me-cats" autocomplete="off"')}
+            ${input("name", "Supplier", s.name, "required")}
+            ${input("agreedAmount", "Total (₱)", pesosText(s.agreedAmount), 'inputmode="decimal" placeholder="Optional"')}
+            <details class="wl-fold"><summary>More details</summary>
+              ${input("contactPerson", "Contact person", s.contactPerson)}${input("phone", "Phone", s.phone, 'inputmode="tel"')}${input("email", "Email", s.email)}${input("location", "Address / location", s.location)}
+              <div class="field"><label for="me-notes">Notes</label><textarea class="input" id="me-notes" name="notes" rows="2">${s.notes ?? ""}</textarea></div>
+            </details>
+            <p class="form-error" role="alert" data-role="me-error" hidden></p>
+          </form>
+          <h3 class="slip-head">Payments</h3>
+          <p class="wl-count" data-role="me-paid">${whole(s.paid ?? 0)} paid${balance === null ? "" : ` · ${whole(balance)} remaining`} · <span class="wl-chip" data-tone="${STATUS_TONE[paidState(s)] || ""}">${STATUS[paidState(s)]}</span></p>
+          ${paid.length ? html`<ul class="slip" data-role="paid-list">${paid.map((e) => html`<li data-expense="${e.id}"><span class="slip-what">${whole(e.amount)} paid ${short(e.date)}${e.reference ? html`<small>${e.reference}</small>` : ""}</span><span class="slip-amt"></span><span class="slip-act">${proofBtn(e)}</span></li>`)}</ul>` : ""}
+          ${canPay ? html`<button type="button" class="btn btn-compact" data-x="record">Record payment</button>` : ""}
+          <h3 class="slip-head">Payment schedule</h3>
+          ${plan.length ? html`<ul class="wl-list" data-role="scheduled-list">${plan.map((p) => html`<li class="wl-row"><button type="button" class="wl-main" data-x="scheduled" data-id="${p.id}"><span class="wl-name">${short(p.dueDate)} · ${whole(p.amount)}</span><span class="wl-sub">${p.dueDate < today() ? "Overdue · " : ""}${p.description || "Tap to pay, edit or cancel"}</span></button></li>`)}</ul>` : html`<p class="stat-hint">Nothing scheduled.</p>`}
+          ${canSchedule ? html`<button type="button" class="btn btn-compact" data-x="schedule">${plan.length ? "Add to schedule" : "Add a payment schedule"}</button>` : ""}
+        </div>
+        <div class="modal-footer"><button type="button" class="btn" data-x="close">Close</button><button type="button" class="btn btn-primary" data-x="save">Save changes</button></div>
+      </div>`
+    );
+    // After a payment / schedule change, reopen the sheet with fresh figures.
+    const again = async () => {
+      await load();
+      const fresh = state.rows.find((x) => x.id === s.id);
+      if (fresh) await editSheet(fresh);
+    };
     backdrop.addEventListener("click", async (ev) => {
-      const x = ev.target.closest("[data-x]");
-      if (ev.target === backdrop || x?.dataset.x === "close") return close();
-      // A paid line's proof: View, or Add when there's none yet.
-      if (x?.dataset.x?.startsWith("proof-")) {
-        const e = paid.find((y) => y.id === x.dataset.id);
-        if (!e) return undefined;
-        if (x.dataset.x !== "proof-view") close();
-        try {
-          await exp.proofAction(x.dataset.x, e);
-        } catch (err) {
-          toast(err.message || "Something went wrong", "danger");
+      const x = ev.target.closest("[data-x]")?.dataset.x;
+      if (ev.target === backdrop || x === "close") return close();
+      try {
+        if (x === "save") {
+          const f = backdrop.querySelector('[data-role="money-edit-form"]').elements;
+          const v = Object.fromEntries(["category", "name", "agreedAmount", "contactPerson", "phone", "email", "location", "notes"].map((k) => [k, f[k].value]));
+          if (!v.name.trim()) throw new Error("Enter the supplier's name");
+          const next = toSupplierInput(await withCategory({ ...v, service: s.service }));
+          const changes = Object.fromEntries(Object.entries(next).filter(([k, val]) => (s[k] ?? null) !== (val ?? null)));
+          if (Object.keys(changes).length) {
+            await data.suppliersApi({ action: "update", supplierId: s.id, expectedRevision: s.revision, changes });
+            toast("Saved.", "success");
+          }
+          close();
+          load();
+        } else if (x === "record") {
+          close();
+          if (recorded(await recordPayment(s, false))) await again();
+        } else if (x === "schedule") {
+          close();
+          const r = await pay.newDialog(s);
+          await pay.after("Payment scheduled.")(r);
+          if (r) await again();
+        } else if (x === "scheduled") {
+          const p = state.upcoming.find((y) => y.id === ev.target.closest("[data-x]").dataset.id);
+          close();
+          if (p) pay.openView(p);
+        } else if (x === "proof-view" || x === "proof-add") {
+          const e = paid.find((y) => y.id === ev.target.closest("[data-x]").dataset.id);
+          if (!e) return undefined;
+          if (x === "proof-add") close();
+          await exp.proofAction(x, e);
         }
-        return undefined;
-      }
-      if (x?.dataset.x === "scheduled") {
-        const p = state.upcoming.find((y) => y.id === x.dataset.id);
-        close();
-        if (p) pay.openView(p);
+      } catch (err) {
+        const box = backdrop.querySelector('[data-role="me-error"]');
+        if (box) {
+          box.hidden = false;
+          box.textContent = err.message || "Couldn't save";
+        }
+        toast(err.message || "Something went wrong", "danger");
       }
       return undefined;
     });
-    try {
-      paid = seesExpenses ? (await data.listWeddingExpenses(businessId, { status: "active", supplierId: s.id }, { pageSize: 100 })).rows : [];
-      const list = upcomingOf(s);
-      const proofButton = (e) => (e.proof ? html`<button type="button" class="btn btn-compact btn-ghost" data-x="proof-view" data-id="${e.id}" aria-label="View proof of the ${whole(e.amount)} payment">View proof</button>` : can.update ? html`<button type="button" class="btn btn-compact btn-ghost" data-x="proof-add" data-id="${e.id}" aria-label="Add proof to the ${whole(e.amount)} payment">Add proof</button>` : "");
-      paint(html`
-        <ul class="slip" data-role="paid-list">${paid.length ? paid.map((e) => html`<li data-expense="${e.id}"><span class="slip-what">${whole(e.amount)} paid ${short(e.date)}${e.reference ? html`<small>${e.reference}</small>` : ""}</span><span class="slip-amt"></span><span class="slip-act">${proofButton(e)}</span></li>`) : html`<li><span class="slip-what stat-hint">Nothing paid yet.</span></li>`}</ul>
-        ${list.length
-          ? html`<h3 class="slip-head">Scheduled</h3><ul class="wl-list" data-role="scheduled-list">${list.map(
-              (p) => html`<li class="wl-row"><button type="button" class="wl-main" data-x="scheduled" data-id="${p.id}"><span class="wl-name">${whole(p.amount)} ${p.dueDate < today() ? "was due" : "due"} ${short(p.dueDate)}</span><span class="wl-sub">${p.description}</span></button></li>`
-            )}</ul>`
-          : ""}
-        <p class="stat-hint">Paid ${whole(s.paid ?? 0)}${supplierBalance(s) !== null ? ` · ${whole(supplierBalance(s))} still due` : ""}</p>`);
-    } catch (err) {
-      paint(html`<p class="form-error">${err.message || "Couldn't load"}</p>`);
+  }
+
+  // Planned line: Edit (category, amount, optional supplier) and Details.
+  const plannedEdit = (c) =>
+    formDialog({
+      title: "Edit money item",
+      fields: [
+        { name: "name", label: "Category", value: c.name, required: true },
+        { name: "budget", label: "Amount (₱)", value: Number.isSafeInteger(c.budget) ? String(c.budget / 100) : "", inputmode: "decimal", hint: "Optional: leave blank until you know it." },
+        ...(canManage ? [{ name: "supplier", label: "Supplier / Payee", value: "", placeholder: "e.g. Nice Print Photography", hint: "Optional. Adding one turns this planned line into a supplier line." }] : []),
+      ],
+      submitLabel: "Save changes",
+      onSubmit: async (v) => {
+        const budget = v.budget.trim() ? parseBudget(v.budget, "amount") : null;
+        const changes = {};
+        if (v.name.trim() !== c.name) changes.name = v.name.trim();
+        if ((c.budget ?? null) !== budget) changes.budget = budget;
+        if (budget === null && !c.planned) changes.planned = true; // stays on the plan without an amount
+        if (Object.keys(changes).length) await data.budgetApi({ action: "updateCategory", categoryId: c.id, ...(c.revision ? { expectedRevision: c.revision } : {}), changes });
+        const name = (v.supplier || "").trim();
+        if (name) await data.suppliersApi({ action: "create", supplier: toSupplierInput({ name, service: guessService(changes.name || c.name), agreedAmount: budget === null ? "" : String(budget / 100), categoryId: c.id }) });
+        return Object.keys(changes).length || name ? { saved: true } : { unchanged: true };
+      },
+    });
+  const plannedView = (r) =>
+    detailsDialog({
+      title: r.category,
+      badgeHtml: badge("Planned", "info"),
+      rows: [["Category", r.category], ["Supplier", "No supplier yet"], ["Planned amount", r.total === null ? "Amount not set" : money(r.total)], ["Spent so far", money((state.budget?.spentByCategory || {})[r.id] ?? 0)], ["Remaining", r.remaining === null ? "—" : money(r.remaining)]],
+      activity: activityLines(r.record.history, timezone),
+      actions: [],
+      onAction: async () => false,
+    });
+
+  // Remove: nothing recorded -> deleted; payments / schedule -> off the
+  // active list (records, payments and history kept). Planned -> off the plan.
+  async function removeRow(r) {
+    if (r.kind === "supplier") {
+      const s = r.record;
+      const activity = s.paid > 0 || s.upcomingCount > 0;
+      const keep = activity ? ` Its ${s.paid > 0 ? `${whole(s.paid)} in payments` : ""}${s.paid > 0 && s.upcomingCount > 0 ? " and " : ""}${s.upcomingCount > 0 ? "scheduled payments" : ""} stay in your records and history.` : "";
+      if (!(await confirm({ title: "Remove this money item?", body: `It will no longer appear in your active wedding money list.${keep}`, confirmLabel: "Remove", danger: true }))) return;
+      if (activity) await data.suppliersApi({ action: "setStatus", supplierId: s.id, status: "inactive" });
+      else await data.suppliersApi({ action: "delete", supplierId: s.id });
+      toast("Removed.", "success");
+      load();
+    } else if (r.kind === "expense") exp.done("Removed")(await exp.removeDialog(r.record));
+    else {
+      const c = r.record;
+      if (!(await confirm({ title: "Remove this money item?", body: "It will no longer appear in your active wedding money list. Anything already paid stays.", confirmLabel: "Remove", danger: true }))) return;
+      saved("Removed.")(await data.budgetApi({ action: "updateCategory", categoryId: c.id, ...(c.revision ? { expectedRevision: c.revision } : {}), changes: { budget: null, ...(c.planned ? { planned: false } : {}) } }));
     }
   }
 
@@ -449,8 +523,6 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     }
     return r;
   };
-  const categoryDialog = (title, current) =>
-    formDialog({ title, fields: [categoryField(state.categories, { value: current })], onSubmit: async (v) => ({ categoryId: await categoryFor(v.category) }) });
   const budgetItemDialog = (c = null) =>
     formDialog({
       title: c ? `${c.name}: budget` : "Add budget item",
@@ -472,9 +544,10 @@ export function mount(container, session, { data = defaultData, toast = defaultT
   async function openRow(kind, id) {
     const r = findRow(kind, id);
     if (!r) return;
-    if (kind === "supplier") openView(r.record);
-    else if (kind === "expense") exp.openView(r.record);
-    else if (canCategory) saved("Budget saved.")(await budgetItemDialog(r.record));
+    if (kind === "supplier") await openView(r.record);
+    else if (kind === "expense") exp.openView(r.record, { readOnly: true });
+    else if (canCategory) saved("Saved.")(await plannedEdit(r.record));
+    else plannedView(r);
   }
 
   // Sample Budget + Add: a normal Planned line (category = the item, no
@@ -520,44 +593,22 @@ export function mount(container, session, { data = defaultData, toast = defaultT
       const r = findRow(el.dataset.kind, el.dataset.id);
       if (!r) return;
       const x = el.dataset.x;
+      if (x === "remove") return await removeRow(r);
       if (r.kind === "supplier") {
         const s = r.record;
-        if (x === "view") openView(s);
-        else if (x === "payments") await viewPayments(s);
-        else if (x === "edit") saved("Saved.")(await editDialog(s));
-        else if (x === "category") {
-          const c = await categoryDialog(`${s.name}: category`, r.category);
-          if (c && c.categoryId !== (s.categoryId ?? null)) saved("Category changed.")(await data.suppliersApi({ action: "update", supplierId: s.id, expectedRevision: s.revision, changes: { categoryId: c.categoryId } }));
-        } else if (x === "record") recorded(await recordPayment(s, false));
-        else if (x === "schedule") await pay.after("Payment scheduled.")(await pay.newDialog(s));
-        else if (x === "archive") {
-          await data.suppliersApi({ action: "setStatus", supplierId: s.id, status: s.status === "active" ? "inactive" : "active" });
-          toast(s.status === "active" ? "Archived. Its payments and history are kept." : "Brought back.", "success");
-          load();
-        } else if (x === "delete") {
-          if (!(await confirm({ title: `Delete ${s.name}?`, body: "Nothing was paid or scheduled to this supplier, so it can be deleted.", confirmLabel: "Delete", danger: true }))) return;
-          await data.suppliersApi({ action: "delete", supplierId: s.id });
-          toast(`${s.name} deleted.`, "success");
+        if (x === "view") await openView(s);
+        else if (x === "edit") await editSheet(s);
+        else if (x === "restore") {
+          await data.suppliersApi({ action: "setStatus", supplierId: s.id, status: "active" });
+          toast("Brought back.", "success");
           load();
         }
       } else if (r.kind === "expense") {
         const e = r.record;
-        if (x === "view" || x === "remove") exp.openView(e);
-        else if (x.startsWith("proof-")) await exp.proofAction(x, e);
-        else if (x === "category") {
-          const c = await categoryDialog("Expense category", r.category);
-          if (c && c.categoryId !== e.category) saved("Category changed.")(await data.expensesApi({ action: "update", expenseId: e.id, expectedRevision: e.revision, changes: { category: c.categoryId } }));
-        }
-      } else {
-        const c = r.record;
-        if (x === "supplier") saved("Supplier added.")(await addSupplierDialog(c.name));
-        else if (x === "expense") exp.done("Expense added")(await exp.addDialog({ category: c.name }));
-        else if (x === "amount") saved("Budget saved.")(await budgetItemDialog(c));
-        else if (x === "unplan") {
-          if (!(await confirm({ title: `Remove ${c.name} from the budget?`, body: "Its budget amount is cleared. Anything already paid stays.", confirmLabel: "Remove", danger: true }))) return;
-          saved("Removed from the budget.")(await data.budgetApi({ action: "updateCategory", categoryId: c.id, ...(c.revision ? { expectedRevision: c.revision } : {}), changes: { budget: null, ...(c.planned ? { planned: false } : {}) } }));
-        }
-      }
+        if (x === "view") exp.openView(e, { readOnly: true });
+        else if (x === "edit") exp.done("Expense updated")(await exp.editDialog(e));
+      } else if (x === "edit") saved("Saved.")(await plannedEdit(r.record));
+      else if (x === "view") plannedView(r);
     } catch (err) {
       toast(err.message || "Something went wrong", "danger");
     }

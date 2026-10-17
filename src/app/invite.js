@@ -29,10 +29,16 @@ async function call(body, fetchImpl) {
 // slug moves to the wedding's current address once the token checks out.
 export const inviteTokenFrom = (path) => (/^(?:\/w\/[a-z0-9-]{1,60})?\/invite\/([A-Za-z0-9_-]{32})\/?$/.exec(path) || [])[1] || "";
 
-export function renderInvitePage(root, { token = inviteTokenFrom(window.location.pathname), fetchImpl = (...a) => window.fetch(...a) } = {}) {
+// The wedding link alone (/w/{slug}): invitations are personal, so nothing
+// about the wedding is shown without a guest's private code.
+export const isWeddingHomePath = (path) => /^\/w\/[a-z0-9-]{1,60}\/?$/.test(path || "");
+
+// preview (Owner, inside Luna): the same page, but answers aren't sent and
+// the tab title / address bar are left alone.
+export function renderInvitePage(root, { token = inviteTokenFrom(window.location.pathname), fetchImpl = (...a) => window.fetch(...a), preview = false } = {}) {
   const state = { status: "loading", inv: null, message: "", choosing: null, seats: null, done: null, busy: false };
   const of = (n) => `${n} of ${state.inv.guest.seats}`;
-  document.title = "You're invited";
+  if (!preview) document.title = "You're invited";
   // The theme's serif (Google Fonts is allowed by the site's policy).
   if (!document.querySelector("link[data-invite-font]")) {
     const l = document.createElement("link");
@@ -99,6 +105,11 @@ export function renderInvitePage(root, { token = inviteTokenFrom(window.location
   }
 
   async function send(status, confirmed) {
+    if (preview) {
+      state.message = "Preview only: your guest answers from their own link.";
+      draw();
+      return;
+    }
     state.busy = true;
     state.message = "";
     draw();
@@ -136,6 +147,12 @@ export function renderInvitePage(root, { token = inviteTokenFrom(window.location
     } else if (a === "send" && state.seats) send("attending", state.seats);
   });
 
+  if (!token) {
+    state.status = "error";
+    state.message = isWeddingHomePath(window.location.pathname) ? "Wedding invitations are personal. Please open the invitation link the couple sent you." : "This invitation link isn't valid. Please ask the couple for a new one.";
+    draw();
+    return Promise.resolve();
+  }
   draw();
   return call({ action: "view", token }, fetchImpl).then(
     (r) => {
@@ -143,7 +160,7 @@ export function renderInvitePage(root, { token = inviteTokenFrom(window.location
       state.inv = r.invitation;
       // Move an older address (no slug / an old slug) to the current one.
       const path = r.invitation.path;
-      if (typeof path === "string" && inviteTokenFrom(path) === token && path !== window.location.pathname) {
+      if (!preview && typeof path === "string" && inviteTokenFrom(path) === token && path !== window.location.pathname) {
         try {
           window.history.replaceState(null, "", path);
         } catch {

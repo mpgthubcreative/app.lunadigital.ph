@@ -10,6 +10,7 @@ import { mount as mountExpenses, parseWeddingExpense } from "../../src/modules/w
 import { mount as mountSuppliers, toSupplierInput, paidState, moneySummary, shortPeso, moneyRows } from "../../src/modules/wedding/suppliers.js";
 import { mount as mountSetup } from "../../src/modules/wedding/setup.js";
 import { mount as mountProgram } from "../../src/modules/wedding/program.js";
+import { openInvitePreview } from "../../src/modules/wedding/invite-preview.js";
 import { renderInvitePage, inviteTokenFrom } from "../../src/app/invite.js";
 import { guessService } from "../../src/modules/wedding/categories.js";
 import { mount as mountDownloads } from "../../src/modules/downloads/index.js";
@@ -162,22 +163,57 @@ describe("Money (Owner-pilot Bridal): ONE list of everything the wedding costs",
     expect(after.map((r) => [r.kind, r.name])).toEqual([["supplier", "ABC Photo Studio"], ["supplier", "Palazzo"]]);
   });
 
-  it("supplier ⋯: Record payment, View payments, Edit, Change category, Payment schedule, Details, Archive; Record payment records ONE expense", async () => {
-    const data = await mountMoney(money({ listSupplierPayments: vi.fn(async () => ({ rows: [], hasMore: false })) }));
-    const row = rowOf('[data-supplier="supABCphoto01"]');
-    expect([...row.querySelectorAll('[data-act="menu"]')].map((b) => b.textContent)).toEqual(["Record payment", "View payments", "Edit", "Change category", "Payment schedule", "Details", "Archive"]);
-    row.querySelector('[data-x="record"]').click();
+  // Owner-pilot Bridal: ⋯ is just Edit / Details / Remove.
+  const PAID = [{ id: "e1aaaaaaaa", date: "2026-10-01", amount: 1500000, supplierId: SUP.id, status: "active", method: "gcash", reference: "GC-1", proof: { contentType: "application/pdf" } }, { id: "e2aaaaaaaa", date: "2026-10-10", amount: 500000, supplierId: SUP.id, status: "active", method: "cash" }];
+  const paidMoney = (extra = {}) => money({ listWeddingExpenses: vi.fn(async (_b, f) => ({ rows: f.supplierId ? PAID : [OTHER], hasMore: false })), attachExpenseProof: vi.fn(async () => ({ hasProof: true })), expenseProof: vi.fn(async () => ({ proof: { contentType: "image/png", dataBase64: "iVBORw0KGgo=" } })), ...extra });
+  const sheet = () => document.querySelector('[data-role="money-edit"]');
+  const menuOf = (sel) => [...rowOf(sel).querySelectorAll('[data-act="menu"]')].map((b) => b.textContent);
+
+  it("every Money line's ⋯ is just Edit / Details / Remove (supplier, other expense, planned)", async () => {
+    await mountMoney();
+    expect(menuOf('[data-supplier="supABCphoto01"]')).toEqual(["Edit", "Details", "Remove"]);
+    expect(menuOf(`[data-expense="${OTHER.id}"]`)).toEqual(["Edit", "Details", "Remove"]);
+    expect(menuOf('[data-planned="catVenue00001"]')).toEqual(["Edit", "Details", "Remove"]);
+    // The one-line row itself is unchanged.
+    expect(rowOf('[data-supplier="supABCphoto01"] [data-role="status"] .wl-chip').textContent).toBe("Partial");
+  });
+
+  it("supplier Edit: one sheet — Category, Supplier, Total; Payments (paid · remaining · status, proofs, Record payment); Payment schedule; Save changes", async () => {
+    const data = await mountMoney(paidMoney({ budgetApi: vi.fn(async () => ({ categoryId: "catVideo00001" })), suppliersApi: vi.fn(async () => ({})) }));
+    rowOf('[data-supplier="supABCphoto01"] [data-x="edit"]').click();
+    await flush();
+    const f = sheet().querySelector('[data-role="money-edit-form"]').elements;
+    expect([f.category.value, f.name.value, f.agreedAmount.value]).toEqual(["Photo / Video", "ABC Photo Studio", "80000"]);
+    expect(sheet().querySelector('[data-role="me-paid"]').textContent.replace(/\s+/g, " ")).toBe("₱20,000 paid · ₱60,000 remaining · Partial");
+    expect([...sheet().querySelectorAll('[data-role="paid-list"] .slip-act')].map((x) => x.textContent.trim())).toEqual(["View proof", "Add proof"]);
+    expect(sheet().querySelector('[data-role="scheduled-list"] .wl-name').textContent).toBe("Dec 1 · ₱30,000");
+    expect([...sheet().querySelectorAll('[data-x="record"], [data-x="schedule"], [data-x="save"]')].map((b) => b.textContent)).toEqual(["Record payment", "Add to schedule", "Save changes"]);
+    // Change category (a new name is created) + total, in one Save.
+    f.category.value = "Video only";
+    f.agreedAmount.value = "90000";
+    sheet().querySelector('[data-x="save"]').click();
+    await flush();
+    expect(data.budgetApi).toHaveBeenCalledWith({ action: "createCategory", category: { name: "Video only", budget: null } });
+    expect(data.suppliersApi).toHaveBeenCalledTimes(1);
+    expect(data.suppliersApi).toHaveBeenCalledWith({ action: "update", supplierId: SUP.id, expectedRevision: 2, changes: { categoryId: "catVideo00001", agreedAmount: 9000000 } });
+    expect(sheet()).toBeNull();
+  });
+
+  it("supplier Edit → Record payment records ONE expense (proof optional); Add to schedule schedules for THIS supplier", async () => {
+    const data = await mountMoney(paidMoney({ expensesApi: vi.fn(async () => ({ expenseId: "e3aaaaaaaa" })) }));
+
+    rowOf('[data-supplier="supABCphoto01"] [data-x="edit"]').click();
+    await flush();
+    sheet().querySelector('[data-x="record"]').click();
     await flush();
     lastForm().elements.amount.value = "15000";
     submit(lastForm());
     await flush();
     expect(data.expensesApi).toHaveBeenCalledTimes(1);
     expect(data.expensesApi).toHaveBeenCalledWith({ action: "create", idempotencyKey: expect.stringMatching(/^[A-Za-z0-9_-]{16,64}$/), expense: { date: "2026-10-16", category: "catPhotoVid01", amount: 1500000, supplierId: SUP.id, method: "bank_transfer" } });
-  });
-
-  it("⋯ Payment schedule schedules for THIS supplier; ⋯ Change category moves it (a new name is created)", async () => {
-    const data = await mountMoney(money({ budgetApi: vi.fn(async () => ({ categoryId: "catVideo00001" })), suppliersApi: vi.fn(async () => ({})) }));
-    rowOf('[data-supplier="supABCphoto01"] [data-x="schedule"]').click();
+    await flush();
+    expect(sheet()).not.toBeNull(); // the sheet comes back with fresh figures
+    sheet().querySelector('[data-x="schedule"]').click();
     await flush();
     const form = lastForm();
     expect(form.elements.supplierId).toBeUndefined();
@@ -187,12 +223,125 @@ describe("Money (Owner-pilot Bridal): ONE list of everything the wedding costs",
     submit(form);
     await flush();
     expect(data.paymentsApi).toHaveBeenCalledWith({ action: "create", payment: expect.objectContaining({ supplierId: SUP.id, amount: 1000000, dueDate: "2027-01-10", category: "catPhotoVid01" }) });
-    rowOf('[data-supplier="supABCphoto01"] [data-x="category"]').click();
-    lastForm().elements.category.value = "Video only";
+  });
+
+  it("supplier Edit: Add proof on a paid line uploads to THAT expense; a failed upload after Record payment keeps the payment and says how to add it later", async () => {
+    const toast = vi.fn();
+    const data = paidMoney({ expensesApi: vi.fn(async () => ({ expenseId: "e3aaaaaaaa" })), attachExpenseProof: vi.fn(async () => { throw new Error("Proofs must be under 2.5 MB"); }) });
+    mountSuppliers(container, wedding(), { data, now: NOW, toast, confirm: async () => true, prepareProof: vi.fn(async () => ({ contentType: "image/jpeg", dataBase64: "AAAA" })) });
+    await flush();
+    rowOf('[data-supplier="supABCphoto01"] [data-x="edit"]').click();
+    await flush();
+    sheet().querySelector('[data-x="record"]').click();
+    await flush();
+    lastForm().elements.amount.value = "5000";
+    Object.defineProperty(lastForm().elements.proof, "files", { value: [{ name: "r.jpg", type: "image/jpeg" }], configurable: true });
     submit(lastForm());
     await flush();
-    expect(data.budgetApi).toHaveBeenCalledWith({ action: "createCategory", category: { name: "Video only", budget: null } });
-    expect(data.suppliersApi).toHaveBeenCalledWith({ action: "update", supplierId: SUP.id, expectedRevision: 2, changes: { categoryId: "catVideo00001" } });
+    expect(toast).toHaveBeenCalledWith("Saved, but the proof didn't upload (Proofs must be under 2.5 MB). Add it from ⋯ → Add proof.", "danger");
+    expect(toast).toHaveBeenCalledWith("Payment recorded.", "success");
+    data.attachExpenseProof.mockImplementation(async () => ({ hasProof: true }));
+    await flush();
+    sheet().querySelector('[data-x="proof-add"][data-id="e2aaaaaaaa"]').click();
+    await flush();
+    Object.defineProperty(lastForm().elements.proof, "files", { value: [{ name: "t.pdf", type: "application/pdf" }], configurable: true });
+    submit(lastForm());
+    await flush();
+    expect(data.attachExpenseProof).toHaveBeenLastCalledWith("e2aaaaaaaa", { contentType: "image/jpeg", dataBase64: "AAAA" });
+  });
+
+  it("supplier Details is read-only: total / paid / remaining / status, payment history with proof, schedule; no buttons but Close", async () => {
+    await mountMoney(paidMoney());
+    rowOf('[data-supplier="supABCphoto01"] [data-x="view"]').click();
+    await flush();
+    const d = document.querySelector('[data-role="details"]');
+    const field = (k) => [...d.querySelectorAll("dt")].find((x) => x.textContent === k)?.nextElementSibling.textContent;
+    expect([field("Total"), field("Paid"), field("Remaining"), field("Status")]).toEqual(["₱80,000.00", "₱20,000.00", "₱60,000.00", "Partial"]);
+    const lists = [...d.querySelectorAll('[data-role="section"]')].map((ul) => [...ul.children].map((li) => li.textContent));
+    expect(lists[0]).toEqual(["₱15,000 paid Oct 1, 2026 · GCash · Ref GC-1 · proof: PDF", "₱5,000 paid Oct 10, 2026 · Cash · no proof"]);
+    expect(lists[1][0]).toMatch(/^Dec 1, 2026 · ₱30,000/);
+    expect([...d.querySelectorAll(".modal-footer button")].map((b) => b.textContent)).toEqual(["Close"]);
+  });
+
+  it("Remove: nothing recorded → deleted; with payments → off the active list, payments kept (the confirmation says so); Bring back", async () => {
+    const fresh = { ...SUP, id: "supFreshOne01", name: "New Florist", paid: 0, upcoming: 0, upcomingCount: 0, nextDue: null };
+    const asked = [];
+    const data = fakeData({ listSuppliers: vi.fn(async (_b, f) => ({ rows: f.status === "inactive" ? [{ ...SUP, id: "supOldOne0001", name: "Old Band", status: "inactive" }] : [SUP, fresh], hasMore: false })) });
+    mountSuppliers(container, wedding(), { data, now: NOW, toast: () => {}, confirm: async (c) => (asked.push(c), true) });
+    await flush();
+    container.querySelector('[data-supplier="supFreshOne01"] [data-x="remove"]').click();
+    await flush();
+    expect(asked[0]).toMatchObject({ title: "Remove this money item?", body: "It will no longer appear in your active wedding money list." });
+    expect(data.suppliersApi).toHaveBeenCalledWith({ action: "delete", supplierId: "supFreshOne01" });
+    container.querySelector('[data-supplier="supABCphoto01"] [data-x="remove"]').click();
+    await flush();
+    expect(asked[1].body).toBe("It will no longer appear in your active wedding money list. Its ₱20,000 in payments and scheduled payments stay in your records and history.");
+    expect(data.suppliersApi).toHaveBeenCalledWith({ action: "setStatus", supplierId: SUP.id, status: "inactive" });
+    expect(data.suppliersApi).not.toHaveBeenCalledWith({ action: "delete", supplierId: SUP.id });
+    expect(container.querySelector(".wl-fold summary").textContent).toBe("Removed from the list (1)");
+    expect(menuOf('[data-supplier="supOldOne0001"]')).toEqual(["Details", "Bring back"]);
+  });
+
+  it("other expense: Edit (fields + proof), Details read-only (View proof only), Remove in plain words (a reason is kept)", async () => {
+    const withProof = { ...OTHER, proof: { contentType: "image/png" } };
+    const data = money({ listWeddingExpenses: vi.fn(async () => ({ rows: [withProof], hasMore: false })), expensesApi: vi.fn(async () => ({})), attachExpenseProof: vi.fn(async () => ({})), expenseProof: vi.fn(async () => ({ proof: { contentType: "image/png", dataBase64: "iVBORw0KGgo=" } })) });
+    mountSuppliers(container, wedding(), { data, now: NOW, toast: () => {}, confirm: async () => true, prepareProof: vi.fn(async () => ({ contentType: "image/jpeg", dataBase64: "AAAA" })) });
+    await flush();
+    const visible = rowOf(`[data-expense="${OTHER.id}"]`).cloneNode(true);
+    visible.querySelector("details").remove();
+    expect(visible.textContent).not.toMatch(/proof/i);
+    rowOf(`[data-expense="${OTHER.id}"] [data-x="edit"]`).click();
+    await flush();
+    const f = lastForm();
+    expect(f.querySelector('label[for$="proof"]')?.textContent || f.elements.proof.labels?.[0]?.textContent).toMatch(/Replace proof/);
+    f.elements.amount.value = "2000";
+    Object.defineProperty(f.elements.proof, "files", { value: [{ name: "r.jpg", type: "image/jpeg" }], configurable: true });
+    submit(f);
+    await flush();
+    expect(data.expensesApi).toHaveBeenCalledWith({ action: "update", expenseId: OTHER.id, expectedRevision: 1, changes: { amount: 200000 } });
+    expect(data.attachExpenseProof).toHaveBeenCalledWith(OTHER.id, { contentType: "image/jpeg", dataBase64: "AAAA" });
+    rowOf(`[data-expense="${OTHER.id}"] [data-x="view"]`).click();
+    await flush();
+    expect([...document.querySelectorAll('[data-role="details"] .modal-footer button')].map((b) => b.textContent)).toEqual(["View proof", "Close"]);
+    document.querySelector('[data-role="details"] [data-act="close"]').click();
+    rowOf(`[data-expense="${OTHER.id}"] [data-x="remove"]`).click();
+    await flush();
+    expect(document.querySelector(".modal-backdrop .card-title, .modal-backdrop h2").textContent).toBe("Remove this money item?");
+    lastForm().elements.reason.value = "Entered twice";
+    submit(lastForm());
+    await flush();
+    expect(data.expensesApi).toHaveBeenCalledWith({ action: "remove", expenseId: OTHER.id, reason: "Entered twice" });
+  });
+
+  it("+ Add → Budget item; a planned line's Edit sets category / amount and can add its supplier; Details read-only; Remove takes it off the plan", async () => {
+    const planned = { id: "catLights001", name: "Lights & sounds", budget: null, planned: true, status: "active", order: 60, revision: 2, history: [] };
+    const data = await mountMoney(money({ listCategories: vi.fn(async () => [...CATS, planned]), budgetApi: vi.fn(async () => ({ categoryId: "catGown000001" })), suppliersApi: vi.fn(async () => ({})) }));
+    container.querySelector('[data-act="add"][data-x="budget"]').click();
+    lastForm().elements.category.value = "Wedding gown";
+    lastForm().elements.budget.value = "80000";
+    submit(lastForm());
+    await flush();
+    expect(data.budgetApi).toHaveBeenCalledWith({ action: "createCategory", category: { name: "Wedding gown", budget: null } });
+    expect(data.budgetApi).toHaveBeenCalledWith({ action: "updateCategory", categoryId: "catGown000001", changes: { budget: 8000000 } });
+    const row = rowOf('[data-planned="catLights001"]');
+    expect([row.querySelector('[data-role="total"]').textContent, row.querySelector('[data-role="left"]').textContent]).toEqual(["—", "Amount not set"]);
+    row.querySelector('[data-x="edit"]').click();
+    await flush();
+    const f = lastForm();
+    expect([f.elements.name.value, f.elements.budget.value, f.elements.supplier.value]).toEqual(["Lights & sounds", "", ""]);
+    f.elements.budget.value = "25000";
+    f.elements.supplier.value = "Bright Sounds";
+    submit(f);
+    await flush();
+    expect(data.budgetApi).toHaveBeenCalledWith({ action: "updateCategory", categoryId: "catLights001", expectedRevision: 2, changes: { budget: 2500000 } });
+    expect(data.suppliersApi).toHaveBeenCalledWith({ action: "create", supplier: expect.objectContaining({ name: "Bright Sounds", categoryId: "catLights001", agreedAmount: 2500000 }) });
+    rowOf('[data-planned="catLights001"] [data-x="view"]').click();
+    await flush();
+    expect([...document.querySelectorAll('[data-role="details"] .modal-footer button')].map((b) => b.textContent)).toEqual(["Close"]);
+    document.querySelector('[data-role="details"] [data-act="close"]').click();
+    rowOf('[data-planned="catLights001"] [data-x="remove"]').click();
+    await flush();
+    expect(data.budgetApi).toHaveBeenCalledWith({ action: "updateCategory", categoryId: "catLights001", expectedRevision: 2, changes: { budget: null, planned: false } });
   });
 
   it("one dropdown filter (All / Unpaid / Partial / Paid / Planned)", async () => {
@@ -259,112 +408,6 @@ describe("Money (Owner-pilot Bridal): ONE list of everything the wedding costs",
     await flush();
     expect(data.suppliersApi).toHaveBeenCalledWith({ action: "create", supplier: { name: "Glam by Jo", service: "hair_makeup", agreedAmount: 1500000, categoryId: "catHmua000001", contactPerson: null, phone: null, email: null, location: null, notes: null } });
     expect([guessService("Photo & Video"), guessService("Souvenirs")]).toEqual(["photo_video", "other"]);
-  });
-
-  it("+ Add → Budget item: a new item with an amount (the planned line appears); planned ⋯ Add supplier pre-fills its category", async () => {
-    const data = await mountMoney(money({ budgetApi: vi.fn(async () => ({ categoryId: "catGown000001" })) }));
-    container.querySelector('[data-act="add"][data-x="budget"]').click();
-    lastForm().elements.category.value = "Wedding gown";
-    lastForm().elements.budget.value = "80000";
-    submit(lastForm());
-    await flush();
-    expect(data.budgetApi).toHaveBeenNthCalledWith(1, { action: "createCategory", category: { name: "Wedding gown", budget: null } });
-    expect(data.budgetApi).toHaveBeenNthCalledWith(2, { action: "updateCategory", categoryId: "catGown000001", changes: { budget: 8000000 } });
-    rowOf('[data-planned="catVenue00001"] [data-x="supplier"]').click();
-    expect(lastForm().elements.category.value).toBe("Venue");
-  });
-
-  it("⋯ View payments lists what was paid and what's scheduled (open a scheduled one to pay / edit it)", async () => {
-    const data = money({ listWeddingExpenses: vi.fn(async (_b, f) => ({ rows: f.supplierId ? [{ id: "e1", date: "2026-10-01", amount: 1500000, supplierId: SUP.id }, { id: "e2", date: "2026-10-10", amount: 500000, supplierId: SUP.id }] : [], hasMore: false })) });
-    await mountMoney(data);
-    rowOf('[data-supplier="supABCphoto01"] [data-x="payments"]').click();
-    await flush();
-    const box = document.querySelector('[data-role="supplier-payments"]');
-    expect(data.listWeddingExpenses).toHaveBeenCalledWith("demo-distributor-a", { status: "active", supplierId: SUP.id }, { pageSize: 100 });
-    expect([...box.querySelectorAll('[data-role="paid-list"] .slip-what')].map((x) => x.textContent)).toEqual(["₱15,000 paid Oct 1", "₱5,000 paid Oct 10"]);
-    expect(box.querySelector('[data-role="scheduled-list"] .wl-name').textContent).toBe("₱30,000 due Dec 1");
-    box.querySelector('[data-x="scheduled"]').click();
-    expect(document.querySelector('[data-role="details"] .card-title').textContent).toContain("Second payment");
-  });
-
-  // Owner-pilot Bridal fix pass: proof (receipt photo or PDF) under ⋯, never a column.
-  const PREP = { contentType: "image/jpeg", dataBase64: "AAAA" };
-  const pickFile = (form, file = { name: "receipt.jpg", type: "image/jpeg" }) => Object.defineProperty(form.elements.proof, "files", { value: [file], configurable: true });
-  const proofMoney = (extra = {}) => money({ attachExpenseProof: vi.fn(async () => ({ hasProof: true })), expenseProof: vi.fn(async () => ({ proof: { contentType: "image/png", dataBase64: "iVBORw0KGgo=" } })), ...extra });
-  const mountProofMoney = async (data) => {
-    mountSuppliers(container, wedding(), { data, now: NOW, toast: () => {}, confirm: async () => true, prepareProof: vi.fn(async () => PREP) });
-    await flush();
-    return data;
-  };
-
-  it("expense ⋯: Add proof uploads a photo / PDF to THAT expense; with a proof: View proof / Replace proof; the row stays one line (no proof column)", async () => {
-    const data = await mountProofMoney(proofMoney());
-    const items = () => [...container.querySelectorAll(`[data-expense="${OTHER.id}"] .menu-item`)].map((b) => b.textContent);
-    expect(items()).toEqual(["Details", "Add proof", "Change category", "Remove"]);
-    const visible = container.querySelector(`[data-expense="${OTHER.id}"]`).cloneNode(true);
-    visible.querySelector("details").remove();
-    expect(visible.textContent).not.toMatch(/proof/i);
-    rowOf(`[data-expense="${OTHER.id}"] [data-x="proof-add"]`).click();
-    await flush();
-    const form = lastForm();
-    expect(form.elements.proof.getAttribute("accept")).toBe("image/jpeg,image/png,image/webp,application/pdf");
-    pickFile(form);
-    submit(form);
-    await flush();
-    expect(data.attachExpenseProof).toHaveBeenCalledWith(OTHER.id, PREP);
-
-    document.body.innerHTML = '<main id="content"></main>';
-    container = document.getElementById("content");
-    const withProof = { ...OTHER, proof: { contentType: "image/png", size: 200 } };
-    const d2 = await mountProofMoney(proofMoney({ listWeddingExpenses: vi.fn(async () => ({ rows: [withProof], hasMore: false })) }));
-    expect(items()).toEqual(["Details", "View proof", "Replace proof", "Change category", "Remove"]);
-    rowOf(`[data-expense="${OTHER.id}"] [data-x="proof-view"]`).click();
-    await flush();
-    expect(d2.expenseProof).toHaveBeenCalledWith(OTHER.id);
-    expect(document.querySelector('[data-role="proof-viewer"] img').getAttribute("src")).toBe("data:image/png;base64,iVBORw0KGgo=");
-  });
-
-  it("supplier ⋯ View payments: each paid line has View proof / Add proof; Record payment takes an optional proof (More options)", async () => {
-    const data = proofMoney({
-      listWeddingExpenses: vi.fn(async (_b, f) => ({ rows: f.supplierId ? [{ id: "e1aaaaaaaa", date: "2026-10-01", amount: 1500000, supplierId: SUP.id, status: "active", proof: { contentType: "application/pdf" } }, { id: "e2aaaaaaaa", date: "2026-10-10", amount: 500000, supplierId: SUP.id, status: "active" }] : [], hasMore: false })),
-      expensesApi: vi.fn(async () => ({ expenseId: "e3aaaaaaaa" })),
-    });
-    await mountProofMoney(data);
-    rowOf('[data-supplier="supABCphoto01"] [data-x="payments"]').click();
-    await flush();
-    const box = document.querySelector('[data-role="supplier-payments"]');
-    expect([...box.querySelectorAll('[data-role="paid-list"] .slip-act')].map((x) => x.textContent.trim())).toEqual(["View proof", "Add proof"]);
-    box.querySelector('[data-x="proof-add"][data-id="e2aaaaaaaa"]').click();
-    await flush();
-    pickFile(lastForm(), { name: "transfer.pdf", type: "application/pdf" });
-    submit(lastForm());
-    await flush();
-    expect(data.attachExpenseProof).toHaveBeenCalledWith("e2aaaaaaaa", PREP);
-
-    rowOf('[data-supplier="supABCphoto01"] [data-x="record"]').click();
-    await flush();
-    const form = lastForm();
-    form.elements.amount.value = "5000";
-    pickFile(form);
-    submit(form);
-    await flush();
-    expect(data.expensesApi).toHaveBeenCalledWith(expect.objectContaining({ action: "create", expense: expect.objectContaining({ amount: 500000, supplierId: SUP.id }) }));
-    expect(data.attachExpenseProof).toHaveBeenLastCalledWith("e3aaaaaaaa", PREP);
-  });
-
-  it("a failed proof upload after Record payment keeps the payment and says how to add the proof later", async () => {
-    const toast = vi.fn();
-    const data = proofMoney({ expensesApi: vi.fn(async () => ({ expenseId: "e3aaaaaaaa" })), attachExpenseProof: vi.fn(async () => { throw new Error("Proofs must be under 2.5 MB"); }) });
-    mountSuppliers(container, wedding(), { data, now: NOW, toast, confirm: async () => true, prepareProof: vi.fn(async () => PREP) });
-    await flush();
-    rowOf('[data-supplier="supABCphoto01"] [data-x="record"]').click();
-    await flush();
-    lastForm().elements.amount.value = "5000";
-    pickFile(lastForm());
-    submit(lastForm());
-    await flush();
-    expect(toast).toHaveBeenCalledWith("Saved, but the proof didn't upload (Proofs must be under 2.5 MB). Add it from ⋯ → Add proof.", "danger");
-    expect(toast).toHaveBeenCalledWith("Payment recorded.", "success");
   });
 
   it("permissions: no record / schedule / add expense without the right; no hidden action is offered", async () => {
@@ -681,20 +724,6 @@ describe("Phase 18.5 corrections: Delete what was added by mistake", () => {
     expect(data.tasksApi).toHaveBeenCalledWith({ action: "delete", taskId: "taskChurch001" });
   });
 
-  it("Suppliers: Delete is offered only when nothing was paid or scheduled (the server re-checks)", async () => {
-    const fresh = { ...SUP, id: "supFreshOne01", name: "New Florist", paid: 0, upcoming: 0, upcomingCount: 0, nextDue: null };
-    const data = fakeData({ listSuppliers: vi.fn(async () => ({ rows: [SUP, fresh], hasMore: false })) });
-    mountSuppliers(container, wedding(), { data, now: NOW, toast: () => {}, confirm: async () => true });
-    await flush();
-    container.querySelector('[data-supplier="supABCphoto01"] [data-act="open"]').click();
-    expect(panel().querySelector('[data-act="delete"]')).toBeNull(); // has payments: archive only
-    panel().querySelector('[data-act="close"]').click();
-    expect(container.querySelector('[data-supplier="supABCphoto01"] [data-x="delete"]')).toBeNull();
-    container.querySelector('[data-supplier="supFreshOne01"] [data-x="delete"]').click();
-    await flush();
-    expect(data.suppliersApi).toHaveBeenCalledWith({ action: "delete", supplierId: "supFreshOne01" });
-  });
-
   it("Wedding Budget: ⋯ Delete for a never-used category (cancel sends nothing)", async () => {
     const data = fakeData();
     let answer = false;
@@ -888,39 +917,93 @@ it("Wedding link / hashtag: suggested from the couple names, cleaned as typed (#
     mountGuests(container, wedding(), { data, toast, confirm: async () => true });
     await flush();
     expect(guestMenuItems()).toContain("Create invitation link");
-    expect(guestMenuItems()).not.toContain("Regenerate invitation link");
+    expect(guestMenuItems()).not.toContain("Regenerate link");
     const loads = data.listGuests.mock.calls.length;
     container.querySelector('[data-guest="guestPrado001"] [data-act="invite-create"]').click();
     await flush();
     expect(data.guestsApi).toHaveBeenCalledWith({ action: "inviteLink", guestId: GUEST.id });
     expect(navigator.clipboard.writeText).toHaveBeenCalledWith(`${location.origin}/invite/${"a".repeat(32)}`);
-    expect(toast).toHaveBeenCalledWith("Invitation link for Prado Family created and copied.", "success");
+    expect(toast).toHaveBeenCalledWith("Copied ✓ New invitation link for Prado Family", "success");
     expect(data.listGuests.mock.calls.length).toBeGreaterThan(loads);
   });
 
-  it("Guest ⋯ with a link: View invitation / Copy invitation link / Regenerate invitation link", async () => {
-    const data = fakeData({ listGuests: vi.fn(async () => ({ rows: [{ ...GUEST, category: "family", invitation: { status: "active" } }], hasMore: false })), getSeating: vi.fn(async () => null), getWeddingSetup: vi.fn(async () => ({ setup: FULL })), guestsApi: vi.fn(async () => ({ path: "/invite/" + "a".repeat(32) })) });
-    Object.assign(navigator, { clipboard: { writeText: vi.fn(async () => {}) } });
+  it("Guest ⋯ with a link: View invitation (inside Luna, Owner bar) / Copy invitation link (Copied ✓) / Share invitation / Regenerate link", async () => {
+    const LINK = "/w/camilleandcarloforever/invite/" + "a".repeat(32);
+    const data = fakeData({ listGuests: vi.fn(async () => ({ rows: [{ ...GUEST, category: "family", invitation: { status: "active" } }], hasMore: false })), getSeating: vi.fn(async () => null), getWeddingSetup: vi.fn(async () => ({ setup: FULL })), guestsApi: vi.fn(async () => ({ path: LINK })) });
+    Object.assign(navigator, { clipboard: { writeText: vi.fn(async () => {}) }, share: vi.fn(async () => {}) });
     const toast = vi.fn();
-    mountGuests(container, wedding(), { data, toast, confirm: async () => true });
+    const preview = vi.fn(async () => ({}));
+    mountGuests(container, wedding(), { data, toast, confirm: async () => true, preview });
     await flush();
-    expect(guestMenuItems()).toEqual(expect.arrayContaining(["View invitation", "Copy invitation link", "Regenerate invitation link"]));
-    expect(guestMenuItems()).not.toContain("Create invitation link");
+    expect(guestMenuItems()).toEqual(["Edit", "View invitation", "Copy invitation link", "Share invitation", "Regenerate link", "Details & history", "Remove guest"]);
     container.querySelector('[data-guest="guestPrado001"] [data-act="invite-copy"]').click();
     await flush();
     expect(data.guestsApi).toHaveBeenCalledWith({ action: "inviteLink", guestId: GUEST.id });
-    expect(navigator.clipboard.writeText).toHaveBeenCalledWith(`${location.origin}/invite/${"a".repeat(32)}`);
-    const win = { location: { href: "" } };
-    const open = vi.spyOn(window, "open").mockReturnValue(win);
+    // The complete friendly link: host + /w/{wedding}/invite/{private code}.
+    expect(navigator.clipboard.writeText).toHaveBeenCalledWith(`${location.origin}${LINK}`);
+    expect(toast).toHaveBeenCalledWith("Copied ✓ Invitation link for Prado Family", "success");
+    container.querySelector('[data-guest="guestPrado001"] [data-act="invite-share"]').click();
+    await flush();
+    expect(navigator.share).toHaveBeenCalledWith({ title: "Wedding invitation", text: "Prado Family, you're invited! Open your personal invitation to RSVP:", url: `${location.origin}${LINK}` });
     container.querySelector('[data-guest="guestPrado001"] [data-act="invite-view"]').click();
     await flush();
-    expect(open).toHaveBeenCalledWith("about:blank", "_blank");
-    expect(win.location.href).toBe(`${location.origin}/invite/${"a".repeat(32)}`);
-    open.mockRestore();
+    expect(preview).toHaveBeenCalledWith(expect.objectContaining({ token: "a".repeat(32), actions: [{ id: "copy", label: "Copy guest link" }, { id: "share", label: "Share" }, { id: "open", label: "Open as guest ↗", href: `${location.origin}${LINK}` }] }));
     container.querySelector('[data-guest="guestPrado001"] [data-act="invite-new"]').click();
     await flush();
     expect(data.guestsApi).toHaveBeenCalledWith({ action: "regenerateInvite", guestId: GUEST.id });
-    expect(toast).toHaveBeenCalledWith("New link for Prado Family copied.", "success");
+    expect(toast).toHaveBeenCalledWith("Copied ✓ New invitation link for Prado Family (the old one no longer works)", "success");
+    delete navigator.share;
+  });
+
+  it("the Owner's in-app preview: invitation + Owner-only bar; answers aren't sent; the address bar is left alone", async () => {
+    const before = window.location.pathname;
+    const fetchImpl = vi.fn(async () => ({ ok: true, status: 200, json: async () => ({ success: true, invitation: { wedding: FULL, hero: null, guest: { name: "Maria Santos", seats: 2, rsvp: "awaiting", confirmed: 0 }, rsvpOpen: true, path: "/w/x/invite/" + "a".repeat(32) } }) }));
+    const onAction = vi.fn();
+    const { close } = await openInvitePreview({ token: "a".repeat(32), fetchImpl, actions: [{ id: "copy", label: "Copy guest link" }], onAction });
+    const box = document.querySelector('[data-role="invite-preview"]');
+    expect(box.querySelector('[data-role="owner-bar"]').textContent).toContain("Copy guest link");
+    expect(box.querySelector('[data-role="guest-name"]').textContent).toBe("Maria Santos");
+    box.querySelector('[data-pv="copy"]').click();
+    expect(onAction).toHaveBeenCalledWith("copy", expect.anything());
+    box.querySelector('[data-act="decline"]').click();
+    await flush();
+    expect(fetchImpl).toHaveBeenCalledTimes(1); // only the view
+    expect(box.textContent).toContain("Preview only");
+    expect(window.location.pathname).toBe(before);
+    close();
+    expect(document.querySelector('[data-role="invite-preview"]')).toBeNull();
+  });
+
+  it("Wedding Setup shows the wedding link (host + /w/{slug}) with Copy link → Copied ✓ and Preview; the guest's private link is explained", async () => {
+    Object.assign(navigator, { clipboard: { writeText: vi.fn(async () => {}) } });
+    const preview = vi.fn(async () => ({}));
+    const api = vi.fn(async () => ({ setup: FULL, hasHero: false }));
+    mountSetup(container, wedding(), { api, toast: () => {}, preview });
+    await flush();
+    const box = container.querySelector('[data-role="wedding-link"]');
+    expect(box.querySelector('[data-role="wedding-url"]').textContent).toBe(`${location.origin}/w/camilleandcarloforever`);
+    expect(box.textContent).toMatch(/personal invitation link: .*\/w\/camilleandcarloforever\/invite\/••••••\. The private part is different for every guest/);
+    box.querySelector('[data-act="copy-wedding-link"]').click();
+    await flush();
+    expect(navigator.clipboard.writeText).toHaveBeenCalledWith(`${location.origin}/w/camilleandcarloforever`);
+    expect(box.querySelector('[data-role="copied"]').textContent).toBe("Copied ✓");
+    box.querySelector('[data-act="preview"]').click();
+    await flush();
+    expect(preview).toHaveBeenCalledTimes(1);
+    const { fetchImpl } = preview.mock.calls[0][0];
+    const inv = (await (await fetchImpl()).json()).invitation;
+    expect(inv.wedding.coupleNames).toBe("Camille & Carlo");
+    expect(inv.guest.name).toBe("Your guest's name");
+  });
+
+  it("the wedding link alone (/w/{slug}) shows only a 'personal links' note, nothing about the wedding", async () => {
+    window.history.replaceState(null, "", "/w/camilleandcarloforever");
+    document.body.innerHTML = '<div id="root"></div>';
+    const fetchImpl = vi.fn();
+    await renderInvitePage(document.getElementById("root"), { fetchImpl });
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(document.querySelector('[data-role="message"]').textContent).toBe("Wedding invitations are personal. Please open the invitation link the couple sent you.");
+    window.history.replaceState(null, "", "/");
   });
 });
 
@@ -983,27 +1066,6 @@ describe("Owner-pilot Bridal: Sample Checklist (Tasks) and Sample Budget (Money)
     expect(data.budgetApi).toHaveBeenCalledWith({ action: "updateCategory", categoryId: "catCater0001", changes: { planned: true } });
   });
 
-  it("a Planned line with no amount yet: '—', 'Amount not set', ⋯ Set amount; Remove from budget takes it off the plan; lines already in My Money show Added ✓", async () => {
-    const planned = { id: "catLights001", name: "Lights & sounds", budget: null, planned: true, status: "active", order: 60, revision: 2 };
-    const rows = moneyRows({ suppliers: [], categories: [planned], budget: null });
-    expect(rows).toEqual([expect.objectContaining({ kind: "planned", category: "Lights & sounds", total: null, status: "planned", remaining: null })]);
-    expect(moneyRows({ categories: [{ ...planned, planned: false }] })).toEqual([]); // a bare category isn't a line
-    const data = fakeData({ listCategories: vi.fn(async () => [...CATS, planned]), listSuppliers: vi.fn(async (_b, f) => ({ rows: f.status === "inactive" ? [] : [SUP], hasMore: false })), budgetApi: vi.fn(async () => ({})) });
-    mountSuppliers(container, wedding(), { data, now: NOW, toast: () => {}, confirm: async () => true });
-    await flush();
-    const row = container.querySelector('[data-planned="catLights001"]');
-    expect(row.querySelector('[data-role="total"]').textContent).toBe("—");
-    expect(row.querySelector('[data-role="left"]').textContent).toBe("Amount not set");
-    expect(row.querySelector('[data-role="status"] .wl-chip').textContent).toBe("Planned");
-    expect([...row.querySelectorAll(".menu-item")].map((b) => b.textContent)).toContain("Set amount");
-    row.querySelector('[data-x="unplan"]').click();
-    await flush();
-    expect(data.budgetApi).toHaveBeenCalledWith({ action: "updateCategory", categoryId: "catLights001", expectedRevision: 2, changes: { budget: null, planned: false } });
-    container.querySelector('[data-act="seg"][data-value="sample"]').click();
-    await flush();
-    const line = [...container.querySelectorAll(".wl-sample")].find((li) => li.querySelector(".wl-name").textContent === "Lights & sounds");
-    expect(line.querySelector('[data-role="added"]').textContent).toBe("Added ✓");
-  });
 });
 
 describe("the guest's invitation page (/invite/{token}, no login)", () => {

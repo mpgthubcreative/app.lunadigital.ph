@@ -19,7 +19,9 @@ export const activityLines = (history, timezone) => (history || []).map((h) => [
 
 // A read-only "View details" dialog: rows [[label, value]], activity lines,
 // and footer buttons [{ act, label, danger? }]. onAction(act) -> true closes.
-export function detailsDialog({ title, badgeHtml = "", rows, activity = [], actions = [], onAction }) {
+// sections (Owner-pilot Bridal Details): extra read-only lists, e.g.
+// { title: "Payment history", lines: ["₱10,000 paid Oct 1 · proof ✓"], empty: "Nothing paid yet." }.
+export function detailsDialog({ title, badgeHtml = "", rows, sections = [], activity = [], actions = [], onAction }) {
   const backdrop = document.createElement("div");
   backdrop.className = "modal-backdrop is-panel";
   document.body.appendChild(backdrop);
@@ -30,6 +32,7 @@ export function detailsDialog({ title, badgeHtml = "", rows, activity = [], acti
       <div class="modal-header"><h2 class="card-title">${title}</h2>${badgeHtml ? html`<div class="page-actions">${badgeHtml}</div>` : ""}</div>
       <div class="modal-body">
         <dl class="dl dl-compact" data-role="fields">${rows.filter(([, v]) => v !== null && v !== undefined && v !== "").map(([k, v]) => html`<dt>${k}</dt><dd>${v}</dd>`)}</dl>
+        ${sections.map((sec) => html`<h3 class="section-title">${sec.title}</h3>${sec.lines.length ? html`<ul class="list activity" data-role="section">${sec.lines.map((l) => html`<li>${l}</li>`)}</ul>` : html`<p class="stat-hint">${sec.empty || "None."}</p>`}`)}
         ${activity.length ? html`<h3 class="section-title">Activity</h3><ul class="list activity" data-role="activity">${activity.map((l) => html`<li>${l}</li>`)}</ul>` : ""}
       </div>
       <div class="modal-footer">

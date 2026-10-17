@@ -259,25 +259,28 @@ export function expenseActions({ data, currency, timezone, can, toast, getCtx, r
       },
     });
   };
+  // Edit: the expense's fields, plus its proof (Owner-pilot Bridal: one place).
   const editDialog = (e) =>
     formDialog({
       title: "Edit expense",
-      fields: fields(e, ctx()),
-      onSubmit: (v) => {
+      fields: [...fields(e, ctx()), ...(e.status === "active" ? [{ ...proofField(e.proof ? "Replace proof (photo or PDF)" : "Add proof (photo or PDF)"), more: false }] : [])],
+      submitLabel: "Save changes",
+      onSubmit: async (v) => {
         const next = parseWeddingExpense(v, e);
         const changes = {};
         for (const [k, val] of Object.entries(next)) {
           if (val === undefined) continue; // payee comes from the saved supplier
           if (k === "recurring" ? Boolean(e.recurring) !== val : (e[k] ?? null) !== (val ?? null)) changes[k] = val;
         }
-        if (!Object.keys(changes).length) return { unchanged: true };
-        return data.expensesApi({ action: "update", expenseId: e.id, expectedRevision: e.revision, changes });
+        const r = Object.keys(changes).length ? await data.expensesApi({ action: "update", expenseId: e.id, expectedRevision: e.revision, changes }) : null;
+        if (v.proof) await sendProof(e.id, v.proof);
+        return r || (v.proof ? { proof: true } : { unchanged: true });
       },
     });
   const removeDialog = (e) =>
     formDialog({
-      title: `Remove ${formatCentavos(e.amount, currency)} expense?`,
-      intro: e.supplierPaymentId ? "It stays in the history but no longer counts as spent or as paid to the supplier. Its supplier payment goes back to Upcoming." : "Use this for an expense entered by mistake. It stays in the history but no longer counts as spent.",
+      title: "Remove this money item?",
+      intro: `It will no longer appear in your active wedding money list (${formatCentavos(e.amount, currency)}). ${e.supplierPaymentId ? "It no longer counts as spent or as paid to the supplier; its supplier payment goes back to the schedule." : "It no longer counts as spent."} The record stays in your history.`,
       fields: [{ name: "reason", label: "Reason", type: "textarea", required: true }],
       submitLabel: "Remove expense",
       onSubmit: (v) => data.expensesApi({ action: "remove", expenseId: e.id, reason: v.reason }),
@@ -289,7 +292,8 @@ export function expenseActions({ data, currency, timezone, can, toast, getCtx, r
     return true;
   };
 
-  function openView(e) {
+  // readOnly (Money's Details): no Edit / Remove buttons; View proof stays.
+  function openView(e, { readOnly = false } = {}) {
     const active = e.status === "active";
     detailsDialog({
       title: `${formatCentavos(e.amount, currency)} · ${categoryName(names(), e)}`,
@@ -307,7 +311,7 @@ export function expenseActions({ data, currency, timezone, can, toast, getCtx, r
         ["Proof", proofLine(e.proof, timezone)],
       ],
       activity: activityLines(e.history, timezone),
-      actions: [...(active && can.remove ? [{ act: "remove", label: "Remove expense", danger: true }] : []), ...proofItems(e).map((i) => ({ act: i.x, label: i.label })), ...(active && can.update ? [{ act: "edit", label: "Edit" }] : [])],
+      actions: readOnly ? (e.proof ? [{ act: "proof-view", label: "View proof" }] : []) : [...(active && can.remove ? [{ act: "remove", label: "Remove expense", danger: true }] : []), ...proofItems(e).map((i) => ({ act: i.x, label: i.label })), ...(active && can.update ? [{ act: "edit", label: "Edit" }] : [])],
       onAction: async (act) => {
         try {
           if (act === "proof-view") {
@@ -325,5 +329,5 @@ export function expenseActions({ data, currency, timezone, can, toast, getCtx, r
     });
   }
 
-  return { addDialog, openView, done, proofItems, proofAction, attachAfter };
+  return { addDialog, editDialog, removeDialog, openView, done, proofItems, proofAction, attachAfter };
 }

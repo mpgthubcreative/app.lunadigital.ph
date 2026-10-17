@@ -12,7 +12,8 @@ import { html, render } from "../../lib/html.js";
 import { pageHeader, skeleton } from "../../components/ui.js";
 import { toast as defaultToast } from "../../components/feedback.js";
 import { api as defaultApi } from "../../lib/api.js";
-import { isWeddingSlug, suggestWeddingSlug } from "@shared/index.js";
+import { isWeddingSlug, suggestWeddingSlug, rsvpOpen } from "@shared/index.js";
+import { openInvitePreview, copyText } from "./invite-preview.js";
 
 const TEXT = [
   ["coupleNames", "Couple names", "e.g. Camille & Carlo"],
@@ -70,7 +71,7 @@ export function readSetupForm(form) {
   return setup;
 }
 
-export function mount(container, session, { api = defaultApi, toast = defaultToast, shrink = shrinkPhoto } = {}) {
+export function mount(container, session, { api = defaultApi, toast = defaultToast, shrink = shrinkPhoto, preview = openInvitePreview } = {}) {
   const canEdit = session.member.permissions["guests.manage"] === true;
   const state = { setup: null, draft: null, hasHero: false, hero: null, error: null, saving: false, status: null };
   let alive = true;
@@ -83,6 +84,17 @@ export function mount(container, session, { api = defaultApi, toast = defaultToa
   const slugPreview = (slug, names) => `Guests' links look like ${host()}/w/${slug || suggestWeddingSlug(names) || "your-names-wedding"}/invite/… (the private part after /invite/ is different for each guest).`;
   const slugField = (s) =>
     html`<div class="field"><label for="ws-weddingSlug">Wedding link / hashtag</label><input class="input" id="ws-weddingSlug" name="weddingSlug" type="text" autocapitalize="none" autocomplete="off" spellcheck="false" maxlength="60" value="${s.weddingSlug ?? ""}" placeholder="${suggestWeddingSlug(s.coupleNames) || "e.g. carlo-and-yanie-wedding"}" aria-describedby="ws-slug-hint" ${canEdit ? "" : "disabled"}><p class="stat-hint" id="ws-slug-hint" data-role="slug-preview">${slugPreview(s.weddingSlug, s.coupleNames)}</p><p class="stat-hint">Lowercase letters, numbers and hyphens, e.g. carloyanieforever. Leave blank to use the suggestion. Change it before sharing; links already sent keep working.</p></div>`;
+  // The wedding's own link (identity) vs each guest's private invitation.
+  const origin = () => globalThis.location?.origin || "https://app.lunadigital.ph";
+  const linkBox = () => {
+    const slug = state.setup?.weddingSlug;
+    return html`<div class="ws-link" data-role="wedding-link">
+      <span class="stat-hint">Wedding link</span>
+      ${isWeddingSlug(slug) ? html`<span class="ws-link-url" data-role="wedding-url">${origin()}/w/${slug}</span>` : html`<span class="stat-hint" data-role="wedding-url-none">Save to get your wedding link.</span>`}
+      <div class="ws-link-actions">${isWeddingSlug(slug) ? html`<button type="button" class="btn btn-compact" data-act="copy-wedding-link">Copy link</button>` : ""}<button type="button" class="btn btn-compact" data-act="preview">Preview</button><span class="ws-link-copied" data-role="copied" aria-live="polite"></span></div>
+      <p class="stat-hint">Each guest gets a personal invitation link: ${host()}/w/${isWeddingSlug(slug) ? slug : "…"}/invite/••••••. The private part is different for every guest, and only that party can open it and RSVP. Copy or share each one from Guests → ⋯.</p>
+    </div>`;
+  };
   const syncSlug = () => {
     const f = form();
     if (!f) return;
@@ -136,6 +148,7 @@ export function mount(container, session, { api = defaultApi, toast = defaultToa
                 <p class="stat-hint">What your guests see on their invitation. After saving, make each guest's link from Guests → ⋯ → Create invitation link.</p>
                 ${field("coupleNames", "Couple names", "e.g. Camille & Carlo", s.coupleNames)}
                 ${slugField(s)}
+                ${linkBox()}
                 ${field("weddingDate", "Wedding date", "", s.weddingDate, "date")}
                 <fieldset class="wl-fieldset"><legend>Ceremony</legend>${field("ceremonyTime", "Time", "", s.ceremonyTime, "time")}${TEXT.slice(1, 4).map(([n, l, p]) => field(n, l.replace("Ceremony ", "").replace(/^./, (c) => c.toUpperCase()), p, s[n], n.endsWith("Map") ? "url" : "text"))}</fieldset>
                 <fieldset class="wl-fieldset"><legend>Reception</legend>${field("receptionTime", "Time", "", s.receptionTime, "time")}${TEXT.slice(4, 7).map(([n, l, p]) => field(n, l.replace("Reception ", "").replace(/^./, (c) => c.toUpperCase()), p, s[n], n.endsWith("Map") ? "url" : "text"))}</fieldset>
@@ -227,6 +240,23 @@ export function mount(container, session, { api = defaultApi, toast = defaultToa
     }
   };
   const onClick = async (event) => {
+    const act = event.target.closest("[data-act]")?.dataset.act;
+    if (act === "copy-wedding-link") {
+      const ok = await copyText(`${origin()}/w/${state.setup.weddingSlug}`);
+      const box = container.querySelector('[data-role="copied"]');
+      if (box) box.textContent = ok ? "Copied ✓" : "Couldn't copy: select the link above";
+      if (ok) toast("Copied ✓ Wedding link", "success");
+      return;
+    }
+    if (act === "preview") {
+      // What a guest sees, from the details on screen now (not yet saved too).
+      const now = form() ? readSetupForm(form()) : {};
+      const w = { ...(state.setup || {}), ...now };
+      const invitation = { wedding: w, hero: state.hero, guest: { name: "Your guest's name", seats: 2, rsvp: "awaiting", confirmed: 0 }, rsvpOpen: rsvpOpen(w, new Date().toISOString().slice(0, 10)) };
+      const fetchImpl = async () => ({ ok: true, status: 200, json: async () => ({ success: true, invitation }) });
+      await preview({ token: "P".repeat(32), fetchImpl, note: "Preview: what your guests see (with a sample guest)" });
+      return;
+    }
     if (!event.target.closest('[data-act="hero-remove"]')) return;
     try {
       await api("wedding-setup", { method: "POST", body: { action: "hero", dataUrl: null } });

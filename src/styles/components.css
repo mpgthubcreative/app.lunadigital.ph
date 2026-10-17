@@ -3685,3 +3685,16 @@ tr.is-saving {
 .wl-prog-song { flex: 1 1 55%; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-muted); font-size: var(--text-sm); text-align: left; }
 .wl-prog-song.is-quiet { opacity: 0.7; }
 .wl-prog-dur { flex: none; min-width: 3.2rem; text-align: right; font-variant-numeric: tabular-nums; font-size: var(--text-sm); color: var(--text-muted); }
+
+/* Owner-pilot Bridal: the invitation previewed inside Luna (Owner-only bar on top). */
+.inv-preview-backdrop { padding: 0; align-items: stretch; }
+.inv-preview { position: fixed; inset: 0; display: flex; flex-direction: column; background: var(--bg, #fff); z-index: 1; }
+.inv-preview-bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-2); padding: var(--space-2) var(--space-3); border-bottom: 1px solid var(--border); background: var(--surface, #fff); }
+.inv-preview-note { font-size: var(--text-sm); color: var(--text-muted); }
+.inv-preview-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.inv-preview-body { flex: 1 1 auto; overflow: auto; }
+/* Wedding Setup: the wedding link box. */
+.ws-link { margin: var(--space-2) 0 var(--space-3); padding: var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-sm); }
+.ws-link-url { display: block; font-weight: 600; word-break: break-all; margin: 2px 0 var(--space-2); }
+.ws-link-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; }
+.ws-link-copied { color: var(--success); font-size: var(--text-sm); }
