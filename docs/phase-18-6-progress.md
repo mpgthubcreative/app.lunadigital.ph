@@ -841,6 +841,23 @@ The accepted Bridal design (Money | Tasks | Guests | More) is unchanged; this pa
   - **Live on staging (temporary `pnav-home-tmp` with an Owner and an Admin, removed):** 9/9 at 390, run twice.
   - **Checked:** default tabs; arranged Expenses · Payroll · Grocery · More, saved to the Owner's record only; Attendance moved to More; kept after refresh; the Admin still has the default; Reset restores the default.
 
+### 2026-10-18 · Recurring bills: one occurrence per bill per period (cf17f38) + staging repair
+
+- **Cause (found in rwp-d419):** after paying, each bill's next occurrence (Nov 17) was edited back to Oct 17 (Meralco Dec 17 → Oct 18 → Oct 17). Parking also had its paid Oct occurrence reopened by Mark unpaid. Future months were projected from EVERY unpaid occurrence of a bill, so each bill showed twice per month.
+- **Fix:**
+  - **Chain id:** `recurringId` on every occurrence (the bill's first record id), set on create and carried to each next one.
+  - **Paying:** if an occurrence already exists for the next date (same recurringId), it's reused (nextId set, `nextExisted`); a retry or a pay-again after Mark unpaid makes nothing new.
+  - **Editing:** moving a due date onto a date the same bill already has is refused ("Meralco already has a bill due …").
+  - **Months:** `/api/household-money` projects later months only from each bill's latest unpaid occurrence and lists bill + date once, so Bills remaining counts each occurrence once.
+  - **My Bills:** groups by recurringId.
+- **Staging repair (rwp-d419, scratchpad bills-repair.mjs; dry run, then --apply):**
+  - **Chain ids:** recurringId backfilled on 7 records.
+  - **Duplicates re-dated** (not deleted: they were the bills' own next occurrences): Meralco bLoAfUSi Oct 17 → Dec 17, Parking M4zgp3cW Oct 17 → Nov 17, Assoc Dues o8Twu5VP Oct 17 → Nov 17, each with a history note. Amounts unchanged.
+  - **Result:** Oct 2026: Parking (unpaid; Meralco and Assoc Dues paid). Nov 2026–Feb 2027: Parking, Meralco and Assoc Dues once each, Bills remaining ₱19,038.
+- **Tests:**
+  - **Unit:** 1639 pass (5 new: months Oct 2026–Feb 2027 viewed 3×, pay / retry / Mark unpaid / pay again, an existing next occurrence reused, the pilot's same-date move refused, older duplicate data listed once).
+  - **Live API (temporary `pdup-home-tmp`, removed):** 5/5.
+
 ## Plan (decisions made from the brief)
 
 ### Stage 1: Distributor
