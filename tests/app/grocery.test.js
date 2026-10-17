@@ -172,6 +172,7 @@ describe("Expenses hand-off", () => {
       householdMonth: vi.fn(async () => null),
       listCategories: vi.fn(async () => [{ id: "catGroceries01", name: "Groceries", status: "active" }]),
       listExpenses: vi.fn(async () => ({ rows: [], hasMore: false })),
+      listBills: vi.fn(async () => ({ rows: [], hasMore: false })),
       expensesApi: vi.fn(async () => ({ expenseId: "expNew0000001" })),
       budgetApi: vi.fn(),
     };

@@ -3747,30 +3747,22 @@ tr.is-saving {
   .staff-tabs { gap: 0; padding: 0 var(--space-1); }
   .staff-tab { flex: 1 1 auto; padding: 0 6px; font-size: var(--text-sm); }
 }
-/* Luna Household Expenses: Bridal-Money-style compact rows.
-   Phone:   Payee / Category (sub) | Amount | Date | ⋯
-   Desktop: Category | Payee | Amount | Date | ⋯ */
-.hx-tools { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin: 0 0 var(--space-3); }
-.hx-month { display: flex; align-items: center; gap: var(--space-1); flex: none; }
+/* Luna Household Expenses: a household statement. Category groups ARE the
+   list: UTILITIES ₱9,238, then one short line per record (name + a quiet
+   date / due / paid line | amount | ⋯). */
+.hx-month { display: flex; align-items: center; gap: var(--space-1); margin: 0 0 var(--space-3); }
 .hx-month strong { min-width: 8.5em; text-align: center; }
-.hx-filter { flex: 1 1 9rem; min-width: 0; width: auto; min-height: 38px; }
 .hx-page-menu { flex: none; }
-.hx-row .hx-cat { display: none; }
+.hx-group { margin-bottom: var(--space-4); }
+.hx-group-head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-2); }
+.hx-group-total { font-variant-numeric: tabular-nums; font-weight: 700; color: var(--text); letter-spacing: 0; }
+.hx-row { min-height: 44px; }
+.hx-row .hx-main { padding: 4px 0; }
 .hx-row .hx-amt { min-width: 5.5em; text-align: right; padding-right: 0; font-weight: 600; }
-.hx-row .hx-date { min-width: 3.4em; }
 .hx-row[data-kind="payroll"] .wl-name { font-weight: 500; }
-.hx-cat-row { padding-right: var(--space-2); }
-.hx-cat-btn { flex-direction: row; align-items: center; gap: var(--space-2); }
-.hx-cat-btn .wl-name { flex: 1 1 auto; min-width: 0; }
-.hx-cat-amt { flex: none; font-variant-numeric: tabular-nums; font-weight: 600; }
-.hx-go { flex: none; color: var(--text-muted); font-size: 1.2em; line-height: 1; }
-.hx-drill { margin: 0 0 var(--space-2); }
-.hx-drill .section-title { margin: var(--space-1) 0 0; }
-.hx-drill-total { margin: 2px 0 0; color: var(--text-muted); }
-.hx-drill-total b { color: var(--text); font-variant-numeric: tabular-nums; }
+.hx-row[data-kind="bill-due"] .hx-amt { color: var(--text-muted); }
+.hx-due.is-over { color: var(--danger); }
 @media (min-width: 720px) {
-  .hx-row .hx-cat { display: block; flex: 0 0 10rem; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--text-muted); font-size: var(--text-sm); }
-  .hx-row .hx-sub { display: none; }
+  .hx-row .hx-main { flex-direction: row; align-items: baseline; gap: var(--space-3); }
   .hx-row .hx-amt { min-width: 7rem; }
-  .hx-row .hx-date { min-width: 4.2em; }
 }

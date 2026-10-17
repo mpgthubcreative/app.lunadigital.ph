@@ -1,12 +1,12 @@
 // @vitest-environment jsdom
-// Luna Household money screens: Expenses ("Bridal Money for the household":
-// month summary Spent / Bills remaining / Advances released / Cash out, By
-// category with drill-down, one compact list incl. read-only payroll rows,
-// ⋯ Edit / Details / Remove, Month / Category / Search), Bills (repeat,
-// Pay -> expense + next bill), Categories (no budget anywhere), loaders.
+// Luna Household money screens: Expenses as a household statement (Spent +
+// Bills remaining only; category groups ARE the list: expenses, read-only
+// payroll rows and unpaid bills under their category; bill ⋯ Paid / Edit /
+// Remove, paid bill ⋯ Mark unpaid / Edit / Remove), Bills (recurring bills:
+// name, amount, category, due date, repeat), Categories (no budget), loaders.
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { mount as mountExpenses, shiftMonth, monthRange, parseHouseholdExpense, monthRows, categoryTotals } from "../../src/modules/household/expenses.js";
+import { mount as mountExpenses, shiftMonth, monthRange, parseHouseholdExpense, monthRows, groupRows, dueBills } from "../../src/modules/household/expenses.js";
 import { mount as mountBills, parseRepeat, repeatValue } from "../../src/modules/household/bills.js";
 import { mount as mountBudget } from "../../src/modules/household/budget.js";
 import { MODULE_LOADERS } from "../../src/modules/loaders.js";
@@ -36,10 +36,10 @@ const CATS = [
 const EXP = { id: "expense0000001", date: "2026-10-05", category: "catGroceries01", amount: 250000, payee: "SM Supermarket", method: "cash", status: "active", revision: 1, history: [] };
 const EXPS = [
   { ...EXP, id: "expense0000003", date: "2026-10-17", payee: "Puregold", amount: 325000 },
-  { id: "expense0000002", date: "2026-10-15", category: "catUtilities01", amount: 480000, payee: "Meralco", method: "gcash", status: "active", revision: 1, history: [], scheduleId: "sched1" },
+  { id: "expense0000002", date: "2026-10-15", category: "catUtilities01", amount: 300000, payee: "Parking", method: "gcash", status: "active", revision: 1, history: [], scheduleId: "schedPark0001" },
   EXP,
 ];
-const MONTH = { month: "2026-10", current: true, spent: 1611500, expensesSpent: 1055000, staffPaid: 556500, staffPayments: 1, billsRemaining: 450000, billsDue: 1, payroll: [{ id: "pay1", staffName: "Loriza", amount: 556500, paidDate: "2026-10-15" }], advancesReleased: 300000, advanceCount: 1, cashOut: 1911500, categories: [], byCategory: { catGroceries01: 575000, catUtilities01: 480000 } };
+const MONTH = { month: "2026-10", current: true, spent: 1431500, expensesSpent: 875000, staffPaid: 556500, staffPayments: 1, billsRemaining: 450000, billsDue: 1, payroll: [{ id: "pay1", staffName: "Loriza", amount: 556500, paidDate: "2026-10-15" }], advancesReleased: 300000, advanceCount: 1, cashOut: 1911500, categories: [], byCategory: { catGroceries01: 575000, catUtilities01: 480000 } };
 const BILL = { id: "sched000000001", description: "Meralco", category: "catUtilities01", amount: 450000, dueDate: "2026-10-20", status: "upcoming", repeat: { every: "month", interval: 1 }, revision: 1, history: [] };
 
 function fakeData(extra = {}) {
@@ -75,85 +75,112 @@ describe("navigation", () => {
 
 const $ = (sel) => container.querySelector(sel);
 const $$ = (sel) => [...container.querySelectorAll(sel)];
-const rowTexts = () => $$('[data-role="expenses"] .wl-row').map((r) => r.textContent.replace(/\s+/g, " ").trim());
+const flat = (el) => el.textContent.replace(/\s+/g, " ").trim();
 const mountExp = async (data = fakeData()) => {
-  mountExpenses(container, home(), { data, now: NOW, location: { search: "" } });
+  mountExpenses(container, home(), { data, now: NOW, location: { search: "" }, confirm: async () => true, toast: () => {} });
   await flush();
   return data;
 };
+const group = (key) => $(`[data-group="${key}"]`);
+const peso = (t) => Math.round(Number(t.replace(/[₱,]/g, "")) * 100);
 
-describe("Expenses", () => {
-  it("month summary: Spent, Bills remaining, Advances released, Cash out; no budget anywhere", async () => {
+describe("Expenses (household statement)", () => {
+  it("top: the month and only Spent + Bills remaining; no search, advances, cash out, By category or separate Expenses list", async () => {
     const data = await mountExp();
     expect(data.listExpenses).toHaveBeenCalledWith(expect.any(String), { status: "active", from: "2026-10-01", to: "2026-10-31" }, expect.objectContaining({ pageSize: 500 }));
-    const kpis = $('[data-role="month-summary"]').textContent.replace(/\s+/g, " ");
-    for (const t of ["Spent ₱16,115", "incl. ₱5,565.00 payroll", "Bills remaining ₱4,500", "Advances released ₱3,000", "Cash out ₱19,115"]) expect(kpis).toContain(t);
-    expect(container.textContent).not.toMatch(/budget/i);
-    expect($('[data-act="set-budget"]')).toBeNull();
+    expect(data.listBills).toHaveBeenCalledWith(expect.any(String), { status: "upcoming", to: "2026-10-31" }, expect.anything());
     expect($('[data-role="month"]').textContent).toBe("October 2026");
-    expect($('[data-act="month-next"]').disabled).toBe(true);
-  });
-
-  it("one compact list, newest first: expense rows with ⋯ (Edit / Details / Remove), the salary as a read-only Household Staff · Payroll row", async () => {
-    await mountExp();
-    const rows = $$('[data-role="expenses"] .wl-row');
-    expect(rows.map((r) => r.dataset.kind)).toEqual(["expense", "expense", "payroll", "expense"]);
-    expect(rowTexts()[0]).toMatch(/Groceries.*Puregold.*₱3,250\.00.*Oct 17/);
-    expect(rowTexts()[2]).toMatch(/Household Staff.*Payroll · Loriza.*₱5,565\.00.*Oct 15/);
-    expect(rows[2].querySelector(".line-menu")).toBeNull();
-    expect([...rows[0].querySelectorAll(".menu-item")].map((b) => b.textContent.trim())).toEqual(["Edit", "Details", "Remove"]);
-  });
-
-  it("By category: totals from the same rows (expenses + payroll; advances never), largest first", async () => {
-    await mountExp();
-    const cats = $$('[data-role="category-totals"] .hx-cat-btn').map((b) => b.textContent.replace(/\s+/g, " ").trim());
-    expect(cats).toEqual(["Groceries₱5,750.00›", "Household Staff₱5,565.00›", "Utilities₱4,800.00›"]);
-    expect(container.querySelector('[data-role="category-totals"]').textContent).not.toMatch(/Advance/);
-  });
-
-  it("tapping Groceries filters to October's grocery expenses with the total; ‹ All expenses restores the full list", async () => {
-    await mountExp();
-    $('[data-act="cat"][data-cat="catGroceries01"]').click();
-    expect($('[data-role="drill-title"]').textContent).toBe("Groceries — October");
-    expect($('[data-role="drill-total"]').textContent.replace(/\s+/g, " ")).toBe("₱5,750.00 total");
-    expect(rowTexts().map((t) => t.match(/(Puregold|SM Supermarket)/)[1])).toEqual(["Puregold", "SM Supermarket"]);
+    expect($$('[data-role="month-summary"] .kpi-label').map((e) => e.textContent)).toEqual(["Spent", "Bills remaining"]);
+    expect(flat($('[data-role="month-summary"]'))).toContain("₱14,315.00");
+    expect($('input[type="search"], input[name="search"]')).toBeNull();
+    expect($('select[name="category"]')).toBeNull();
+    expect(container.textContent).not.toMatch(/Advances released|Cash out|By category|budget/i);
     expect($('[data-role="category-totals"]')).toBeNull();
-    expect($('select[name="category"]').value).toBe("catGroceries01");
-    $('[data-act="clear-cat"]').click();
-    expect($$('[data-role="expenses"] .wl-row')).toHaveLength(4);
-    expect($('[data-role="drill"]')).toBeNull();
+    expect($('[data-role="expenses"]')).toBeNull();
   });
 
-  it("Household Staff drill-down shows the payroll row; the Category filter and Search narrow the same list", async () => {
+  it("categories ARE the list: groups by total (largest first), each with its rows; the category isn't repeated in rows", async () => {
     await mountExp();
-    $('[data-act="cat"][data-cat="catStaff000001"]').click();
-    expect(rowTexts()).toHaveLength(1);
-    expect(rowTexts()[0]).toMatch(/Payroll · Loriza/);
-    $('[data-act="clear-cat"]').click();
-    const sel = $('select[name="category"]');
-    sel.value = "catUtilities01";
-    sel.dispatchEvent(new Event("change", { bubbles: true }));
-    expect(rowTexts()).toHaveLength(1);
-    $('[data-act="clear-cat"]').click();
-    const search = $('input[name="search"]');
-    search.value = "pure";
-    search.dispatchEvent(new Event("input", { bubbles: true }));
-    expect(rowTexts()).toHaveLength(1);
-    expect(rowTexts()[0]).toMatch(/Puregold/);
+    const heads = $$(".hx-group-head").map(flat);
+    expect(heads).toEqual(["Utilities₱7,500.00", "Groceries₱5,750.00", "Household Staff₱5,565.00"]);
+    expect($$('[data-group="catUtilities01"] .wl-name').map((e) => e.textContent)).toEqual(["Meralco", "Parking"]);
+    expect($$('[data-group="catGroceries01"] .wl-name').map((e) => e.textContent)).toEqual(["Puregold", "SM Supermarket"]);
+    for (const r of $$(".hx-row")) expect(r.querySelector(".wl-name").textContent).not.toMatch(/^(Utilities|Groceries)$/);
   });
 
-  it("monthRows / categoryTotals: no Household Staff category -> payroll gets its own Household Staff group", () => {
-    const rows = monthRows([EXP], [{ id: "p", staffName: "Ana", amount: 100, paidDate: "2026-10-01" }], [CATS[0]]);
-    expect(categoryTotals(rows)).toEqual([{ key: "catGroceries01", name: "Groceries", amount: 250000, count: 1 }, { key: "payroll", name: "Household Staff", amount: 100, count: 1 }]);
+  it("each group total = the sum of its visible rows; all groups = Spent + Bills remaining", async () => {
+    await mountExp();
+    let all = 0;
+    for (const g of $$(".hx-group")) {
+      const rows = [...g.querySelectorAll(".hx-amt")].reduce((t, e) => t + peso(e.textContent), 0);
+      expect(peso(g.querySelector('[data-role="group-total"]').textContent), g.dataset.group).toBe(rows);
+      all += rows;
+    }
+    expect(all).toBe(MONTH.spent + MONTH.billsRemaining);
   });
 
-  it("+ Add expense: Amount, Category, Date up front; payee, method, reference, notes, proof under More details", async () => {
+  it("payroll: one read-only row under Household Staff (no ⋯)", async () => {
+    await mountExp();
+    const rows = $$('[data-kind="payroll"]');
+    expect(rows).toHaveLength(1);
+    expect(rows[0].closest("[data-group]").dataset.group).toBe("catStaff000001");
+    expect(flat(rows[0])).toMatch(/Payroll · Loriza.*Oct 15.*₱5,565\.00/);
+    expect(rows[0].querySelector(".line-menu")).toBeNull();
+  });
+
+  it("an unpaid bill sits under its category: Due Oct 20, ⋯ Paid / Edit / Remove; Paid records it once (cash, today, full, a key)", async () => {
+    const data = await mountExp();
+    const bill = $('[data-kind="bill-due"]');
+    expect(flat(bill)).toMatch(/Meralco.*Due Oct 20.*₱4,500\.00/);
+    expect([...bill.querySelectorAll(".menu-item")].map((b) => b.textContent.trim())).toEqual(["Paid", "Edit", "Remove"]);
+    bill.querySelector('[data-act="bill-paid"]').click();
+    bill.querySelector('[data-act="bill-paid"]').click(); // a double tap sends once
+    await flush();
+    const calls = data.scheduleApi.mock.calls.filter(([b]) => b.action === "markPaid");
+    expect(calls).toHaveLength(1);
+    expect(calls[0][0]).toMatchObject({ action: "markPaid", scheduleId: "sched000000001", payment: { method: "cash", amount: 450000, paidDate: "2026-10-16", final: true } });
+    expect(calls[0][0].payment.key).toMatch(/^[a-z2-9]{12}$/);
+  });
+
+  it("a paid bill: Paid · Oct 15, ⋯ Mark unpaid / Edit / Remove; Mark unpaid removes its expense (the bill reopens)", async () => {
+    const data = await mountExp();
+    const paid = $('[data-kind="bill-paid"]');
+    expect(flat(paid)).toMatch(/Parking.*Paid · Oct 15.*₱3,000\.00/);
+    expect([...paid.querySelectorAll(".menu-item")].map((b) => b.textContent.trim())).toEqual(["Mark unpaid", "Edit", "Remove"]);
+    paid.querySelector('[data-act="bill-unpaid"]').click();
+    await flush();
+    expect(data.expensesApi).toHaveBeenCalledWith({ action: "remove", expenseId: "expense0000002", reason: "Marked unpaid" });
+  });
+
+  it("Remove on an unpaid bill cancels it; Edit uses the bill fields", async () => {
+    const data = await mountExp();
+    $('[data-kind="bill-due"] [data-act="bill-remove"]').click();
+    await flush();
+    expect(data.scheduleApi).toHaveBeenCalledWith({ action: "cancel", scheduleId: "sched000000001", reason: "Removed" });
+    $('[data-kind="bill-due"] [data-act="bill-edit"]').click();
+    await flush();
+    expect([...lastForm().elements].filter((e) => e.name).map((e) => e.name)).toEqual(["description", "amount", "category", "dueDate", "repeat"]);
+  });
+
+  it("a normal expense: ⋯ Edit / Details / Remove, no Paid / Unpaid", async () => {
+    const data = await mountExp();
+    const r = $('[data-row="expense0000003"]');
+    expect([...r.querySelectorAll(".menu-item")].map((b) => b.textContent.trim())).toEqual(["Edit", "Details", "Remove"]);
+    r.querySelector('[data-act="edit"]').click();
+    await flush();
+    const f = lastForm();
+    f.elements.amount.value = "3300";
+    submit(f);
+    await flush();
+    expect(data.expensesApi).toHaveBeenCalledWith({ action: "update", expenseId: "expense0000003", expectedRevision: 1, changes: { amount: 330000 } });
+  });
+
+  it("+ Add expense: Amount, Category, Date up front; payee, method, reference, notes, receipt under More details", async () => {
     const data = await mountExp();
     $('[data-act="new"]').click();
     await flush();
     const form = lastForm();
-    const visible = [...form.querySelectorAll("input, select, textarea")].filter((e) => !e.closest("details:not([open])")).map((e) => e.name);
-    expect(visible).toEqual(["amount", "category", "date"]);
+    expect([...form.querySelectorAll("input, select, textarea")].filter((e) => !e.closest("details:not([open])")).map((e) => e.name)).toEqual(["amount", "category", "date"]);
     expect([...form.querySelectorAll("details input, details select, details textarea")].map((e) => e.name)).toEqual(["payee", "method", "reference", "notes", "proof"]);
     form.elements.amount.value = "1,299.50";
     form.elements.category.value = "Pets";
@@ -163,28 +190,22 @@ describe("Expenses", () => {
     expect(data.expensesApi).toHaveBeenCalledWith({ action: "create", expense: { date: "2026-10-16", amount: 129950, method: "cash", category: "catNew0000001" } });
   });
 
-  it("⋯ Edit and Remove work on the row's expense; Details is read-only", async () => {
-    const data = await mountExp();
-    $('[data-row="expense0000003"] [data-act="edit"]').click();
-    await flush();
-    const f = lastForm();
-    f.elements.amount.value = "3300";
-    submit(f);
-    await flush();
-    expect(data.expensesApi).toHaveBeenCalledWith({ action: "update", expenseId: "expense0000003", expectedRevision: 1, changes: { amount: 330000 } });
-    $('[data-row="expense0000003"] [data-act="view"]').click();
-    expect(document.querySelector('[data-role="details"]').textContent).toContain("Puregold");
-    expect(document.querySelector('[data-role="details"] [data-act="edit"]')).toBeNull();
-  });
-
-  it("⋯ → Manage categories (no Budget); previous month reloads that month", async () => {
+  it("⋯ → Manage categories; previous month reloads it (bills due by its end, not later ones)", async () => {
     const data = await mountExp();
     expect($('[data-role="manage-categories"]').getAttribute("href")).toBe("/budget");
-    expect($('[data-role="manage-categories"]').textContent).toBe("Manage categories");
     $('[data-act="month-prev"]').click();
     await flush();
     expect(data.householdMonth).toHaveBeenLastCalledWith("2026-09");
-    expect(data.listExpenses).toHaveBeenLastCalledWith(expect.any(String), { status: "active", from: "2026-09-01", to: "2026-09-30" }, expect.anything());
+    expect(data.listBills).toHaveBeenLastCalledWith(expect.any(String), { status: "upcoming", to: "2026-09-30" }, expect.anything());
+  });
+
+  it("helpers: dueBills follows Bills remaining (current month incl. overdue; past month only its own); groups sort largest first", () => {
+    const b = (id, dueDate, extra = {}) => ({ id, dueDate, status: "upcoming", amount: 100, ...extra });
+    const bills = [b("a", "2026-09-20"), b("b", "2026-10-20"), b("c", "2026-11-02"), b("d", "2026-10-05", { status: "paid" }), b("e", "2026-10-06", { paidAmount: 100 })];
+    expect(dueBills(bills, "2026-10", "2026-10-16").map((x) => x.id)).toEqual(["a", "b"]);
+    expect(dueBills(bills, "2026-09", "2026-10-16").map((x) => x.id)).toEqual(["a"]);
+    const g = groupRows(monthRows({ expenses: [EXP], payroll: [{ id: "p", staffName: "Ana", amount: 300000, paidDate: "2026-10-01" }], bills: [], categories: [CATS[0]] }));
+    expect(g.map((x) => [x.key, x.total])).toEqual([["payroll", 300000], ["catGroceries01", 250000]]);
   });
 
   it("month helpers and parsing", () => {
@@ -195,34 +216,47 @@ describe("Expenses", () => {
   });
 });
 
-describe("Bills", () => {
-  it("lists bills with their repeat; Pay records the expense and says the next one is added", async () => {
+describe("Bills (recurring bills)", () => {
+  it("+ Add bill: Bill name, Amount, Category, Due date, Repeat only; monthly by default", async () => {
     const data = fakeData();
     mountBills(container, home(), { data, now: NOW });
     await flush();
-    expect(container.querySelector('[data-col="repeat"]').textContent).toBe("Every month");
-    click('[data-act="pay"]');
+    $('[data-act="new"]').click();
     await flush();
     const form = lastForm();
-    expect(form.closest(".modal").textContent).toContain("the next one (every month) is added");
-    submit(form);
-    await flush();
-    expect(data.scheduleApi).toHaveBeenCalledWith({ action: "markPaid", scheduleId: "sched000000001", payment: expect.objectContaining({ amount: 450000, final: true, method: "cash", paidDate: "2026-10-16" }) });
-  });
-
-  it("+ Add bill defaults to monthly and sends the repeat", async () => {
-    const data = fakeData();
-    mountBills(container, home(), { data, now: NOW });
-    await flush();
-    click('[data-act="new"]');
-    await flush();
-    const form = lastForm();
+    expect([...form.elements].filter((e) => e.name).map((e) => e.name)).toEqual(["description", "amount", "category", "dueDate", "repeat"]);
+    expect([...form.elements.repeat.options].map((o) => o.textContent)).toEqual(["Doesn't repeat", "Weekly", "Every 2 weeks", "Monthly", "Every 3 months", "Every 6 months", "Yearly"]);
     form.elements.description.value = "Internet";
     form.elements.amount.value = "1699";
     form.elements.dueDate.value = "2026-10-25";
     submit(form);
     await flush();
     expect(data.scheduleApi).toHaveBeenCalledWith({ action: "create", payment: { description: "Internet", amount: 169900, dueDate: "2026-10-25", repeat: { every: "month", interval: 1 }, category: "catUtilities01" } });
+  });
+
+  it("an unpaid bill: Due · Monthly, ⋯ Paid / Edit / Remove; Paid needs no payment form", async () => {
+    const data = fakeData();
+    mountBills(container, home(), { data, now: NOW, toast: () => {} });
+    await flush();
+    expect(flat($('[data-col="repeat"]'))).toBe("Due Oct 20 · Monthly");
+    expect([...$$('[data-bill] .menu-item')].map((b) => b.textContent.trim())).toEqual(["Paid", "Edit", "Remove"]);
+    $('[data-act="paid"]').click();
+    await flush();
+    expect(document.querySelector(".modal-backdrop form")).toBeNull();
+    expect(data.scheduleApi).toHaveBeenCalledWith(expect.objectContaining({ action: "markPaid", scheduleId: "sched000000001", payment: expect.objectContaining({ method: "cash", amount: 450000, final: true }) }));
+  });
+
+  it("Paid tab: ⋯ Mark unpaid / Remove", async () => {
+    const PAID = { ...BILL, id: "schedPaid0001", status: "paid", paidDate: "2026-10-15", paidAmount: 450000, expenseId: "expBill000001" };
+    const data = fakeData({ listBills: vi.fn(async (b, f) => ({ rows: f.status === "paid" ? [PAID] : [BILL], hasMore: false })) });
+    mountBills(container, home(), { data, now: NOW, confirm: async () => true, toast: () => {} });
+    await flush();
+    $('[data-act="seg"][data-value="paid"]').click();
+    await flush();
+    expect([...$$('[data-bill] .menu-item')].map((b) => b.textContent.trim())).toEqual(["Mark unpaid", "Remove"]);
+    $('[data-act="unpaid"]').click();
+    await flush();
+    expect(data.expensesApi).toHaveBeenCalledWith({ action: "remove", expenseId: "expBill000001", reason: "Marked unpaid" });
   });
 
   it("repeat helpers", () => {

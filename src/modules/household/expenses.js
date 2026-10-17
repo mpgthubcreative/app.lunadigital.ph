@@ -1,40 +1,46 @@
-// Luna Household: Expenses ("Bridal Money for the household": easy expense
-// monitoring, not budgeting). One month at a time, one list:
+// Luna Household: Expenses, a simple household statement.
+//   Open Expenses -> see total spent -> see unpaid bills -> see where it went.
 //   ‹ October 2026 ›                                   + Add expense  ⋯
-//   Spent · Bills remaining · Advances released · Cash out   (/api/household-money)
-//   By category     Groceries ₱14,200 ›   (tap = the list filtered to it)
-//   Expenses        Groceries | Puregold | ₱3,250 | Oct 17 | ⋯ (Edit / Details / Remove)
-//                   Household Staff | Payroll · Loriza | ₱3,860 | Oct 15   (read-only)
-// The month's expenses are loaded once; Category, Search and the category
-// drill-down only filter that list, so the totals always match the rows.
-// Salaries come from Payroll (read-only rows under Household Staff, never
-// expense records); cash advances are cash out, not spending.
-// + Add expense: Amount, Category, Date; More details: paid to, method,
-// reference, notes, proof. Categories are managed from ⋯ → Manage categories.
+//   Spent ₱14,803          Bills remaining ₱0          (/api/household-money)
+//   UTILITIES                                  ₱9,238
+//     Meralco            Due Oct 25            ₱3,000   ⋯ (Paid / Edit / Remove)
+//     Parking            Paid · Oct 15         ₱3,000   ⋯ (Mark unpaid / Edit / Remove)
+//     Internet           Oct 3                 ₱3,238   ⋯ (Edit / Details / Remove)
+//   HOUSEHOLD STAFF                            ₱5,565
+//     Payroll · Loriza   Oct 15                ₱5,565      (read-only, from Payroll)
+// Categories ARE the list (largest total first; empty ones hidden). A group
+// holds the month's expenses, its released salaries and the bills still to
+// pay that count in Bills remaining, so the group totals always add up to
+// Spent + Bills remaining. Bills: "Paid" records ONE expense through the
+// idempotent mark-paid (a repeating bill gets its next one once); "Mark
+// unpaid" removes that expense (the bill goes back to unpaid). Salaries are
+// never expense records; advances aren't shown here (Payroll / Advances).
+// + Add expense: Amount, Category, Date; More details: payee / merchant,
+// method, reference, notes, receipt.
 
 import { html, render } from "../../lib/html.js";
 import { pageHeader, emptyState, badge, skeleton, kpiStrip } from "../../components/ui.js";
 import { formDialog } from "../../components/form-dialog.js";
-import { toast as defaultToast } from "../../components/feedback.js";
+import { toast as defaultToast, confirmDialog } from "../../components/feedback.js";
 import { formatCentavos, formatDayId } from "../../lib/format.js";
-import { EXPENSE_METHODS, EXPENSE_METHOD_IDS, SUGGESTED_HOUSEHOLD_CATEGORIES, parseCentavos, businessDate } from "@shared/index.js";
+import { EXPENSE_METHODS, EXPENSE_METHOD_IDS, SUGGESTED_HOUSEHOLD_CATEGORIES, parseCentavos, businessDate, upcomingPart } from "@shared/index.js";
 import { categoryName, activityLines, detailsDialog } from "../baby/common.js";
 import { categoryField, categoryNameOf, resolveCategory } from "../wedding/categories.js";
 import { proofField, proofLine } from "../wedding/expenses.js";
 import { prepareProof as defaultPrepareProof } from "../../lib/image.js";
 import { viewProof } from "../../components/proof-viewer.js";
+import { billFields, parseBill, partKey } from "./bills.js";
 import * as defaultData from "./money-data.js";
 
 const methodLabel = (id) => EXPENSE_METHODS[id]?.label ?? id;
 const METHOD_OPTIONS = EXPENSE_METHOD_IDS.map((id) => ({ value: id, label: EXPENSE_METHODS[id].label }));
-// One month of a household is small; the list is filtered in the browser.
+// One month of a household is small: everything is loaded and grouped here.
 const MONTH_LIMIT = 500;
 export const PAYROLL_KEY = "payroll";
 export const STAFF_CATEGORY = "Household Staff";
 
 // "2026-10" -> "October 2026"; shiftMonth("2026-01", -1) -> "2025-12".
 export const monthLabel = (m) => new Date(`${m}-01T00:00:00Z`).toLocaleDateString("en-US", { month: "long", year: "numeric", timeZone: "UTC" });
-const monthName = (m) => new Date(`${m}-01T00:00:00Z`).toLocaleDateString("en-US", { month: "long", timeZone: "UTC" });
 export function shiftMonth(m, by) {
   const [y, mo] = m.split("-").map(Number);
   const d = new Date(Date.UTC(y, mo - 1 + by, 1));
@@ -54,37 +60,45 @@ export function parseHouseholdExpense(v) {
   return { date: v.date, amount, payee: (v.payee || "").trim() || null, method: v.method || "cash", reference: (v.reference || "").trim() || null, notes: (v.notes || "").trim() || null };
 }
 
-// The list's rows: the month's expenses plus its released salaries (read-only,
-// under the Household Staff category when there is one). key = category id,
-// or PAYROLL_KEY for salaries when no Household Staff category exists.
-export function monthRows(expenses, payroll, categories) {
+// The bills still to pay that the month's Bills remaining counts (same rule
+// as /api/household-money): due by the month's end; for the current month
+// overdue ones from earlier months too.
+export function dueBills(bills, month, today) {
+  const { from, to } = monthRange(month);
+  const current = month === today.slice(0, 7);
+  return bills.filter((s) => s.status === "upcoming" && typeof s.dueDate === "string" && s.dueDate <= to && (current || s.dueDate >= from) && upcomingPart(s) > 0);
+}
+
+// Rows for the month: expenses (a paid bill's expense carries its
+// scheduleId), released salaries (read-only) and unpaid bills, each with its
+// category key (a category id, or PAYROLL_KEY for salaries when there's no
+// Household Staff category).
+export function monthRows({ expenses, payroll = [], bills = [], categories }) {
   const names = new Map(categories.map((c) => [c.id, c.name]));
   const staff = categories.find((c) => c.name.toLocaleLowerCase("en") === STAFF_CATEGORY.toLocaleLowerCase("en"));
-  const rows = expenses.map((e) => ({ kind: "expense", id: e.id, key: e.category, category: categoryName(names, e), payee: e.payee || "", amount: e.amount, date: e.date, record: e }));
-  for (const p of payroll || []) rows.push({ kind: "payroll", id: `payroll-${p.id}`, key: staff ? staff.id : PAYROLL_KEY, category: staff ? staff.name : STAFF_CATEGORY, payee: `Payroll${p.staffName ? ` · ${p.staffName}` : ""}`, amount: p.amount, date: p.paidDate });
-  return rows.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : a.kind === b.kind ? 0 : a.kind === "payroll" ? 1 : -1));
+  const rows = expenses.map((e) => ({ kind: e.scheduleId ? "bill-paid" : "expense", id: e.id, key: e.category, category: categoryName(names, e), title: e.payee || e.notes || "Expense", amount: e.amount, date: e.date, record: e }));
+  for (const p of payroll) rows.push({ kind: "payroll", id: `payroll-${p.id}`, key: staff ? staff.id : PAYROLL_KEY, category: staff ? staff.name : STAFF_CATEGORY, title: `Payroll${p.staffName ? ` · ${p.staffName}` : ""}`, amount: p.amount, date: p.paidDate });
+  for (const s of bills) rows.push({ kind: "bill-due", id: s.id, key: s.category, category: names.get(s.category) ?? s.categoryName ?? "—", title: s.description, amount: upcomingPart(s), date: s.dueDate, record: s });
+  return rows;
 }
-// By category, from the same rows (largest first).
-export function categoryTotals(rows) {
+// Category groups: total = the sum of its rows; largest first; inside a
+// group, bills still to pay first (by due date), then the newest records.
+export function groupRows(rows) {
   const by = new Map();
   for (const r of rows) {
-    const c = by.get(r.key) || { key: r.key, name: r.category, amount: 0, count: 0 };
-    c.amount += r.amount;
-    c.count += 1;
-    by.set(r.key, c);
+    const g = by.get(r.key) || { key: r.key, name: r.category, total: 0, rows: [] };
+    g.total += r.amount;
+    g.rows.push(r);
+    by.set(r.key, g);
   }
-  return [...by.values()].sort((a, b) => b.amount - a.amount || a.name.localeCompare(b.name));
+  const order = (a, b) => (a.kind === "bill-due") !== (b.kind === "bill-due") ? (a.kind === "bill-due" ? -1 : 1) : a.kind === "bill-due" ? a.date.localeCompare(b.date) : b.date.localeCompare(a.date) || a.title.localeCompare(b.title);
+  return [...by.values()].map((g) => ({ ...g, rows: g.rows.sort(order) })).sort((a, b) => b.total - a.total || a.name.localeCompare(b.name));
 }
-export const matchesSearch = (r, term) => {
-  const t = term.trim().toLocaleLowerCase("en");
-  if (!t) return true;
-  const e = r.record || {};
-  return [r.payee, r.category, e.notes, e.reference].some((x) => typeof x === "string" && x.toLocaleLowerCase("en").includes(t));
-};
 
-export function mount(container, session, { data = defaultData, toast = defaultToast, now = () => new Date(), prepareProof = defaultPrepareProof, location: loc = globalThis.location } = {}) {
+export function mount(container, session, { data = defaultData, toast = defaultToast, confirm = confirmDialog, now = () => new Date(), prepareProof = defaultPrepareProof, location: loc = globalThis.location } = {}) {
   const perms = session.member.permissions;
-  const can = { create: perms["expenses.create"] === true, update: perms["expenses.update"] === true, remove: perms["expenses.delete"] === true, category: perms["budget.manage"] === true, bills: perms["schedule.view"] === true };
+  const can = { create: perms["expenses.create"] === true, update: perms["expenses.update"] === true, remove: perms["expenses.delete"] === true, category: perms["budget.manage"] === true, bills: perms["schedule.view"] === true, billsManage: perms["schedule.manage"] === true };
+  can.pay = can.billsManage && can.create;
   const businessId = session.business.id;
   const currency = session.business.currency || "PHP";
   const timezone = session.business.timezone;
@@ -92,24 +106,27 @@ export function mount(container, session, { data = defaultData, toast = defaultT
   // From the Grocery List ("Record grocery expense"): open + Add expense
   // with Groceries and today; the Owner types the trip's real total.
   let groceryTrip = new URLSearchParams(loc?.search || "").get("add") === "groceries";
-  const state = { month: today().slice(0, 7), summary: null, expenses: [], categories: [], category: "", search: "", truncated: false, loading: true, error: null };
+  const state = { month: today().slice(0, 7), summary: null, expenses: [], bills: [], categories: [], truncated: false, loading: true, error: null, busy: new Set() };
   let alive = true;
   const names = () => new Map(state.categories.map((c) => [c.id, c.name]));
   const money = (c) => formatCentavos(c ?? 0, currency);
+  const short = (d) => formatDayId(d).replace(/, \d{4}$/, "");
 
   async function load() {
-    state.loading = true;
+    state.loading = !state.expenses.length && !state.summary;
     draw();
     try {
       const { from, to } = monthRange(state.month);
-      const [summary, cats, page] = await Promise.all([
+      const [summary, cats, page, bills] = await Promise.all([
         perms["budget.view"] ? data.householdMonth(state.month).catch(() => null) : null,
         state.categories.length || !perms["budget.view"] ? state.categories : data.listCategories(businessId),
         data.listExpenses(businessId, { status: "active", from, to }, { pageSize: MONTH_LIMIT }),
+        can.bills ? data.listBills(businessId, { status: "upcoming", to }, { pageSize: MONTH_LIMIT }).catch(() => ({ rows: [] })) : { rows: [] },
       ]);
       state.summary = summary;
       state.categories = cats;
       state.expenses = page.rows;
+      state.bills = bills.rows;
       state.truncated = page.hasMore === true;
       state.error = null;
       if (groceryTrip && can.create) {
@@ -127,56 +144,30 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     draw();
   }
 
-  function summaryHtml() {
-    const s = state.summary;
-    if (!s) return state.loading ? skeleton(1) : "";
-    return kpiStrip(
-      [
-        { id: "spent", label: "Spent", value: money(s.spent), hint: s.staffPaid ? `incl. ${money(s.staffPaid)} payroll` : "" },
-        { id: "bills", label: "Bills remaining", value: money(s.billsRemaining), hint: s.billsDue ? `${s.billsDue} to pay` : "None due" },
-        { id: "advances", label: "Advances released", value: money(s.advancesReleased), hint: s.advancesReleased ? "Repaid through payroll" : "" },
-        { id: "cashout", label: "Cash out", value: money(s.cashOut ?? s.spent), hint: "Spent + advances" },
-      ],
-      { role: "month-summary" }
-    );
-  }
-
-  const rowMenu = (r) =>
-    html`<details class="line-menu"><summary class="btn btn-compact btn-ghost" aria-label="More for ${r.payee || r.category} ${money(r.amount)}">⋯</summary><div class="line-menu-list" role="menu">
-      ${can.update ? html`<button type="button" class="menu-item" role="menuitem" data-act="edit" data-id="${r.id}">Edit</button>` : ""}
-      <button type="button" class="menu-item" role="menuitem" data-act="view" data-id="${r.id}">Details</button>
-      ${can.remove ? html`<div class="menu-sep" role="separator"></div><button type="button" class="menu-item menu-danger" role="menuitem" data-act="remove" data-id="${r.id}">Remove</button>` : ""}
-    </div></details>`;
-  const short = (d) => formatDayId(d).replace(/, \d{4}$/, "");
+  const menu = (r, items) =>
+    items.length
+      ? html`<details class="line-menu"><summary class="btn btn-compact btn-ghost" aria-label="More for ${r.title} ${money(r.amount)}">⋯</summary><div class="line-menu-list" role="menu">
+          ${items.map((i) => (i.sep ? html`<div class="menu-sep" role="separator"></div>` : html`<button type="button" class="menu-item${i.danger ? " menu-danger" : ""}" role="menuitem" data-act="${i.act}" data-kind="${r.kind}" data-id="${r.id}">${i.label}</button>`))}
+        </div></details>`
+      : html`<span class="wl-menu-gap" aria-hidden="true"></span>`;
+  const rowItems = (r) => {
+    if (r.kind === "payroll") return [];
+    if (r.kind === "bill-due") return [...(can.pay ? [{ act: "bill-paid", label: "Paid" }] : []), ...(can.billsManage ? [{ act: "bill-edit", label: "Edit" }, { sep: true }, { act: "bill-remove", label: "Remove", danger: true }] : [])];
+    if (r.kind === "bill-paid") return [...(can.remove ? [{ act: "bill-unpaid", label: "Mark unpaid" }] : []), ...(can.update ? [{ act: "edit", label: "Edit" }] : []), ...(can.remove && can.billsManage ? [{ sep: true }, { act: "bill-remove-paid", label: "Remove", danger: true }] : [])];
+    return [...(can.update ? [{ act: "edit", label: "Edit" }] : []), { act: "view", label: "Details" }, ...(can.remove ? [{ sep: true }, { act: "remove", label: "Remove", danger: true }] : [])];
+  };
+  const quiet = (r) => (r.kind === "bill-due" ? html`<span class="hx-due${r.date < today() ? " is-over" : ""}">Due ${short(r.date)}</span>` : r.kind === "bill-paid" ? `Paid · ${short(r.date)}` : short(r.date));
   const row = (r) => html`<li class="wl-row hx-row" data-kind="${r.kind}" data-row="${r.id}">
-    <span class="hx-cat">${r.category}</span>
-    <span class="wl-main hx-main"><span class="wl-name">${r.payee || r.category}</span><span class="wl-sub hx-sub">${r.category}</span></span>
+    <span class="wl-main hx-main"><span class="wl-name">${r.title}</span><span class="wl-sub hx-sub">${quiet(r)}</span></span>
     <span class="wl-amt hx-amt">${money(r.amount)}</span>
-    <span class="wl-due hx-date">${short(r.date)}</span>
-    ${r.kind === "expense" ? rowMenu(r) : html`<span class="wl-menu-gap" aria-hidden="true"></span>`}
+    ${menu(r, rowItems(r))}
   </li>`;
-
-  function listHtml(all) {
-    const cat = state.category;
-    const rows = all.filter((r) => (!cat || r.key === cat) && matchesSearch(r, state.search));
-    const catName = cat ? all.find((r) => r.key === cat)?.category ?? categoryNameOf(state.categories, cat) ?? "Category" : "";
-    const total = rows.reduce((t, r) => t + r.amount, 0);
-    return html`<section class="wl-section" data-section="list">
-      ${cat
-        ? html`<div class="hx-drill" data-role="drill"><button type="button" class="btn btn-compact btn-ghost" data-act="clear-cat">‹ All expenses</button><h2 class="section-title" data-role="drill-title">${catName} — ${monthName(state.month)}</h2><p class="hx-drill-total" data-role="drill-total"><b>${money(total)}</b> total</p></div>`
-        : html`<h2 class="wl-cat-head"><span class="wl-group-title">Expenses</span>${state.search ? html`<span class="wl-cat-counts">· ${rows.length} found</span>` : ""}</h2>`}
-      ${!rows.length
-        ? html`<p class="stat-hint wl-none" data-role="none">${state.search || cat ? "No expenses match." : "No expenses this month yet."}</p>`
-        : html`<ul class="wl-list" data-role="expenses">${rows.map(row)}</ul>`}
-      ${state.truncated ? html`<p class="stat-hint">Showing the first ${MONTH_LIMIT} expenses of the month.</p>` : ""}
-    </section>`;
-  }
 
   function draw() {
     if (!alive) return;
     const isNow = state.month === today().slice(0, 7);
-    const all = monthRows(state.expenses, state.summary?.payroll ?? [], state.categories);
-    const totals = categoryTotals(all);
+    const s = state.summary;
+    const groups = groupRows(monthRows({ expenses: state.expenses, payroll: s?.payroll ?? [], bills: dueBills(state.bills, state.month, today()), categories: state.categories }));
     render(
       container,
       html`
@@ -189,38 +180,27 @@ export function mount(container, session, { data = defaultData, toast = defaultT
               </div></details>`
             : ""}`,
         })}
-        <form class="hx-tools" data-role="filters">
-          <div class="hx-month" data-role="month-nav">
-            <button type="button" class="btn btn-compact btn-ghost" data-act="month-prev" aria-label="Previous month">‹</button>
-            <strong data-role="month">${monthLabel(state.month)}</strong>
-            <button type="button" class="btn btn-compact btn-ghost" data-act="month-next" aria-label="Next month" ${isNow ? "disabled" : ""}>›</button>
-          </div>
-          <select class="select hx-filter" name="category" aria-label="Category" data-act="filter-cat">
-            <option value="">All categories</option>
-            ${totals.map((c) => html`<option value="${c.key}" ${c.key === state.category ? "selected" : ""}>${c.name}</option>`)}
-          </select>
-          <input class="input hx-filter hx-search" type="search" name="search" value="${state.search}" placeholder="Search payee, notes, ref" aria-label="Search expenses">
-        </form>
+        <div class="hx-month" data-role="month-nav">
+          <button type="button" class="btn btn-compact btn-ghost" data-act="month-prev" aria-label="Previous month">‹</button>
+          <strong data-role="month">${monthLabel(state.month)}</strong>
+          <button type="button" class="btn btn-compact btn-ghost" data-act="month-next" aria-label="Next month" ${isNow ? "disabled" : ""}>›</button>
+        </div>
         ${state.error
           ? html`<section class="card">${emptyState({ title: "Couldn't load", body: state.error })}</section>`
           : html`
-            ${summaryHtml()}
+            ${s ? kpiStrip([{ id: "spent", label: "Spent", value: money(s.spent) }, { id: "bills", label: "Bills remaining", value: money(s.billsRemaining) }], { role: "month-summary" }) : state.loading ? skeleton(1) : ""}
             ${state.loading
               ? skeleton(4)
-              : html`
-                ${!state.category && totals.length
-                  ? html`<section class="wl-section" data-section="by-category"><h2 class="wl-cat-head"><span class="wl-group-title">By category</span></h2>
-                      <ul class="wl-list" data-role="category-totals">${totals.map(
-                        (c) => html`<li class="wl-row hx-cat-row"><button type="button" class="wl-main hx-cat-btn" data-act="cat" data-cat="${c.key}" aria-label="${c.name}: ${money(c.amount)}, show these expenses"><span class="wl-name">${c.name}</span><span class="hx-cat-amt">${money(c.amount)}</span><span class="hx-go" aria-hidden="true">›</span></button></li>`
-                      )}</ul></section>`
-                  : ""}
-                ${listHtml(all)}`}`}`
+              : !groups.length
+                ? html`<p class="stat-hint wl-none" data-role="none">No expenses this month yet.</p>`
+                : groups.map(
+                    (g) => html`<section class="wl-section hx-group" data-group="${g.key}">
+                      <h2 class="wl-cat-head hx-group-head"><span class="wl-group-title">${g.name}</span><span class="hx-group-total" data-role="group-total">${money(g.total)}</span></h2>
+                      <ul class="wl-list" data-role="group-rows">${g.rows.map(row)}</ul>
+                    </section>`
+                  )}
+            ${state.truncated ? html`<p class="stat-hint">Showing the first ${MONTH_LIMIT} expenses of the month.</p>` : ""}`}`
     );
-    const search = container.querySelector(".hx-search");
-    if (search && state.focusSearch) {
-      search.focus();
-      search.setSelectionRange?.(search.value.length, search.value.length);
-    }
   }
 
   // ---- Proof (one per expense) ----
@@ -230,17 +210,17 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     try {
       await sendProof(result.expenseId, file);
     } catch (err) {
-      toast(`Saved, but the proof didn't upload (${err.message || "error"}). Add it from Edit.`, "danger");
+      toast(`Saved, but the receipt didn't upload (${err.message || "error"}). Add it from Edit.`, "danger");
     }
   };
-  const showProof = (e) => viewProof({ title: `Proof · ${money(e.amount)}${e.payee ? ` · ${e.payee}` : ""}`, load: async () => (await data.expenseProof(e.id)).proof });
+  const showProof = (e) => viewProof({ title: `Receipt · ${money(e.amount)}${e.payee ? ` · ${e.payee}` : ""}`, load: async () => (await data.expenseProof(e.id)).proof });
 
   const expenseFields = (e = null, prefill = {}) => {
     const day = today();
     return [
       { name: "amount", label: "Amount (₱)", value: e ? (e.amount / 100).toFixed(2) : "", inputmode: "decimal", required: true },
       householdCategoryField(state.categories, { value: e ? categoryNameOf(state.categories, e.category) || e.categoryName || "" : prefill.category || "" }),
-      { name: "date", label: "Date paid", type: "date", value: e?.date ?? day, max: day, required: true, hint: e ? "" : "Not paid yet? Add it under Bills." },
+      { name: "date", label: "Date paid", type: "date", value: e?.date ?? day, max: day, required: true },
       { name: "payee", label: "Payee / merchant", value: e?.payee ?? "", placeholder: "e.g. Puregold, Meralco", more: true },
       { name: "method", label: "Payment method", type: "select", options: METHOD_OPTIONS, value: e?.method ?? "cash", more: true },
       { name: "reference", label: "Reference (OR no., bill account, transfer ref)", value: e?.reference ?? "", more: true },
@@ -287,10 +267,22 @@ export function mount(container, session, { data = defaultData, toast = defaultT
   const removeDialog = (e) =>
     formDialog({
       title: `Remove ${money(e.amount)} expense?`,
-      intro: e.scheduleId ? "It stays in the history but no longer counts as spent. Its bill goes back to unpaid." : "Use this for an expense entered by mistake. It stays in the history but no longer counts as spent.",
+      intro: "Use this for an expense entered by mistake. It stays in the history but no longer counts as spent.",
       fields: [{ name: "reason", label: "Reason", type: "textarea", required: true }],
       submitLabel: "Remove expense",
       onSubmit: (v) => data.expensesApi({ action: "remove", expenseId: e.id, reason: v.reason }),
+    });
+
+  const billEditDialog = (b) =>
+    formDialog({
+      title: `Edit ${b.description}`,
+      fields: billFields(b, state.categories, today()),
+      submitLabel: "Save changes",
+      onSubmit: async (v) => {
+        const next = await parseBill(v, { categories: state.categories, data, canCategory: can.category });
+        const changes = Object.fromEntries(Object.entries(next).filter(([k, val]) => JSON.stringify(b[k] ?? null) !== JSON.stringify(val ?? null)));
+        return Object.keys(changes).length ? data.scheduleApi({ action: "update", scheduleId: b.id, expectedRevision: b.revision, changes }) : { unchanged: true };
+      },
     });
 
   const done = (message) => (result) => {
@@ -301,10 +293,9 @@ export function mount(container, session, { data = defaultData, toast = defaultT
   };
 
   function openView(e) {
-    const active = e.status === "active";
     detailsDialog({
       title: `${money(e.amount)} · ${categoryName(names(), e)}`,
-      badgeHtml: active ? "" : badge("Removed", "neutral"),
+      badgeHtml: e.status === "active" ? "" : badge("Removed", "neutral"),
       rows: [
         ["Date paid", formatDayId(e.date)],
         ["Amount", money(e.amount)],
@@ -312,12 +303,11 @@ export function mount(container, session, { data = defaultData, toast = defaultT
         ["Payee / merchant", e.payee || "—"],
         ["Payment method", methodLabel(e.method)],
         ["Reference", e.reference || "—"],
-        ["From a bill", e.scheduleId ? "Yes" : null],
         ["Notes", e.notes],
         ["Receipt / proof", proofLine(e.proof, timezone)],
       ],
       activity: activityLines(e.history, timezone),
-      actions: [...(e.proof ? [{ act: "proof-view", label: "View proof" }] : [])],
+      actions: e.proof ? [{ act: "proof-view", label: "View receipt" }] : [],
       onAction: async (act) => {
         if (act === "proof-view") showProof(e);
         return false;
@@ -325,11 +315,37 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     });
   }
 
+  // Bills from the list: one tap each; the server keeps it to ONE expense.
+  async function billPaid(b) {
+    const r = await data.scheduleApi({ action: "markPaid", scheduleId: b.id, payment: { method: "cash", amount: upcomingPart(b), paidDate: today(), final: true, key: partKey() } });
+    return done(r?.alreadyPaid ? "Already paid." : r?.nextScheduleId ? `${b.description} paid. The next one is scheduled.` : `${b.description} paid.`)(r);
+  }
+  async function billUnpaid(e) {
+    if (!(await confirm({ title: `Mark ${e.payee || "this bill"} unpaid?`, body: `${money(e.amount)} no longer counts as spent and the bill goes back to Bills remaining.`, confirmLabel: "Mark unpaid" }))) return false;
+    return done("Marked unpaid.")(await data.expensesApi({ action: "remove", expenseId: e.id, reason: "Marked unpaid" }));
+  }
+  async function billRemove(b) {
+    if (!(await confirm({ title: `Remove ${b.description}?`, body: `It leaves Bills remaining${b.repeat ? " and won't repeat. Add it again under Bills if it should" : ""}.`, confirmLabel: "Remove bill", danger: true }))) return false;
+    return done("Bill removed.")(await data.scheduleApi({ action: "cancel", scheduleId: b.id, reason: "Removed" }));
+  }
+  async function billRemovePaid(e) {
+    if (!(await confirm({ title: `Remove ${e.payee || "this bill"}?`, body: `Its ${money(e.amount)} payment no longer counts as spent and this bill is removed. Later bills already scheduled stay.`, confirmLabel: "Remove", danger: true }))) return false;
+    await data.expensesApi({ action: "remove", expenseId: e.id, reason: "Removed" });
+    try {
+      await data.scheduleApi({ action: "cancel", scheduleId: e.scheduleId, reason: "Removed" });
+    } catch {}
+    return done("Removed.")({});
+  }
+
   const expenseOf = (id) => state.expenses.find((r) => r.id === id);
+  const billOf = (id) => state.bills.find((r) => r.id === id);
   const onClick = async (event) => {
     const el = event.target.closest("[data-act]");
-    if (!el || !container.contains(el) || el.dataset.act === "filter-cat") return undefined;
+    if (!el || !container.contains(el)) return undefined;
     el.closest("details.line-menu")?.removeAttribute("open");
+    const key = `${el.dataset.act}:${el.dataset.id || ""}`;
+    if (state.busy.has(key)) return undefined;
+    state.busy.add(key);
     try {
       switch (el.dataset.act) {
         case "new":
@@ -346,16 +362,31 @@ export function mount(container, session, { data = defaultData, toast = defaultT
           const e = expenseOf(el.dataset.id);
           return e ? done("Expense removed")(await removeDialog(e)) : undefined;
         }
-        case "cat":
-          state.category = el.dataset.cat;
-          draw();
-          return container.querySelector('[data-role="drill"]')?.scrollIntoView?.({ block: "start" });
-        case "clear-cat":
-          state.category = "";
-          return draw();
+        case "bill-paid": {
+          const b = billOf(el.dataset.id);
+          return b ? await billPaid(b) : undefined;
+        }
+        case "bill-edit": {
+          const b = billOf(el.dataset.id);
+          return b ? done("Bill updated")(await billEditDialog(b)) : undefined;
+        }
+        case "bill-remove": {
+          const b = billOf(el.dataset.id);
+          return b ? await billRemove(b) : undefined;
+        }
+        case "bill-unpaid": {
+          const e = expenseOf(el.dataset.id);
+          return e ? await billUnpaid(e) : undefined;
+        }
+        case "bill-remove-paid": {
+          const e = expenseOf(el.dataset.id);
+          return e ? await billRemovePaid(e) : undefined;
+        }
         case "month-prev":
         case "month-next":
           state.month = shiftMonth(state.month, el.dataset.act === "month-prev" ? -1 : 1);
+          state.summary = null;
+          state.expenses = [];
           return load();
         default:
           return undefined;
@@ -363,34 +394,14 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     } catch (err) {
       toast(err.message || "Something went wrong", "danger");
       return undefined;
+    } finally {
+      state.busy.delete(key);
     }
-  };
-  const onChange = (event) => {
-    if (event.target.name === "category") {
-      state.category = event.target.value;
-      draw();
-    }
-  };
-  const onInput = (event) => {
-    if (event.target.name !== "search") return;
-    state.search = event.target.value;
-    state.focusSearch = true;
-    draw();
-    state.focusSearch = false;
-  };
-  const onSubmit = (event) => {
-    if (event.target.dataset.role === "filters") event.preventDefault();
   };
   container.addEventListener("click", onClick);
-  container.addEventListener("change", onChange);
-  container.addEventListener("input", onInput);
-  container.addEventListener("submit", onSubmit);
   load();
   return () => {
     alive = false;
     container.removeEventListener("click", onClick);
-    container.removeEventListener("change", onChange);
-    container.removeEventListener("input", onInput);
-    container.removeEventListener("submit", onSubmit);
   };
 }
