@@ -871,6 +871,19 @@ The accepted Bridal design (Money | Tasks | Guests | More) is unchanged; this pa
   - **Not checked live:** Distributor rows (no temporary Distributor was set up). They use the same shared code and the unit tests.
   - **Test-script fixes:** a dropdown covers the row below it, so "another ⋯" is tested by opening a lower row and tapping the one above. Page-level menus with links are excluded from row checks. No seeded data was changed by stray taps (checked).
 
+### 2026-10-18 · Household bills: overdue occurrences carry forward until paid (fd9b8ff + id fix)
+
+- **Carry-forward:** each month lists every unpaid occurrence due in it, plus any earlier one whose due date has passed ("Overdue from Sep · 31 days", first in its category). Occurrences stay separate and never merge; Bills remaining counts them all.
+  - **Paying:** paying the overdue one lowers Bills remaining at once and leaves the current month's occurrence as it was.
+- **No gaps:** a recurring bill's occurrences are calculated along its own due dates, so an unpaid earlier one never stops later ones. A period the bill already has (paid, unpaid or removed) is never projected (`recurrencePeriod`: month / year / week).
+- **Paying a projected occurrence:** Paid on an occurrence that isn't stored yet calls `payOccurrence`. It stores that occurrence once (id = recurringId + yymmdd, one per bill per period) and pays it through the idempotent mark-paid. Paying the earlier one later reuses it (`nextExisted`).
+- **Duplicate checks:** the next-occurrence check and the edit check are per period, not only per exact date.
+- **Fix found live:** the first occurrence id (recurringId + yyyymmdd = 28 characters) made its payment's expense id 41 characters (limit 40), so a projected occurrence was stored but not paid. Now yymmdd is used (26); a unit test pins a real 20-character id.
+- **Tests:**
+  - **Unit:** 1651 pass (4 server + 1 UI new).
+  - **Live (temporary `pcarry-home-tmp`, a bill first due Sep 17, today Oct 18, removed):** 6/6.
+  - **Checked:** October shows September overdue + October (₱10,000). Paying October (a double tap) leaves ₱5,000 with September still overdue. November still shows its own. Paying September leaves ₱0, with one record per month and two expenses.
+
 ## Plan (decisions made from the brief)
 
 ### Stage 1: Distributor
