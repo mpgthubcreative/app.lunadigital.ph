@@ -468,7 +468,54 @@ Replaces the second-pass Bridal layout (the second brief arrived mid-work and wa
 - **Fixed during the checks:**
   - A 7-item guest ⋯ ran past the screen edge; it now measures itself and flips or scrolls.
   - On desktop a planned line repeated its category; it now reads "No supplier yet".
-- **Not built:** the "proof" upload on expenses (expenses have no file attachment yet); a table shown on the invitation (setting reserved, off); more themes or a page builder (by design).
+- **Not built:** the "proof" upload on expenses (expenses have no file attachment yet); a table shown on the invitation (setting reserved, off); more themes or a page builder (by design). *(Proof upload added in the fix pass below.)*
+
+### 2026-10-17 · Bridal pilot fix pass: Wedding Setup save, invitation actions, expense proof (0cb401f)
+
+The accepted Bridal design (Money | Tasks | Guests | More) is unchanged; this pass only fixes what the Owner reported and adds the one unfinished Money item.
+
+- **Bug: Wedding Setup didn't keep what was typed.**
+  - **Seen:** the pilot wedding's saved setup had every field blank and RSVP off, but its cover photo was saved.
+  - **Root cause:** choosing (or removing) a cover photo redrew the whole form from the last SAVED values, which were empty, so everything typed above it was wiped. Save then stored blanks. There was no Saving / Saved state either, so it looked like Save did nothing.
+  - **Fix:**
+    - What's typed is kept as a draft through any redraw, and the photo only redraws its own part.
+    - Save shows "Saving…", then "Saved ✓" using the values the server reads back after the write. "Not saved yet" appears while editing.
+    - A failed save shows a clear inline error (role=alert) plus a toast, and keeps the typed values for a retry.
+    - Map links are checked before sending: no silent browser block, and a clear message if the link doesn't start with https://.
+- **Bug: no invitation link in Guests → ⋯.**
+  - **Root cause:** the actions only appeared when the saved setup had couple names or RSVP on. Because of the first bug, the pilot's setup was blank, so the actions were hidden with no explanation.
+  - **Fix:** the Owner always sees one of three things in the guest ⋯:
+    - **Setup missing the couple's names or the wedding date:** "Invitation: complete Wedding Setup first →", which opens Wedding Setup.
+    - **No link yet:** **Create invitation link**, which creates and copies it.
+    - **A link exists:** **View invitation · Copy invitation link · Regenerate invitation link**.
+  - **Details:** the guest's details show the link status.
+  - **Server:** a link needs the couple's names and the wedding date. Without them it answers 409 `setup-incomplete` and names what's missing.
+- **Expense proof (the remaining Money item).** A receipt photo or screenshot, or a PDF, on one wedding expense. Every amount paid in Bridal is an expense, including supplier payments, so this covers payments too.
+  - **Where:** expense ⋯ (View / Add / Replace proof), the expense's Details, the supplier's View payments (View proof / Add proof on each paid line), and optional in Record payment and Add expense under More options. It's never a column: the Money row is unchanged.
+  - **Server:** POST `/api/expenses` with `attachProof` (expenses.update) or `proof` (expenses.view), Bridal only.
+    - **Checks:** the file type is checked from its contents (JPEG / PNG / WebP / PDF), up to 2.5 MB, and counted against the plan's storage.
+    - **Storage:** files live at `tenants/{bid}/expenses/proofs/`, with no browser access (Storage rules deny it, as for payroll proofs). They're served only through the API to the same business.
+    - **Replace:** links the new file, then deletes the old one and gives its storage back. The history keeps "Proof added" and "Proof replaced".
+  - **Master Backup:** each proof is listed as file type, content type, size, when and who. The file bytes, storage path and ledger id are never in the workbook. Export Info explains this.
+- **Tests:**
+  - **Unit:** 1469 pass.
+    - **Bridal UI:** every setup field is sent; Saving… then Saved ✓ from the read-back; a photo keeps typed values; a failed save is visible and can be retried; a bad map link isn't sent; values show on reopen; the ⋯ handles setup missing, Create, and View / Copy / Regenerate; the expense ⋯ proof actions and viewer; View payments proof buttons; Record payment with a proof; a failed proof upload warns.
+    - **Server (`tests/functions/wedding-proof.test.js`):** setup read-back and clearing; links need the setup; proof upload, view, metering and history; PDF accepted; fakes, non-images and oversized files refused with nothing stored; replace deletes the old file and frees its storage; cross-tenant and outside-path refusals; removed expense refused; Distributor refused; Backup lists proofs safely.
+  - **Firestore + Storage rules (emulator):** storage, invitations, expenses and wedding all pass, 79/79. That includes a new check that proof files can't be read, linked, listed, uploaded or deleted from a browser, even by the Owner. No rules file changed.
+  - **Live on staging (temporary wedding `p186b-wed-tmp`, 390px and 1280px):** 94/94.
+    - **Setup:** ⋯ before setup shows the hint, which opens Setup; every field filled, then a cover photo chosen, keeps the typed values; Saving… then Saved ✓; Firestore matches; values stay after a refresh and after signing in again; a bad map link is refused visibly.
+    - **Links:** Create invitation link, then View / Copy / Regenerate.
+    - **The guest's invitation (logged out):** shows the right wedding and party with 3 seats, no login, and no other guests. Accept offers 1–3; 4 is refused.
+    - **After the RSVP:** the same guest record changes, the history reads "Guest responded: Attending 2", totals go up by 2, and the summary and FAMILY header follow. The guest then appears under Seating → Unassigned.
+    - **Changes and regenerate:** an Owner change keeps both history lines; declining from the link frees the table; regenerating kills the old link at once while the new one works.
+    - **Proofs:** a photo and a PDF uploaded and viewed from the expense ⋯; View payments proof buttons; the Money row unchanged.
+    - **Security:** another wedding's Owner is refused (403 / 404); a wedding without setup gets a clear 409; the proof can't be read from Storage directly; Master Backup lists the proof safely.
+    - **Layout:** no sideways scroll on any screen.
+- **Remaining limits:**
+  - The pilot wedding's blank setup isn't refilled automatically. The Owner re-enters it once in More → Wedding Setup; the cover photo is already there.
+  - One proof per expense (Replace swaps it).
+  - The guest's table isn't shown on the invitation (setting reserved, off).
+  - One invitation theme, by design.
 
 ## Plan (decisions made from the brief)
 
