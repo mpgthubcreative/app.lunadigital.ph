@@ -449,7 +449,7 @@ describe("navigation", () => {
     expect(nav("bridal-expense", "owner")).toEqual(["/wedding-suppliers Money", "/wedding-tasks Tasks", "/guests Guests", "/budget Budget", "/expenses Wedding Expenses", "/supplier-payments Supplier Payments", "/users Users", "/settings Settings"]);
     expect(nav("baby-expense", "owner")).toEqual(["/ Baby Dashboard", "/budget Budget & Categories", "/expenses Baby Expenses", "/payment-schedule Payment Schedule", "/providers Providers / Vendors", "/users Users", "/settings Settings"]);
     // Owner-pilot UX (2026-10-17): no Dashboard in Household; Payroll first (home).
-    expect(nav("household-payroll", "owner")).toEqual(["/payroll Payroll", "/attendance Attendance", "/expenses Expenses", "/advances Advances", "/household-staff Household Staff", "/payment-schedule Bills", "/budget Budget & Categories", "/users Users", "/settings Settings"]);
+    expect(nav("household-payroll", "owner")).toEqual(["/payroll Payroll", "/attendance Attendance", "/expenses Expenses", "/advances Advances", "/household-staff Household Staff", "/payment-schedule Bills", "/budget Categories", "/users Users", "/settings Settings"]);
   });
 
   it("Household hides the Dashboard (still an allowed, entitled module) and names Payroll its home; the validator holds the rules", () => {

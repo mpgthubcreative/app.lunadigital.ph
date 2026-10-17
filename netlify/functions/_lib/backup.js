@@ -7,8 +7,7 @@
 // Memberships and the Audit log; a wedding also gets Wedding Setup, Guest
 // Categories, RSVP History, Tables, Seating Assignments and Music & Program
 // as readable sheets; Luna Household gets Expenses, Bills, Recurring Items,
-// Categories and Budget under those names (+ readable Recurring Items and
-// Budget sheets).
+// Categories and Grocery List under those names (no Budget).
 //
 // Never exported: credentials. Fields whose name says token / secret / hash
 // / password are dropped, and the invitation links live in a server-only
@@ -42,8 +41,11 @@ const NAMES = {
 };
 // Bridal sheet order (what the couple expects to find first).
 // Luna Household names for the shared money collections, and sheet order.
-const HOUSEHOLD_NAMES = { scheduledPayments: "Bills", expenseCategories: "Categories", budgets: "Budget record", groceryItems: "Grocery List record", groceryLists: "Grocery List settings" };
-const HOUSEHOLD_ORDER = ["Export Info", "Staff", "Attendance", "Attendance requests", "Payroll", "Advances", "Expenses", "Bills", "Recurring Items", "Categories", "Budget", "Budget record", "Grocery List", "Grocery List record", "Grocery List settings", "Users & Memberships", "Audit log"];
+// No Budget sheets: Household has no budget (owner pilot, 2026-10-17); the
+// stored budgets/current (Luna's own running totals) isn't exported.
+const HOUSEHOLD_NAMES = { scheduledPayments: "Bills", expenseCategories: "Categories", groceryItems: "Grocery List record", groceryLists: "Grocery List settings" };
+const HOUSEHOLD_SKIP = new Set(["budgets"]);
+const HOUSEHOLD_ORDER = ["Export Info", "Staff", "Attendance", "Attendance requests", "Payroll", "Advances", "Expenses", "Bills", "Recurring Items", "Categories", "Grocery List", "Grocery List record", "Grocery List settings", "Users & Memberships", "Audit log"];
 const WEDDING_ORDER = ["Export Info", "Wedding Setup", "Budget", "Budget totals", "Suppliers", "Supplier Payments", "Expenses", "Tasks", "Guest Categories", "Guests", "RSVP History", "Tables", "Seating Assignments", "Party Members", "Wedding Roles", "Music & Program", "Crew Meals", "Invitation Design", "Users & Memberships", "Audit log"];
 
 const iso = (v) => (v && typeof v.toDate === "function" ? v.toDate().toISOString() : v instanceof Date ? v.toISOString() : null);
@@ -100,7 +102,7 @@ export async function buildBackup({ db, tenant, business, entitlements, FieldPat
   const collections = [];
   for (const id of template?.modules || []) {
     if (!isModuleEnabled(entitlements, id)) continue;
-    for (const c of Object.keys(getModule(id)?.collections || {})) if (!SKIP.has(c) && !collections.includes(c)) collections.push(c);
+    for (const c of Object.keys(getModule(id)?.collections || {})) if (!SKIP.has(c) && !(home && HOUSEHOLD_SKIP.has(c)) && !collections.includes(c)) collections.push(c);
   }
   const sheets = [];
   const counts = [];
@@ -111,7 +113,9 @@ export async function buildBackup({ db, tenant, business, entitlements, FieldPat
   const data = {};
   for (const c of collections) {
     data[c] = await readAll(tenant.collection(c), FieldPath, budget);
-    add((home && HOUSEHOLD_NAMES[c]) || NAMES[c] || c, tableOf(data[c]));
+    // Household categories: the old per-category budget figure isn't exported.
+    const rows = home && c === "expenseCategories" ? data[c].map((r) => ({ id: r.id, data: Object.fromEntries(Object.entries(r.data).filter(([k]) => k !== "budget")) })) : data[c];
+    add((home && HOUSEHOLD_NAMES[c]) || NAMES[c] || c, tableOf(rows));
   }
   const members = await readAll(tenant.collection("members"), FieldPath, budget);
   add("Users & Memberships", tableOf(members));
@@ -169,8 +173,6 @@ export async function buildBackup({ db, tenant, business, entitlements, FieldPat
     const every = (r) => (!r ? "" : r.interval > 1 ? `Every ${r.interval} ${r.every}s` : `Every ${r.every}`);
     // The repeating bills still to pay: what comes back each period.
     add("Recurring Items", [["Bill id", "Bill", "Repeats", "Next due", "Amount (PHP)", "Category", "Paid to", "Notes"], ...data.scheduledPayments.filter((s) => s.data.repeat && s.data.status === "upcoming").map((s) => [s.id, s.data.description, every(s.data.repeat), s.data.dueDate, peso(s.data.amount), names[s.data.category] ?? s.data.categoryName ?? "", s.data.payee ?? "", s.data.notes ?? ""])]);
-    const b = (data.budgets || []).find((x) => x.id === "current")?.data ?? {};
-    add("Budget", [["Item", "Value"], ["Monthly budget (PHP)", peso(b.total) ?? "Not set"], ...(data.expenseCategories || []).map((c) => [`Category: ${c.data.name}${c.data.status === "active" ? "" : " (hidden)"}`, peso(c.data.budget) ?? ""])]);
   }
 
   const info = [

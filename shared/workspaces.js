@@ -129,8 +129,10 @@ const TEMPLATES = [
     modules: [...CORE, "household", "attendance", "payroll", "advances", "expenses", "budget", "schedule", "grocery"],
     // Owner-pilot UX: no Dashboard in Household. Payroll is the home page;
     // what needs attention lives in the bell. Phone: Payroll, Attendance,
-    // Expenses + More (Advances, Household Staff, Bills, Export & Backup,
-    // Users, Subscription, Settings). Budget & Categories open from Expenses.
+    // Expenses + More (Advances, Household Staff, Bills, Grocery List, Export
+    // & Backup, Users, Subscription, Settings). No budget in Household (expense
+    // monitoring, not budgeting): the "budget" module is just Categories,
+    // opened from Expenses → ⋯ → Manage categories.
     navigation: ["payroll", "attendance", "expenses", "advances", "household", "schedule", "grocery", "budget", "users", "settings"],
     mobileTabs: ["payroll", "attendance", "expenses"],
     navHidden: ["dashboard"],
@@ -140,7 +142,7 @@ const TEMPLATES = [
       widgets: ["activeStaff", "attendanceToday", "payrollsToRelease", "awaitingReceipt", "advancesNotPaid", "advancesToDeduct"],
       empty: { title: "Your payroll workspace is ready", body: "Add your household staff to start marking attendance." },
     },
-    labels: { modules: { dashboard: "Payroll Dashboard", expenses: "Expenses", schedule: "Bills", budget: "Budget & Categories", household: "Household Staff" } },
+    labels: { modules: { dashboard: "Payroll Dashboard", expenses: "Expenses", schedule: "Bills", budget: "Categories", household: "Household Staff" } },
     settings: {},
     plannedModules: [{ id: "payroll-reports", name: "Payroll Reports" }],
   },

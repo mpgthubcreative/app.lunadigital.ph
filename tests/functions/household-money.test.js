@@ -176,14 +176,16 @@ describe("The month: payroll counted once, advances excluded", () => {
     const staffCat = await category("Household Staff");
     await spend(g, 300000);
     await spend(staffCat, 50000); // e.g. the helper's uniform
-    ok(await api("budget", u.carlo, { action: "setTotal", total: 5000000 }));
     const util = await category("Utilities");
     ok(await api("schedule", u.carlo, { action: "create", payment: { description: "Meralco", category: util, amount: 450000, dueDate: OCT(20), repeat: { every: "month", interval: 1 } } }), 201);
     ok(await api("schedule", u.carlo, { action: "create", payment: { description: "Rent", category: util, amount: 2000000, dueDate: "2026-11-05" } }), 201);
     const m = ok(await month()).month;
     expect(under("expenses")).toHaveLength(2); // payroll never becomes an expense
-    expect(m).toMatchObject({ month: "2026-10", current: true, expensesSpent: 350000, staffPaid: salary, spent: 350000 + salary, billsRemaining: 450000, billsDue: 1, budget: 5000000 });
-    expect(m.left).toBe(5000000 - (350000 + salary) - 450000 - m.payrollDue);
+    expect(m).toMatchObject({ month: "2026-10", current: true, expensesSpent: 350000, staffPaid: salary, spent: 350000 + salary, billsRemaining: 450000, billsDue: 1 });
+    // No budget in Household any more (expense monitoring, not budgeting).
+    for (const k of ["budget", "left", "payrollDue"]) expect(m).not.toHaveProperty(k);
+    // The salary as ONE read-only payroll row for the Expenses list.
+    expect(m.payroll).toEqual([{ id: pid, staffName: "Loriza", amount: salary, paidDate: docAt(`payrolls/${pid}`).salary.paidDate }]);
     expect(m.categories.find((c) => c.name === "Household Staff")).toEqual({ name: "Household Staff", amount: 50000 + salary, payroll: salary });
     expect(m.categories.find((c) => c.name === "Groceries").amount).toBe(300000);
     // The ₱250 advance appears nowhere in the money.
@@ -196,12 +198,12 @@ describe("The month: payroll counted once, advances excluded", () => {
     expect(m.staffPaid).toBe(docAt(`payrolls/${pid}`).salary.amount);
   });
 
-  it("another month: only its own expenses and salaries; payroll due only for the current month", async () => {
+  it("another month: only its own expenses and salaries", async () => {
     await paidHelper();
     const g = await category("Groceries");
     await spend(g, 120000, "2026-09-28");
     const sep = ok(await month("2026-09")).month;
-    expect(sep).toMatchObject({ month: "2026-09", current: false, expensesSpent: 120000, staffPaid: 0, payrollDue: 0, budget: null, left: null, advancesReleased: 0, cashOut: 120000 });
+    expect(sep).toMatchObject({ month: "2026-09", current: false, expensesSpent: 120000, staffPaid: 0, payroll: [], advancesReleased: 0, cashOut: 120000 });
     expect((await month("2026-13")).status).toBe(400);
   });
 });
@@ -233,8 +235,9 @@ describe("Access", () => {
 });
 
 describe("Master Backup (Household)", () => {
-  it("has Expenses, Bills, Recurring Items, Categories and Budget sheets", async () => {
+  it("has Expenses, Bills, Recurring Items and Categories; no Budget sheet and no budget column (old data stays stored)", async () => {
     const util = await category("Utilities");
+    ok(await api("budget", u.carlo, { action: "updateCategory", categoryId: util, changes: { budget: 500000 } }));
     ok(await api("budget", u.carlo, { action: "setTotal", total: 4000000 }));
     await spend(util, 10000);
     ok(await api("schedule", u.carlo, { action: "create", payment: { description: "Meralco", category: util, amount: 450000, dueDate: OCT(20), repeat: { every: "month", interval: 1 } } }), 201);
@@ -246,6 +249,13 @@ describe("Master Backup (Household)", () => {
     expect(read("Bills")[1]).toEqual(expect.arrayContaining(["Meralco"]));
     expect(read("Recurring Items")[1]).toEqual(expect.arrayContaining(["Meralco", "Every month", OCT(20), "4500", "Utilities"]));
     expect(read("Categories")[1]).toEqual(expect.arrayContaining(["Utilities"]));
-    expect(read("Budget")[1]).toEqual(["Monthly budget (PHP)", "40000"]);
+    expect(read("Categories")[0]).not.toContain("budget");
+    const res2 = await createBackupHandler(deps())({ ...request({ uid: u.carlo, businessId: H, method: "POST" }), body: "{}" });
+    const sheets = JSON.parse(JSON.stringify(readXlsx(Buffer.from(res2.body, "base64"), { sheet: "Export Info" }).rows)).map((r) => r[0]);
+    for (const gone of ["Budget", "Budget record", "Budget totals"]) expect(sheets).not.toContain(gone);
+    for (const kept of ["Expenses", "Bills", "Recurring Items", "Categories", "Grocery List"]) expect(sheets).toContain(kept);
+    // Old stored budget data is kept (backward compatibility), just not shown or exported.
+    expect(docAt("budgets/current").total).toBe(4000000);
+    expect(docAt(`expenseCategories/${util}`).budget).toBe(500000);
   });
 });
