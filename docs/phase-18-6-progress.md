@@ -517,6 +517,36 @@ The accepted Bridal design (Money | Tasks | Guests | More) is unchanged; this pa
   - The guest's table isn't shown on the invitation (setting reserved, off).
   - One invitation theme, by design.
 
+### 2026-10-17 · Bridal invitations: friendly link + partial attendance; Sample Checklist / Sample Budget; cover photo shown (a539012, 8edf464)
+
+- **Friendly wedding link.** Guests' links are now `/w/{weddingSlug}/invite/{token}`.
+  - **Choosing it:** "Wedding link / hashtag" in Wedding Setup takes lowercase letters, digits and hyphens (3–60). What's typed is cleaned as you go (`#CarloYanieForever` → `carloyanieforever`). Left blank, Luna makes one from the couple's names (`carlo-and-yanie-wedding`, then `-2`… if taken).
+  - **Unique:** each slug is held in a server-only registry, `weddingSlugs/{slug}` (rules deny all browser access). Another wedding's slug is refused with a 409, and changing yours frees the old one.
+  - **Only the token decides.** The slug is never sent or trusted: a valid slug with a wrong token opens nothing.
+  - **Old links still work:** `/invite/{token}` and old-slug addresses open as before, then the address bar moves to the current one. Weddings set up before slugs get one with their next link.
+- **Reserved seats vs attending.**
+  - **On the invitation:** Accept no longer preselects every seat. The guest picks 1–N, then Confirm RSVP, and the page reads "1 of 2". When changing an earlier answer, their current number is preselected.
+  - **History:** "Guest responded: Attending · 1 of 2", then "Guest changed RSVP: 1 of 2 → 2 of 2", with source and time kept.
+  - **Counts:** the row shows 1/2, and totals, categories and Seating use confirmed people, which they already did. Tests now pin this, including a full table being flagged.
+- **Sample Checklist (Tasks → My Tasks | Sample Checklist).** About 75 curated items in 11 groups, drawn from the bride's checklist: duplicates merged, plain labels, and church- or wedding-specific items marked Optional.
+  - **Read-only:** + Add makes one normal task, with the group as its category. Nothing is added automatically.
+  - **Veil:** appears once, under attire. The ceremony item is the sponsors' unity veil.
+- **Sample Budget (Money → My Money | Sample Budget).** About 27 lines in 10 groups, with no supplier names or prices. It's a reference only and doesn't count in the totals.
+  - **+ Add:** makes a normal Planned line: the item becomes the category, with no supplier and the amount set later. Existing or archived categories with that name are reused.
+  - **Server:** budget categories have a new `planned` flag (boolean, logged).
+  - **A line with no amount yet:** shows "—" and "Amount not set", and its ⋯ offers Set amount. Remove from budget also takes it off the plan.
+- **Owner note: "No file chosen" next to a saved cover photo.** That was the browser's own file box, which always says this after a reload. Wedding Setup now shows the current photo, with **Change photo** and **Remove photo** buttons.
+- **Tests:**
+  - **Unit:** 1489 pass. New: `tests/functions/wedding-slug.test.js`, plus UI tests for the slug field, the invitation (1 of 2 and 2 of 2, no preselect, address move), the 1/2 row, Seating over capacity, both sample lists and the cover photo preview.
+  - **Rules (emulator):** invitations and wedding pass, 25/25, including a new check that `weddingSlugs` can't be read, listed, claimed or taken over from a browser.
+  - **Live on staging (temporary wedding `p186b-wed-tmp`, 390px and 1280px):** 56/56, covering:
+    - the cover photo preview and the slug field (cleaning, preview, saved and reserved)
+    - the friendly link, and accepting 1 of 2 with no preselect and Confirm RSVP
+    - the history line, the row reading 1/2, and an old link moving to the new address
+    - changing to 2 of 2, and a wrong token refused even with a valid slug
+    - adding from the Sample Checklist, and a Planned line from the Sample Budget with totals unchanged
+    - no sideways scrolling on any screen.
+
 ## Plan (decisions made from the brief)
 
 ### Stage 1: Distributor
