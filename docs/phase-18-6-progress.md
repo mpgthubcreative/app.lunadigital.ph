@@ -760,6 +760,24 @@ The accepted Bridal design (Money | Tasks | Guests | More) is unchanged; this pa
   - **Live on staging (temporary `phx-home-tmp`, removed):** 6/6 API checks; 18/18 browser checks at 390; 12/12 at 1280 (a re-run: the first 1280 pass read the summary before it had loaded and compared stale figures).
   - **Checked:** a paid bill + retry = one expense and one next bill; advance and salary create no expense; Spent excludes the advance and Cash out includes it; category totals = expense data; the Groceries drill-down and clear; search; Record grocery expense = one ₱1,850 Groceries expense in the drill-down while the grocery items stay separate; Categories show no budget figures; the kasambahay is refused (API 403, rules 403); no sideways scroll.
 
+### 2026-10-17 · Luna Household Expenses as a household statement; Bills = recurring bills (94756f5, 433345e)
+
+- **Top:** ‹ month › with only Spent and Bills remaining. Search, Advances released, Cash out, the By category section, the drill-down and the Category filter are gone. Advances stay in Payroll / Advances; the server still computes them.
+- **Category groups ARE the list:** "UTILITIES ₱5,640", then its rows; largest total first; empty categories hidden.
+  - **What a group holds:** the month's expenses, the released salaries (read-only "Payroll · {name}" under Household Staff, no ⋯) and the unpaid bills that Bills remaining counts (current month: due by month end incl. overdue; a past month: only its own).
+  - **Totals:** group total = its rows, so all groups = Spent + Bills remaining.
+  - **Rows:** name + a quiet line (date / "Due Oct 28" / "Paid · Oct 17") | amount | ⋯. The category name isn't repeated.
+- **⋯ menus:**
+  - **Unpaid bill:** Paid / Edit / Remove. Paid = the idempotent mark-paid (method cash, today, full amount, a fresh key; the expense can be edited after), so one expense, and a repeating bill's next one is created once. A double tap sends once.
+  - **Paid bill:** Mark unpaid / Edit / Remove. Mark unpaid removes its expense, so the bill reopens; Remove = remove its expense + cancel the bill.
+  - **Normal expense:** Edit / Details / Remove (no paid state).
+- **Bills page:** + Add bill with Bill name, Amount, Category, Due date, Repeat (Weekly / Every 2 weeks / Monthly / Every 3 months / Every 6 months / Yearly). Unpaid | Paid, compact rows, the same ⋯ actions. No payment method, payee or pay form.
+- **Fix found live:** a Household bill paid with no payee recorded an expense titled "Scheduled payment: Water"; its expense is now named after the bill (payee = the bill's name). Baby unchanged.
+- **Tests:**
+  - **Unit:** 1598 pass. Server and rules accounting unchanged apart from the payee fix (tested).
+  - **Live on staging (temporary `phx-home-tmp`, removed):** 6/6 API, 26/27 browser + 4/4 re-check at 390, 1280. The one failure was my script's selector (it matched menu buttons).
+  - **Checked:** top shows only Spent / Bills remaining; group totals = rows and the sum = Spent + Bills remaining; payroll once, read-only; Water ⋯ Paid (double tap) = one expense with Spent +₱840 and Bills remaining −₱840; Mark unpaid = 0 expenses, bill unpaid, figures back; Paid again = one expense; the monthly Meralco has exactly one next bill; Record grocery expense lands under Groceries and the checklist creates no money; + Add bill has exactly the 5 fields; no sideways scroll.
+
 ## Plan (decisions made from the brief)
 
 ### Stage 1: Distributor
