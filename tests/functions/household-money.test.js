@@ -19,6 +19,7 @@ import { createBusiness, addMember, ensureAuthUser } from "../../netlify/functio
 import { buildWorld, request } from "../helpers/tenants.js";
 import { readXlsx } from "../../shared/xlsx.js";
 import { nextDueDate } from "../../shared/baby.js";
+import { occurrenceId, partExpenseId } from "../../netlify/functions/_lib/baby.js";
 
 const H = "biz-home";
 const W = 41100;
@@ -473,7 +474,11 @@ describe("Overdue bills carry forward until paid", () => {
     const pay = (dueDate, key) => api("schedule", u.carlo, { action: "payOccurrence", scheduleId: sid, dueDate, payment: { method: "cash", paidDate: "2026-11-20", final: true, key } });
     const r1 = ok(await pay("2026-11-17", "kmeralconov001"));
     const r2 = ok(await pay("2026-11-17", "kmeralconov001"));
-    expect(r1.occurrence).toBe(`${sid}20261117`);
+    expect(r1.occurrence).toBe(`${sid}261117`);
+    // A real (20-character) bill id: the occurrence id and its payment's expense id fit the 8–40 id rule.
+    const real = occurrenceId("AbCdEfGhIjKlMnOpQrSt", "2026-11-17");
+    expect(real).toMatch(/^[A-Za-z0-9]{26}$/);
+    expect(partExpenseId(real, 0, "abcdefghjk23")).toMatch(/^[A-Za-z0-9]{8,40}$/);
     expect(r2).toMatchObject({ occurrence: r1.occurrence, alreadyPaid: true });
     // October (unpaid) + November (paid) + December (made when November was paid).
     expect(under("scheduledPayments").filter((x) => x.description === "Meralco").map((x) => [x.dueDate, x.status]).sort()).toEqual([["2026-10-17", "upcoming"], ["2026-11-17", "paid"], ["2026-12-17", "upcoming"]]);

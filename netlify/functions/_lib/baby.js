@@ -506,8 +506,10 @@ export const partExpenseId = (scheduleId, attempt, key = null) => (key ? `${sche
 
 // Luna Household (overdue carry-forward): a recurring bill's occurrence that
 // is due but not stored yet (the next one is normally stored only when the
-// previous is paid) is stored on demand, once: id = recurringId + yyyymmdd,
+// previous is paid) is stored on demand, once: id = recurringId + yymmdd
+// (≤ 26 characters, so its payments' expense ids stay within 40),
 // and the same bill + period is never stored twice. Returns its id.
+export const occurrenceId = (rid, dueDate) => `${String(rid).slice(0, 20)}${dueDate.slice(2).replace(/-/g, "")}`;
 export async function ensureOccurrence({ db, tenant, FieldValue, scheduleId, dueDate, actor }) {
   if (!isDayId(dueDate)) throw new BabyError("invalid-input", "Choose a valid due date");
   const sRef = scheduleRef(tenant, scheduleId);
@@ -529,7 +531,7 @@ export async function ensureOccurrence({ db, tenant, FieldValue, scheduleId, due
     if (!chainDueDates(first, s.repeat, s.repeatDay ?? null, dueDate).includes(dueDate)) throw new BabyError("invalid-input", "That isn't one of this bill's due dates");
     const before = [snap, ...chain].map((d) => ({ id: d.id, ...d.data() })).filter((x) => x.dueDate < dueDate).sort((a, b) => b.dueDate.localeCompare(a.dueDate))[0];
     const amount = amountOn(s.amountSchedule, dueDate) ?? s.amount;
-    const ref = tenant.collection("scheduledPayments").doc(`${rid}${dueDate.replace(/-/g, "")}`);
+    const ref = tenant.collection("scheduledPayments").doc(occurrenceId(rid, dueDate));
     await loadBudget(tx, tenant);
     const stamp = FieldValue.serverTimestamp();
     tx.create(ref, { schemaVersion: BABY_SCHEMA_VERSION, description: s.description, category: s.category, categoryName: s.categoryName ?? null, providerId: s.providerId ?? null, payee: s.payee ?? null, amount, dueDate, status: "upcoming", notes: s.notes ?? null, repeat: s.repeat, repeatDay: s.repeatDay ?? null, recurringId: rid, amountSchedule: s.amountSchedule ?? null, ...(s.kind ? { kind: s.kind } : {}), previousId: before?.id ?? null, expenseId: null, paidDate: null, paidAmount: null, method: null, reference: null, attempt: 0, history: [entry(actor, `Scheduled ${s.description} ${peso(amount)} due ${dueDate} (${repeatLabel(s.repeat).toLowerCase()})`)], revision: 1, createdBy: who(actor), createdAt: stamp, updatedBy: who(actor), updatedAt: stamp });
@@ -539,7 +541,7 @@ export async function ensureOccurrence({ db, tenant, FieldValue, scheduleId, due
     // A concurrent request stored it first (deterministic id): use it.
     if (err && (err.code === 6 || err.code === "already-exists")) {
       const s = (await sRef.get()).data();
-      return { scheduleId: `${s?.recurringId ?? scheduleId}${dueDate.replace(/-/g, "")}`, existed: true };
+      return { scheduleId: occurrenceId(s?.recurringId ?? scheduleId, dueDate), existed: true };
     }
     throw err;
   });
