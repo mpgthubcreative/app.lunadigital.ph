@@ -1,16 +1,17 @@
 // Luna Household: Bills = telling Luna which household bills repeat.
+//   My Bills | Sample Bills
+//   My Bills: ONE row per bill (its occurrences are managed inside Luna):
+//     Meralco     Monthly · next due Oct 28                          ₱5,000  ⋯ (Edit / Remove)
+//     Insurance   Monthly · next due Oct 25 · Amount changes by period ₱3,000  ⋯
+//   Sample Bills: Meralco ₱5,000 / PLDT ₱2,000 / Parking ₱3,000, Monthly,
+//     each with + Add (opens the bill form, editable before adding).
 //   + Add bill: Bill name, Amount, Category, Due date, Repeat
 //     (+ Add future amount change: "₱3,000 starting Oct 1")
-//   Bills | Paid history, one compact line each:
-//     Insurance   Monthly · next due Nov 25 · Amount changes by period   ₱3,000  ⋯ (Paid / Edit / Remove)
-//     Parking     Paid Oct 15                                             ₱3,000  ⋯ (Mark unpaid / Remove)
-// One row per bill: a recurring bill has one next occurrence at a time (the
-// next is created when it's paid), and its amount can change by period
-// (amountSchedule): each occurrence takes the amount in force on its due
-// date; paid ones keep theirs. Scheduled one-time expenses (Expenses →
-// Schedule for later) aren't bills and aren't listed here.
-// "Paid" records ONE expense (idempotent mark-paid: cash, today, the full
-// amount; the expense can be edited after). "Mark unpaid" removes it.
+// A recurring bill's amount can change by period (amountSchedule): each
+// occurrence takes the amount in force on its due date; paid ones keep
+// theirs. Paying (and Mark unpaid) happens on Expenses, where each month's
+// occurrence shows under its category. Scheduled one-time expenses aren't
+// bills and aren't listed here.
 
 import { html, render } from "../../lib/html.js";
 import { pageHeader, emptyState, skeleton, segmented } from "../../components/ui.js";
@@ -56,14 +57,14 @@ export function amountPlan(s) {
 }
 
 // Bill name, Amount, Category, Due date, Repeat; + future amount changes.
-export const billFields = (s, categories, today) => {
+export const billFields = (s, categories, today, prefill = null) => {
   const plan = amountPlan(s);
   return [
-    { name: "description", label: "Bill name", value: s?.description ?? "", required: true, placeholder: "e.g. Meralco, Rent, Insurance" },
-    { name: "amount", label: "Amount (₱)", value: s ? pesos(plan.amount) : "", inputmode: "decimal", required: true, hint: "Changes each month? Put the usual amount; edit it when the bill comes." },
-    householdCategoryField(categories, { value: s ? categoryNameOf(categories, s.category) || s.categoryName || "" : "Utilities" }),
+    { name: "description", label: "Bill name", value: s?.description ?? prefill?.description ?? "", required: true, placeholder: "e.g. Meralco, Rent, Insurance" },
+    { name: "amount", label: "Amount (₱)", value: s ? pesos(plan.amount) : prefill ? pesos(prefill.amount) : "", inputmode: "decimal", required: true, hint: "Changes each month? Put the usual amount; edit it when the bill comes." },
+    householdCategoryField(categories, { value: s ? categoryNameOf(categories, s.category) || s.categoryName || "" : prefill?.category ?? "Utilities" }),
     { name: "dueDate", label: s ? "Next due date" : "Due date", type: "date", value: s?.dueDate ?? today, required: true },
-    { name: "repeat", label: "Repeat", type: "select", options: REPEAT_OPTIONS, value: s ? repeatValue(s.repeat) : "month:1" },
+    { name: "repeat", label: "Repeat", type: "select", options: REPEAT_OPTIONS, value: s ? repeatValue(s.repeat) : prefill ? repeatValue(prefill.repeat) : "month:1" },
     { name: "from", label: "This amount applies from", type: "date", value: plan.from, more: true, hint: "Optional. Used when the amount changes later." },
     ...Array.from({ length: FUTURE_SLOTS }, (_, i) => [
       { name: `futureAmount${i}`, label: i ? "Another change: new amount (₱)" : "New amount (₱)", value: pesos(plan.future[i]?.amount), inputmode: "decimal", more: true },
@@ -102,19 +103,43 @@ export async function parseBill(v, { categories, data, canCategory }) {
   return { description: v.description.trim(), amount, dueDate: v.dueDate, repeat, category, amountSchedule };
 }
 
-const TABS = [["upcoming", "Bills"], ["paid", "Paid history"]];
+const TABS = [["mine", "My Bills"], ["sample", "Sample Bills"]];
 const isBill = (s) => s.kind !== "scheduled";
+// Sample Bills (a starter list; nothing is a bill until + Add).
+export const SAMPLE_BILLS = Object.freeze([
+  { description: "Meralco", amount: 500000, category: "Utilities", repeat: { every: "month", interval: 1 } },
+  { description: "PLDT", amount: 200000, category: "Utilities", repeat: { every: "month", interval: 1 } },
+  { description: "Parking", amount: 300000, category: "Transportation", repeat: { every: "month", interval: 1 } },
+]);
+const nameKey = (t) => String(t || "").trim().toLocaleLowerCase("en");
+// One row per bill: the unpaid occurrences of the same bill (a reopened one
+// and the next one already made, linked by nextId) show once, as the latest.
+export function billRows(rows) {
+  const upcoming = rows.filter((r) => r.status === "upcoming" && isBill(r));
+  const byId = new Map(upcoming.map((r) => [r.id, r]));
+  const head = (r) => {
+    let x = r;
+    for (let i = 0; i < 50 && x.nextId && byId.has(x.nextId); i++) x = byId.get(x.nextId);
+    return x;
+  };
+  const groups = new Map();
+  for (const r of upcoming) {
+    const h = head(r);
+    const g = groups.get(h.id) || { bill: h, occurrences: [] };
+    g.occurrences.push(r);
+    groups.set(h.id, g);
+  }
+  return [...groups.values()].sort((a, b) => a.bill.description.localeCompare(b.bill.description));
+}
 
 export function mount(container, session, { data = defaultData, toast = defaultToast, confirm = confirmDialog, now = () => new Date() } = {}) {
   const perms = session.member.permissions;
   const canManage = perms["schedule.manage"] === true;
-  const canPay = canManage && perms["expenses.create"] === true;
-  const canUnpay = perms["expenses.delete"] === true;
   const canCategory = perms["budget.manage"] === true;
   const businessId = session.business.id;
   const currency = session.business.currency || "PHP";
   const today = () => businessDate(session.business.timezone, now());
-  const state = { status: "upcoming", rows: [], hasMore: false, categories: [], loading: true, error: null, busy: new Set() };
+  const state = { view: "mine", rows: [], hasMore: false, categories: [], loading: true, error: null, busy: new Set() };
   let alive = true;
   const money = (c) => formatCentavos(c ?? 0, currency);
   const short = (d) => formatDayId(d).replace(/, \d{4}$/, "");
@@ -125,7 +150,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     try {
       const [cats, page] = await Promise.all([
         state.categories.length || !perms["budget.view"] ? state.categories : data.listCategories(businessId),
-        data.listBills(businessId, { status: state.status }, { pageSize: 100 }),
+        data.listBills(businessId, { status: "upcoming" }, { pageSize: 200 }),
       ]);
       state.categories = cats;
       state.rows = page.rows.filter(isBill);
@@ -139,29 +164,32 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     draw();
   }
 
-  const items = (s) =>
-    s.status === "upcoming"
-      ? [...(canPay ? [{ act: "paid", label: "Paid" }] : []), ...(canManage ? [{ act: "edit", label: "Edit" }, { sep: true }, { act: "remove", label: "Remove", danger: true }] : [])]
-      : s.status === "paid" && s.expenseId && canUnpay
-        ? [{ act: "unpaid", label: "Mark unpaid" }, ...(canManage ? [{ sep: true }, { act: "remove-paid", label: "Remove", danger: true }] : [])]
-        : [];
-  const menu = (s) => {
-    const list = items(s);
-    return list.length
+  const groupOf = (id) => billRows(state.rows).find((g) => g.bill.id === id);
+  const menu = (s) =>
+    canManage
       ? html`<details class="line-menu"><summary class="btn btn-compact btn-ghost" aria-label="More for ${s.description}">⋯</summary><div class="line-menu-list" role="menu">
-          ${list.map((i) => (i.sep ? html`<div class="menu-sep" role="separator"></div>` : html`<button type="button" class="menu-item${i.danger ? " menu-danger" : ""}" role="menuitem" data-act="${i.act}" data-id="${s.id}">${i.label}</button>`))}
+          <button type="button" class="menu-item" role="menuitem" data-act="edit" data-id="${s.id}">Edit</button>
+          <div class="menu-sep" role="separator"></div><button type="button" class="menu-item menu-danger" role="menuitem" data-act="remove" data-id="${s.id}">Remove</button>
         </div></details>`
       : html`<span class="wl-menu-gap" aria-hidden="true"></span>`;
+  const sub = (g) => {
+    const s = g.bill;
+    const late = g.occurrences.filter((o) => o.dueDate < today()).length;
+    return html`${s.repeat ? `${repeatWord(s.repeat)} · next due ` : "Due "}<span class="hx-due${s.dueDate < today() ? " is-over" : ""}">${short(s.dueDate)}</span>${late && g.occurrences.length > 1 ? ` · ${late} unpaid` : ""}${changesByPeriod(s) ? html` · <span data-role="by-period">Amount changes by period</span>` : ""}`;
   };
-  const sub = (s) =>
-    s.status === "paid"
-      ? `Paid ${short(s.paidDate || s.dueDate)}`
-      : html`${s.repeat ? `${repeatWord(s.repeat)} · next due ` : "Due "}<span class="hx-due${s.dueDate < today() ? " is-over" : ""}">${short(s.dueDate)}</span>${changesByPeriod(s) ? html` · <span data-role="by-period">Amount changes by period</span>` : ""}`;
-  const row = (s) => html`<li class="wl-row hx-row" data-bill="${s.id}">
-    <span class="wl-main hx-main"><span class="wl-name">${s.description}</span><span class="wl-sub hx-sub" data-col="repeat">${sub(s)}</span></span>
-    <span class="wl-amt hx-amt">${money(s.status === "paid" ? s.paidAmount ?? s.amount : upcomingPart(s))}</span>
-    ${menu(s)}
+  const row = (g) => html`<li class="wl-row hx-row" data-bill="${g.bill.id}">
+    <span class="wl-main hx-main"><span class="wl-name">${g.bill.description}</span><span class="wl-sub hx-sub" data-col="repeat">${sub(g)}</span></span>
+    <span class="wl-amt hx-amt">${money(upcomingPart(g.bill))}</span>
+    ${menu(g.bill)}
   </li>`;
+  const sampleRow = (x, i, mine) => {
+    const added = mine.has(nameKey(x.description));
+    return html`<li class="wl-row hx-row wl-sample" data-sample="${i}">
+      <span class="wl-main hx-main"><span class="wl-name">${x.description}</span><span class="wl-sub hx-sub">${repeatWord(x.repeat)} · ${x.category}</span></span>
+      <span class="wl-amt hx-amt">${money(x.amount)}</span>
+      ${added ? html`<span class="wl-added" data-role="added">Added ✓</span>` : canManage ? html`<button type="button" class="btn btn-compact" data-act="sample-add" data-i="${i}" aria-label="Add ${x.description}">+ Add</button>` : ""}
+    </li>`;
+  };
 
   function draw() {
     if (!alive) return;
@@ -169,14 +197,17 @@ export function mount(container, session, { data = defaultData, toast = defaultT
       container,
       html`
         ${pageHeader({ title: "Bills", subtitle: html`The household bills that repeat. Unpaid ones count in Bills remaining. <a href="/expenses" data-link>Expenses ›</a>`, actions: canManage ? html`<button type="button" class="btn btn-primary" data-act="new">+ Add bill</button>` : "" })}
-        <div class="wl-tools">${segmented("status", TABS, state.status, { label: "Show" })}</div>
+        <div class="wl-tools">${segmented("view", TABS, state.view, { label: "Show" })}</div>
         ${state.error
           ? html`<section class="card">${emptyState({ title: "Couldn't load", body: state.error })}</section>`
           : state.loading
             ? skeleton(4)
-            : !state.rows.length
-              ? html`<p class="stat-hint wl-none" data-role="none">${state.status === "upcoming" ? "No bills yet. Add the bills you pay every month, like electricity or rent." : "No paid bills yet."}</p>`
-              : html`<ul class="wl-list" data-role="bills">${state.rows.map(row)}</ul>${state.hasMore ? html`<p class="stat-hint">Showing the first 100.</p>` : ""}`}`
+            : state.view === "sample"
+              ? html`<p class="stat-hint wl-sample-intro">Common household bills. Tap + Add to set one up (you can change the amount, category, due date and repeat first).</p>
+                  <ul class="wl-list" data-role="sample-bills">${SAMPLE_BILLS.map((x, i) => sampleRow(x, i, new Set(billRows(state.rows).map((g) => nameKey(g.bill.description)))))}</ul>`
+              : !state.rows.filter(isBill).length
+                ? html`<p class="stat-hint wl-none" data-role="none">No bills yet. Add the bills you pay every month, like electricity or rent, or pick from Sample Bills.</p>`
+                : html`<ul class="wl-list" data-role="bills">${billRows(state.rows).map(row)}</ul>`}`
     );
   }
 
@@ -186,7 +217,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     load();
     return true;
   };
-  const dialog = (s = null) => billDialog({ bill: s, categories: state.categories, today: today(), data, canCategory });
+  const dialog = (s = null, prefill = null) => billDialog({ bill: s, prefill, categories: state.categories, today: today(), data, canCategory });
 
   const onClick = async (event) => {
     const el = event.target.closest("[data-act]");
@@ -201,27 +232,20 @@ export function mount(container, session, { data = defaultData, toast = defaultT
         case "new":
           return after("Bill added.")(await dialog());
         case "seg":
-          state.status = el.dataset.value;
-          state.rows = [];
-          return load();
+          state.view = el.dataset.value;
+          return draw();
         case "edit":
           return s ? after("Saved.")(await dialog(s)) : undefined;
-        case "paid": {
-          if (!s) return undefined;
-          const r = await data.scheduleApi({ action: "markPaid", scheduleId: s.id, payment: { method: "cash", amount: upcomingPart(s), paidDate: today(), final: true, key: partKey() } });
-          return after(r?.alreadyPaid ? "Already paid." : r?.nextScheduleId ? `${s.description} paid. The next one is scheduled.` : `${s.description} paid.`)(r);
+        case "sample-add": {
+          const x = SAMPLE_BILLS[Number(el.dataset.i)];
+          return x ? after(`${x.description} added to My Bills.`)(await dialog(null, x)) : undefined;
         }
-        case "unpaid":
-          if (!s || !(await confirm({ title: `Mark ${s.description} unpaid?`, body: "Its payment no longer counts as spent and the bill goes back to Bills remaining.", confirmLabel: "Mark unpaid" }))) return undefined;
-          return after("Marked unpaid.")(await data.expensesApi({ action: "remove", expenseId: s.expenseId, reason: "Marked unpaid" }));
-        case "remove":
-          if (!s || !(await confirm({ title: `Remove ${s.description}?`, body: `It leaves Bills remaining${s.repeat ? " and won't repeat" : ""}.`, confirmLabel: "Remove bill", danger: true }))) return undefined;
-          return after("Bill removed.")(await data.scheduleApi({ action: "cancel", scheduleId: s.id, reason: "Removed" }));
-        case "remove-paid":
-          if (!s || !(await confirm({ title: `Remove ${s.description}?`, body: "Its payment no longer counts as spent and this bill is removed. Later bills already scheduled stay.", confirmLabel: "Remove", danger: true }))) return undefined;
-          await data.expensesApi({ action: "remove", expenseId: s.expenseId, reason: "Removed" });
-          await data.scheduleApi({ action: "cancel", scheduleId: s.id, reason: "Removed" });
-          return after("Removed.")({});
+        case "remove": {
+          const g = groupOf(el.dataset.id);
+          if (!g || !(await confirm({ title: `Remove ${g.bill.description}?`, body: `It leaves Bills remaining${g.bill.repeat ? " and won't repeat" : ""}. Payments already made stay in Expenses.`, confirmLabel: "Remove bill", danger: true }))) return undefined;
+          for (const o of g.occurrences) await data.scheduleApi({ action: "cancel", scheduleId: o.id, reason: "Removed" });
+          return after("Bill removed.")({});
+        }
         default:
           return undefined;
       }
@@ -241,10 +265,10 @@ export function mount(container, session, { data = defaultData, toast = defaultT
 }
 
 // Add / edit a bill (shared with the Expenses list).
-export function billDialog({ bill: s = null, categories, today, data, canCategory }) {
+export function billDialog({ bill: s = null, prefill = null, categories, today, data, canCategory }) {
   return formDialog({
-    title: s ? `Edit ${s.description}` : "Add bill",
-    fields: billFields(s, categories, today),
+    title: s ? `Edit ${s.description}` : prefill ? `Add ${prefill.description}` : "Add bill",
+    fields: billFields(s, categories, today, prefill),
     moreLabel: "+ Add future amount change",
     submitLabel: s ? "Save changes" : "Add bill",
     onSubmit: async (v) => {

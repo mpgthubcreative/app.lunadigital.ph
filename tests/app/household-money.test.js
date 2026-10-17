@@ -269,16 +269,40 @@ describe("Bills (recurring bills)", () => {
     expect(data.scheduleApi).toHaveBeenCalledWith({ action: "create", payment: { description: "Internet", amount: 169900, dueDate: "2026-10-25", repeat: { every: "month", interval: 1 }, category: "catUtilities01" } });
   });
 
-  it("one row per bill: Monthly · next due · Amount changes by period (quiet); scheduled expenses aren't bills", async () => {
+  it("My Bills: ONE row per bill (a reopened occurrence and the next one show once); ⋯ Edit / Remove only; scheduled expenses aren't bills", async () => {
     const BYP = { ...BILL, id: "schedIns000002", description: "Insurance", amount: 300000, amountSchedule: [{ amount: 250000, from: "2026-05-01", until: null }, { amount: 300000, from: "2026-10-01", until: null }] };
+    const OLD = { ...BILL, id: "schedMer000000", dueDate: "2026-09-20", nextId: "sched000000001" }; // reopened September Meralco
     const ONE = { ...BILL, id: "schedOne000001", description: "Dentist", kind: "scheduled", repeat: null };
-    const data = fakeData({ listBills: vi.fn(async () => ({ rows: [BILL, BYP, ONE], hasMore: false })) });
+    const data = fakeData({ listBills: vi.fn(async () => ({ rows: [OLD, BILL, BYP, ONE], hasMore: false })) });
+    mountBills(container, home(), { data, now: NOW, toast: () => {}, confirm: async () => true });
+    await flush();
+    expect($$("[data-bill] .wl-name").map((e) => e.textContent)).toEqual(["Insurance", "Meralco"]);
+    expect(flat($('[data-bill="sched000000001"] [data-col="repeat"]'))).toBe("Monthly · next due Oct 20 · 1 unpaid");
+    expect(flat($('[data-bill="schedIns000002"] [data-col="repeat"]'))).toBe("Monthly · next due Oct 20 · Amount changes by period");
+    expect([...$$('[data-bill="sched000000001"] .menu-item')].map((b) => b.textContent.trim())).toEqual(["Edit", "Remove"]);
+    // Remove the bill: every unpaid occurrence of it is cancelled.
+    $('[data-bill="sched000000001"] [data-act="remove"]').click();
+    await flush();
+    const cancelled = data.scheduleApi.mock.calls.filter(([b]) => b.action === "cancel").map(([b]) => b.scheduleId).sort();
+    expect(cancelled).toEqual(["sched000000001", "schedMer000000"]);
+  });
+
+  it("Sample Bills: Meralco ₱5,000 / PLDT ₱2,000 / Parking ₱3,000, Monthly; + Add opens the bill form prefilled (editable); a bill already in My Bills shows Added ✓", async () => {
+    const data = fakeData();
     mountBills(container, home(), { data, now: NOW, toast: () => {} });
     await flush();
-    expect($$("[data-bill] .wl-name").map((e) => e.textContent)).toEqual(["Meralco", "Insurance"]);
-    expect(flat($('[data-bill="sched000000001"] [data-col="repeat"]'))).toBe("Monthly · next due Oct 20");
-    expect(flat($('[data-bill="schedIns000002"] [data-col="repeat"]'))).toBe("Monthly · next due Oct 20 · Amount changes by period");
-    expect([...$$('[data-bill="sched000000001"] .menu-item')].map((b) => b.textContent.trim())).toEqual(["Paid", "Edit", "Remove"]);
+    $('[data-act="seg"][data-value="sample"]').click();
+    await flush();
+    expect($$('[data-role="sample-bills"] .wl-row').map(flat)).toEqual(["MeralcoMonthly · Utilities ₱5,000.00 Added ✓", "PLDTMonthly · Utilities ₱2,000.00 + Add", "ParkingMonthly · Transportation ₱3,000.00 + Add"]);
+    $('[aria-label="Add PLDT"]').click();
+    await flush();
+    const f = lastForm();
+    expect([f.elements.description.value, f.elements.amount.value, f.elements.category.value, f.elements.repeat.value]).toEqual(["PLDT", "2000.00", "Utilities", "month:1"]);
+    f.elements.amount.value = "1899";
+    submit(f);
+    await flush();
+    expect(data.scheduleApi).toHaveBeenCalledWith({ action: "create", payment: { description: "PLDT", amount: 189900, dueDate: "2026-10-16", repeat: { every: "month", interval: 1 }, category: "catUtilities01" } });
+    expect(data.scheduleApi.mock.calls).toHaveLength(1); // nothing was created before + Add
   });
 
   it("Edit an amount-changing bill: shows the current amount + when it started + the later change; adding a change sends the schedule only", async () => {
@@ -296,23 +320,6 @@ describe("Bills (recurring bills)", () => {
     submit(f);
     await flush();
     expect(data.scheduleApi).toHaveBeenCalledWith({ action: "update", scheduleId: "schedIns000002", expectedRevision: 3, changes: { amountSchedule: [{ amount: 250000, from: "2026-05-01" }, { amount: 300000, from: "2026-11-01" }] } });
-  });
-
-  it("Paid needs no payment form; Paid history tab: ⋯ Mark unpaid / Remove", async () => {
-    const PAID = { ...BILL, id: "schedPaid0001", status: "paid", paidDate: "2026-10-15", paidAmount: 450000, expenseId: "expBill000001" };
-    const data = fakeData({ listBills: vi.fn(async (b, f) => ({ rows: f.status === "paid" ? [PAID] : [BILL], hasMore: false })) });
-    mountBills(container, home(), { data, now: NOW, confirm: async () => true, toast: () => {} });
-    await flush();
-    $('[data-act="paid"]').click();
-    await flush();
-    expect(document.querySelector(".modal-backdrop form")).toBeNull();
-    expect(data.scheduleApi).toHaveBeenCalledWith(expect.objectContaining({ action: "markPaid", scheduleId: "sched000000001" }));
-    $('[data-act="seg"][data-value="paid"]').click();
-    await flush();
-    expect([...$$('[data-bill] .menu-item')].map((b) => b.textContent.trim())).toEqual(["Mark unpaid", "Remove"]);
-    $('[data-act="unpaid"]').click();
-    await flush();
-    expect(data.expensesApi).toHaveBeenCalledWith({ action: "remove", expenseId: "expBill000001", reason: "Marked unpaid" });
   });
 
   it("repeat helpers", () => {
