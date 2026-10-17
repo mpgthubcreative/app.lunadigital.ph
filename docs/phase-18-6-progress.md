@@ -740,6 +740,26 @@ The accepted Bridal design (Money | Tasks | Guests | More) is unchanged; this pa
   - **Plan records:** household-basic and household-plus modules only (+ grocery).
   - **Recomputed to v4 + permissions resynced:** demo-household-a, demo-household-b, rwp-d419 (the kasambahay logins gained grocery.view / grocery.check).
 
+### 2026-10-17 · Luna Household Expenses: Bridal-Money-style monitoring, no budget (6c37ece)
+
+- **Expenses page:** one month at a time (‹ October 2026 ›), Category select and Search. Summary: Spent · Bills remaining · Advances released · Cash out.
+  - **By category:** computed from the same rows as the list (expenses + released salaries, never advances), largest first. Every row is tappable.
+  - **The list:** one compact list, newest first: Category | Payee | Amount | Date | ⋯ (Edit / Details / Remove). On a phone: Payee over Category | Amount | Date | ⋯.
+  - **Payroll rows:** the month's released salaries show as read-only "Household Staff · Payroll · {name}" rows (no ⋯; never expense records).
+  - **+ Add expense:** Amount, Category, Date; More details: Payee / merchant, method, reference, notes, receipt / proof.
+  - **Header ⋯:** Manage categories, Bills.
+- **Drill-down:** tapping a category filters the same month list to it: "Groceries — October", "₱7,200.00 total", its rows; "‹ All expenses" clears it. Household Staff includes the payroll rows. No new data: the month's expenses are loaded once (up to 500) and filtered in the browser.
+- **Budget removed from Household:** no monthly budget input, budget left, category budgets or "Budget & Categories".
+  - **Categories:** the `budget` module's route is now "Categories" (names only: add, rename, hide a used one, delete an unused one; hidden ones folded), reached from Expenses ⋯ → Manage categories.
+  - **Server:** `/api/household-money` no longer returns budget / left / payroll due (+ `payroll` rows).
+  - **Old data:** stored budget data (budgets/current.total, category budgets) is kept untouched.
+  - **Bills:** remain; they still use budgets/current for their running totals.
+- **Master Backup (Household):** Expenses, Bills, Recurring Items, Categories (without the old budget column), Grocery List (+ raw records) with Staff / Attendance / Payroll / Advances. No Budget, Budget record or Budget totals sheets.
+- **Tests:**
+  - **Unit:** 1595 pass. No rules change.
+  - **Live on staging (temporary `phx-home-tmp`, removed):** 6/6 API checks; 18/18 browser checks at 390; 12/12 at 1280 (a re-run: the first 1280 pass read the summary before it had loaded and compared stale figures).
+  - **Checked:** a paid bill + retry = one expense and one next bill; advance and salary create no expense; Spent excludes the advance and Cash out includes it; category totals = expense data; the Groceries drill-down and clear; search; Record grocery expense = one ₱1,850 Groceries expense in the drill-down while the grocery items stay separate; Categories show no budget figures; the kasambahay is refused (API 403, rules 403); no sideways scroll.
+
 ## Plan (decisions made from the brief)
 
 ### Stage 1: Distributor
