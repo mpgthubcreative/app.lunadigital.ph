@@ -968,6 +968,32 @@ The accepted Bridal design (Money | Tasks | Guests | More) is unchanged; this pa
   - **Unit:** 1673 pass.
   - **Live on staging (temporary `prev-home-tmp`, removed after):** 31 of 31 at 390 and 1280. Review showed Basic pay ₱1,233.00, Advance deduction −₱500.00 and To pay ₱733.00. Opening, Close, Back and Escape wrote nothing (payrolls, audit and receipt links unchanged); reopening Pay started at Review. A double-tapped Pay salary made exactly one paid payroll (₱733, GCash) and one receipt link.
 
+
+### 2026-10-19 · One clean Excel download per workspace; Master Backup internal (a494de0, 04b691f)
+
+- **Customers:** More → **Download Excel** (was "Export & Backup") has ONE button. It downloads one workbook (`/api/workbook`, shared/workbook.js, `_lib/workbook/`).
+  - **Range:** Household and Business offer This month (the default), Custom range (up to 366 days) or All records. Bridal is always the whole wedding.
+  - **Removed from the page:** the single-list downloads and the Master Backup.
+- **Sheets:**
+  - **Household:** Expenses (Date, Category, Expense, Amount). A paid salary appears once, as "Payroll · name" under Household Staff; advances never appear. Also Payroll, Payroll Breakdown, Attendance, Advances and Grocery List.
+  - **Bridal:** Money (the Money screen's rows; shared/wedding-money.js is now shared with the screen), Payments, Tasks (Bride and Groom status), Guests, Party Members, Seating, Roles (one row per person and role), Crew Meals, Music & Program and Wedding Setup.
+  - **Business:** Orders (items as text, e.g. "Hayst Kopi × 2; Hayst Choco × 1"), Payments, Users (no UID), Inventory and Customers. No costs.
+- **Style (`workbookSheet`):**
+  - One bold, frozen header row with AutoFilter (even on an empty sheet) and set column widths.
+  - ₱ amounts are stored as numbers; dates are real dates shown as "Oct 17, 2026" (the global date format changed from yyyy-mm-dd).
+  - Total rows sit below the filter range. No ids, JSON or field names. Printable (landscape, fit to width). The file now carries a default "Normal" cell style.
+- **Access:**
+  - **Workbook:** requires data.export (Owner, Admin). Each sheet also needs its screen's module and view permission. The tenant comes from requireTenant only, and unknown body fields are refused.
+  - **Master Backup:** `/api/backup` is now Luna Super Admin only (requireOperator plus `{ businessId }`). Its button is on the console's business page. Tenant Owners, Admins and Staff get 403. Each download is logged to the business audit log and to platformAudit.
+- **Automatic backup:** docs/BACKUP.md covers scheduled Firestore backups, PITR, Storage versioning and soft delete, config in Git, an optional export to Cloud Storage, and a restore drill. Nothing has been run in production.
+- **Tests:**
+  - **Unit:** 1682 pass (workbook.test.js 7; Master Backup callers moved to an operator).
+  - **Live on staging (temporary `prev-home-tmp`, `prev-wed-tmp`, `prev-dist-tmp`, removed after):** 33 of 33 API and file checks, and 42 of 42 browser checks at 390 and 1280.
+    - Files read back with openpyxl, with warnings treated as errors.
+    - Household Expenses total ₱27,921 equals Luna's month Spent; the payroll row appears once.
+    - Bridal: no invite token or slug in the file. Business: no UID, ids, SKU or costs.
+    - Master Backup: Owner 403, Super Admin 200.
+
 ## Plan (decisions made from the brief)
 
 ### Stage 1: Distributor
