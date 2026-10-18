@@ -175,7 +175,7 @@ describe("Baby Expenses", () => {
     submit(f);
     await flush();
     expect(data.listBabyExpenses).toHaveBeenLastCalledWith("demo-distributor-a", { status: "active", category: "catMedical0001", providerId: "provABCclinic01" }, { cursor: null });
-    // Owner-pilot: downloads live under More → Export & Backup, not on the list.
+    // Owner-pilot: downloads live under More → Download Excel, not on the list.
     expect(container.querySelector('[data-export="babyExpenses"]')).toBeNull();
   });
 

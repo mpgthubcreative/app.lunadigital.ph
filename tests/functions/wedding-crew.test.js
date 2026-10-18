@@ -7,7 +7,7 @@ import { createWeddingCrewMealsHandler } from "../../netlify/functions/wedding-c
 import { createWeddingSuppliersHandler } from "../../netlify/functions/wedding-suppliers.js";
 import { createBackupHandler } from "../../netlify/functions/backup.js";
 import { createBusiness, addMember, ensureAuthUser } from "../../netlify/functions/_lib/provisioning.js";
-import { buildWorld, request } from "../helpers/tenants.js";
+import { buildWorld, request, asOperator } from "../helpers/tenants.js";
 import { crewTotals, mealLine, validateCrewItem } from "../../shared/wedding-crew.js";
 import { readXlsx } from "../../shared/xlsx.js";
 
@@ -89,7 +89,7 @@ describe("Crew Meals", () => {
     await add({ name: "Photo team", breakfast: 3, lunch: 3, dinner: 3, location: "Hotel" });
     await add({ name: "Video team", breakfast: 4, lunch: 4, dinner: 4, location: "Hotel", remarks: "Arrive 6 AM" });
     ok(await crew(u.camille, { action: "setPrices", prices: { lunch: 25000 } }));
-    const res = await createBackupHandler(deps())({ ...request({ uid: u.camille, businessId: W, method: "POST" }), body: "{}" });
+    const res = await createBackupHandler(deps())(asOperator(world, W));
     const rows = readXlsx(Buffer.from(res.body, "base64"), { sheet: "Crew Meals" }).rows;
     expect(rows[0]).toEqual(["Crew / person", "Linked supplier", "Breakfast", "Lunch", "Dinner", "Location", "Remarks", "Created", "Updated", "Entry id"]);
     expect(rows.slice(1).map((r) => r.slice(0, 7))).toEqual([

@@ -180,8 +180,9 @@ export const XLSX_COLUMN_FORMATS = Object.freeze(["text", "number", ...Object.ke
 
 const STYLES_XML =
   `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">` +
-  // Money is Philippine peso: ₱1,234.50 / -₱1,234.50 (Phase 18.6).
-  `<numFmts count="3"><numFmt numFmtId="166" formatCode="yyyy-mm-dd"/><numFmt numFmtId="167" formatCode="yyyy-mm-dd hh:mm"/><numFmt numFmtId="168" formatCode="&quot;₱&quot;#,##0.00;-&quot;₱&quot;#,##0.00"/></numFmts>` +
+  // Money is Philippine peso: ₱1,234.50 / -₱1,234.50 (Phase 18.6). Dates
+  // read like Luna's screens (Oct 17, 2026); the cells stay real dates.
+  `<numFmts count="3"><numFmt numFmtId="166" formatCode="mmm d, yyyy"/><numFmt numFmtId="167" formatCode="mmm d, yyyy h:mm AM/PM"/><numFmt numFmtId="168" formatCode="&quot;₱&quot;#,##0.00;-&quot;₱&quot;#,##0.00"/></numFmts>` +
   `<fonts count="3"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="14"/><name val="Calibri"/></font></fonts>` +
   `<fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills><borders count="1"><border/></borders><cellStyleXfs count="1"><xf/></cellStyleXfs>` +
   `<cellXfs count="11"><xf fontId="0"/><xf fontId="1" applyFont="1"/><xf fontId="0" numFmtId="168" applyNumberFormat="1"/><xf fontId="0" numFmtId="3" applyNumberFormat="1"/><xf fontId="0" numFmtId="10" applyNumberFormat="1"/><xf fontId="0" numFmtId="166" applyNumberFormat="1"/><xf fontId="0" numFmtId="167" applyNumberFormat="1"/><xf fontId="2" applyFont="1"/><xf fontId="1" numFmtId="168" applyFont="1" applyNumberFormat="1"/><xf fontId="1" numFmtId="3" applyFont="1" applyNumberFormat="1"/><xf fontId="1" numFmtId="10" applyFont="1" applyNumberFormat="1"/></cellXfs></styleSheet>`;

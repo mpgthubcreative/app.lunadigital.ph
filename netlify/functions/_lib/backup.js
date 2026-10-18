@@ -1,5 +1,7 @@
-// Master Backup (Owner-pilot): ONE Excel workbook with everything the
-// business has in Luna, as its emergency copy. Not a report: every record of
+// Master Backup: ONE Excel workbook with everything the business has in
+// Luna, as Luna's technical recovery copy. Luna Super Admin only since
+// 2026-10-18 (../backup.js: requireOperator); customers download the clean
+// workbook instead (./workbook/). Not a report: every record of
 // every collection the workspace's modules own (removed / voided / inactive
 // ones included), read in full pages (never truncated: too much data is an
 // error, not a shorter file), one sheet each, with every field as a column

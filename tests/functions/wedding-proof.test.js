@@ -10,7 +10,7 @@ import { createExpensesHandler } from "../../netlify/functions/expenses.js";
 import { createBudgetHandler } from "../../netlify/functions/budget.js";
 import { createBackupHandler } from "../../netlify/functions/backup.js";
 import { createBusiness, addMember, ensureAuthUser } from "../../netlify/functions/_lib/provisioning.js";
-import { buildWorld, request } from "../helpers/tenants.js";
+import { buildWorld, request, asOperator } from "../helpers/tenants.js";
 import { setupMissing } from "../../shared/wedding.js";
 import { readXlsx } from "../../shared/xlsx.js";
 
@@ -168,7 +168,7 @@ describe("expense proof (receipt photo or PDF)", () => {
     const e = await expense();
     ok(await api("expenses", u.camille, { action: "attachProof", expenseId: e, proof: { contentType: "image/png", dataBase64: PNG } }));
     const p = docAt(`expenses/${e}`).proof;
-    const res = await createBackupHandler(deps())({ ...request({ uid: u.camille, businessId: W, method: "POST" }), body: "{}" });
+    const res = await createBackupHandler(deps())(asOperator(world, W));
     expect(res.statusCode).toBe(200);
     const bytes = Buffer.from(res.body, "base64");
     const sheet = readXlsx(bytes, { sheet: "Expenses" }).rows;

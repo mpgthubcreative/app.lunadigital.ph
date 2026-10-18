@@ -167,6 +167,36 @@ export function tableSheet({ name, columns, rows, timezone }) {
   };
 }
 
+// ---------- Download Excel (Owner pilot): the clean workbook sheet ----------
+//
+// One data table per sheet, the same plain style everywhere: ONE bold header
+// row (frozen) with AutoFilter, real numbers (pesos with the ₱ format, real
+// Excel dates), sensible widths, no title block or merged cells, printable
+// (landscape, one page wide). A Total row under the table only for columns
+// marked `total: true` (outside the filter, so sorting never moves it).
+// columns: [{ header, format, width?, value(row), total? }]
+export function workbookSheet({ name, columns, rows, timezone }) {
+  const data = rows.map((r) => columns.map((c) => cellValue(c.format, c.value(r), timezone)));
+  const hasTotals = data.length > 0 && columns.some((c) => c.total);
+  const totals = hasTotals
+    ? columns.map((c, i) => {
+        if (i === 0 && !c.total) return "Total";
+        if (!c.total) return null;
+        const sum = data.reduce((t, row) => (typeof row[i] === "number" ? t + row[i] : t), 0);
+        return c.format === "money" ? Math.round(sum * 100) / 100 : sum;
+      })
+    : null;
+  return {
+    name,
+    header: true,
+    filter: true,
+    print: true,
+    ...(totals ? { totalRow: data.length + 1 } : {}),
+    columns: columns.map((c) => ({ format: SHEET_FORMAT[c.format] || "text", width: c.width || Math.max(10, Math.min(40, c.header.length + 4)) })),
+    rows: [columns.map((c) => c.header), ...data, ...(totals ? [totals] : [])],
+  };
+}
+
 // ---------- Phase 18.6: ONE worksheet per download ----------
 //
 // Every Luna Excel file is a single sheet:

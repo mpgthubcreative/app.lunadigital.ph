@@ -10,7 +10,7 @@ import { createWeddingSetupHandler } from "../../netlify/functions/wedding-setup
 import { createInviteHandler } from "../../netlify/functions/invite.js";
 import { createBackupHandler } from "../../netlify/functions/backup.js";
 import { createBusiness, addMember, ensureAuthUser, setOperator, assignPlan } from "../../netlify/functions/_lib/provisioning.js";
-import { buildWorld, request } from "../helpers/tenants.js";
+import { buildWorld, request, asOperator } from "../helpers/tenants.js";
 import { invitationLevelOf, resolveDesign, validateDesignConfig, invitationStatus, TEMPLATES } from "../../shared/invitation-design.js";
 import { readXlsx } from "../../shared/xlsx.js";
 
@@ -206,7 +206,7 @@ describe("design images, content sections, backup", () => {
     await assignPlan({ ...world, businessId: W, planId: "bridal-plus", actor: "ops", reason: "upgrade" });
     ok(await design({ action: "saveDraft", businessId: W, config: { templateId: "garden" } }));
     ok(await design({ action: "publish", businessId: W }));
-    const res = await createBackupHandler(deps())({ ...request({ uid: u.camille, businessId: W, method: "POST" }), body: "{}" });
+    const res = await createBackupHandler(deps())(asOperator(world, W));
     const rows = readXlsx(Buffer.from(res.body, "base64"), { sheet: "Invitation Design" }).rows;
     const map = Object.fromEntries(rows.slice(1).map((r) => [r[0], r[1]]));
     expect(map).toMatchObject({ "Invitation level": "custom", "Guests see": "custom", "Published version": "1", "Published template": "garden" });

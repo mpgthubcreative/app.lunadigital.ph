@@ -11,7 +11,7 @@ import { createExpensesHandler } from "../../netlify/functions/expenses.js";
 import { createBudgetHandler } from "../../netlify/functions/budget.js";
 import { createBusiness, addMember, ensureAuthUser } from "../../netlify/functions/_lib/provisioning.js";
 import { hashInviteToken } from "../../netlify/functions/_lib/invitations.js";
-import { buildWorld, request } from "../helpers/tenants.js";
+import { buildWorld, request, asOperator } from "../helpers/tenants.js";
 import { rsvpSummary, rsvpOpen, validateWeddingSetup } from "../../shared/wedding.js";
 import { readXlsx } from "../../shared/xlsx.js";
 
@@ -163,7 +163,7 @@ describe("guest RSVP updates the SAME guest record", () => {
 
 describe("Master Backup", () => {
   async function backup(uid, businessId = W) {
-    const res = await createBackupHandler(deps())({ ...request({ uid, businessId, method: "POST" }), body: "{}" });
+    const res = await createBackupHandler(deps())(asOperator(world, businessId));
     return res;
   }
   const sheetNames = (bytes) => {
@@ -210,10 +210,22 @@ describe("Master Backup", () => {
     expect(rows.length).toBe(1201);
   });
 
-  it("Owner only (billing.view + data.export); the business's own data only; other workspaces get their own sheets", async () => {
-    expect((await backup(u.mon)).statusCode).toBe(403);
-    expect((await backup(u.helper)).statusCode).toBe(403);
-    expect((await backup(u.camille, W2)).statusCode).toBe(403); // not a member there
+  it("Luna Super Admin only: the Owner, an Admin and staff get 403 even for their own business; the operator gets only the named business's data; other workspaces get their own sheets", async () => {
+    const asTenant = (uid, businessId = W) => createBackupHandler(deps())({ ...request({ uid, businessId, method: "POST" }), body: JSON.stringify({ businessId }) });
+    for (const uid of [u.camille, u.mon, u.helper]) expect((await asTenant(uid)).statusCode).toBe(403);
+    expect((await asTenant(world.uids.ownera, "biz-a")).statusCode).toBe(403);
+    expect((await asTenant(u.camille, W2)).statusCode).toBe(403);
+    expect((await createBackupHandler(deps())({ ...request({ method: "POST" }), body: JSON.stringify({ businessId: W }) })).statusCode).toBe(401);
+    world.db.seed("operators/opDisabled1", { email: "old@luna.test", role: "superadmin", status: "disabled" });
+    expect((await createBackupHandler(deps())({ ...request({ uid: "opDisabled1", method: "POST" }), body: JSON.stringify({ businessId: W }) })).statusCode).toBe(403);
+    const op = asOperator(world, W);
+    expect((await createBackupHandler(deps())({ ...op, body: JSON.stringify({ businessId: "../x" }) })).statusCode).toBe(400);
+    expect((await createBackupHandler(deps())({ ...op, body: JSON.stringify({ businessId: "no-such-biz" }) })).statusCode).toBe(404);
+    expect((await createBackupHandler(deps())({ ...op, body: JSON.stringify({ businessId: W, extra: 1 }) })).statusCode).toBe(400);
+    // Each operator download is recorded (business audit log + platformAudit).
+    expect((await backup(null, W)).statusCode).toBe(200);
+    expect([...world.db.docs.entries()].some(([k, v]) => k.startsWith(`businesses/${W}/auditLog/`) && v.type === "backup.downloaded" && v.operator?.uid === "opLunaBackup1")).toBe(true);
+    expect([...world.db.docs.entries()].some(([k, v]) => k.startsWith("platformAudit/") && v.type === "backup.downloaded" && v.businessId === W)).toBe(true);
     const theirs = Buffer.from((await backup(u.other, W2)).body, "base64");
     expect(readXlsx(theirs, { sheet: "Users & Memberships" }).rows.flat()).not.toContain("camille@inv.test");
     const dist = Buffer.from((await backup(world.uids.ownera, "biz-a")).body, "base64");

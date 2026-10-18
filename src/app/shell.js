@@ -112,10 +112,10 @@ export function shellNavigation(session) {
     const at = prev >= 0 ? prev + 1 : nav.findIndex((m) => navGroup(m.id) === "manage");
     nav.splice(at < 0 ? nav.length : at, 0, { id: "weddingcrew", path: "/wedding-crew-meals", label: "Crew Meals", icon: "gift" });
   }
-  // Owner-pilot: Export & Backup, one page under More / Manage (every workspace).
+  // Owner-pilot: Download Excel, one page under More / Manage (every workspace).
   if (showExportPage(session)) {
     const at = nav.findIndex((m) => m.id === "users");
-    nav.splice(at < 0 ? nav.length : at, 0, { id: "downloads", path: "/export", label: "Export & Backup", icon: "download" });
+    nav.splice(at < 0 ? nav.length : at, 0, { id: "downloads", path: "/export", label: "Download Excel", icon: "download" });
   }
   return nav;
 }

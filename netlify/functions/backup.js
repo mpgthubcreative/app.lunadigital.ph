@@ -1,26 +1,55 @@
-// POST /api/backup   -> the Master Backup .xlsx (Owner-pilot: More → Export & Backup)
-// One workbook with every record of the business (./_lib/backup.js). The
-// Owner only (billing.view) who may also export (data.export): it holds
-// everything, Users included. Reads only. Kept apart from the everyday
-// screens so it can become a paid unlock later (one place to gate).
+// POST /api/backup   { businessId }  -> the Master Backup .xlsx
+//
+// LUNA SUPER ADMIN ONLY (Owner pilot, 2026-10-18). The technical copy of
+// every record of one business (./_lib/backup.js): disaster recovery,
+// migration, project transfer, support and audit. Not a customer download:
+// customers get the clean workbook (/api/workbook, More → Download Excel).
+//
+// Enforced here, whatever the browser shows: a verified ID token AND an
+// active Luna operator record (requireOperator). A business Owner / Admin /
+// Staff gets 403 even for their own business; the business is named by the
+// operator (it isn't the caller's tenant). Reads only; each download leaves
+// a record in the business's audit log and in platformAudit.
 
-import { withErrorHandling, requireMethod, RequestError } from "./_lib/http.js";
+import { withErrorHandling, requireMethod, parseJsonBody, RequestError } from "./_lib/http.js";
 import { getAdmin } from "./_lib/firebase-admin.js";
-import { requireTenant } from "./_lib/tenant.js";
+import { requireOperator } from "./_lib/operator.js";
+import { tenantDb } from "./_lib/tenant-db.js";
 import { buildBackup, BackupError } from "./_lib/backup.js";
-import { EXPORT_PERMISSION } from "../../shared/exports.js";
+import { isValidBusinessId } from "../../shared/tenancy.js";
 
 const XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
-export const BACKUP_PERMISSIONS = ["billing.view", EXPORT_PERMISSION];
 
 export function createBackupHandler({ getAdmin: loadAdmin, now = () => new Date() }) {
   return withErrorHandling("backup", async (event) => {
     requireMethod(event, "POST");
-    const { db, auth, admin } = await loadAdmin();
-    const ctx = await requireTenant(event, { db, auth, permission: "billing.view" });
-    if (ctx.permissions[EXPORT_PERMISSION] !== true) throw new RequestError("not-allowed", "You can't download the backup.", 403);
+    let body = null;
+    let bodyError = null;
     try {
-      const out = await buildBackup({ db, tenant: ctx.tenant, business: ctx.business, entitlements: ctx.entitlements, FieldPath: admin.firestore.FieldPath, actor: { uid: ctx.uid, name: ctx.user?.name || "", email: ctx.user?.email || "" }, now: now() });
+      body = parseJsonBody(event, 1000);
+    } catch (err) {
+      bodyError = err;
+    }
+    const { db, auth, admin } = await loadAdmin();
+    // Operators only, before anything else is looked at.
+    const op = await requireOperator(event, { db, auth });
+    if (bodyError) throw bodyError;
+    const businessId = body && typeof body === "object" ? body.businessId : null;
+    if (!isValidBusinessId(businessId) || Object.keys(body).some((k) => k !== "businessId")) throw new RequestError("invalid-request", "Choose a business.", 400);
+    const tenant = tenantDb(db, businessId);
+    const snap = await tenant.ref.get();
+    if (!snap.exists) throw new RequestError("not-found", "Business not found.", 404);
+    const b = snap.data();
+    const business = { id: businessId, name: b.name || "", timezone: b.timezone || "Asia/Manila", subscription: b.subscription || null };
+    const at = now();
+    try {
+      const out = await buildBackup({ db, tenant, business, entitlements: b.entitlements, FieldPath: admin.firestore.FieldPath, actor: { uid: op.uid, name: op.name || "", email: op.email || "" }, now: at });
+      const FieldValue = admin.firestore.FieldValue;
+      const record = { type: "backup.downloaded", summary: "Master Backup downloaded (Luna Super Admin)", businessId, actor: op.email || op.uid, operator: { uid: op.uid, email: op.email || null }, rows: out.rows, at: FieldValue.serverTimestamp() };
+      const batch = db.batch();
+      batch.set(tenant.collection("auditLog").doc(), record);
+      batch.set(db.collection("platformAudit").doc(), record);
+      await batch.commit();
       return {
         statusCode: 200,
         headers: { "Content-Type": XLSX, "Content-Disposition": `attachment; filename="${out.fileName}"`, "Cache-Control": "no-store", "X-Luna-Export-Rows": String(out.rows) },

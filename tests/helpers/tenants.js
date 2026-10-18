@@ -49,3 +49,10 @@ export function request({ uid, token, businessId, method = "GET" } = {}) {
   if (businessId !== undefined) headers["x-luna-business-id"] = businessId;
   return { httpMethod: method, headers };
 }
+
+// The Master Backup is Luna Super Admin only (2026-10-18): a request from an
+// active Luna operator naming the business.
+export function asOperator(world, businessId, { uid = "opLunaBackup1" } = {}) {
+  world.db.seed(`operators/${uid}`, { email: "ops.backup@luna.test", name: "Luna Ops", role: "superadmin", status: "active" });
+  return { ...request({ uid, method: "POST" }), body: JSON.stringify({ businessId }) };
+}

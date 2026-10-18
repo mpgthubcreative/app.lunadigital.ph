@@ -123,6 +123,20 @@ describe("console views", () => {
     expect(el.querySelector('[data-member="u1"] [data-act="member-status"]')).toBeNull();
   });
 
+  it("detail: the Master Backup lives here (Luna Super Admin), downloaded for this business", async () => {
+    const call = vi.fn(async () => DETAIL);
+    const download = vi.fn(async () => ({ blob: new Blob(["x"]), fileName: "ABC-Test-Trading-Master-Backup-2026-10-18.xlsx" }));
+    const save = vi.fn();
+    const ctx = ctxWith(call, { download, save });
+    businessDetailView(el, ctx, "abc-test-trading");
+    await flush();
+    el.querySelector('[data-act="backup"]').click();
+    await flush();
+    expect(download).toHaveBeenCalledWith("backup", { businessId: "abc-test-trading" });
+    expect(save).toHaveBeenCalledWith("ABC-Test-Trading-Master-Backup-2026-10-18.xlsx", expect.any(Blob));
+    expect(ctx.toast).toHaveBeenCalledWith(expect.stringMatching(/Master Backup downloaded/), "success");
+  });
+
   it("plans: grouped by workspace (each plan in its own workspace), with subscriber counts; read-only", async () => {
     plansView(el, ctxWith(vi.fn(async () => ({ subscribers: { growth: 8, "baby-plus": 3 } }))));
     await flush();

@@ -323,7 +323,7 @@ describe("period filter: period figures vs live 'now' figures", () => {
     expect(fetch.mock.calls.length).toBe(calls);
   });
 
-  it("Owner-pilot: no Download Excel on the dashboard (More → Export & Backup)", async () => {
+  it("Owner-pilot: no Download Excel on the dashboard (More → Download Excel)", async () => {
     await show(sessionFixture(), DOCS);
     await choose("yesterday");
     expect(container.querySelector('[data-act="export"]')).toBeNull();

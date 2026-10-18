@@ -16,7 +16,7 @@ import { createAdvancesHandler } from "../../netlify/functions/advances.js";
 import { createActivateHandler } from "../../netlify/functions/activate.js";
 import { createBackupHandler } from "../../netlify/functions/backup.js";
 import { createBusiness, addMember, ensureAuthUser } from "../../netlify/functions/_lib/provisioning.js";
-import { buildWorld, request } from "../helpers/tenants.js";
+import { buildWorld, request, asOperator } from "../helpers/tenants.js";
 import { readXlsx } from "../../shared/xlsx.js";
 import { nextDueDate } from "../../shared/baby.js";
 import { occurrenceId, partExpenseId } from "../../netlify/functions/_lib/baby.js";
@@ -244,7 +244,7 @@ describe("Master Backup (Household)", () => {
     ok(await api("budget", u.carlo, { action: "setTotal", total: 4000000 }));
     await spend(util, 10000);
     ok(await api("schedule", u.carlo, { action: "create", payment: { description: "Meralco", category: util, amount: 450000, dueDate: OCT(20), repeat: { every: "month", interval: 1 } } }), 201);
-    const res = await createBackupHandler(deps())({ ...request({ uid: u.carlo, businessId: H, method: "POST" }), body: "{}" });
+    const res = await createBackupHandler(deps())(asOperator(world, H));
     expect(res.statusCode).toBe(200);
     const bytes = Buffer.from(res.body, "base64");
     const read = (name) => readXlsx(bytes, { sheet: name }).rows;
@@ -253,7 +253,7 @@ describe("Master Backup (Household)", () => {
     expect(read("Recurring Items")[1]).toEqual(expect.arrayContaining(["Meralco", "Every month", OCT(20), "4500", "Utilities"]));
     expect(read("Categories")[1]).toEqual(expect.arrayContaining(["Utilities"]));
     expect(read("Categories")[0]).not.toContain("budget");
-    const res2 = await createBackupHandler(deps())({ ...request({ uid: u.carlo, businessId: H, method: "POST" }), body: "{}" });
+    const res2 = await createBackupHandler(deps())(asOperator(world, H));
     const sheets = JSON.parse(JSON.stringify(readXlsx(Buffer.from(res2.body, "base64"), { sheet: "Export Info" }).rows)).map((r) => r[0]);
     for (const gone of ["Budget", "Budget record", "Budget totals"]) expect(sheets).not.toContain(gone);
     for (const kept of ["Expenses", "Bills", "Recurring Items", "Categories", "Grocery List"]) expect(sheets).toContain(kept);

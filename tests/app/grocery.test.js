@@ -49,7 +49,7 @@ describe("navigation", () => {
     expect(buildRoutes(s).map((r) => r.path)).toContain("/grocery-list");
     renderShell(document.getElementById("app"), s);
     expect($$(".tabbar .tab-link", document).map((a) => a.textContent.trim())).toEqual(["Payroll", "Attendance", "Expenses", "More"]);
-    expect($$(".nav-link", document).map((a) => a.textContent.trim())).toEqual(["Payroll", "Attendance", "Expenses", "Advances", "Household Staff", "Bills", "Grocery List", "Export & Backup", "Users", "Subscription", "Settings"]);
+    expect($$(".nav-link", document).map((a) => a.textContent.trim())).toEqual(["Payroll", "Attendance", "Expenses", "Advances", "Household Staff", "Bills", "Grocery List", "Download Excel", "Users", "Subscription", "Settings"]);
     expect((await MODULE_LOADERS.grocery(s)).mount).toBe(mountGrocery);
   });
   it("the kasambahay's account: Grocery List only through their portal; no money routes", () => {

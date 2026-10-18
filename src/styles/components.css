@@ -3971,3 +3971,18 @@ tr.is-saving {
 .sm-settings legend { font-weight: 600; font-size: var(--text-sm); margin-bottom: 4px; }
 .sm-products [data-role="products"] { max-height: 240px; overflow-y: auto; }
 .sm-settings .btn-primary { width: 100%; margin-top: var(--space-2); }
+
+/* Download Excel (More): one button, an optional range. */
+.dl-excel {
+  display: grid;
+  gap: var(--space-3);
+  max-width: 560px;
+}
+.dl-excel .btn-primary {
+  justify-self: start;
+}
+.dl-dates {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3);
+}

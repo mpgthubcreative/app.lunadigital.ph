@@ -751,9 +751,9 @@ describe("Phase 18.5 corrections: Delete what was added by mistake", () => {
   });
 });
 
-describe("Bridal More: Wedding Setup and Export & Backup", () => {
-  it("More holds Wedding Setup and Export & Backup; Staff get neither", () => {
-    expect(buildRoutes(wedding()).filter((r) => ["/wedding-setup", "/export"].includes(r.path)).map((r) => r.label)).toEqual(["Export & Backup", "Wedding Setup"]);
+describe("Bridal More: Wedding Setup and Download Excel", () => {
+  it("More holds Wedding Setup and Download Excel; Staff get neither", () => {
+    expect(buildRoutes(wedding()).filter((r) => ["/wedding-setup", "/export"].includes(r.path)).map((r) => r.label)).toEqual(["Download Excel", "Wedding Setup"]);
     expect(buildRoutes(wedding("staff")).some((r) => ["/wedding-setup", "/export"].includes(r.path))).toBe(false);
   });
 

@@ -10,7 +10,7 @@ import { createHouseholdStaffHandler } from "../../netlify/functions/household-s
 import { createActivateHandler } from "../../netlify/functions/activate.js";
 import { createBackupHandler } from "../../netlify/functions/backup.js";
 import { createBusiness, addMember, ensureAuthUser } from "../../netlify/functions/_lib/provisioning.js";
-import { buildWorld, request } from "../helpers/tenants.js";
+import { buildWorld, request, asOperator } from "../helpers/tenants.js";
 import { readXlsx } from "../../shared/xlsx.js";
 import { validateGroceryItem, sortGrocery, SAMPLE_GROCERY, GROCERY_CATEGORIES } from "../../shared/grocery.js";
 
@@ -157,7 +157,7 @@ describe("Master Backup", () => {
     const id = ok(await grocery(u.carlo, { action: "add", item: { name: "Eggs", qty: "2 trays", category: "Dairy & Eggs" } }), 201).items[0].itemId;
     ok(await grocery(u.carlo, { action: "add", item: { name: "Rice" } }), 201);
     ok(await grocery(u.helper, { action: "check", itemId: id, bought: true }));
-    const res = await createBackupHandler(deps())({ ...request({ uid: u.carlo, businessId: H, method: "POST" }), body: "{}" });
+    const res = await createBackupHandler(deps())(asOperator(world, H));
     expect(res.statusCode).toBe(200);
     const rows = readXlsx(Buffer.from(res.body, "base64"), { sheet: "Grocery List" }).rows;
     expect(rows[0]).toEqual(["Item", "Qty", "Category", "Bought", "Created", "Created by", "Bought on", "Bought by", "Updated by"]);

@@ -11,6 +11,8 @@ import { formatMoney, planWorkspace, WORKSPACE_TEMPLATES, SUBSCRIPTION_LABELS, S
 import { formatBytes, formatNumber } from "../lib/format.js";
 import { moneySections } from "./money.js";
 import { invitationDesignView } from "./design.js";
+import { apiDownload } from "../lib/api.js";
+import { saveBlob } from "../lib/export.js";
 
 const TONE = { active: "success", past_due: "warning", suspended: "danger", cancelled: "neutral" };
 const statusBadge = (s) => badge(SUBSCRIPTION_LABELS[s] ?? s ?? "—", TONE[s] || "neutral");
@@ -202,6 +204,7 @@ export async function businessDetailView(el, ctx, businessId) {
             <button type="button" class="btn btn-compact" data-act="plan">Change plan</button>
             <button type="button" class="btn btn-compact" data-act="status">Subscription…</button>
             <button type="button" class="btn btn-compact" data-act="general">Edit name / timezone</button>
+            <button type="button" class="btn btn-compact" data-act="backup" title="Every record, technical (recovery, migration, support). Recorded in the audit log.">Master Backup</button>
             ${b.workspaceTemplateId === "bridal-expense" ? html`<a class="btn btn-compact" href="${ctx.base}/businesses?b=${b.id}&design=1" data-link data-role="design-link">Invitation design</a>` : ""}
           </div>`,
         })}
@@ -317,6 +320,20 @@ export async function businessDetailView(el, ctx, businessId) {
     } else if (act === "member-status") {
       const m = d.members.find((x) => x.uid === t.dataset.id);
       run(() => withReason(`${m.status === "active" ? "Deactivate" : "Reactivate"} ${m.email}?`, "Their membership is kept (and can be reactivated).", [], m.status === "active" ? "Deactivate" : "Reactivate", (v) => ctx.call("setMemberStatus", { businessId, uid: m.uid, status: m.status === "active" ? "disabled" : "active", reason: v.reason })), "Member updated.");
+    } else if (act === "backup") {
+      // Luna Super Admin only (the server checks): the technical copy of every record.
+      const label = t.textContent;
+      t.disabled = true;
+      t.textContent = "Preparing…";
+      try {
+        const { blob, fileName } = await (ctx.download || apiDownload)("backup", { businessId });
+        (ctx.save || saveBlob)(fileName, blob);
+        ctx.toast("Master Backup downloaded. It's recorded in the audit log.", "success");
+      } catch (err) {
+        ctx.toast(err.message || "Couldn't prepare the backup.", "danger");
+      }
+      t.disabled = false;
+      t.textContent = label;
     } else if (act === "setup-link") {
       try {
         const r = await ctx.call("setupLink", { businessId, uid: t.dataset.id });

@@ -9,7 +9,7 @@ import { createBackupHandler } from "../../netlify/functions/backup.js";
 import { createInviteHandler } from "../../netlify/functions/invite.js";
 import { createWeddingSetupHandler } from "../../netlify/functions/wedding-setup.js";
 import { createBusiness, addMember, ensureAuthUser } from "../../netlify/functions/_lib/provisioning.js";
-import { buildWorld, request } from "../helpers/tenants.js";
+import { buildWorld, request, asOperator } from "../helpers/tenants.js";
 import { validateRole, roleKey, rolesPlan, categoryForRole, peopleOf, peopleWithoutRole, attendingNames } from "../../shared/wedding-roles.js";
 import { seatingPlan, SEATING_DOC_ID } from "../../shared/wedding.js";
 import { readXlsx } from "../../shared/xlsx.js";
@@ -111,7 +111,7 @@ describe("wedding roles (on the guest record)", () => {
     const ryan = await guest("Ryan Reyes", "sponsors");
     ok(await assign(ryan, { id: "principal_sponsor" }));
     ok(await api("tasks", u.camille, { action: "create", task: { title: "Baptismal certificate", category: "Church Requirements", forWhom: "both", source: "San Jose Parish" } }), 201);
-    const res = await createBackupHandler(deps())({ ...request({ uid: u.camille, businessId: W, method: "POST" }), body: "{}" });
+    const res = await createBackupHandler(deps())(asOperator(world, W));
     const bytes = Buffer.from(res.body, "base64");
     expect(readXlsx(bytes, { sheet: "Wedding Roles" }).rows).toEqual([["Role", "Role key", "Person", "Person key", "Party (guest)", "Guest id", "RSVP"], ["Principal Sponsors", "principal_sponsor", "Ryan Reyes", ryan, "Ryan Reyes", ryan, "awaiting"]]);
     const tasks = readXlsx(bytes, { sheet: "Tasks" }).rows;

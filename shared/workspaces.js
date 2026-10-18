@@ -95,7 +95,7 @@ const TEMPLATES = [
     mobileTabs: ["orders", "inventory", "payments"],
     dashboard: {
       // Selected period first, then current operations (Phase 12.5). The
-      // Dashboard workbook (Export & Backup) lists all of these. Owner pilot:
+      // Dashboard workbook (Download Excel) lists all of these. Owner pilot:
       // the SCREEN is the checkout and shows only Total sales, Total orders
       // and Gross profit (src/modules/dashboard SCREEN_WIDGETS); COGS and
       // operating profit detail stay in Reports.

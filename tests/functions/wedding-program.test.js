@@ -6,7 +6,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { createWeddingProgramHandler } from "../../netlify/functions/wedding-program.js";
 import { createBackupHandler } from "../../netlify/functions/backup.js";
 import { createBusiness, addMember, ensureAuthUser } from "../../netlify/functions/_lib/provisioning.js";
-import { buildWorld, request } from "../helpers/tenants.js";
+import { buildWorld, request, asOperator } from "../helpers/tenants.js";
 import { parseDuration, formatDuration, validateProgramItem, SAMPLE_PROGRAM } from "../../shared/wedding-program.js";
 import { readXlsx } from "../../shared/xlsx.js";
 
@@ -106,7 +106,7 @@ describe("Music & Program", () => {
     await add("ceremony", "Groom entrance", { song: "Turning Page", durationSec: 257 });
     await add("ceremony", "Bride entrance", { song: "Moon River" });
     await add("reception", "First dance", { durationSec: 242, person: "Couple" });
-    const res = await createBackupHandler(deps())({ ...request({ uid: u.camille, businessId: W, method: "POST" }), body: "{}" });
+    const res = await createBackupHandler(deps())(asOperator(world, W));
     expect(res.statusCode).toBe(200);
     const rows = readXlsx(Buffer.from(res.body, "base64"), { sheet: "Music & Program" }).rows;
     expect(rows[0]).toEqual(["Part", "#", "Moment", "Song", "Duration", "Person / group", "Notes", "Item id"]);

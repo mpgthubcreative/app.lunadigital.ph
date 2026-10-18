@@ -22,16 +22,14 @@ const NOTIFICATIONS_ROUTE = Object.freeze({ path: "/notifications", label: "Noti
 // module registry: every workspace has it, whatever its template.
 export const SUBSCRIPTION_ROUTE = Object.freeze({ path: "/subscription", label: "Subscription", moduleId: "subscription" });
 export const canSeeSubscription = (session) => session?.member?.permissions?.["billing.view"] === true;
-// Owner-pilot: ONE Export & Backup page (under More) in every workspace,
-// instead of Download Excel on the everyday screens. Single lists = this
-// workspace's export datasets this person may download (the usual
-// per-dataset checks); the Dashboard and Reports workbooks need a period and
-// stay on their pages. Master Backup = the Owner (billing.view) who may export.
-export const EXPORT_ROUTE = Object.freeze({ path: "/export", label: "Export & Backup", moduleId: "downloads" });
+// Owner-pilot: ONE Download Excel page (under More) in every workspace: one
+// clean workbook for whoever may export (data.export; each sheet also needs
+// its screen's permission on the server). The Master Backup is Luna Super
+// Admin only (the Luna console), never on this page.
+export const EXPORT_ROUTE = Object.freeze({ path: "/export", label: "Download Excel", moduleId: "downloads" });
 const PAGE_ONLY = new Set(["dashboard", "reports"]);
 export const exportListsFor = (session) => Object.keys(EXPORT_DATASETS).filter((id) => !PAGE_ONLY.has(id) && canExport({ entitlements: session.entitlements, permissions: session.member.permissions }, EXPORT_DATASETS[id]));
-export const canBackup = (session) => session?.member?.permissions?.["billing.view"] === true && session?.member?.permissions?.["data.export"] === true;
-export const showExportPage = (session) => canBackup(session) || exportListsFor(session).length > 0;
+export const showExportPage = (session) => session?.member?.permissions?.["data.export"] === true;
 // Owner-pilot Bridal: Wedding Setup (the invitation + RSVP settings), under More.
 export const SETUP_ROUTE = Object.freeze({ path: "/wedding-setup", label: "Wedding Setup", moduleId: "weddingsetup" });
 // Owner-pilot Bridal: Music & Program (ceremony / reception sequence and songs), under More.

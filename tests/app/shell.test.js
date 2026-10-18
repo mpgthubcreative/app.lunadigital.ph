@@ -34,7 +34,7 @@ describe("app shell", () => {
     renderShell(document.getElementById("app"), sessionFixture({ roleTemplate: "staff" }));
     expect(navLabels()).toEqual(["Dashboard", "Orders", "Payments", "Inventory", "Customers"]);
     renderShell(document.getElementById("app"), sessionFixture({ roleTemplate: "manager" }));
-    expect(navLabels()).toEqual(["Dashboard", "Orders", "Payments", "Inventory", "Customers", "Operating Expenses", "Reports", "Imports", "Export & Backup", "Users", "Settings"]);
+    expect(navLabels()).toEqual(["Dashboard", "Orders", "Payments", "Inventory", "Customers", "Operating Expenses", "Reports", "Imports", "Download Excel", "Users", "Settings"]);
   });
 
   it("shows a read-only banner for suspended businesses", () => {

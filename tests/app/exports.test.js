@@ -44,24 +44,41 @@ const clickExport = async (dataset) => {
   await flush();
 };
 
-// Owner-pilot: Download Excel left the everyday screens. Every workspace's
-// lists are downloaded whole from More → Export & Backup (plus the Master
-// Backup for the Owner); Reports keeps its own workbook.
-describe("More → Export & Backup (every workspace)", () => {
-  it("Distributor owner: Master Backup + each list; the lists no longer carry a button", async () => {
-    const ex = exporter();
+// Owner-pilot: Download Excel left the everyday screens. Every workspace has
+// ONE customer download, More → Download Excel: one clean workbook
+// (/api/workbook). The Master Backup is Luna Super Admin only (the console);
+// Reports keeps its own workbook.
+describe("More → Download Excel (every workspace)", () => {
+  const NOW = () => new Date("2026-10-18T04:00:00Z");
+  it("Business owner: ONE Download Excel button (no Master Backup, no single lists); This month by default", async () => {
     const toast = vi.fn();
-    const download = vi.fn(async () => ({ blob: new Blob(["x"]), fileName: "ABC-Master-Backup-2026-10-17.xlsx", rows: 120 }));
+    const download = vi.fn(async () => ({ blob: new Blob(["x"]), fileName: "Luna-Business-ABC-Oct-2026.xlsx", rows: 120 }));
     const save = vi.fn();
-    mountExportPage(container, session(), { toast, exportDeps: ex, download, save });
-    expect([...container.querySelectorAll("[data-download]")].map((r) => r.dataset.download)).toEqual(["orders", "payments", "products", "inventory", "customers", "expenses"]);
-    container.querySelector('[data-act="backup"]').click();
+    mountExportPage(container, session(), { toast, download, save, now: NOW });
+    expect(container.querySelector("h1").textContent).toBe("Download Excel");
+    expect(container.querySelector('[data-act="backup"]')).toBeNull();
+    expect(container.querySelectorAll("[data-download], [data-act=export]")).toHaveLength(0);
+    expect([...container.querySelectorAll("button")].filter((b) => /Download/.test(b.textContent)).map((b) => b.textContent)).toEqual(["Download Excel"]);
+    expect([...container.querySelectorAll('[data-seg="range"]')].map((b) => [b.textContent, b.getAttribute("aria-pressed")])).toEqual([["This month", "true"], ["Custom range", "false"], ["All records", "false"]]);
+    expect(container.querySelector('[data-role="contents"]').textContent).toMatch(/Orders, Payments, Users, Inventory and Customers/);
+    container.querySelector('[data-act="download"]').click();
     await flush();
-    expect(download).toHaveBeenCalledWith("backup", {});
-    expect(save).toHaveBeenCalledWith("ABC-Master-Backup-2026-10-17.xlsx", expect.any(Blob));
-    expect(toast).toHaveBeenCalledWith("Master Backup downloaded.", "success");
-    await clickExport("orders");
-    expect(ex.download).toHaveBeenCalledWith("exports", { dataset: "orders", filters: {} });
+    expect(download).toHaveBeenCalledWith("workbook", { range: "month" });
+    expect(save).toHaveBeenCalledWith("Luna-Business-ABC-Oct-2026.xlsx", expect.any(Blob));
+    expect(toast).toHaveBeenCalledWith("Excel file downloaded.", "success");
+    // All records / a custom range.
+    container.querySelector('[data-seg="range"][data-value="all"]').click();
+    container.querySelector('[data-act="download"]').click();
+    await flush();
+    expect(download).toHaveBeenLastCalledWith("workbook", { range: "all" });
+    container.querySelector('[data-seg="range"][data-value="custom"]').click();
+    const from = container.querySelector('[data-role="from"]');
+    from.value = "2026-09-01";
+    from.dispatchEvent(new Event("change", { bubbles: true }));
+    container.querySelector('[data-act="download"]').click();
+    await flush();
+    expect(download).toHaveBeenLastCalledWith("workbook", { range: "custom", from: "2026-09-01", to: "2026-10-18" });
+    // The everyday lists still carry no download button.
     document.body.innerHTML = '<main id="content"></main>';
     container = document.getElementById("content");
     mountOrders(container, session("manager"), { data: { listOrders: page([], false) } });
@@ -72,13 +89,27 @@ describe("More → Export & Backup (every workspace)", () => {
     expect(container.querySelector('[data-act="export"]')).toBeNull();
   });
 
-  it("who sees what: a manager gets lists but no Master Backup (Owner only); staff get no page", () => {
-    mountExportPage(container, session("manager"), { toast: () => {} });
-    expect(container.querySelector('[data-act="backup"]')).toBeNull();
-    expect(container.querySelectorAll("[data-download]").length).toBeGreaterThan(0);
+  it("Bridal: the whole wedding, no range; Household: its sheets", async () => {
+    const download = vi.fn(async () => ({ blob: new Blob(["x"]), fileName: "Luna-Bridal-Carlo-Yanie.xlsx", rows: 9 }));
+    mountExportPage(container, sessionFixture({ workspaceTemplateId: "bridal-expense" }), { toast: () => {}, download, save: vi.fn(), now: NOW });
+    expect(container.querySelector('[data-seg="range"]')).toBeNull();
+    expect(container.querySelector('[data-role="contents"]').textContent).toMatch(/Money, Payments, Tasks, Guests, Party Members, Seating, Roles, Crew Meals, Music & Program and Wedding Setup/);
+    container.querySelector('[data-act="download"]').click();
+    await flush();
+    expect(download).toHaveBeenCalledWith("workbook", {});
+    document.body.innerHTML = '<main id="content"></main>';
+    container = document.getElementById("content");
+    mountExportPage(container, sessionFixture({ workspaceTemplateId: "household-payroll" }), { toast: () => {}, download, save: vi.fn(), now: NOW });
+    expect(container.querySelector('[data-role="contents"]').textContent).toMatch(/Expenses, Payroll, Payroll Breakdown, Attendance, Advances and Grocery List/);
+    expect(container.querySelector('[data-seg="range"]')).not.toBeNull();
+  });
+
+  it("who sees the page: whoever may export (Owner, Admin); staff don't; labelled Download Excel in every workspace", () => {
+    expect(buildRoutes(session("manager")).some((r) => r.path === "/export")).toBe(true);
     expect(buildRoutes(session("staff")).some((r) => r.path === "/export")).toBe(false);
-    expect(buildRoutes(session()).find((r) => r.path === "/export")).toMatchObject({ label: "Export & Backup" });
-    for (const w of ["household-payroll", "baby-expense", "bridal-expense"]) expect(buildRoutes(sessionFixture({ workspaceTemplateId: w })).some((r) => r.path === "/export"), w).toBe(true);
+    expect(buildRoutes(session("manager", { revoke: ["data.export"] })).some((r) => r.path === "/export")).toBe(false);
+    expect(buildRoutes(session()).find((r) => r.path === "/export")).toMatchObject({ label: "Download Excel" });
+    for (const w of ["household-payroll", "baby-expense", "bridal-expense"]) expect(buildRoutes(sessionFixture({ workspaceTemplateId: w })).find((r) => r.path === "/export"), w).toMatchObject({ label: "Download Excel" });
   });
 
   it("Orders: a reversed range is still refused before anything is queried", async () => {
@@ -116,19 +147,16 @@ describe("who gets the button; errors are explained", () => {
     expect(container.querySelector('[data-export="reports"]')).toBeNull();
   });
 
-  it("too many rows / a failed backup: the server's message is shown and the button comes back", async () => {
-    const toast = vi.fn();
+  it("too many rows: the server's message is shown and the button comes back", async () => {
     const download = vi.fn(async () => {
-      throw new ApiError(413, "too-many-rows", "This export contains too many rows. Narrow your filters and try again.");
+      throw new ApiError(413, "too-many-rows", "This download has too many rows. Choose a shorter range and try again.");
     });
-    mountExportPage(container, session(), { toast, exportDeps: { download, save: vi.fn() }, download, save: vi.fn() });
-    await clickExport("orders");
-    expect(toast).toHaveBeenCalledWith("This export contains too many rows. Narrow your filters and try again.", "danger");
-    const btn = container.querySelector('[data-act="export"][data-export="orders"]');
-    expect([btn.disabled, btn.textContent]).toEqual([false, "Download"]);
-    container.querySelector('[data-act="backup"]').click();
+    mountExportPage(container, session(), { toast: vi.fn(), download, save: vi.fn() });
+    container.querySelector('[data-act="download"]').click();
     await flush();
-    expect(container.querySelector('[data-act="backup"]').textContent).toBe("Download Master Backup");
+    expect(container.querySelector('[data-role="error"]').textContent).toBe("This download has too many rows. Choose a shorter range and try again.");
+    const btn = container.querySelector('[data-act="download"]');
+    expect([btn.disabled, btn.textContent]).toEqual([false, "Download Excel"]);
   });
 });
 
