@@ -10,7 +10,7 @@ import { createProduct } from "../../netlify/functions/_lib/inventory.js";
 import { createCustomer, setCustomerStatus } from "../../netlify/functions/_lib/customers.js";
 import { createImportsHandler } from "../../netlify/functions/imports.js";
 import { tenantDb } from "../../netlify/functions/_lib/tenant-db.js";
-import { createBusiness, addMember, ensureAuthUser, updateOverrides } from "../../netlify/functions/_lib/provisioning.js";
+import { createBusiness, addMember, ensureAuthUser } from "../../netlify/functions/_lib/provisioning.js";
 import { autoMap, mapRows, convertRow, IMPORT_MAX_ROWS } from "../../shared/imports.js";
 import { FieldValue } from "../helpers/fake-firebase.js";
 import { buildWorld, request } from "../helpers/tenants.js";
@@ -182,49 +182,29 @@ describe("commit", () => {
   });
 });
 
-describe("POST /api/imports", () => {
+// Owner pilot (2026-10-19): Excel import is NOT launched (shared/modules.js
+// UNLAUNCHED_MODULE_IDS). The import logic above stays tested; the API is
+// closed to every tenant user, whatever they send.
+describe("POST /api/imports (not launched)", () => {
   const call = async (uid, body, businessId) => {
     const res = await createImportsHandler({ getAdmin: async () => world, now: () => NOW })({ ...request({ uid, businessId, method: "POST" }), body: JSON.stringify(body) });
     return { status: res.statusCode, body: JSON.parse(res.body) };
   };
   const pv = (type = "products", rows = [prow(2, "API-1")]) => ({ action: "preview", type, fileName: "f.csv", rows });
 
-  it("401 first; staff (no imports.run) 403; manager previews and commits", async () => {
+  it("401 without sign-in; the Owner, an Admin and staff all get 403 for preview, commit and cancel; nothing is written", async () => {
     expect((await createImportsHandler({ getAdmin: async () => world })({ ...request({ method: "POST" }), body: "{x" })).statusCode).toBe(401);
-    expect((await call(world.uids.staffa, pv())).status).toBe(403);
-    const p = await call(world.uids.managera, pv());
-    expect(p).toMatchObject({ status: 201, body: { counts: { ready: 1 } } });
-    expect((await call(world.uids.managera, { action: "commit", jobId: p.body.jobId })).body).toMatchObject({ done: true, result: { created: 1 } });
-  });
-
-  it("the target module + manage permission are required too", async () => {
-    const u = await ensureAuthUser({ auth: world.auth, email: "imp@t.test", name: "Importer" });
-    await addMember({ ...world, businessId: "biz-a", uid: u.uid, email: u.email, name: "Importer", roleTemplate: "manager", permissionOverrides: { revoke: ["products.manage"] } });
-    expect((await call(u.uid, pv("products"))).body.error).toBe("not-allowed");
-    expect((await call(u.uid, pv("customers", [crow(2, "OK Shop")]))).status).toBe(201);
-    // A job previewed by someone allowed can't be committed by someone who isn't.
-    const p = await call(world.uids.managera, pv());
-    expect((await call(u.uid, { action: "commit", jobId: p.body.jobId })).body.error).toBe("not-allowed");
-    await updateOverrides({ ...world, businessId: "biz-a", set: { modules: { customers: false } }, actor: "t", reason: "customers off" });
-    expect((await call(world.uids.ownera, pv("customers", [crow(2, "X")]))).body.error).toBe("not-allowed");
-  });
-
-  it("strict payloads", async () => {
-    expect((await call(world.uids.ownera, { ...pv(), extra: 1 })).status).toBe(400);
-    expect((await call(world.uids.ownera, { action: "preview", type: "orders", fileName: "o.csv", rows: [] })).status).toBe(400);
-    expect((await call(world.uids.ownera, { action: "commit", jobId: "../x" })).status).toBe(400);
-    expect((await call(world.uids.ownera, { action: "commit", jobId: "abcdefgh12345678", includeWarnings: "yes" })).status).toBe(400);
-  });
-
-  it("cross-tenant: B's import can't be committed, cancelled or seen from A", async () => {
-    const B = tenantDb(world.db, "biz-b");
-    const pb = await previewImport({ db: world.db, tenant: B, FieldValue, actor, now: NOW, type: "products", fileName: "b.csv", rows: [prow(2, "BX")] });
-    for (const uid of [world.uids.ownera, world.uids.managera]) {
-      expect((await call(uid, { action: "commit", jobId: pb.jobId })).status).toBe(404);
-      expect((await call(uid, { action: "cancel", jobId: pb.jobId })).status).toBe(404);
-      expect((await call(uid, pv(), "biz-b")).body.error).toBe("business-access-denied");
+    const A = tenantDb(world.db, "biz-a");
+    const job = await previewImport({ db: world.db, tenant: A, FieldValue, actor, now: NOW, type: "products", fileName: "a.csv", rows: [prow(2, "INT-1")] });
+    for (const uid of [world.uids.ownera, world.uids.managera, world.uids.staffa]) {
+      for (const body of [pv(), pv("customers", [crow(2, "OK Shop")]), { action: "commit", jobId: job.jobId }, { action: "cancel", jobId: job.jobId }]) {
+        const r = await call(uid, body);
+        expect(r.status, `${uid} ${body.action}`).toBe(403);
+      }
     }
-    expect(docAt(`businesses/biz-b/imports/${pb.jobId}`).status).toBe("previewed");
+    expect(docAt(`businesses/biz-a/imports/${job.jobId}`).status).toBe("previewed");
+    expect([...world.db.docs.keys()].filter((k) => k.startsWith("businesses/biz-a/imports/") && k.split("/").length === 4)).toHaveLength(1);
+    expect([...world.db.docs.values()].some((d) => d && d.sku === "API-1")).toBe(false);
   });
 
   it("a bridal workspace has no Imports, even with a forged snapshot", async () => {
@@ -236,7 +216,8 @@ describe("POST /api/imports", () => {
     expect((await call(u.uid, pv(), "biz-w")).status).toBe(503);
   });
 
-  it("suspended businesses can't import (write)", async () => {
-    expect((await call(world.uids.owners, pv(), "biz-s")).body.error).toBe("read-only");
+  it("a Business plan that includes Imports keeps a valid subscription (entitlements untouched)", async () => {
+    expect(docAt("businesses/biz-a").entitlements.modules.imports).toBe(true);
+    expect((await call(world.uids.ownera, pv())).body.error).not.toBe("business-misconfigured");
   });
 });

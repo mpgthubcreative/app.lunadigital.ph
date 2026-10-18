@@ -40,7 +40,7 @@ describe("navigation", () => {
   it("Distributor: unchanged", () => {
     renderShell(document.getElementById("app"), sessionFixture());
     // Customers is back (built in Phase 9); Reports / Imports return as each is built.
-    expect(navOf()).toEqual(["/ Dashboard", "/orders Orders", "/payments Payments", "/inventory Inventory", "/customers Customers", "/expenses Operating Expenses", "/reports Reports", "/imports Imports", "/export Download Excel", "/users Users", "/subscription Subscription", "/settings Settings"]);
+    expect(navOf()).toEqual(["/ Dashboard", "/orders Orders", "/payments Payments", "/inventory Inventory", "/customers Customers", "/expenses Operating Expenses", "/reports Reports", "/export Download Excel", "/users Users", "/subscription Subscription", "/settings Settings"]);
   });
 
   it("Bridal: Money / Tasks / Guests; More = Wedding Setup, Music & Program, Download Excel, Users, Subscription, Settings (no Budget page: it's in Money)", () => {
@@ -65,6 +65,12 @@ describe("typing a Distributor URL in a bridal workspace", () => {
       expect(r.text).toMatch(/Page not available/);
     });
   }
+
+  it("Excel import isn't launched: a Business Owner typing /imports gets Page not available (the module never loads)", () => {
+    const r = visit(sessionFixture(), "/imports");
+    expect(r.loader).not.toHaveBeenCalled();
+    expect(r.text).toMatch(/Page not available/);
+  });
 
   it("a forged session flag can't open Orders either (the workspace is re-checked)", () => {
     const s = bridal();

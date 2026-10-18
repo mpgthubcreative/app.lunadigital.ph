@@ -98,10 +98,19 @@ export function isModuleEnabled(entitlements, moduleId) {
   return workspaceAllowsModule(snapshotWorkspaceTemplateId(entitlements), moduleId);
 }
 
-// Entitled module + the module's permission.
+// Built modules that are NOT launched to customers yet (Owner pilot,
+// 2026-10-19): the data direction for now is Luna → Download Excel, not
+// Excel → Luna. Entitlements, plans and the import code stay as they are (a
+// snapshot may still say imports: true, and stays valid); nobody can open
+// the module: no navigation or route, and every API request for it is
+// refused (requireTenant). Remove an id here to launch it.
+export const UNLAUNCHED_MODULE_IDS = Object.freeze(["imports"]);
+export const isModuleLaunched = (moduleId) => !UNLAUNCHED_MODULE_IDS.includes(moduleId);
+
+// Entitled, launched module + the module's permission.
 export function canUseModule({ entitlements, permissions }, moduleId) {
   const mod = getModule(moduleId);
-  return Boolean(mod) && isModuleEnabled(entitlements, moduleId) && Boolean(permissions) && permissions[mod.permission] === true;
+  return Boolean(mod) && isModuleLaunched(moduleId) && isModuleEnabled(entitlements, moduleId) && Boolean(permissions) && permissions[mod.permission] === true;
 }
 
 // Usable modules in the workspace's navigation order, with its labels.

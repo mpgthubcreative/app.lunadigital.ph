@@ -19,7 +19,7 @@ import { RequestError } from "./http.js";
 import { authenticate } from "./auth.js";
 import { tenantDb } from "./tenant-db.js";
 import { accessPolicy } from "../../../shared/subscription.js";
-import { isModuleEnabled, getModule } from "../../../shared/modules.js";
+import { isModuleEnabled, isModuleLaunched, getModule } from "../../../shared/modules.js";
 import { ROLE_TEMPLATES, isPermissionKey, moduleForPermission } from "../../../shared/permissions.js";
 import { validateEntitlementsSnapshot } from "../../../shared/entitlements.js";
 import { snapshotWorkspaceTemplateId, getWorkspaceTemplate } from "../../../shared/workspaces.js";
@@ -176,6 +176,8 @@ export async function requireTenant(event, { db, auth, permission = null, module
   const modules = [...new Set([module, permission && moduleForPermission(permission)].filter(Boolean))];
   for (const id of modules) {
     if (!isModuleEnabled(context.entitlements, id)) throw NOT_AVAILABLE(`module-disabled:${id}`);
+    // Not launched to customers (shared/modules.js): refused like a disabled module.
+    if (!isModuleLaunched(id)) throw NOT_AVAILABLE(`module-not-launched:${id}`);
   }
   if (permission && context.permissions[permission] !== true) {
     throw NOT_AVAILABLE(`missing-permission:${permission}`);

@@ -54,6 +54,10 @@ describe("Settings usage (owner)", () => {
     expect(activity.textContent).toMatch(/Customer payments recorded\s*31/);
     expect(activity.querySelector("progress")).toBeNull();
     expect(activity.textContent).not.toMatch(/Payroll|Guests/); // not this workspace's meters
+    // Excel import isn't launched: no Imports module line, limit or meter.
+    expect(el.querySelector('[data-limit="importsPerMonth"]')).toBeNull();
+    expect(el.querySelector("#packageModules").textContent).not.toMatch(/Import/);
+    expect(el.textContent).not.toMatch(/Spreadsheet imports|Import/);
   });
 
   it("Phase 18.6: opening Settings fetches the CURRENT usage (an Excel download since sign-in shows)", async () => {

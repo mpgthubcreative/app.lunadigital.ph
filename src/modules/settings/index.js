@@ -14,7 +14,7 @@
 // reloaded. Settings now asks the server for the CURRENT usage every time
 // it opens and redraws the meters.
 
-import { accessPolicy, MODULES, FEATURE_DEFINITIONS, LIMIT_KEYS, LIMIT_METER, LIMIT_DEFINITIONS, METERS, MONTHLY_METER_IDS, isEnforced, meterApplies } from "@shared/index.js";
+import { isModuleLaunched, accessPolicy, MODULES, FEATURE_DEFINITIONS, LIMIT_KEYS, LIMIT_METER, LIMIT_DEFINITIONS, METERS, MONTHLY_METER_IDS, isEnforced, meterApplies } from "@shared/index.js";
 import { html, render } from "../../lib/html.js";
 import { pageHeader, card, meter, badge } from "../../components/ui.js";
 import { canArrange, mountArrangeNav } from "./arrange-nav.js";
@@ -32,9 +32,11 @@ function featureValue(key, value) {
 }
 
 // Informational monthly counters that mean something for this business.
-const activityMeters = (entitlements) => MONTHLY_METER_IDS.filter((id) => !isEnforced(id) && meterApplies(id, entitlements));
+// A module not launched to customers (Excel import) shows no meter or limit here.
+const launchedMeter = (id) => METERS[id]?.module == null || isModuleLaunched(METERS[id].module);
+const activityMeters = (entitlements) => MONTHLY_METER_IDS.filter((id) => !isEnforced(id) && meterApplies(id, entitlements) && launchedMeter(id));
 // Monthly columns of the history table: limited ones first, then activity.
-const historyMeters = (entitlements) => MONTHLY_METER_IDS.filter((id) => meterApplies(id, entitlements));
+const historyMeters = (entitlements) => MONTHLY_METER_IDS.filter((id) => meterApplies(id, entitlements) && launchedMeter(id));
 
 function historyTable(rows, entitlements) {
   const ids = historyMeters(entitlements);
@@ -55,7 +57,7 @@ function packageCards(session, fresh = null) {
   const { modules, limits, features } = session.entitlements;
   const values = fresh?.current || session.usage?.values || {};
   // Sellable, built modules only; core modules are in every package.
-  const sellable = MODULES.filter((m) => m.available && !m.core);
+  const sellable = MODULES.filter((m) => m.available && !m.core && isModuleLaunched(m.id));
   const activity = activityMeters(session.entitlements);
 
   return html`
@@ -73,7 +75,7 @@ function packageCards(session, fresh = null) {
       title: "Plan limits",
       body: html`
         <div data-role="limits">
-          ${LIMIT_KEYS.map((key) => {
+          ${LIMIT_KEYS.filter((key) => launchedMeter(LIMIT_METER[key])).map((key) => {
             const meterId = LIMIT_METER[key];
             const m = METERS[meterId];
             const label = m.kind === "monthly" ? `${LIMIT_DEFINITIONS[key].label} (this month)` : LIMIT_DEFINITIONS[key].label;

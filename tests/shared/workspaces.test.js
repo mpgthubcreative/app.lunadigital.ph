@@ -438,9 +438,9 @@ describe("navigation", () => {
     // is back since Phase 9 (distributor v2).
     // Expenses (Phase 10) is labelled "Operating Expenses" for Distributor;
     // Staff hold no expenses.* permission, so they don't see it.
-    expect(nav("distributor", "owner")).toEqual(["/ Dashboard", "/orders Orders", "/payments Payments", "/inventory Inventory", "/customers Customers", "/expenses Operating Expenses", "/reports Reports", "/imports Imports", "/users Users", "/settings Settings"]);
+    expect(nav("distributor", "owner")).toEqual(["/ Dashboard", "/orders Orders", "/payments Payments", "/inventory Inventory", "/customers Customers", "/expenses Operating Expenses", "/reports Reports", "/users Users", "/settings Settings"]);
     expect(nav("distributor", "staff")).toEqual(["/ Dashboard", "/orders Orders", "/payments Payments", "/inventory Inventory", "/customers Customers"]);
-    expect(nav("distributor", "manager")).toEqual(["/ Dashboard", "/orders Orders", "/payments Payments", "/inventory Inventory", "/customers Customers", "/expenses Operating Expenses", "/reports Reports", "/imports Imports", "/users Users", "/settings Settings"]);
+    expect(nav("distributor", "manager")).toEqual(["/ Dashboard", "/orders Orders", "/payments Payments", "/inventory Inventory", "/customers Customers", "/expenses Operating Expenses", "/reports Reports", "/users Users", "/settings Settings"]);
   });
 
   it("non-Distributor workspaces get no Distributor navigation, and their own names", () => {
