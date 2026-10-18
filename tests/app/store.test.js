@@ -185,4 +185,20 @@ describe("Orders → Share menu", () => {
     await until(() => api.mock.calls.length === 4);
     expect(api.mock.calls[3][1].body.settings.hiddenProductIds).toEqual(["prodB00000001"]);
   });
+
+  it("Owner: a failed open / closed tap says why (Store settings folded) and the toggle stays as it was", async () => {
+    const api = vi.fn(async (_e, { body }) => {
+      if (body.action === "save") throw new Error("You're offline. Check your connection.");
+      return { settings, path: "/store/biz-a", canManage: true };
+    });
+    const toast = vi.fn();
+    openShareMenu({ session: session("owner"), api, toast, listActiveProducts: vi.fn(), origin: "https://app.example", share: null });
+    await until(() => document.querySelector('[data-x="open"]'));
+    const box = document.querySelector('[data-x="open"]');
+    box.checked = true;
+    box.dispatchEvent(new Event("change", { bubbles: true }));
+    await until(() => toast.mock.calls.length === 1);
+    expect(toast).toHaveBeenCalledWith("You're offline. Check your connection.", "danger");
+    expect(document.querySelector('[data-x="open"]').checked).toBe(false);
+  });
 });

@@ -75,7 +75,8 @@ export function openShareMenu({ session, api, toast, listActiveProducts, origin 
         toast(okText, "success");
       } catch (err) {
         state.error = err.message || "Couldn't save the settings.";
-        if (!backdrop.querySelector('[data-role="settings-form"]')) toast(state.error, "danger");
+        // The form's error line is out of sight while Store settings is folded (e.g. the open / closed tap).
+        if (!backdrop.querySelector('[data-role="store-settings"]')?.open) toast(state.error, "danger");
       }
       state.busy = false;
       const wasOpen = backdrop.querySelector('[data-role="store-settings"]')?.open;

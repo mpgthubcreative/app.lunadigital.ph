@@ -951,6 +951,7 @@ The accepted Bridal design (Money | Tasks | Guests | More) is unchanged; this pa
 - **Tests:**
   - **Unit:** 1671 pass (storefront server 9, public page and Share menu 7).
   - **Live on staging (temporary `prev-dist-tmp`, removed after):** 23 of 23 at 390 and 1280. A double-tapped Place order made exactly one order (ORD-20261018-001, ₱225, Delivery · GCash, pending/unpaid, Kopi reserved +2), the Owner was notified, and the order shows in Orders and Order Details. There was no sideways scroll.
+- **Follow-up fixes:** less than one unit left (e.g. 0.4 kg) shows as Sold out on the menu, since customers order whole units. A failed open/closed tap in Share menu now says why in a toast, because the form's error line is hidden while Store settings is folded. 1672 unit tests pass.
 
 ## Plan (decisions made from the brief)
 

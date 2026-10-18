@@ -158,7 +158,9 @@ const unitLabel = (u) => UNITS[u]?.label ?? u ?? "";
 // beyond the product id needed to order it).
 function publicProduct(id, p) {
   const available = Number.isSafeInteger(p.available) ? p.available : 0;
-  const low = available > 0 && available <= STORE_LOW_STOCK_SHOWN * QTY_SCALE;
+  // The menu orders whole units, so less than one left (e.g. 0.4 kg) is sold out.
+  const orderable = available >= QTY_SCALE;
+  const low = orderable && available <= STORE_LOW_STOCK_SHOWN * QTY_SCALE;
   return {
     id,
     name: p.name || "",
@@ -166,10 +168,10 @@ function publicProduct(id, p) {
     unit: p.unit,
     unitLabel: unitLabel(p.unit),
     price: p.sellingPrice,
-    soldOut: available <= 0,
+    soldOut: !orderable,
     // Only the "Only N left" figure is shown; above that, just a cap.
     left: low ? available : null,
-    max: available <= 0 ? 0 : low ? available : STORE_MAX_LINE_QTY * QTY_SCALE,
+    max: !orderable ? 0 : low ? available : STORE_MAX_LINE_QTY * QTY_SCALE,
   };
 }
 

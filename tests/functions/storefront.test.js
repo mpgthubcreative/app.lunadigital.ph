@@ -42,10 +42,10 @@ const ok = (r, status = 200) => {
 const docAt = (p) => world.db.docs.get(p);
 const docsUnder = (prefix) => [...world.db.docs.entries()].filter(([p]) => p.startsWith(prefix)).map(([p, d]) => ({ path: p, ...d }));
 
-async function stocked(businessId, { sku, name, price = 7500, cost = 5000, qty = 20, category = "Coffee" }) {
+async function stocked(businessId, { sku, name, price = 7500, cost = 5000, qty = 20, category = "Coffee", unit = "pcs" }) {
   const tenant = tenantDb(world.db, businessId);
-  const { productId } = await createProduct({ db: world.db, tenant, FieldValue, actor, input: { sku, name, unit: "pcs", sellingPrice: price, reorderLevel: 0, category } });
-  if (qty > 0) await recordMovement({ db: world.db, tenant, FieldValue, productId, actor, movement: { type: "opening", quantity: Q(qty), unitCost: cost, note: "count" } });
+  const { productId } = await createProduct({ db: world.db, tenant, FieldValue, actor, input: { sku, name, unit, sellingPrice: price, reorderLevel: 0, category } });
+  if (qty > 0) await recordMovement({ db: world.db, tenant, FieldValue, productId, actor, movement: { type: "opening", quantity: Math.round(qty * QTY_SCALE), unitCost: cost, note: "count" } });
   return productId;
 }
 async function openStore(extra = {}) {
@@ -95,16 +95,18 @@ describe("the public menu", () => {
     const kopi = await stocked("biz-a", { sku: "HAYST-KOPI", name: "Hayst Kopi", qty: 20 });
     const choco = await stocked("biz-a", { sku: "HAYST-CHOCO", name: "Hayst Choco", qty: 3 });
     const gone = await stocked("biz-a", { sku: "MATCHA", name: "Matcha", qty: 0 });
+    const scrap = await stocked("biz-a", { sku: "BEANS", name: "Beans", unit: "kg", qty: 0.4 });
     const secret = await stocked("biz-a", { sku: "STAFF-MEAL", name: "Staff meal", qty: 5 });
     await stocked("biz-a", { sku: "FREE", name: "Free sample", price: 0, qty: 5 });
     await openStore({ hiddenProductIds: [secret] });
     const v = ok(await pub({ action: "view", slug: "biz-a" }));
     expect(v.store).toMatchObject({ name: "Biz A", open: true, pickup: true, delivery: true, paymentMethods: ["cod", "gcash"], currency: "PHP" });
-    expect(v.products.map((p) => p.name)).toEqual(["Hayst Choco", "Hayst Kopi", "Matcha"]);
+    expect(v.products.map((p) => p.name)).toEqual(["Beans", "Hayst Choco", "Hayst Kopi", "Matcha"]);
     const by = Object.fromEntries(v.products.map((p) => [p.id, p]));
     expect(by[kopi]).toEqual({ id: kopi, name: "Hayst Kopi", category: "Coffee", unit: "pcs", unitLabel: by[kopi].unitLabel, price: 7500, soldOut: false, left: null, max: Q(99) });
     expect(by[choco]).toMatchObject({ soldOut: false, left: Q(3), max: Q(3) }); // "Only 3 left"
     expect(by[gone]).toMatchObject({ soldOut: true, max: 0 });
+    expect(by[scrap]).toMatchObject({ soldOut: true, left: null, max: 0 }); // 0.4 kg: less than one to order
     const text = JSON.stringify(v);
     for (const leak of ["HAYST-KOPI", "onHand", "reserved", "averageCost", "5000", "Staff meal", "biz-b", "ownera"]) expect(text).not.toContain(leak);
   });
