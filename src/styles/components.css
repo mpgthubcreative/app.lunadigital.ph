@@ -4014,3 +4014,4 @@ tr.is-saving {
   .rp-totals { grid-template-columns: 1fr 1fr; }
   .rp-total.is-main { grid-column: 1 / -1; }
 }
+.rp-section .chart { max-width: 560px; }
