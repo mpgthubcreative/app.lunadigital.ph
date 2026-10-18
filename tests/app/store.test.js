@@ -165,7 +165,8 @@ describe("Orders → Share menu", () => {
     const box = document.querySelector('[data-x="open"]');
     box.checked = true;
     box.dispatchEvent(new Event("change", { bubbles: true }));
-    await until(() => /Open/.test(document.querySelector('[data-role="store-status"]').textContent));
+    await until(() => api.mock.calls.length === 2 && document.querySelector('[data-x="open"]')?.checked);
+    expect(document.querySelector('[data-role="store-status"]')).toBeNull(); // the toggle says it
     expect(api.mock.calls[1][1].body).toEqual({ action: "save", settings: { open: true } });
 
     const form = document.querySelector('[data-role="settings-form"]');

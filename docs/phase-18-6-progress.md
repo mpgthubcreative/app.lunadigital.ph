@@ -924,6 +924,34 @@ The accepted Bridal design (Money | Tasks | Guests | More) is unchanged; this pa
   - **Live (temporary `prev-dist-tmp` + the prev-* review tenants, all removed):** 12 of 13 checks passed at 390 and 1280. The 13th failed only because the check's regex expected "GC-LIVE-1"; the server stores refs without dashes ("GCLIVE1"), so the screen was correct.
   - **Checked live:** a double-tapped Create order made exactly one order: ORD-20261018-001, Walk-in, pending/unpaid, ₱2,875, Cola reserved +5. It shows in Orders; after payment + fulfil, Details reads "Fulfilled · Paid". There was no sideways scroll.
 
+
+### 2026-10-18 · Business public menu / order link (59caa7e + polish)
+
+- **Flow:**
+  1. Orders → **Share menu** gives the link (`/store/{slug}`), with Copy link, Share (where the phone supports it) and Preview.
+  2. The customer opens it with no login, taps quantities (the total is live in a fixed bottom bar), reviews, then enters name, mobile, pickup/delivery (address when delivering) and how they'll pay. They place the order and see a thank-you with the order number.
+- **One normal Luna order:**
+  - `/api/store` uses the same `createOrder` engine as staff orders.
+  - Server prices; the order is reserved, pending and unpaid. The source is the new **Online store** ("Delivery · GCash" in the source note), created by "Online store".
+  - There is no discount and no saved-customer link. Fulfillment stays in Orders.
+  - Staff who fulfil orders get an `order.online` notification (a new optional "store" preference), written in the order's transaction.
+- **What the public sees:**
+  - The store name and note.
+  - Visible active products with a price: name, category, unit, price, "Sold out" or "Only N left" (≤ 5).
+  - Never SKUs, costs, stock levels, staff, hidden products or other businesses.
+  - An unknown, renamed, closed-subscription or misconfigured store gets one 404 answer.
+- **Settings:**
+  - `/api/storefront`: `orders.view` can share the link; `settings.manage` (the Owner) can change it.
+  - Settings: open/closed (one tap), store name, note, link name (unique; renaming stops the old link), pickup/delivery, payment choices, products shown.
+  - Data: settings at `businesses/{bid}/storefront/settings`; the link lookup at top-level `storeSlugs/{slug}`. Both are server-only; rules deny them by default (verified live: 403).
+- **Abuse guards:**
+  - 5 orders per client per 10 minutes and 60 per store per hour (`storeThrottle`, hashed client address, `expireAt` for a TTL policy).
+  - A honeypot field, the plan's monthly order limit, one idempotency key per order, and strict fields (a forged price, discount or customer link is refused).
+- **Custom domains later:** a host → businessId lookup can resolve to the same store; there is no per-tenant code.
+- **Tests:**
+  - **Unit:** 1671 pass (storefront server 9, public page and Share menu 7).
+  - **Live on staging (temporary `prev-dist-tmp`, removed after):** 23 of 23 at 390 and 1280. A double-tapped Place order made exactly one order (ORD-20261018-001, ₱225, Delivery · GCash, pending/unpaid, Kopi reserved +2), the Owner was notified, and the order shows in Orders and Order Details. There was no sideways scroll.
+
 ## Plan (decisions made from the brief)
 
 ### Stage 1: Distributor

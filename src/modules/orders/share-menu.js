@@ -47,10 +47,9 @@ export function openShareMenu({ session, api, toast, listActiveProducts, origin 
               ? html`<p class="stat-hint">Loading…</p>`
               : state.status === "error"
                 ? html`<p class="form-error" data-role="message">${state.message}</p>`
-                : html`<p class="sm-status" data-role="store-status"><span class="${s.open ? "tone-success" : "tone-muted"}">● ${s.open ? "Open" : "Closed"}</span> ${s.open ? "Customers can order from this link." : "Customers see that you're not taking orders."}</p>
-                    ${state.canManage
+                : html`${state.canManage
                       ? html`<label class="sm-check sm-open"><input type="checkbox" data-x="open" ${s.open ? "checked" : ""} ${state.busy ? "disabled" : ""} /> Taking orders online</label>`
-                      : ""}
+                      : html`<p class="sm-status" data-role="store-status"><b class="${s.open ? "tone-success" : "tone-muted"}">${s.open ? "Open" : "Closed"}</b> · ${s.open ? "customers can order from this link." : "customers see that you're not taking orders."}</p>`}
                     <div class="field"><label for="sm-link">Menu link</label><input class="input" id="sm-link" readonly value="${link()}" data-role="link" /></div>
                     <div class="sm-actions">
                       <button type="button" class="btn btn-primary" data-x="copy">Copy link</button>

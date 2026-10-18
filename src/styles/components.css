@@ -3952,7 +3952,7 @@ tr.is-saving {
 .store-pill:has(input:checked) { border-color: var(--luna-primary); color: var(--luna-primary); font-weight: 600; }
 .store-only { margin: 0 0 var(--space-3); color: var(--text-muted); font-size: var(--text-sm); }
 .store-trap { position: absolute; left: -10000px; width: 1px; height: 1px; overflow: hidden; }
-.store-place { width: 100%; min-height: 52px; font-size: var(--text-md); }
+.store-place { width: 100%; min-height: 52px; margin-top: var(--space-3); font-size: var(--text-md); }
 .store-done .store-number { margin: 0 0 var(--space-3); font-size: var(--text-lg); font-weight: 700; font-variant-numeric: tabular-nums; }
 .store-done .btn { width: 100%; min-height: 48px; margin-top: var(--space-3); }
 .store-card { padding: var(--space-5); }
