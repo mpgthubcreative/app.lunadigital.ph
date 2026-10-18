@@ -238,6 +238,12 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     let correcting = false; // Owner-pilot polish: Correct payroll mode (paid)
     let detailsOpen = false;
     let releasing = false; // the Pay salary form is open (one at a time)
+    // Pay flow (Owner pilot 2026-10-18): Pay -> Review payroll (read-only;
+    // nothing is created) -> Continue to payment -> payment details -> only
+    // "Pay salary" pays -> paid. reviewing: null | "list" (opened from the
+    // row's Pay: Close closes) | "panel" (from this payslip: Back returns).
+    let reviewing = then === "release" && p?.status === "draft" && canRelease ? "list" : null;
+    let justPaid = 0; // the amount just paid (the success line after Pay salary)
     const staffRec = () => state.staff.find((s) => s.id === p?.staffId) || { payCycle: p?.payCycle || "semi_monthly" };
     const close = () => {
       backdrop.remove();
@@ -326,8 +332,38 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     };
     const fixMenu = (label, items) => (correcting && canRelease ? lineMenu(label, items) : "");
 
+    // Step 2: what will be paid, read-only. Opening it creates or changes nothing.
+    const reviewPaint = () => {
+      const ongoing = today < p.periodEnd;
+      const attendanceHref = `/attendance?staff=${encodeURIComponent(p.staffId)}&period=${p.periodStart}`;
+      const deductionLabel = (d) => (d.type === "overpayment" ? "Previous salary overpayment" : d.type === "advance" ? "Advance deduction" : d.description);
+      render(
+        backdrop,
+        html`<div class="modal modal-wide" role="dialog" aria-modal="true" aria-labelledby="pr-review-title" data-role="payroll-review">
+          <div class="modal-header"><h2 class="card-title" id="pr-review-title">Review payroll</h2></div>
+          <div class="modal-body">
+            <p class="pay-status" data-role="review-who"><strong>${p.staffName} · ${rowPeriod(p)}</strong></p>
+            <ul class="slip" data-role="review-lines">
+              <li data-line="basic"><span class="slip-what">Basic pay<small>${p.payableDays} paid days × ${formatCentavos(p.dailyWage)}</small></span><span class="slip-amt">${formatCentavos(p.basePay)}</span><span class="slip-act"><button type="button" class="btn btn-compact btn-ghost" data-x="calc">${calc ? "Hide" : "View calculation"}</button></span></li>
+              ${calc ? html`<li class="slip-calc" data-role="calc"><span>${p.present} Present + ${p.officialLeave} Paid Leave = ${p.payableDays} paid days × ${formatCentavos(p.dailyWage)} = ${formatCentavos(p.basePay)}. Not paid: ${p.absent} Absent, ${p.unpaidLeave || 0} Unpaid Leave, ${p.restDay || 0} Rest Day${p.notMarked ? `, ${p.notMarked} not marked` : ""}. <a href="${attendanceHref}" data-link data-x="goto">View attendance</a></span></li>` : ""}
+              ${(p.additions || []).map((a) => html`<li data-addition="${a.id}"><span class="slip-what">${a.type === "thirteenth" ? `13th month pay ${a.year}` : a.description}</span><span class="slip-amt">${formatCentavos(a.amount)}</span><span class="slip-act"></span></li>`)}
+              ${(p.deductions || []).map((d) => html`<li data-deduction="${d.id}"><span class="slip-what">${deductionLabel(d)}</span><span class="slip-amt">− ${formatCentavos(d.amount)}</span><span class="slip-act"></span></li>`)}
+            </ul>
+            <ul class="slip slip-total slip-total-paid"><li><span class="slip-what"><strong>To pay</strong></span><span class="slip-amt"><strong data-role="review-net">${formatCentavos(p.netPay)}</strong></span><span class="slip-act"></span></li></ul>
+            ${ongoing ? html`<p class="stat-hint" data-role="review-ongoing">The period is still ongoing (ends ${short(p.periodEnd)}): this is what's earned so far. You can also pay the upcoming days on the next step.</p>` : ""}
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn" data-x="${reviewing === "panel" ? "review-back" : "close"}">${reviewing === "panel" ? "Back" : "Close"}</button>
+            <button type="button" class="btn btn-primary" data-x="continue-pay" ${releasing ? "disabled" : ""}>Continue to payment</button>
+          </div>
+        </div>`
+      );
+    };
+
     const paint = () => {
       if (!p) return render(backdrop, html`<div class="modal"><div class="modal-body">${emptyState({ title: "Payroll not found" })}</div><div class="modal-footer"><button type="button" class="btn" data-x="close">Close</button></div></div>`);
+      if (reviewing && (p.status !== "draft" || !canRelease)) reviewing = null;
+      if (reviewing) return reviewPaint();
       const draft = p.status === "draft";
       const paid = p.status === "released" && p.salary;
       const attendanceHref = `/attendance?staff=${encodeURIComponent(p.staffId)}&period=${p.periodStart}`;
@@ -349,6 +385,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
         html`<div class="modal modal-wide" role="dialog" aria-modal="true" aria-label="Payroll" data-role="payroll-view">
           <div class="modal-header"><h2 class="card-title">${p.staffName} · ${rowPeriod(p)}</h2></div>
           <div class="modal-body">
+            ${justPaid ? html`<p class="chart-note" data-role="paid-success">${badge("Paid", "success")} ${formatCentavos(paid ? totalPaid : justPaid)} paid to ${p.staffName}.</p>` : ""}
             <p class="pay-status" data-role="pay-status">${statusLine(p)}${paid ? html`<span class="stat-hint">${p.paymentTiming === "early" ? "Paid early" : "Paid"} ${short(p.salary.paidDate)} · ${SALARY_METHODS[p.salary.method]?.label ?? ""}</span>` : ""}</p>
             ${correcting ? html`<p class="chart-note" data-role="correcting">${badge("Correcting", "info")} Tap ⋯ on the line that's wrong. The payment itself (${formatCentavos(totalPaid)}) stays as it was; Luna settles any difference. Basic pay follows attendance: <a href="${attendanceHref}" data-link data-x="goto">correct the days</a>.</p>` : ""}
             <ul class="slip" data-role="summary">
@@ -387,7 +424,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
           </div>
           <div class="modal-footer">
             ${draft && canManage ? html`<details class="line-menu line-menu-up"><summary class="btn">Add ▾</summary><div class="line-menu-list" role="menu"><button type="button" class="menu-item" data-x="add-bonus">Bonus</button><button type="button" class="menu-item" data-x="add">Other deduction</button><button type="button" class="menu-item" data-x="add-13th">13th month pay</button>${p.automatic ? "" : html`<div class="menu-sep" role="separator"></div><button type="button" class="menu-item is-danger" data-x="delete">Delete payroll</button>`}</div></details>` : ""}
-            ${draft && canRelease ? html`<button type="button" class="btn btn-primary" data-x="release">Pay salary</button>` : ""}
+            ${draft && canRelease ? html`<button type="button" class="btn btn-primary" data-x="release">Pay</button>` : ""}
             ${correcting ? html`<button type="button" class="btn btn-primary" data-x="done-correcting">Done</button>` : ""}
             ${!draft && canRelease && !correcting ? html`<button type="button" class="btn" data-x="correct-payroll" data-role="correct-payroll-btn">Correct payroll</button>` : ""}
             ${!draft && canRelease && !correcting ? html`<details class="line-menu line-menu-up"><summary class="btn">More ▾</summary><div class="line-menu-list" role="menu"><button type="button" class="menu-item" data-x="correct-payroll">Correct payroll</button><button type="button" class="menu-item" data-x="correct">Correct payment</button>${!p.salary?.proof ? html`<button type="button" class="menu-item" data-x="add-proof">Add payment proof</button>` : ""}${p.receiptStatus === "awaiting" ? html`<button type="button" class="menu-item" data-x="newlink">New receipt link</button>` : ""}${p.dispute?.state === "open" ? html`<button type="button" class="menu-item" data-x="resolve">Answer "not received"</button>` : ""}<div class="menu-sep" role="separator"></div><button type="button" class="menu-item is-danger" data-x="void">Void payroll</button></div></details>` : ""}
@@ -551,16 +588,27 @@ export function mount(container, session, { data = defaultData, toast = defaultT
           toast(err.message || "Something went wrong", "danger");
         }
       } else if (x === "release") {
-        // Step 2 (review / payment form). Only its own "Pay salary" button
-        // pays; one form at a time; the button arms after a moment so the tap
-        // that opened it can't press it.
-        if (releasing || p.status !== "draft") return undefined;
+        // Step 2: Review payroll (read-only).
+        if (releasing || p.status !== "draft" || !canRelease) return undefined;
+        reviewing = reviewing || "panel";
+        calc = false;
+        paint();
+      } else if (x === "review-back") {
+        reviewing = null;
+        paint();
+      } else if (x === "continue-pay") {
+        // Step 3: payment details. Only its own "Pay salary" button pays;
+        // one form at a time; the button arms after a moment so the tap that
+        // opened it can't press it. Back / Cancel returns to Review, unpaid.
+        if (releasing || !reviewing || p.status !== "draft") return undefined;
         releasing = true;
+        paint();
         const ongoing = today < p.periodEnd;
         // Upcoming days of the period (after today) that can be paid now.
         const upcoming = ongoing ? daysIn({ start: addDays(today, 1), end: p.periodEnd }) : [];
         const wage = p.dailyWage || 0;
         const prepaidOptions = [{ value: "0", label: "No, only what's earned so far" }, ...upcoming.map((d, i) => ({ value: String(i + 1), label: `${i + 1} upcoming day${i ? "s" : ""} (${range(upcoming[0], d)}): +${formatCentavos((i + 1) * wage)}` }))];
+        let sent = 0;
         const r = await formDialog({
           title: `${ongoing ? "Early salary payment: " : ""}Pay ${formatCentavos(p.netPay)} to ${p.staffName}`,
           intro: ongoing
@@ -574,16 +622,22 @@ export function mount(container, session, { data = defaultData, toast = defaultT
             { name: "reference", label: "Reference no. (optional)", more: true },
           ],
           submitLabel: "Pay salary",
+          cancelLabel: "Back",
           armMs: 700,
           onSubmit: async (v) => {
             const proof = v.proof ? await prepareProof(v.proof, { pdf: true }) : null;
             const payment = { method: v.method, ...(v.reference ? { reference: v.reference } : {}), paidDate: v.paidDate || today, ...(ongoing && Number(v.prepaidDays) > 0 ? { prepaidDays: Number(v.prepaidDays) } : {}) };
+            sent = p.netPay + (payment.prepaidDays || 0) * wage;
             const target = p.automatic ? { staffId: p.staffId, periodStart: p.periodStart } : { payrollId };
             return data.payrollApi({ action: "release", ...target, payment, expectedNetPay: p.netPay, ...(proof ? { proof } : {}) });
           },
         });
         releasing = false;
-        if (r) {
+        if (!r) paint(); // back to Review
+        else {
+          // Step 4: paid.
+          reviewing = null;
+          justPaid = sent;
           payrollId = r.payrollId || payrollId;
           link = r.receiptToken ? receiptUrl(r.receiptToken) : null;
           toast(r.paymentTiming === "early" ? `Early salary payment recorded${r.prepaid ? `, including ${r.prepaid.days} prepaid day${r.prepaid.days === 1 ? "" : "s"}` : ""}. Upcoming days stay open.` : "Salary marked paid.", "success");
@@ -634,7 +688,8 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     paint();
     await refresh();
     // From the row's ⋯ (e.g. Correct payment): open that action directly.
-    if (then) backdrop.querySelector(`[data-x="${then}"]`)?.click();
+    // (The row's Pay opens Review, set up above.)
+    if (then && then !== "release") backdrop.querySelector(`[data-x="${then}"]`)?.click();
   }
 
   function choosePeriod(key) {

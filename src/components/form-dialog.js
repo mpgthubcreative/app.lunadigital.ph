@@ -39,7 +39,9 @@ function fieldMarkup(f, id) {
 // onFormChange(form): called once when the dialog opens and after every
 // change, to adapt the form (e.g. "Schedule for later" swaps Date paid for
 // Scheduled date).
-export function formDialog({ title, intro = "", fields, submitLabel = "Save", onSubmit, moreLabel = "More details (optional)", armMs = 0, onFormChange = null }) {
+// cancelLabel: the Cancel button's text (e.g. "Back" when cancelling returns
+// to a previous step). Cancel, Escape and the backdrop all resolve null.
+export function formDialog({ title, intro = "", fields, submitLabel = "Save", cancelLabel = "Cancel", onSubmit, moreLabel = "More details (optional)", armMs = 0, onFormChange = null }) {
   return new Promise((resolve) => {
     const uid = ++counter;
     const backdrop = document.createElement("div");
@@ -64,7 +66,7 @@ export function formDialog({ title, intro = "", fields, submitLabel = "Save", on
             <p class="form-error" data-role="error" role="alert" hidden></p>
           </div>
           <div class="modal-footer">
-            <button type="button" class="btn" data-action="cancel">Cancel</button>
+            <button type="button" class="btn" data-action="cancel">${cancelLabel}</button>
             <button type="submit" class="btn btn-primary" data-action="submit">${submitLabel}</button>
           </div>
         </form>

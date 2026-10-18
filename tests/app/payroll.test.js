@@ -246,6 +246,7 @@ describe("Payroll", () => {
     await flush();
     expect(data.payrollApi).toHaveBeenCalledWith({ action: "addAddition", payrollId: "staffMaria0001_2026-10-01", addition: { type: "thirteenth", amount: 600000 } });
     document.querySelector('[data-role="payroll-view"] [data-x="release"]').click();
+    document.querySelector('[data-role="payroll-review"] [data-x="continue-pay"]').click();
     form = lastForm();
     expect([...form.elements.method.options].map((o) => o.textContent).slice(0, 3)).toEqual(["Cash", "GCash", "Bank Transfer"]);
     expect(form.elements.proof.accept).toMatch(/application\/pdf/);
@@ -260,6 +261,7 @@ describe("Payroll", () => {
     await flush();
     expect(document.querySelector('[data-role="net"]').textContent).toBe("₱6,700.00");
     document.querySelector('[data-x="release"]').click();
+    document.querySelector('[data-x="continue-pay"]').click();
     await flush();
     const form = lastForm();
     form.elements.method.value = "gcash";
@@ -267,47 +269,91 @@ describe("Payroll", () => {
     submit(form);
     await until(() => document.querySelector('[data-role="link-text"]'));
     expect(data.payrollApi).toHaveBeenCalledWith({ action: "release", payrollId: "staffMaria0001_2026-10-01", payment: { method: "gcash", paidDate: "2026-10-16" }, expectedNetPay: 670000 });
+    expect(document.querySelector('[data-role="paid-success"]').textContent).toMatch(/Paid/);
     expect(document.querySelector('[data-role="link-text"]').value).toBe(receiptUrl("tokTOKtokTOKtokTOKtokTOKtokTOKto"));
     document.querySelector('[data-x="copy"]').click();
     await until(() => copy.mock.calls.length);
     expect(copy).toHaveBeenCalledWith(receiptUrl("tokTOKtokTOKtokTOKtokTOKtokTOKto"));
   });
 
-  it("strict pay flow: Pay opens the review / payment form only; nothing is paid until Pay salary is deliberately pressed; Cancel leaves it unpaid; one form at a time; a double tap pays once", async () => {
+  it("strict pay flow: Pay opens a read-only Review first; Continue to payment opens the payment details; only Pay salary pays; Back / Close / Cancel never pay; reopening starts at Review", async () => {
     const data = fakeData();
     mountPayroll(container, home(), { data, now: NOW, toast: () => {} });
     await flush();
+    const writes = () => data.payrollApi.mock.calls.filter((c) => !["period", "thirteenth"].includes(c[0].action));
     const released = () => data.payrollApi.mock.calls.filter((c) => c[0].action === "release").length;
-    // Step 1 -> Step 2 from the row's Pay.
+    const review = () => document.querySelector('[data-role="payroll-review"]');
+    // Step 1 -> Step 2: the row's Pay opens Review, no form.
     container.querySelector('[data-act="pay"]').click();
-    await until(() => document.querySelectorAll(".modal-backdrop form").length === 1);
+    await until(() => review());
+    await flush();
+    expect(document.querySelectorAll(".modal-backdrop form")).toHaveLength(0);
+    expect(review().querySelector('[data-role="review-who"]').textContent).toMatch(/^Maria · /);
+    expect(review().querySelector('[data-line="basic"]').textContent).toMatch(/Basic pay/);
+    expect(review().querySelector('[data-role="review-net"]').textContent).toBe("₱6,700.00");
+    expect(review().querySelector(".line-menu")).toBeNull(); // read-only
+    review().querySelector('[data-x="calc"]').click();
+    expect(review().querySelector('[data-role="calc"]')).toBeTruthy();
+    expect(writes()).toHaveLength(0); // opening Review changes nothing
+    await new Promise((r) => setTimeout(r, 800));
+    expect(document.querySelectorAll(".modal-backdrop form")).toHaveLength(0); // never auto-advances
+    // Close: nothing paid; Pay again starts at Review.
+    review().querySelector('[data-x="close"]').click();
+    await flush();
+    expect(review()).toBeNull();
+    expect(writes()).toHaveLength(0);
+    container.querySelector('[data-act="pay"]').click();
+    await until(() => review());
+    // Step 3: Continue to payment opens the payment details.
+    review().querySelector('[data-x="continue-pay"]').click();
+    await flush();
     let form = lastForm();
     const btn = form.querySelector('[data-action="submit"]');
     expect(btn.textContent).toBe("Pay salary");
+    expect(form.querySelector('[data-action="cancel"]').textContent).toBe("Back");
     expect(btn.disabled).toBe(true); // arming: the opening tap can't press it
-    submit(form); // a tap carried over from the list
+    submit(form); // a tap carried over from Review
     await flush();
     expect(released()).toBe(0);
-    expect(document.querySelector('[data-role="link-text"]')).toBeNull(); // no success
-    // The panel's own Pay salary while the form is open: still one form.
-    document.querySelector('[data-role="payroll-view"] [data-x="release"]').click();
+    // One payment form at a time.
+    review().querySelector('[data-x="continue-pay"]').click();
     await flush();
     expect(document.querySelectorAll(".modal-backdrop form")).toHaveLength(1);
-    // Cancel: still unpaid; reopening shows the form again, unpaid.
+    // Back: returns to Review, unpaid.
     form.querySelector('[data-action="cancel"]').click();
     await flush();
-    expect(released()).toBe(0);
-    expect(document.querySelector('[data-role="payroll-view"] [data-x="release"]')).toBeTruthy();
-    document.querySelector('[data-role="payroll-view"] [data-x="release"]').click();
+    expect(document.querySelectorAll(".modal-backdrop form")).toHaveLength(0);
+    expect(review()).toBeTruthy();
+    expect(writes()).toHaveLength(0);
+    // Step 4 only after the deliberate press; a double tap pays once.
+    review().querySelector('[data-x="continue-pay"]').click();
     await flush();
     form = lastForm();
     await new Promise((r) => setTimeout(r, 750));
     expect(form.querySelector('[data-action="submit"]').disabled).toBe(false);
-    // Step 3 only after the deliberate press; a double tap pays once.
     submit(form);
     submit(form);
     await until(() => document.querySelector('[data-role="link-text"]'));
     expect(released()).toBe(1);
+    expect(review()).toBeNull();
+    expect(document.querySelector('[data-role="paid-success"]').textContent).toMatch(/Paid ₱6,700\.00 paid to Maria/);
+  });
+
+  it("from the payslip: Pay opens Review; Back returns to the payslip, unpaid", async () => {
+    const data = fakeData();
+    mountPayroll(container, home(), { data, now: NOW, toast: () => {} });
+    await flush();
+    container.querySelector('[data-act="view"]').click();
+    await flush();
+    const pay = document.querySelector('[data-role="payroll-view"] [data-x="release"]');
+    expect(pay.textContent).toBe("Pay");
+    pay.click();
+    const back = document.querySelector('[data-role="payroll-review"] [data-x="review-back"]');
+    expect(back.textContent).toBe("Back");
+    back.click();
+    expect(document.querySelector('[data-role="payroll-review"]')).toBeNull();
+    expect(document.querySelector('[data-role="payroll-view"]')).toBeTruthy();
+    expect(data.payrollApi.mock.calls.some((c) => c[0].action === "release")).toBe(false);
   });
 
   it("a household member without payroll.release can't pay; an advance deduction offers its plan actions", async () => {
@@ -583,6 +629,8 @@ describe("Payroll: automatic pay periods (Owner-pilot batch)", () => {
     await flush();
     expect(document.querySelector('[data-role="automatic"]').textContent).toMatch(/Worked out automatically.*still ongoing/);
     document.querySelector('[data-x="release"]').click();
+    expect(document.querySelector('[data-role="review-ongoing"]').textContent).toMatch(/still ongoing \(ends Oct 31\)/);
+    document.querySelector('[data-x="continue-pay"]').click();
     await flush();
     const form = lastForm();
     expect(document.querySelector(".modal-backdrop:last-child .card-title").textContent).toMatch(/^Early salary payment: Pay ₱600\.00 to Maria/);
