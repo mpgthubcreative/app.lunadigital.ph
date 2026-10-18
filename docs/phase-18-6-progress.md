@@ -953,6 +953,21 @@ The accepted Bridal design (Money | Tasks | Guests | More) is unchanged; this pa
   - **Live on staging (temporary `prev-dist-tmp`, removed after):** 23 of 23 at 390 and 1280. A double-tapped Place order made exactly one order (ORD-20261018-001, ₱225, Delivery · GCash, pending/unpaid, Kopi reserved +2), the Owner was notified, and the order shows in Orders and Order Details. There was no sideways scroll.
 - **Follow-up fixes:** less than one unit left (e.g. 0.4 kg) shows as Sold out on the menu, since customers order whole units. A failed open/closed tap in Share menu now says why in a toast, because the form's error line is hidden while Store settings is folded. 1672 unit tests pass.
 
+
+### 2026-10-18 · Household payroll: real Review step before payment (100fbcd + wording)
+
+- **Flow:** Payroll list → **Pay** → **Review payroll** (read-only) → **Continue to payment** → payment details (Paid by, Date paid, prepaid upcoming days, proof, More details) → **Pay salary** → paid.
+- **Review payroll:**
+  - Shows the name · period, Basic pay (with View calculation), each bonus / deduction, and To pay. There are no edit menus.
+  - Buttons: Close (or Back, when opened from the payslip) and Continue to payment.
+  - Opening it calls only the read-only period view; it never auto-advances.
+- **Payment details:** its Cancel button is now **Back**. Back, Escape and the backdrop all return to Review, unpaid. One form at a time; Pay salary arms after 0.7 s; a double tap pays once.
+- **Paid:** the payslip shows "Paid · ₱733.00 to Loriza Check", plus the receipt link.
+- The payslip's own button is now **Pay** (it opens Review); **Pay salary** appears only on the payment details step.
+- **Tests:**
+  - **Unit:** 1673 pass.
+  - **Live on staging (temporary `prev-home-tmp`, removed after):** 31 of 31 at 390 and 1280. Review showed Basic pay ₱1,233.00, Advance deduction −₱500.00 and To pay ₱733.00. Opening, Close, Back and Escape wrote nothing (payrolls, audit and receipt links unchanged); reopening Pay started at Review. A double-tapped Pay salary made exactly one paid payroll (₱733, GCash) and one receipt link.
+
 ## Plan (decisions made from the brief)
 
 ### Stage 1: Distributor

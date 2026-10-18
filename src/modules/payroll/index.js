@@ -385,7 +385,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
         html`<div class="modal modal-wide" role="dialog" aria-modal="true" aria-label="Payroll" data-role="payroll-view">
           <div class="modal-header"><h2 class="card-title">${p.staffName} · ${rowPeriod(p)}</h2></div>
           <div class="modal-body">
-            ${justPaid ? html`<p class="chart-note" data-role="paid-success">${badge("Paid", "success")} ${formatCentavos(paid ? totalPaid : justPaid)} paid to ${p.staffName}.</p>` : ""}
+            ${justPaid ? html`<p class="chart-note" data-role="paid-success">${badge("Paid", "success")} ${formatCentavos(paid ? totalPaid : justPaid)} to ${p.staffName}.</p>` : ""}
             <p class="pay-status" data-role="pay-status">${statusLine(p)}${paid ? html`<span class="stat-hint">${p.paymentTiming === "early" ? "Paid early" : "Paid"} ${short(p.salary.paidDate)} · ${SALARY_METHODS[p.salary.method]?.label ?? ""}</span>` : ""}</p>
             ${correcting ? html`<p class="chart-note" data-role="correcting">${badge("Correcting", "info")} Tap ⋯ on the line that's wrong. The payment itself (${formatCentavos(totalPaid)}) stays as it was; Luna settles any difference. Basic pay follows attendance: <a href="${attendanceHref}" data-link data-x="goto">correct the days</a>.</p>` : ""}
             <ul class="slip" data-role="summary">

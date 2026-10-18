@@ -336,7 +336,7 @@ describe("Payroll", () => {
     await until(() => document.querySelector('[data-role="link-text"]'));
     expect(released()).toBe(1);
     expect(review()).toBeNull();
-    expect(document.querySelector('[data-role="paid-success"]').textContent).toMatch(/Paid ₱6,700\.00 paid to Maria/);
+    expect(document.querySelector('[data-role="paid-success"]').textContent).toMatch(/Paid ₱6,700\.00 to Maria/);
   });
 
   it("from the payslip: Pay opens Review; Back returns to the payslip, unpaid", async () => {
