@@ -64,7 +64,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
                   ${canManage ? html`<div class="page-actions"><button type="button" class="btn btn-primary" data-act="suggested">Add the usual household categories</button></div>` : ""}`
               : html`<ul class="wl-list wl-section" data-role="categories">${active.map(row)}</ul>
                   ${hidden.length ? html`<details class="wl-fold" data-role="hidden"><summary>Hidden (${hidden.length})</summary><ul class="wl-list">${hidden.map(row)}</ul></details>` : ""}
-                  <p class="stat-hint">A hidden category keeps its expenses; it's just not offered for new ones. Salaries come from Payroll and show under Household Staff.</p>`}
+`}
       `
     );
   }

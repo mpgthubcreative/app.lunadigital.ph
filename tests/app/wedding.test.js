@@ -261,7 +261,7 @@ describe("Money (Owner-pilot Bridal): ONE list of everything the wedding costs",
     const t = (sel) => d.querySelector(sel).textContent.replace(/\s+/g, " ").trim();
     expect(t(".dd-title")).toBe("ABC Photo Studio");
     expect(t('[data-role="subtitle"]')).toMatch(/^Photo \/ Video/);
-    expect([t('[data-role="total"]'), t('[data-role="paid"]'), t('[data-role="remaining"]')]).toEqual(["₱80,000", "₱20,000 / ₱80,000", "₱60,000"]);
+    expect([t('[data-role="total"]'), t('[data-role="paid"]'), t('[data-role="paid-of"]'), t('[data-role="remaining"]')]).toEqual(["₱80,000", "₱20,000", "of ₱80,000", "₱60,000"]);
     // Not repeated: no Status / Scheduled / Next due fields.
     expect([...d.querySelectorAll("dt")].map((x) => x.textContent)).not.toEqual(expect.arrayContaining(["Status"]));
     expect(d.textContent).not.toMatch(/Next due|\(1 payment\)/);

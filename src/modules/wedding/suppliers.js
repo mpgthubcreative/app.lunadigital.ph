@@ -288,7 +288,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
           : state.view === "sample"
             ? html`<p class="wl-links"><button type="button" class="btn btn-compact btn-ghost" data-act="sample-back">‹ Money</button></p>
                 <h2 class="section-title">Sample budget</h2>
-                ${state.loading ? skeleton(5) : sampleList({ groups: SAMPLE_BUDGET, added: new Set(allRows().map((r) => sampleKey(r.category))), canAdd: canCategory, role: "sample-money", intro: "A starter list of what weddings usually pay for. It doesn't count in your totals: tap + Add to put a line on Money (Planned, amount later)." })}`
+                ${state.loading ? skeleton(5) : sampleList({ groups: SAMPLE_BUDGET, added: new Set(allRows().map((r) => sampleKey(r.category))), canAdd: canCategory, role: "sample-money", intro: "Not in your totals until you + Add a line." })}`
           : html`
             ${summary()}
             ${state.loading
@@ -334,7 +334,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     const proofWord = (e) => (e.proof ? (e.proof.contentType === "application/pdf" ? "PDF proof" : "Photo proof") : "No proof");
     const hero = html`<div class="dd-money" data-role="money-figures">
       <div class="dd-fig"><span>Total</span><b data-role="total">${total === null ? "Not set" : whole(total)}</b></div>
-      <div class="dd-fig"><span>Paid</span><b data-role="paid">${whole(s.paid ?? 0)}${total !== null ? html`<small> / ${whole(total)}</small>` : ""}</b></div>
+      <div class="dd-fig"><span>Paid</span><b data-role="paid">${whole(s.paid ?? 0)}</b>${total !== null ? html`<small class="dd-of" data-role="paid-of">of ${whole(total)}</small>` : ""}</div>
       ${balance !== null ? html`<div class="dd-fig dd-fig-main${balance > 0 ? "" : " is-done"}"><span>Remaining</span><b data-role="remaining">${whole(Math.max(0, balance))}</b></div>` : ""}
     </div>`;
     detailsDialog({

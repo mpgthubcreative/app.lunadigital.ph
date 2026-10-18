@@ -3834,3 +3834,4 @@ tr.is-saving {
 .wl-owed { font-weight: 700; color: var(--text); white-space: nowrap; }
 .wl-owed.is-late { color: var(--danger); }
 .wl-money-row .wl-name { overflow-wrap: anywhere; white-space: normal; }
+.dd-of { font-size: var(--text-xs); color: var(--text-muted); }

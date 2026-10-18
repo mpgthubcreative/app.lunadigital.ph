@@ -198,7 +198,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     render(
       container,
       html`
-        ${pageHeader({ title: "Bills", subtitle: html`The household bills that repeat. Unpaid ones count in Bills remaining. <a href="/expenses" data-link>Expenses ›</a>`, actions: canManage ? html`<button type="button" class="btn btn-primary" data-act="new">+ Add bill</button>` : "" })}
+        ${pageHeader({ title: "Bills", actions: canManage ? html`<button type="button" class="btn btn-primary" data-act="new">+ Add bill</button>` : "" })}
         <div class="wl-tools">${segmented("view", TABS, state.view, { label: "Show" })}</div>
         ${state.error
           ? html`<section class="card">${emptyState({ title: "Couldn't load", body: state.error })}</section>`

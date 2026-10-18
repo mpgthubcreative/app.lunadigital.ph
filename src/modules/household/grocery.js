@@ -72,7 +72,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
   function samples() {
     const onList = new Set(state.rows.filter((r) => !r.bought).map((r) => r.nameLower));
     const n = state.picked.size;
-    return html`<p class="stat-hint wl-sample-intro">Common household items. Nothing is added until you tap + Add${canAdd() ? " or select several" : ""}.</p>
+    return html`
       ${canAdd() ? html`<div class="gl-pick-bar"><button type="button" class="btn btn-primary btn-compact" data-act="add-picked" ${n ? "" : "disabled"}>Add selected${n ? ` (${n})` : ""}</button></div>` : ""}
       ${SAMPLE_GROCERY.map(
         (g, gi) => html`<section class="wl-section wl-sample-group" data-sample-group="${gi}">
