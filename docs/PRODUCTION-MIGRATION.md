@@ -2,11 +2,17 @@
 
 Prepared 2026-10-19. **Status: PLAN ONLY. Nothing here has been created or deployed.** Execution needs the owner's explicit approval, step by step.
 
-- **Baseline:** the code at `e922b7e` on `main`.
-  - CI passed for every commit up to it.
-  - 1680 unit tests pass.
-  - Live staging checks passed for Download Excel (33/33), import hidden (57/57) and the payroll review (31/31).
-- **Locked behaviour:** Download Excel, Master Backup (Super Admin only) and the hidden Excel import are not to change during migration except for real defects.
+- **Baseline:** the commit recorded under "Production migration baseline" in `docs/phase-18-6-progress.md` (after the Business simplification, 2026-10-19). CI must pass on it.
+- **Locked behaviour:** Download Excel, Master Backup (Super Admin only), the hidden Excel import and the simplified Business (Costs, Reports, Customers hidden) are not to change during migration except for real defects.
+- **Owner decisions (2026-10-19):**
+  - production app domain `app.lunadigital.ph`; a new clean Singapore Firebase project;
+  - the current US Firebase + Netlify stay permanently as staging;
+  - no staging demo or test business is copied;
+  - **no migration script for `veah-bridal` or `rwp-d419` yet**: decide separately after production is validated;
+  - billing and payment details stay configurable (Super Admin console), never hard-coded;
+  - backups, PITR, Storage recovery and a restore drill come before the first paying customer;
+  - Super Admin two-step login is a separately evaluated security enhancement (Identity Platform cost and complexity);
+  - production email comes from Luna's own domain through reliable transactional delivery (Resend SMTP for Firebase Auth emails).
 
 ## 1. Target
 
@@ -156,9 +162,8 @@ All are origin-relative: they work on any domain and need no Firebase authorized
   - `storeSlugs` / `weddingSlugs` (re-claimed in production), `storeThrottle`, receipt, activation and invite links;
   - every staging Storage file.
 - **No Auth users** are exported.
-- **Open decision: the owner's own pilot data on staging.**
-  - `veah-bridal` (the owner's wedding, read-only so far) and `rwp-d419` (the pilot household).
-  - If they should move to production, use a **per-tenant copy script**. It doesn't exist yet and would be written and run only with approval. It would:
+- **The owner's own pilot data on staging (`veah-bridal`, `rwp-d419`): not migrated now, and no script is written yet** (owner decision 2026-10-19). Whether either deserves a one-time migration is decided separately, after production is validated.
+  - If one is approved later, use a **per-tenant copy script**, written and run only with approval. It would:
     - copy `businesses/{bid}/**` keeping document ids, plus the business's `weddingSlugs` / `storeSlugs` entries and its Storage files under `tenants/{bid}/`;
     - re-create the members' Auth users in production with new activation links (no passwords copied);
     - not copy invitation tokens: guests get new links, or the copy keeps the hashed tokens if the old links must keep working (decide);

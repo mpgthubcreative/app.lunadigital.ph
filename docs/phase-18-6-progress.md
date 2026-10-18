@@ -1007,6 +1007,41 @@ The accepted Bridal design (Money | Tasks | Guests | More) is unchanged; this pa
   - **CI:** passed for a494de0, 04b691f and c5581c0.
   - **Live on staging (temporary tenants, removed after):** the export baseline passed 33 of 33 again. The import checks passed 57 of 57 at 390 and 1280 across Business, Household and Bridal: no Import in navigation or on the pages checked, Download Excel unchanged, and `/api/imports` returned 403 with no job written.
 
+
+### 2026-10-19 · Business simplification complete (274874c, f98c662, 0cf7a7b): Costs, simple Reports, Customers hidden
+
+- **Navigation (Distributor template):** `navigation` drops Customers; `navHidden: ["customers"]`; Expenses is labelled **Costs**.
+  - Phone: Dashboard · Orders · Inventory · Payments · More (Costs, Reports, Download Excel, Users, Subscription, Settings).
+  - Desktop: the same items. `/customers` shows "Page not available"; Import stays hidden.
+  - Customer data and the model are untouched: orders still take optional customer details and can link a saved customer.
+- **Costs** (`src/modules/expenses/index.js`, Distributor only):
+  - **Operating Expenses:** the month (‹ Oct 2026 ›) with its total, compact rows (name · date · amount, ⋯ Edit / Remove), + Add item with Expense, Amount and Date up front (category, paid by, reference, recurring and notes under More details). No activity, added or changed lines.
+  - **COGS:** each active product's current unit cost (⋯ Edit, + Add item for products without a cost). New `POST /api/products { action: "setUnitCost", productId, unitCost }` (products.manage + inventory.costs; `_lib/inventory.js setProductUnitCost`):
+    - sets the moving-average basis (productCosts.avgCostUnits), and inventoryValue follows;
+    - is audited as `product.unit_cost_set` with before / after;
+    - is used by the NEXT fulfilment's COGS snapshot; past order costs and movements are never rewritten.
+- **Reports** (`src/modules/reports/index.js`):
+  - Three totals and ONE Net Profit bar graph (by day ≤ 62 days, else by month; a loss below the line).
+  - A Products table (Product | Total Sales | Net Margin, highest sales first).
+  - Presets add Last 3 / Last 6 months and This year.
+  - No tabs, CSV or page download. Members without dashboard.financials see no money.
+  - Formulas (shared/finance.js):
+    - Total Sales = gross sales of fulfilled orders;
+    - Total Net Sales = gross − discounts − returns / refunds;
+    - Total Net Margin = net sales − COGS − operating expenses (`estimatedOperatingProfit`);
+    - Net Profit per period = the same formula per bucket (series `netProfit`);
+    - product Total Sales = the product's sales after its share of order discounts; product Net Margin = that − the product's COGS.
+  - Business has no payroll module, so operating expenses are counted once.
+- **Business Download Excel:** Orders, Payments, Users, Inventory, **Operating Expenses** (Date | Expense | Amount), **COGS** (Product | Unit Cost); no Customers.
+- **Tests:**
+  - **Unit:** 1679 pass (Costs 8, Reports 7, workbook 9 including COGS ₱136 at the next fulfilment and report reconciliation).
+  - **Live on staging (temporary `prev-dist-tmp` + `prev-home-tmp`, removed after):** 37 of 37 at 390 and 1280.
+    - Navigation; `/customers` unavailable.
+    - Costs add / edit (month total ₱3,500 → ₱4,799.50 → ₱4,899.50); COGS edit ₱50 → ₱43 and add Matcha ₱52.
+    - Reports totals equal the API (net margin = net sales − COGS − operating expenses; gross − discounts = net), and the product rows equal the API.
+    - The workbook opens in openpyxl with warnings as errors.
+    - `setUnitCost` from a Household returns 403; unit cost changes are audited.
+
 ## Plan (decisions made from the brief)
 
 ### Stage 1: Distributor
