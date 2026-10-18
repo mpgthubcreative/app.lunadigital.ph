@@ -228,18 +228,30 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     return items;
   }
 
+  // A Money row (2026-10-18): what is still owed is the figure that stands
+  // out; paid and planned lines are quiet.
+  //   Admiral Hotel                    ₱330k left
+  //   ₱800k total · Partial
+  //   Nice Print / Paid · ₱40k         Wedding Gown / ₱80k planned
   function row(r) {
     const late = r.kind === "supplier" && upcomingOf(r.record).some((p) => p.dueDate < today());
     const who = moneyLabel(r);
-    const total = r.total === null ? "—" : shortPeso(r.total);
-    const left = r.status === "paid" ? "" : r.remaining === null ? "amount not set" : `${shortPeso(r.remaining)} left`;
+    const word = late ? "Overdue" : STATUS[r.status];
+    const tone = late ? "danger" : STATUS_TONE[r.status];
+    const owes = (r.status === "unpaid" || r.status === "partly") && Number.isSafeInteger(r.remaining) && r.remaining > 0;
+    const sub =
+      r.status === "planned"
+        ? r.total === null ? html`<span class="wl-state-word" data-tone="info">Planned</span> · amount not set` : html`${shortPeso(r.total)} <span class="wl-state-word" data-tone="info">planned</span>`
+        : r.status === "paid"
+          ? html`<span class="wl-state-word" data-tone="success">Paid</span> · ${shortPeso(r.total ?? 0)}`
+          : html`${r.total === null ? "" : `${shortPeso(r.total)} total · `}<span class="wl-state-word${late ? " is-late" : ""}" data-tone="${tone}">${word}</span>`;
     const menu = menuItems(r);
     return html`<li class="wl-row hx-row wl-money-row" data-kind="${r.kind}" data-${r.kind === "supplier" ? "supplier" : r.kind === "planned" ? "planned" : "expense"}="${r.id}" data-state="${r.status}">
       <button type="button" class="wl-main hx-main" data-act="open" data-kind="${r.kind}" data-id="${r.id}">
         <span class="wl-name">${who}</span>
-        <span class="wl-sub hx-sub" data-role="status"><span class="wl-state-word${late ? " is-late" : ""}" data-tone="${late ? "danger" : STATUS_TONE[r.status]}">${late ? "Overdue" : STATUS[r.status]}</span>${left ? ` · ${left}` : ""}</span>
+        <span class="wl-sub hx-sub" data-role="status">${sub}</span>
       </button>
-      <span class="wl-amt hx-amt" data-role="total">${total}</span>
+      ${owes ? html`<span class="wl-amt hx-amt wl-owed${late ? " is-late" : ""}" data-role="left">${shortPeso(r.remaining)} left</span>` : html`<span class="wl-amt hx-amt" data-role="left"></span>`}
       ${menu.length ? html`<details class="line-menu"><summary class="btn btn-compact btn-ghost" aria-label="More for ${who}">⋯</summary><div class="line-menu-list" role="menu">${menu.map((i) => html`${i.danger ? html`<div class="menu-sep" role="separator"></div>` : ""}<button type="button" class="menu-item${i.danger ? " menu-danger" : ""}" role="menuitem" data-act="menu" data-kind="${r.kind}" data-x="${i.x}" data-id="${r.id}">${i.label}</button>`)}</div></details>` : html`<span class="wl-menu-gap"></span>`}
     </li>`;
   }
@@ -313,19 +325,24 @@ export function mount(container, session, { data = defaultData, toast = defaultT
       paid = [];
     }
     const plan = upcomingOf(s);
+    // Details (2026-10-18): what it is, then Total / Paid / Remaining (the
+    // figure the couple cares about), scheduled payments, and the payment
+    // history and activity folded away. Nothing is said twice.
+    const total = Number.isSafeInteger(s.agreedAmount) ? s.agreedAmount : null;
+    const balance = supplierBalance(s);
+    const shortDay = (d) => formatDayId(d).replace(/, \d{4}$/, "");
+    const proofWord = (e) => (e.proof ? (e.proof.contentType === "application/pdf" ? "PDF proof" : "Photo proof") : "No proof");
+    const hero = html`<div class="dd-money" data-role="money-figures">
+      <div class="dd-fig"><span>Total</span><b data-role="total">${total === null ? "Not set" : whole(total)}</b></div>
+      <div class="dd-fig"><span>Paid</span><b data-role="paid">${whole(s.paid ?? 0)}${total !== null ? html`<small> / ${whole(total)}</small>` : ""}</b></div>
+      ${balance !== null ? html`<div class="dd-fig dd-fig-main${balance > 0 ? "" : " is-done"}"><span>Remaining</span><b data-role="remaining">${whole(Math.max(0, balance))}</b></div>` : ""}
+    </div>`;
     detailsDialog({
-      title: `${categoryNameOf(state.categories, s.categoryId) || "Money"} · ${s.name}`,
+      title: s.name,
+      subtitle: [categoryNameOf(state.categories, s.categoryId), serviceLabel(s.service)].filter((x, i, a) => x && a.indexOf(x) === i && x !== "Other").join(" · "),
       badgeHtml: badge(s.status === "active" ? STATUS[paidState(s)] : "Removed from the list", s.status === "active" ? STATUS_TONE[paidState(s)] || "neutral" : "neutral"),
+      hero,
       rows: [
-        ["Category", categoryNameOf(state.categories, s.categoryId) || null],
-        ["Supplier", s.name],
-        ["Service", serviceLabel(s.service)],
-        ["Total", s.agreedAmount === null || s.agreedAmount === undefined ? "Not set" : money(s.agreedAmount)],
-        ["Paid", money(s.paid ?? 0)],
-        ["Remaining", money(supplierBalance(s))],
-        ["Status", STATUS[paidState(s)]],
-        ["Scheduled", s.upcomingCount ? `${money(s.upcoming ?? 0)} (${s.upcomingCount} payment${s.upcomingCount === 1 ? "" : "s"})` : null],
-        ["Next due", s.nextDue ? formatDayId(s.nextDue) : null],
         ["Contact person", s.contactPerson],
         ["Phone", s.phone],
         ["Email", s.email],
@@ -333,10 +350,11 @@ export function mount(container, session, { data = defaultData, toast = defaultT
         ["Notes", s.notes],
       ],
       sections: [
-        { title: "Payment history", lines: paid.map((e) => `${whole(e.amount)} paid ${formatDayId(e.date)}${e.method ? ` · ${EXPENSE_METHODS[e.method]?.label ?? e.method}` : ""}${e.reference ? ` · Ref ${e.reference}` : ""} · ${e.proof ? `proof: ${e.proof.contentType === "application/pdf" ? "PDF" : "photo"}` : "no proof"}`), empty: "Nothing paid yet." },
-        { title: "Payment schedule", lines: plan.map((p) => `${formatDayId(p.dueDate)} · ${whole(p.amount)}${p.description ? ` · ${p.description}` : ""}${p.dueDate < today() ? " · overdue" : ""}`), empty: "Nothing scheduled." },
+        ...(plan.length ? [{ title: "Scheduled payments", key: "scheduled", lines: plan.map((p) => ({ date: shortDay(p.dueDate), amount: whole(p.amount), sub: [p.description, p.dueDate < today() ? "Overdue" : ""].filter(Boolean).join(" · ") })) }] : []),
+        { title: "Payment history", key: "history", fold: { open: `View payment history${paid.length ? ` (${paid.length})` : ""}`, close: "Hide payment history" }, lines: [...paid].sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0)).map((e) => ({ date: shortDay(e.date), amount: whole(e.amount), sub: [e.method ? EXPENSE_METHODS[e.method]?.label ?? e.method : "", e.reference ? `Ref ${e.reference}` : "", proofWord(e)].filter(Boolean).join(" · ") })), empty: "Nothing paid yet." },
       ],
       activity: activityLines(s.history, timezone),
+      activityFold: true,
       actions: [],
       onAction: async () => false,
     });

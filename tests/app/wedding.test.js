@@ -152,10 +152,11 @@ describe("Money (Owner-pilot Bridal): ONE list of everything the wedding costs",
 
   it("grouped by category (budget-category order): the supplier / payee / description is the row, the status and what's left quiet under it; the category isn't repeated", async () => {
     await mountMoney();
-    const groups = [...container.querySelectorAll(".hx-group")].map((g) => [g.querySelector(".wl-group-title").textContent, [...g.querySelectorAll(".wl-money-row")].map((r) => [r.dataset.kind, r.querySelector(".wl-name").textContent, r.querySelector('[data-role="status"]').textContent.replace(/\s+/g, " ").trim(), r.querySelector('[data-role="total"]').textContent])]);
+    const groups = [...container.querySelectorAll(".hx-group")].map((g) => [g.querySelector(".wl-group-title").textContent, [...g.querySelectorAll(".wl-money-row")].map((r) => [r.dataset.kind, r.querySelector(".wl-name").textContent, r.querySelector('[data-role="status"]').textContent.replace(/\s+/g, " ").trim(), r.querySelector('[data-role="left"]').textContent])]);
+    // What is still owed is the figure on the right; paid / planned lines are quiet.
     expect(groups).toEqual([
-      ["Photo / Video", [["supplier", "ABC Photo Studio", "Partial · ₱60k left", "₱80k"]]],
-      ["Venue", [["planned", "No supplier yet", "Planned · ₱150k left", "₱150k"], ["expense", "Grab to venue", "Paid", "₱1.5k"]]],
+      ["Photo / Video", [["supplier", "ABC Photo Studio", "₱80k total · Partial", "₱60k left"]]],
+      ["Venue", [["planned", "No supplier yet", "₱150k planned", ""], ["expense", "Grab to venue", "Paid · ₱1.5k", ""]]],
     ]);
     expect(moneyGroups([{ categoryId: null, category: "", name: "x" }])).toEqual([{ key: "none", name: "Other", rows: [{ categoryId: null, category: "", name: "x" }] }]);
     expect(moneyLabel({ kind: "expense", name: null, record: { notes: "Bridal car fuel" } })).toBe("Bridal car fuel");
@@ -175,8 +176,9 @@ describe("Money (Owner-pilot Bridal): ONE list of everything the wedding costs",
     expect(menuOf('[data-supplier="supABCphoto01"]')).toEqual(["Edit", "Details", "Remove"]);
     expect(menuOf(`[data-expense="${OTHER.id}"]`)).toEqual(["Edit", "Details", "Remove"]);
     expect(menuOf('[data-planned="catVenue00001"]')).toEqual(["Edit", "Details", "Remove"]);
-    // The status reads quietly under the supplier.
-    expect(rowOf('[data-supplier="supABCphoto01"] [data-role="status"]').textContent.replace(/\s+/g, " ").trim()).toBe("Partial · ₱60k left");
+    // The status reads quietly under the supplier; what's left stands out.
+    expect(rowOf('[data-supplier="supABCphoto01"] [data-role="status"]').textContent.replace(/\s+/g, " ").trim()).toBe("₱80k total · Partial");
+    expect(rowOf('[data-supplier="supABCphoto01"] [data-role="left"]').textContent).toBe("₱60k left");
   });
 
   it("supplier Edit: one sheet — Category, Supplier, Total; Payments (paid · remaining · status, proofs, Record payment); Payment schedule; Save changes", async () => {
@@ -251,16 +253,28 @@ describe("Money (Owner-pilot Bridal): ONE list of everything the wedding costs",
     expect(data.attachExpenseProof).toHaveBeenLastCalledWith("e2aaaaaaaa", { contentType: "image/jpeg", dataBase64: "AAAA" });
   });
 
-  it("supplier Details is read-only: total / paid / remaining / status, payment history with proof, schedule; no buttons but Close", async () => {
+  it("supplier Details: name strongest (category · service under it, the status badge once); Total / Paid of total / Remaining; scheduled payments; payment history and activity folded; no repeated figures; Close only", async () => {
     await mountMoney(paidMoney());
     rowOf('[data-supplier="supABCphoto01"] [data-x="view"]').click();
     await flush();
     const d = document.querySelector('[data-role="details"]');
-    const field = (k) => [...d.querySelectorAll("dt")].find((x) => x.textContent === k)?.nextElementSibling.textContent;
-    expect([field("Total"), field("Paid"), field("Remaining"), field("Status")]).toEqual(["₱80,000.00", "₱20,000.00", "₱60,000.00", "Partial"]);
-    const lists = [...d.querySelectorAll('[data-role="section"]')].map((ul) => [...ul.children].map((li) => li.textContent));
-    expect(lists[0]).toEqual(["₱15,000 paid Oct 1, 2026 · GCash · Ref GC-1 · proof: PDF", "₱5,000 paid Oct 10, 2026 · Cash · no proof"]);
-    expect(lists[1][0]).toMatch(/^Dec 1, 2026 · ₱30,000/);
+    const t = (sel) => d.querySelector(sel).textContent.replace(/\s+/g, " ").trim();
+    expect(t(".dd-title")).toBe("ABC Photo Studio");
+    expect(t('[data-role="subtitle"]')).toMatch(/^Photo \/ Video/);
+    expect([t('[data-role="total"]'), t('[data-role="paid"]'), t('[data-role="remaining"]')]).toEqual(["₱80,000", "₱20,000 / ₱80,000", "₱60,000"]);
+    // Not repeated: no Status / Scheduled / Next due fields.
+    expect([...d.querySelectorAll("dt")].map((x) => x.textContent)).not.toEqual(expect.arrayContaining(["Status"]));
+    expect(d.textContent).not.toMatch(/Next due|\(1 payment\)/);
+    // Scheduled payments: date + amount (+ its description under it).
+    const sched = [...d.querySelectorAll('[data-role="section"]')][0];
+    expect(sched.closest("details")).toBeNull();
+    expect([...sched.querySelectorAll(".dd-line")].map((li) => [li.querySelector(".dd-date").textContent, li.querySelector(".dd-amt").textContent])[0]).toEqual(["Dec 1", "₱30,000"]);
+    // Payment history: closed by default; the toggle reads View … / Hide …; one line per payment with method · proof quiet under it.
+    const fold = d.querySelector('[data-role="fold-history"]');
+    expect(fold.open).toBe(false);
+    expect(fold.querySelector("summary").textContent.replace(/\s+/g, " ").trim()).toBe("View payment history (2)Hide payment history");
+    expect([...fold.querySelectorAll(".dd-line")].map((li) => [li.querySelector(".dd-date").textContent, li.querySelector(".dd-amt").textContent, li.querySelector(".dd-line-sub").textContent])).toEqual([["Oct 10", "₱5,000", "Cash · No proof"], ["Oct 1", "₱15,000", "GCash · Ref GC-1 · PDF proof"]]);
+    expect(d.querySelector('[data-role="fold-activity"]')?.open ?? false).toBe(false);
     expect([...d.querySelectorAll(".modal-footer button")].map((b) => b.textContent)).toEqual(["Close"]);
   });
 
@@ -325,7 +339,7 @@ describe("Money (Owner-pilot Bridal): ONE list of everything the wedding costs",
     expect(data.budgetApi).toHaveBeenCalledWith({ action: "createCategory", category: { name: "Wedding gown", budget: null } });
     expect(data.budgetApi).toHaveBeenCalledWith({ action: "updateCategory", categoryId: "catGown000001", changes: { budget: 8000000 } });
     const row = rowOf('[data-planned="catLights001"]');
-    expect([row.querySelector('[data-role="total"]').textContent, row.querySelector('[data-role="status"]').textContent.replace(/\s+/g, " ").trim()]).toEqual(["—", "Planned · amount not set"]);
+    expect([row.querySelector('[data-role="left"]').textContent, row.querySelector('[data-role="status"]').textContent.replace(/\s+/g, " ").trim()]).toEqual(["", "Planned · amount not set"]);
     row.querySelector('[data-x="edit"]').click();
     await flush();
     const f = lastForm();

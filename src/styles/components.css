@@ -3801,3 +3801,36 @@ tr.is-saving {
 @media (min-width: 720px) {
   .wl-money-row .wl-main { flex-direction: row; align-items: baseline; gap: var(--space-3); }
 }
+
+/* Details sheets: hierarchy (2026-10-18). Title strongest, the key figures
+   next (Remaining stands out), secondary lists folded and quiet. */
+.dd-head { align-items: flex-start; }
+.dd-titles { min-width: 0; }
+.dd-title { overflow-wrap: anywhere; font-size: 1.2rem; line-height: 1.25; }
+.dd-sub { margin: 2px 0 0; color: var(--text-muted); font-size: var(--text-sm); }
+.dd-money { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-2); margin: 0 0 var(--space-3); }
+.dd-fig { display: flex; flex-direction: column; gap: 2px; padding: var(--space-2) var(--space-3); border: 1px solid var(--border); border-radius: var(--radius); min-width: 0; }
+.dd-fig span { font-size: var(--text-sm); color: var(--text-muted); }
+.dd-fig b { font-size: 1.15rem; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.dd-fig b small { font-weight: 500; color: var(--text-muted); font-size: var(--text-sm); }
+.dd-fig-main { grid-column: 1 / -1; border-color: var(--luna-primary); background: var(--surface-2, transparent); }
+.dd-fig-main b { font-size: 1.6rem; color: var(--luna-primary); }
+.dd-fig-main.is-done b { color: var(--success); }
+.dd-lines { list-style: none; padding: 0; margin: 0 0 var(--space-3); }
+.dd-line { display: grid; grid-template-columns: 1fr auto; column-gap: var(--space-3); padding: var(--space-2) 0; border-top: 1px solid var(--border); }
+.dd-line:first-child { border-top: 0; }
+.dd-date { color: var(--text); }
+.dd-amt { text-align: right; font-variant-numeric: tabular-nums; }
+.dd-line-sub { grid-column: 1 / -1; color: var(--text-muted); font-size: var(--text-xs); }
+.dd-fold { margin: var(--space-2) 0; }
+.dd-fold > summary { cursor: pointer; min-height: 40px; display: flex; align-items: center; font-weight: 600; font-size: var(--text-sm); color: var(--luna-primary); list-style: none; }
+.dd-fold > summary::-webkit-details-marker { display: none; }
+.dd-fold > summary::after { content: "›"; margin-left: 6px; transition: transform 0.15s; }
+.dd-fold[open] > summary::after { transform: rotate(90deg); }
+.dd-fold .dd-when-open, .dd-fold[open] .dd-when-closed { display: none; }
+.dd-fold[open] .dd-when-open { display: inline; }
+.dd-fold.dd-quiet > summary { color: var(--text-muted); font-weight: 500; }
+/* Money rows: what is still owed stands out. */
+.wl-owed { font-weight: 700; color: var(--text); white-space: nowrap; }
+.wl-owed.is-late { color: var(--danger); }
+.wl-money-row .wl-name { overflow-wrap: anywhere; white-space: normal; }
