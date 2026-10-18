@@ -106,7 +106,7 @@ const serial = (day) => String(excelSerial({ y: +day.slice(0, 4), m: +day.slice(
 // (2) and dates the date style (5), both as numbers.
 function expectCleanSheet(bytes, name, { money = [], dates = [] } = {}) {
   const xml = sheetXml(bytes, name);
-  expect(xml, name).toMatch(/<pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"\/>|<sheetData><row r="1">/);
+  expect(xml, name).toContain('<pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/>');
   expect(xml, name).toMatch(/<autoFilter ref="A1:[A-Z]+\d+"\/>/);
   expect(xml, name).toMatch(/<cols>(<col [^>]*customWidth="1"\/>)+<\/cols>/);
   const header = /<row r="1">(.*?)<\/row>/.exec(xml)[1];
@@ -119,6 +119,7 @@ function expectCleanSheet(bytes, name, { money = [], dates = [] } = {}) {
   }
   expect(strFromU8(files(bytes)["xl/styles.xml"])).toContain('formatCode="&quot;₱&quot;#,##0.00;-&quot;₱&quot;#,##0.00"');
   expect(strFromU8(files(bytes)["xl/styles.xml"])).toContain('formatCode="mmm d, yyyy"');
+  expect(strFromU8(files(bytes)["xl/styles.xml"])).toContain('<cellStyle name="Normal" xfId="0" builtinId="0"/>');
 }
 // No JSON, arrays or field names in any cell.
 function expectReadable(bytes, forbidden = []) {
@@ -337,6 +338,8 @@ describe("Luna Business workbook", () => {
     expect(rowsOf(wb.bytes, "Customers")[0]).toEqual(["Customer", "Contact", "Total Orders", "Total Sales", "Outstanding Balance"]);
     expectCleanSheet(wb.bytes, "Orders", { money: ["F", "G", "H"], dates: ["B"] });
     expectCleanSheet(wb.bytes, "Inventory", { money: ["E"] });
+    expect(dataOf(wb.bytes, "Customers")).toEqual([]);
+    expectCleanSheet(wb.bytes, "Customers"); // an empty sheet still has its frozen header and filter
     const uids = Object.values(world.uids);
     expectReadable(wb.bytes, ["biz-a", ids.kopi, ids.choco, ids.orderId, "HAYST-KOPI", "Cost", "COGS", "Profit", ...uids]);
     // Another business sees none of it; staff can't download.

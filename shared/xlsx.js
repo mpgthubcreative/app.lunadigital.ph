@@ -185,7 +185,7 @@ const STYLES_XML =
   `<numFmts count="3"><numFmt numFmtId="166" formatCode="mmm d, yyyy"/><numFmt numFmtId="167" formatCode="mmm d, yyyy h:mm AM/PM"/><numFmt numFmtId="168" formatCode="&quot;₱&quot;#,##0.00;-&quot;₱&quot;#,##0.00"/></numFmts>` +
   `<fonts count="3"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="14"/><name val="Calibri"/></font></fonts>` +
   `<fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills><borders count="1"><border/></borders><cellStyleXfs count="1"><xf/></cellStyleXfs>` +
-  `<cellXfs count="11"><xf fontId="0"/><xf fontId="1" applyFont="1"/><xf fontId="0" numFmtId="168" applyNumberFormat="1"/><xf fontId="0" numFmtId="3" applyNumberFormat="1"/><xf fontId="0" numFmtId="10" applyNumberFormat="1"/><xf fontId="0" numFmtId="166" applyNumberFormat="1"/><xf fontId="0" numFmtId="167" applyNumberFormat="1"/><xf fontId="2" applyFont="1"/><xf fontId="1" numFmtId="168" applyFont="1" applyNumberFormat="1"/><xf fontId="1" numFmtId="3" applyFont="1" applyNumberFormat="1"/><xf fontId="1" numFmtId="10" applyFont="1" applyNumberFormat="1"/></cellXfs></styleSheet>`;
+  `<cellXfs count="11"><xf fontId="0"/><xf fontId="1" applyFont="1"/><xf fontId="0" numFmtId="168" applyNumberFormat="1"/><xf fontId="0" numFmtId="3" applyNumberFormat="1"/><xf fontId="0" numFmtId="10" applyNumberFormat="1"/><xf fontId="0" numFmtId="166" applyNumberFormat="1"/><xf fontId="0" numFmtId="167" applyNumberFormat="1"/><xf fontId="2" applyFont="1"/><xf fontId="1" numFmtId="168" applyFont="1" applyNumberFormat="1"/><xf fontId="1" numFmtId="3" applyFont="1" applyNumberFormat="1"/><xf fontId="1" numFmtId="10" applyFont="1" applyNumberFormat="1"/></cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>`;
 
 const coreXml = (meta) =>
   `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">` +
@@ -254,7 +254,8 @@ export function writeXlsx(sheets, meta = null) {
       })
       .join("");
     const split = headerRow + 1;
-    const views = header && rows.length > split ? `<sheetViews><sheetView workbookViewId="0"><pane ySplit="${split}" topLeftCell="A${split + 1}" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>` : "";
+    // A filtered table keeps its header frozen even with no rows yet.
+    const views = header && (rows.length > split || s.filter) ? `<sheetViews><sheetView workbookViewId="0"><pane ySplit="${split}" topLeftCell="A${split + 1}" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>` : "";
     const widths = columns.some((c) => c && c.width)
       ? `<cols>${columns.map((c, k) => (c && c.width ? `<col min="${k + 1}" max="${k + 1}" width="${Math.min(80, Math.max(4, Number(c.width) || 10))}" customWidth="1"/>` : "")).join("")}</cols>`
       : "";
