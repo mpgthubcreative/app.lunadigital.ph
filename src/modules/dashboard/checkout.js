@@ -91,7 +91,7 @@ export function mountCheckout(host, session, deps) {
     const out = (p.available ?? 0) <= 0;
     const shown = state.text.get(p.id) ?? (q ? formatQuantity(q) : "0");
     return html`<li class="co-row${q ? " is-picked" : ""}${out ? " is-out" : ""}" data-product="${p.id}">
-      <span class="co-info"><span class="co-name">${p.name}</span><span class="co-sub">${p.sku} · ${money(p.sellingPrice)} · <span data-role="left">${out ? "Out of stock" : `${formatQuantity(Math.max(0, left(p)))} ${unitOf(p)} left`}</span></span>${l.error ? html`<span class="form-error">${l.error}</span>` : ""}</span>
+      <span class="co-info"><span class="co-name">${p.name}</span><span class="co-sub">${p.sku} · ${money(p.sellingPrice)} · <span data-role="left">${out ? "Out of stock" : `${formatQuantity(Math.max(0, left(p)))} ${unitOf(p)} left`}</span></span><span class="form-error" data-role="co-qty-error" ${l.error ? "" : "hidden"}>${l.error || ""}</span></span>
       <span class="co-qty">
         <button type="button" class="co-step" data-act="co-dec" data-id="${p.id}" aria-label="One less ${p.name}" ${q > 0 ? "" : "disabled"}>−</button>
         <input class="co-num" data-role="co-num" data-id="${p.id}" inputmode="decimal" value="${shown}" aria-label="Quantity of ${p.name}" autocomplete="off" />
@@ -119,6 +119,9 @@ export function mountCheckout(host, session, deps) {
       const l = lineOf(p);
       const q = l.quantity || 0;
       li.classList.toggle("is-picked", q > 0);
+      const err = li.querySelector('[data-role="co-qty-error"]');
+      err.textContent = l.error || "";
+      err.hidden = !l.error;
       li.querySelector('[data-role="left"]').textContent = (p.available ?? 0) <= 0 ? "Out of stock" : `${formatQuantity(Math.max(0, left(p)))} ${unitOf(p)} left`;
       li.querySelector('[data-act="co-dec"]').disabled = !(q > 0);
       li.querySelector('[data-act="co-inc"]').disabled = !((l.quantity ?? 0) + QTY_SCALE <= (p.available ?? 0));

@@ -132,6 +132,12 @@ describe("Distributor: the Dashboard is the checkout", () => {
     box.value = "1.5";
     box.dispatchEvent(new Event("input", { bubbles: true }));
     expect(co('[data-act="co-create"]').disabled).toBe(true);
+    const why = rowOf("p2").querySelector('[data-role="co-qty-error"]');
+    expect(why.hidden).toBe(false); // the reason shows while typing
+    expect(why.textContent).not.toBe("");
+    box.value = "2";
+    box.dispatchEvent(new Event("input", { bubbles: true }));
+    expect(why.hidden).toBe(true);
   });
 
   it("Create order: ONE order through the same orders create action (walk-in, not fulfilled); a double tap sends once; the cart resets and the figures reload", async () => {
