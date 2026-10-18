@@ -895,6 +895,35 @@ The accepted Bridal design (Money | Tasks | Guests | More) is unchanged; this pa
   - **Unit:** 1651 pass (Money tests rewritten for the grouped layout).
   - **Live (temporary `pbm-wed-tmp`, removed):** 12/12 at 390 and 1280: Reception / Admiral Hotel ₱800k Partial · ₱330k left; Printing / MV Prints ₱40k Unpaid; Crew Meals / Planned ₱30k; Transportation / Bridal car fuel ₱3.5k Paid. Spent ₱473.5k, To pay ₱370k; the sample budget is reached from + Add; no sideways scroll.
 
+
+### 2026-10-18 · Hierarchy refinements + Business daily-use simplification (e94f8c6, 048d094)
+
+- **Hierarchy (e94f8c6):** page subtitles / hint paragraphs removed on Bills, Categories and the Grocery sample view. Bridal Money Details' Paid figure shows "of ₱800,000" as a quiet second line.
+- **Business Dashboard = checkout:**
+  - **Figures:** Total sales, Total orders (fulfilled in the hint) and Gross profit (dashboard.financials only). Unpaid, Needs attention, the Inventory summary and the Orders summary are off the screen.
+  - **Fewer reads:** the screen fetches only these figures (SCREEN_WIDGETS), with no list queries or live counts.
+  - **Workbook:** the Dashboard workbook keeps every widget, plus Gross profit.
+- **Checkout:**
+  - **Products:** one row per active product: name, SKU · price · "X left", and a 44px − qty + (a quantity can also be typed). Search matches name or SKU.
+  - **Summary:** line subtotals, total items and total.
+  - **Customer:** optional and folded: name (blank = Walk-in), source (default Walk-in) and a note.
+  - **Create order:** disabled while the cart is empty. It posts the existing orders `create` with one idempotency key per order, so the order is reserved and stays open (pending) in Orders. Fulfillment stays in Orders.
+- **Order Details:**
+  - **Header:** the number, with "Fulfilled · Paid" under it.
+  - **Customer:** shown only when there is one; a plain walk-in shows its source.
+  - **Items and totals:** one stacked line per product ("5 pcs × ₱75 … ₱375"), no tables. Total is the strongest figure; Balance shows only if something is owed; COGS / Gross profit are quiet.
+  - **Payments:** date, then amount · method, then Ref / screenshot, with a per-payment ⋯ for view / verify / edit / remove.
+  - **Activity:** folded.
+  - **Footer:** Edit and Close; Record payment / Mark fulfilled / Cancel / Delete sit under ⋯ More.
+- **Inventory Details:**
+  - **Fields:** "SKU · Name", a Stock left box, then Category, Unit and Selling price. In stock / set aside / reorder / status / costs / movement count and the cost paragraph are no longer shown; the data is unchanged.
+  - **History:** folded "View stock history", read only when opened, as stacked lines.
+  - **Footer:** Receive / Adjust (Starting stock before any movement) / Edit product (Delete only if never stocked), with Close quiet.
+- **Tests:**
+  - **Unit:** 1655 pass.
+  - **Live (temporary `prev-dist-tmp` + the prev-* review tenants, all removed):** 12 of 13 checks passed at 390 and 1280. The 13th failed only because the check's regex expected "GC-LIVE-1"; the server stores refs without dashes ("GCLIVE1"), so the screen was correct.
+  - **Checked live:** a double-tapped Create order made exactly one order: ORD-20261018-001, Walk-in, pending/unpaid, ₱2,875, Cola reserved +5. It shows in Orders; after payment + fulfil, Details reads "Fulfilled · Paid". There was no sideways scroll.
+
 ## Plan (decisions made from the brief)
 
 ### Stage 1: Distributor
