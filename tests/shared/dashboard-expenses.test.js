@@ -139,7 +139,7 @@ describe("Expenses module registration", () => {
     const access = { entitlements: growth(), permissions: resolvePermissions("owner") };
     expect(access.entitlements.modules.expenses).toBe(true);
     expect(canUseModule(access, "expenses")).toBe(true);
-    expect(resolveNavigation(access).find((m) => m.id === "expenses").label).toBe("Operating Expenses");
+    expect(resolveNavigation(access).find((m) => m.id === "expenses").label).toBe("Costs");
     expect(canUseModule({ entitlements: growth(), permissions: resolvePermissions("staff") }, "expenses")).toBe(false);
   });
 

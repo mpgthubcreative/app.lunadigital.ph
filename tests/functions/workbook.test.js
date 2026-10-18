@@ -24,8 +24,10 @@ import { createWeddingSetupHandler } from "../../netlify/functions/wedding-setup
 import { createWeddingSuppliersHandler } from "../../netlify/functions/wedding-suppliers.js";
 import { createWeddingCrewMealsHandler } from "../../netlify/functions/wedding-crew-meals.js";
 import { createWeddingProgramHandler } from "../../netlify/functions/wedding-program.js";
+import { createProductsHandler } from "../../netlify/functions/products.js";
+import { createReportsHandler } from "../../netlify/functions/reports.js";
 import { createBusiness, addMember, ensureAuthUser } from "../../netlify/functions/_lib/provisioning.js";
-import { createOrder } from "../../netlify/functions/_lib/orders.js";
+import { createOrder, fulfillOrder } from "../../netlify/functions/_lib/orders.js";
 import { recordPayment } from "../../netlify/functions/_lib/payments.js";
 import { createProduct, recordMovement } from "../../netlify/functions/_lib/inventory.js";
 import { tenantDb } from "../../netlify/functions/_lib/tenant-db.js";
@@ -65,6 +67,7 @@ const HANDLERS = {
   suppliers: createWeddingSuppliersHandler,
   crew: createWeddingCrewMealsHandler,
   program: createWeddingProgramHandler,
+  products: createProductsHandler,
 };
 async function api(kind, uid, businessId, body) {
   const res = await HANDLERS[kind](deps())({ ...request({ uid, businessId, method: "POST" }), body: JSON.stringify(body) });
@@ -319,15 +322,18 @@ describe("Luna Business workbook", () => {
     const entitlements = world.db.docs.get("businesses/biz-a").entitlements;
     const o = await createOrder({ ...common, business, entitlements, input: { customer: { name: "Marian Santos" }, source: "viber", items: [{ productId: kopi, quantity: Q(2) }, { productId: choco, quantity: Q(1) }] }, idempotencyKey: "wb-order-key-000001", canDiscount: false, canLinkCustomers: false, now: clock });
     await recordPayment({ ...common, bucket: world.bucket, business, orderId: o.orderId, input: { amount: 10000, method: "gcash", reference: "GC-77" }, canVerify: true, now: clock });
-    return { kopi, choco, orderId: o.orderId, orderNumber: o.orderNumber };
+    // Costs: two operating expenses this month, one last month; Kopi's unit cost set to ₱43.
+    for (const [date, payee, amount] of [["2026-10-01", "Rent", 250000], ["2026-10-05", "Water", 100000], ["2026-09-30", "Old rent", 250000]]) ok(await api("expenses", world.uids.ownera, "biz-a", { action: "create", expense: { date, category: "rent", amount, method: "cash", payee } }), 201);
+    ok(await api("products", world.uids.ownera, "biz-a", { action: "setUnitCost", productId: kopi, unitCost: 4300 }));
+    return { kopi, choco, orderId: o.orderId, orderNumber: o.orderNumber, business, common };
   }
 
-  it("Orders (items as text), Payments, Users (no UID), Inventory, Customers; no costs; this business only", async () => {
+  it("Orders (items as text), Payments, Users (no UID), Inventory, Operating Expenses, COGS; no Customers; this business only", async () => {
     const ids = await shop();
     const wb = await workbook(world.uids.ownera, "biz-a", { range: "month" });
     expect(wb.status).toBe(200);
     expect(wb.fileName).toMatch(/^Luna-Business-[A-Za-z0-9-]+-Oct-2026\.xlsx$/);
-    expect(sheetNames(wb.bytes)).toEqual(["Orders", "Payments", "Users", "Inventory", "Customers"]);
+    expect(sheetNames(wb.bytes)).toEqual(["Orders", "Payments", "Users", "Inventory", "Operating Expenses", "COGS"]);
     expect(rowsOf(wb.bytes, "Orders")[0]).toEqual(["Order No.", "Date", "Customer", "Source", "Items", "Total", "Paid", "Balance", "Status", "Created By"]);
     const [order] = dataOf(wb.bytes, "Orders");
     expect(order).toEqual([ids.orderNumber, serial("2026-10-18"), "Marian Santos", "Viber", "Hayst Kopi × 2; Hayst Choco × 1", "230", "100", "130", "Pending · Partially paid", "Carlo Reyes"]);
@@ -335,17 +341,53 @@ describe("Luna Business workbook", () => {
     expect(rowsOf(wb.bytes, "Users")[0]).toEqual(["Name", "Email", "Role", "Status"]);
     expect(dataOf(wb.bytes, "Users").map((r) => r[2])).toContain("Owner");
     expect(dataOf(wb.bytes, "Inventory")).toEqual([["Hayst Choco", "Coffee", "pcs", "19", "80"], ["Hayst Kopi", "Coffee", "pcs", "18", "75"]]);
-    expect(rowsOf(wb.bytes, "Customers")[0]).toEqual(["Customer", "Contact", "Total Orders", "Total Sales", "Outstanding Balance"]);
+    expect(rowsOf(wb.bytes, "Operating Expenses")[0]).toEqual(["Date", "Expense", "Amount"]);
+    expect(dataOf(wb.bytes, "Operating Expenses")).toEqual([[serial("2026-10-01"), "Rent", "2500"], [serial("2026-10-05"), "Water", "1000"]]);
+    expect(rowsOf(wb.bytes, "Operating Expenses").at(-1)).toEqual(["Total", "", "3500"]);
+    expect(rowsOf(wb.bytes, "COGS")[0]).toEqual(["Product", "Unit Cost"]);
+    expect(dataOf(wb.bytes, "COGS").sort()).toEqual([["Hayst Choco", "50"], ["Hayst Kopi", "43"]]);
     expectCleanSheet(wb.bytes, "Orders", { money: ["F", "G", "H"], dates: ["B"] });
     expectCleanSheet(wb.bytes, "Inventory", { money: ["E"] });
-    expect(dataOf(wb.bytes, "Customers")).toEqual([]);
-    expectCleanSheet(wb.bytes, "Customers"); // an empty sheet still has its frozen header and filter
+    expectCleanSheet(wb.bytes, "Operating Expenses", { money: ["C"], dates: ["A"] });
+    expectCleanSheet(wb.bytes, "COGS", { money: ["B"] });
+    expect(sheetNames(wb.bytes)).not.toContain("Customers");
     const uids = Object.values(world.uids);
-    expectReadable(wb.bytes, ["biz-a", ids.kopi, ids.choco, ids.orderId, "HAYST-KOPI", "Cost", "COGS", "Profit", ...uids]);
+    expectReadable(wb.bytes, ["biz-a", ids.kopi, ids.choco, ids.orderId, "HAYST-KOPI", "Average", "avgCost", "Stock value", "inventoryValue", "Profit", ...uids]);
     // Another business sees none of it; staff can't download.
     const b = await workbook(world.uids.ownerb, "biz-b", { range: "all" });
     expect(allText(b.bytes)).not.toContain("Marian Santos");
     expect((await workbook(world.uids.staffa, "biz-a", {})).status).toBe(403);
+  });
+
+  it("COGS unit cost: Owner sets it (audited, inventory value follows, used by the NEXT fulfilment); staff and members without cost access can't", async () => {
+    const ids = await shop();
+    expect(world.db.docs.get(`businesses/biz-a/productCosts/${ids.kopi}`)).toMatchObject({ avgCostUnits: 4300 * 10000, inventoryValue: 20 * 4300 }); // 20 on hand (2 reserved) × ₱43
+    const audit = [...world.db.docs.entries()].find(([k, v]) => k.startsWith("businesses/biz-a/auditLog/") && v.type === "product.unit_cost_set");
+    expect(audit[1]).toMatchObject({ productId: ids.kopi, before: { unitCost: 5000 }, after: { unitCost: 4300 } });
+    expect((await api("products", world.uids.staffa, "biz-a", { action: "setUnitCost", productId: ids.kopi, unitCost: 100 })).status).toBe(403);
+    const x = await ensureAuthUser({ auth: world.auth, email: "nocost@t.test", name: "No Cost" });
+    await addMember({ ...world, businessId: "biz-a", uid: x.uid, email: x.email, name: "No Cost", roleTemplate: "manager", permissionOverrides: { revoke: ["inventory.costs"] } });
+    expect((await api("products", x.uid, "biz-a", { action: "setUnitCost", productId: ids.kopi, unitCost: 100 })).status).toBe(403);
+    for (const bad of [0, -5, 12.5, "43"]) expect((await api("products", world.uids.ownera, "biz-a", { action: "setUnitCost", productId: ids.kopi, unitCost: bad })).status).toBe(400);
+    expect((await api("products", world.uids.ownerb, "biz-b", { action: "setUnitCost", productId: ids.kopi, unitCost: 100 })).status).toBe(404);
+    // Fulfil the order: Kopi × 2 at ₱43 + Choco × 1 at ₱50 = ₱136 COGS.
+    await fulfillOrder({ ...ids.common, business: ids.business, orderId: ids.orderId, now: clock });
+    const lines = world.db.docs.get(`businesses/biz-a/orderCosts/${ids.orderId}`).lines;
+    expect(lines.reduce((t, l) => t + l.costConsumed, 0)).toBe(13600);
+  });
+
+  it("Reports reconcile: Total Net Margin = net sales − COGS − operating expenses; product Net Margin = product sales − product COGS", async () => {
+    const ids = await shop();
+    await fulfillOrder({ ...ids.common, business: ids.business, orderId: ids.orderId, now: clock });
+    const res = await createReportsHandler(deps())({ ...request({ uid: world.uids.ownera, businessId: "biz-a", method: "GET" }), queryStringParameters: { from: "2026-10-01", to: "2026-10-18" } });
+    const r = JSON.parse(res.body);
+    expect(r.overview).toMatchObject({ grossSales: 23000, netSales: 23000, cogs: 13600, operatingExpenses: 350000 });
+    expect(r.overview.estimatedOperatingProfit).toBe(23000 - 13600 - 350000);
+    const byName = Object.fromEntries(r.products.rows.map((p) => [p.name, p]));
+    expect(byName["Hayst Kopi"]).toMatchObject({ netSales: 15000, cogs: 8600, grossProfit: 6400 });
+    expect(byName["Hayst Choco"]).toMatchObject({ netSales: 8000, cogs: 5000, grossProfit: 3000 });
+    expect(r.series.reduce((t, s) => t + (s.netProfit ?? 0), 0)).toBe(r.overview.estimatedOperatingProfit);
+    expect(r.products.rows.map((p) => p.name)).toEqual(["Hayst Kopi", "Hayst Choco"]); // highest sales first
   });
 
   it("the Master Backup is not for customers: Owner and Admin get 403 for their own business", async () => {

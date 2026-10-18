@@ -29,7 +29,7 @@ import {
   InventoryError,
   MOVEMENT_TYPES,
 } from "../../../shared/inventory.js";
-import { inventoryValue, formatQuantity, UNITS } from "../../../shared/quantity.js";
+import { inventoryValue, formatQuantity, UNITS, isCentavos, centavosToCostUnits, costUnitsToCentavos, MAX_CENTAVOS } from "../../../shared/quantity.js";
 import { adjustCurrentMetrics } from "./metrics.js";
 import { prepareNotifications } from "./notifications.js";
 
@@ -150,6 +150,29 @@ export async function updateProduct({ db, tenant, FieldValue, productId, changes
     audit(tx, tenant, FieldValue, { type: "product.updated", productId, actor, before, after: data });
     notes.commit({ FieldValue });
     return { productId, product: { ...merged, isLowStock: low } };
+  }, TX_OPTIONS);
+}
+
+// Owner pilot (2026-10-19), Costs → COGS: the product's CURRENT unit cost,
+// set directly. It becomes the cost basis from now on: the next fulfilled
+// order's COGS snapshot uses it, and later stock receipts average from it.
+// Nothing recorded is rewritten (past order costs, movements). The change is
+// in the audit log with before / after (the costing history stays there).
+// inventoryValue (the sum() the inventory value reads) follows.
+export async function setProductUnitCost({ db, tenant, FieldValue, productId, unitCost, actor }) {
+  if (!isCentavos(unitCost) || unitCost === 0 || unitCost > MAX_CENTAVOS) throw new InventoryError("invalid-cost", "Enter a unit cost more than ₱0");
+  const { product: productRef, costs: costRef } = refs(tenant, productId);
+  return db.runTransaction(async (tx) => {
+    const [snap, costSnap] = await Promise.all([tx.get(productRef), tx.get(costRef)]);
+    if (!snap.exists) throw new InventoryError("not-found", "Product not found");
+    const p = snap.data();
+    const before = costSnap.exists ? costSnap.data().avgCostUnits ?? null : null;
+    const after = centavosToCostUnits(unitCost);
+    if (before === after) return { productId, unitCost, unchanged: true };
+    const stamp = FieldValue.serverTimestamp();
+    tx.set(costRef, { schemaVersion: PRODUCT_SCHEMA_VERSION, productId, avgCostUnits: after, inventoryValue: inventoryValue(p.onHand || 0, after), unitCostSetBy: actor, unitCostSetAt: stamp, updatedAt: stamp }, { merge: true });
+    audit(tx, tenant, FieldValue, { type: "product.unit_cost_set", productId, actor, before: { unitCost: before === null ? null : costUnitsToCentavos(before), avgCostUnits: before }, after: { unitCost, avgCostUnits: after } });
+    return { productId, unitCost };
   }, TX_OPTIONS);
 }
 

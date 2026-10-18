@@ -434,13 +434,12 @@ describe("navigation", () => {
   const nav = (t, role) => resolveNavigation(access(t, role)).map((m) => `${m.path} ${m.label}`);
 
   it("Distributor: unchanged order and labels for every role", () => {
-    // Reports and Imports placeholders return when each is built; Customers
-    // is back since Phase 9 (distributor v2).
-    // Expenses (Phase 10) is labelled "Operating Expenses" for Distributor;
-    // Staff hold no expenses.* permission, so they don't see it.
-    expect(nav("distributor", "owner")).toEqual(["/ Dashboard", "/orders Orders", "/payments Payments", "/inventory Inventory", "/customers Customers", "/expenses Operating Expenses", "/reports Reports", "/users Users", "/settings Settings"]);
-    expect(nav("distributor", "staff")).toEqual(["/ Dashboard", "/orders Orders", "/payments Payments", "/inventory Inventory", "/customers Customers"]);
-    expect(nav("distributor", "manager")).toEqual(["/ Dashboard", "/orders Orders", "/payments Payments", "/inventory Inventory", "/customers Customers", "/expenses Operating Expenses", "/reports Reports", "/users Users", "/settings Settings"]);
+    // Owner pilot (2026-10-19): Customers is hidden (navHidden; still
+    // entitled for order details) and Expenses is the "Costs" page; Imports
+    // isn't launched. Staff hold no expenses.* permission, so no Costs.
+    expect(nav("distributor", "owner")).toEqual(["/ Dashboard", "/orders Orders", "/payments Payments", "/inventory Inventory", "/expenses Costs", "/reports Reports", "/users Users", "/settings Settings"]);
+    expect(nav("distributor", "staff")).toEqual(["/ Dashboard", "/orders Orders", "/payments Payments", "/inventory Inventory"]);
+    expect(nav("distributor", "manager")).toEqual(["/ Dashboard", "/orders Orders", "/payments Payments", "/inventory Inventory", "/expenses Costs", "/reports Reports", "/users Users", "/settings Settings"]);
   });
 
   it("non-Distributor workspaces get no Distributor navigation, and their own names", () => {

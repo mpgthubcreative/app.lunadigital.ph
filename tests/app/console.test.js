@@ -153,11 +153,13 @@ describe("console views", () => {
 });
 
 describe("tenant terminology in the business app", () => {
-  it("a Distributor that calls customers Dealers sees 'Dealers' in the navigation (same path)", () => {
+  it("Customers is hidden in Business (Owner pilot 2026-10-19), whatever the customer terminology", () => {
     const s = sessionFixture();
     s.config = resolveTenantConfig({ terminology: { customer: "dealer" } }, "distributor");
     renderShell(document.getElementById("app"), s);
-    const link = [...document.querySelectorAll(".nav-link")].find((a) => a.getAttribute("href") === "/customers");
-    expect(link.textContent.trim()).toBe("Dealers");
+    const labels = [...document.querySelectorAll(".nav-link")].map((a) => a.textContent.trim());
+    expect([...document.querySelectorAll(".nav-link")].some((a) => a.getAttribute("href") === "/customers")).toBe(false);
+    expect(labels).not.toContain("Dealers");
+    expect(labels).not.toContain("Customers");
   });
 });

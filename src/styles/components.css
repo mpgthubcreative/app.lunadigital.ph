@@ -3986,3 +3986,31 @@ tr.is-saving {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: var(--space-3);
 }
+
+/* Costs (Luna Business): two sections, the number first. */
+.costs { display: grid; gap: var(--space-5); max-width: 720px; }
+.cost-section { margin: 0; }
+.cost-head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-3); margin: 0 0 var(--space-2); }
+.cost-title { margin: 0; font-size: var(--text-lg); font-weight: 700; }
+.cost-total { font-size: var(--text-xl); font-variant-numeric: tabular-nums; }
+.cost-month { margin: 0 0 var(--space-2); color: var(--text-muted); }
+.cost-month span { min-width: 6.5em; text-align: center; font-weight: 600; }
+.cost-add { margin-top: var(--space-2); }
+
+/* Reports (Luna Business): three totals, one graph, one product table. */
+.rp-range { margin: calc(-1 * var(--space-2)) 0 var(--space-3); }
+.rp-totals { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-3); margin: 0 0 var(--space-4); }
+.rp-total { display: flex; flex-direction: column; gap: 2px; min-width: 0; padding: var(--space-3); border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
+.rp-label { font-size: var(--text-sm); color: var(--text-muted); }
+.rp-value { font-size: var(--text-lg); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.rp-total.is-main { border-color: var(--luna-primary); }
+.rp-total.is-main .rp-value { font-size: var(--text-xl); }
+.rp-value.is-empty { color: var(--text-muted); font-size: var(--text-base); }
+.rp-value.is-loss { color: var(--danger); }
+.rp-section { margin: 0 0 var(--space-4); }
+.rp-title { margin: 0 0 var(--space-2); font-size: var(--text-lg); }
+.rp-title .hint { font-size: var(--text-sm); font-weight: 400; color: var(--text-muted); }
+@media (max-width: 560px) {
+  .rp-totals { grid-template-columns: 1fr 1fr; }
+  .rp-total.is-main { grid-column: 1 / -1; }
+}

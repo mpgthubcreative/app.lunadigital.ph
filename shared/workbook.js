@@ -7,7 +7,7 @@
 //              Grocery List
 //   Bridal     Money, Payments, Tasks, Guests, Party Members, Seating,
 //              Roles, Crew Meals, Music & Program, Wedding Setup
-//   Business   Orders, Payments, Users, Inventory, Customers
+//   Business   Orders, Payments, Users, Inventory, Operating Expenses, COGS
 //
 // Range (Household / Business; a wedding is one event, always everything):
 //   month   this month in the business's timezone (the default)

@@ -3,13 +3,15 @@
 //   { action: "update", productId, changes: { ...any of the above } }
 //   { action: "setStatus", productId, status: "active" | "inactive" }
 //   { action: "delete", productId }              (only never-used products)
+//   { action: "setUnitCost", productId, unitCost }  Costs → COGS: the
+//        product's current unit cost (centavos); also needs inventory.costs
 // Quantities are scaled integers and money is integer centavos
-// (shared/quantity.js). Balances and costs can't be set here at all.
+// (shared/quantity.js). Balances can't be set here at all.
 
 import { respond, withErrorHandling, requireMethod, parseJsonBody, RequestError } from "./_lib/http.js";
 import { getAdmin } from "./_lib/firebase-admin.js";
 import { requireTenant } from "./_lib/tenant.js";
-import { createProduct, updateProduct, setProductStatus, deleteUnusedProduct } from "./_lib/inventory.js";
+import { createProduct, updateProduct, setProductStatus, deleteUnusedProduct, setProductUnitCost } from "./_lib/inventory.js";
 import { actorOf, only, mapInventoryErrors } from "./_lib/inventory-http.js";
 
 const SHAPES = {
@@ -17,6 +19,7 @@ const SHAPES = {
   update: ["action", "productId", "changes"],
   setStatus: ["action", "productId", "status"],
   delete: ["action", "productId"],
+  setUnitCost: ["action", "productId", "unitCost"],
 };
 
 // Product fields everyone with inventory.view may see (never costs).
@@ -34,6 +37,7 @@ export function createProductsHandler({ getAdmin: loadAdmin }) {
     const shape = SHAPES[body && body.action];
     if (!shape) throw new RequestError("invalid-request", "Unknown action.", 400);
     only(body, shape);
+    if (body.action === "setUnitCost" && ctx.permissions["inventory.costs"] !== true) throw new RequestError("forbidden", "You can't change product costs.", 403);
 
     const common = { db, tenant: ctx.tenant, FieldValue: admin.firestore.FieldValue, actor: actorOf(ctx) };
     const result = await mapInventoryErrors(async () => {
@@ -42,6 +46,8 @@ export function createProductsHandler({ getAdmin: loadAdmin }) {
           return createProduct({ ...common, input: body.product });
         case "update":
           return updateProduct({ ...common, productId: body.productId, changes: body.changes });
+        case "setUnitCost":
+          return setProductUnitCost({ ...common, productId: body.productId, unitCost: body.unitCost });
         case "setStatus":
           return setProductStatus({ ...common, productId: body.productId, status: body.status });
         default:
@@ -53,6 +59,7 @@ export function createProductsHandler({ getAdmin: loadAdmin }) {
       productId: result.productId,
       ...(result.product ? { product: publicProduct(result.productId, result.product) } : {}),
       ...(result.deleted ? { deleted: true } : {}),
+      ...(body.action === "setUnitCost" ? { unitCost: result.unitCost, ...(result.unchanged ? { unchanged: true } : {}) } : {}),
     });
   });
 }

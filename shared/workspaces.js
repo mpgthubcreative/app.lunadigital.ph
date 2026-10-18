@@ -91,7 +91,13 @@ const TEMPLATES = [
     modules: [...CORE, "orders", "payments", "inventory", "customers", "expenses", "reports", "imports"],
     // Phase 18.5: navigation follows the daily story (Monitor → Work →
     // Analyze → Manage); phones show Dashboard + mobileTabs + More.
-    navigation: ["dashboard", "orders", "payments", "inventory", "customers", "expenses", "reports", "imports", "users", "settings"],
+    // Owner pilot (2026-10-19, Business simplification): Customers is kept
+    // (entitled; orders still take optional customer details and may link a
+    // saved customer) but has no page or menu entry; Operating Expenses + COGS
+    // are one "Costs" page. Phone: Dashboard · Orders · Inventory · Payments
+    // + More (Costs, Reports, Users, Download Excel, Settings).
+    navigation: ["dashboard", "orders", "payments", "inventory", "expenses", "reports", "imports", "users", "settings"],
+    navHidden: ["customers"],
     mobileTabs: ["orders", "inventory", "payments"],
     dashboard: {
       // Selected period first, then current operations (Phase 12.5). The
@@ -102,7 +108,7 @@ const TEMPLATES = [
       widgets: ["netSales", "ordersToday", "grossProfit", "fulfilledOrders", "receivablesOutstanding", "unpaidOrders", "pendingFulfillment", "lowStock", "paymentsToVerify", "ordersPending", "ordersPreparing", "ordersReady", "inventorySummary", "recentOrders", "lowStockItems"],
       empty: { title: "Nothing to show yet", body: "Your dashboard fills in as your business uses Luna." },
     },
-    labels: { modules: { expenses: "Operating Expenses" } },
+    labels: { modules: { expenses: "Costs" } },
     settings: { orderPrefix: "ORD" },
     plannedModules: [
       { id: "suppliers", name: "Suppliers" },

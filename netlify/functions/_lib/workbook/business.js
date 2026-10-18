@@ -4,11 +4,16 @@
 //   Payments   payments received in the range (voided ones left out)
 //   Users      name, email (or login ID), role, status; never a Firebase UID
 //   Inventory  the active products as the Inventory screen shows them
-//   Customers  active customers with Luna's own order totals
-// Each sheet only with its module and view permission. No costs or profit:
-// this is the everyday file, not a finance report.
+//   Operating Expenses  the Costs page's expenses in the range
+//   COGS       each active product's current unit cost (inventory.costs)
+// Customers is hidden in Business for now (Owner pilot, 2026-10-19): no
+// sheet; customer details stay on each order.
+// Each sheet only with its module and view permission (COGS also needs
+// inventory.costs). No averages, stock value or profit: unit costs only.
 
-import { ordersQuery, paymentsQuery, productsQuery, customersQuery } from "../../../../shared/list-queries.js";
+import { ordersQuery, paymentsQuery, productsQuery, expensesQuery } from "../../../../shared/list-queries.js";
+import { expenseCategoryLabel } from "../../../../shared/expenses.js";
+import { costUnitsToCentavos } from "../../../../shared/quantity.js";
 import { ORDER_SOURCES, FULFILLMENT_STATUSES } from "../../../../shared/orders.js";
 import { ORDER_PAYMENT_STATUSES, PAYMENT_METHODS } from "../../../../shared/payments.js";
 import { UNITS, formatQuantity } from "../../../../shared/quantity.js";
@@ -57,12 +62,14 @@ const INVENTORY_COLUMNS = [
   { header: "Stock Left", format: "quantity", width: 11, value: (p) => p.available },
   { header: "Selling Price", format: "money", width: 14, value: (p) => p.sellingPrice },
 ];
-const CUSTOMER_COLUMNS = [
-  { header: "Customer", format: "text", width: 28, value: (c) => c.name },
-  { header: "Contact", format: "text", width: 24, value: (c) => c.phone || c.email },
-  { header: "Total Orders", format: "integer", width: 12, total: true, value: (c) => c.stats?.orderCount ?? 0 },
-  { header: "Total Sales", format: "money", width: 14, total: true, value: (c) => c.stats?.totalOrdered ?? 0 },
-  { header: "Outstanding Balance", format: "money", width: 18, total: true, value: (c) => c.stats?.outstandingBalance ?? 0 },
+const EXPENSE_COLUMNS = [
+  { header: "Date", format: "date", width: 14, value: (e) => e.date },
+  { header: "Expense", format: "text", width: 32, value: (e) => e.payee || expenseCategoryLabel(e.category) },
+  { header: "Amount", format: "money", width: 14, total: true, value: (e) => e.amount },
+];
+const COGS_COLUMNS = [
+  { header: "Product", format: "text", width: 30, value: (p) => p.name },
+  { header: "Unit Cost", format: "money", width: 14, value: (p) => p.unitCost },
 ];
 
 export async function businessSheets(x) {
@@ -85,6 +92,16 @@ export async function businessSheets(x) {
     sheets.push({ name: "Users", columns: USER_COLUMNS, rows });
   }
   if (x.can("inventory", "inventory.view")) sheets.push({ name: "Inventory", columns: INVENTORY_COLUMNS, rows: await x.readRows("products", productsQuery({ status: "active" })) });
-  if (x.can("customers", "customers.view")) sheets.push({ name: "Customers", columns: CUSTOMER_COLUMNS, rows: await x.readRows("customers", customersQuery({ status: "active" })) });
+  if (x.can("expenses", "expenses.view")) {
+    const rows = await x.readRows("expenses", expensesQuery({ status: "active", ...dated }));
+    rows.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : byText(a.payee, b.payee)));
+    sheets.push({ name: "Operating Expenses", columns: EXPENSE_COLUMNS, rows });
+  }
+  if (x.can("inventory", "inventory.view", "inventory.costs")) {
+    const products = await x.readRows("products", productsQuery({ status: "active" }));
+    const costs = await x.readByIds("productCosts", products.map((p) => p.id));
+    const rows = products.map((p) => ({ name: p.name, avg: costs.get(p.id)?.avgCostUnits })).filter((p) => Number.isSafeInteger(p.avg)).map((p) => ({ name: p.name, unitCost: costUnitsToCentavos(p.avg) }));
+    sheets.push({ name: "COGS", columns: COGS_COLUMNS, rows });
+  }
   return sheets;
 }

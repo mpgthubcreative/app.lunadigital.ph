@@ -99,6 +99,33 @@ export function stackedColumns(periods, { aria = "", format = compactMoney, maxL
   </svg>`;
 }
 
+// periods: [{ label, value }] -> one bar per period from a zero line (a
+// loss goes below it, in the loss color). Values sit on the bars while
+// there are few enough to read (Reports: Net Profit).
+export function profitColumns(periods, { aria = "", format = compactMoney, maxLabels = 8, valueLabels = 12 } = {}) {
+  const vals = periods.map((p) => p.value || 0);
+  const hi = niceMax(Math.max(0, ...vals) || 1);
+  const lo = Math.min(0, ...vals) < 0 ? -niceMax(-Math.min(...vals)) : 0;
+  const top = 22;
+  const bottom = 172;
+  const left = 40;
+  const y = (v) => bottom - ((v - lo) / (hi - lo)) * (bottom - top);
+  const step = (W - left - 8) / Math.max(1, periods.length);
+  const bw = Math.min(34, step * 0.62);
+  const every = Math.ceil(periods.length / maxLabels);
+  const showValues = periods.length <= valueLabels;
+  return html`<svg viewBox="0 0 ${W} 196" role="img" aria-label="${aria}">
+    ${[...new Set([lo, 0, hi])].map((v) => html`<line class="grid-line" x1="${left}" y1="${y(v).toFixed(1)}" x2="${W - 6}" y2="${y(v).toFixed(1)}"></line><text x="${left - 6}" y="${(y(v) + 4).toFixed(1)}" text-anchor="end">${format(v)}</text>`)}
+    ${periods.map((p, i) => {
+      const v = p.value || 0;
+      const x = left + i * step + (step - bw) / 2;
+      const yt = y(Math.max(0, v));
+      const h = Math.max(v ? 1 : 0, Math.abs(y(v) - y(0)));
+      return html`${v ? html`<rect class="${v < 0 ? "fill-loss" : "fill-profit"}" x="${x.toFixed(1)}" y="${yt.toFixed(1)}" width="${bw.toFixed(1)}" height="${h.toFixed(1)}" rx="2"></rect>` : ""}${showValues && v ? html`<text class="chart-value" x="${(x + bw / 2).toFixed(1)}" y="${(v < 0 ? y(v) + 12 : yt - 5).toFixed(1)}" text-anchor="middle">${format(v)}</text>` : ""}${i % every === 0 || i === periods.length - 1 ? html`<text x="${(x + bw / 2).toFixed(1)}" y="188" text-anchor="middle">${p.label}</text>` : ""}`;
+    })}
+  </svg>`;
+}
+
 // periods: [{ label, values: [a, b] }], series: [{ cls }] (two bars per period).
 export function groupedColumns(periods, series, { aria = "", format = (n) => String(n), maxLabels = 8 } = {}) {
   const max = niceMax(Math.max(1, ...periods.flatMap((p) => p.values.map((v) => v || 0))));

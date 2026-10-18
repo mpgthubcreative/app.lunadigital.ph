@@ -60,7 +60,7 @@ describe("More → Download Excel (every workspace)", () => {
     expect(container.querySelectorAll("[data-download], [data-act=export]")).toHaveLength(0);
     expect([...container.querySelectorAll("button")].filter((b) => /Download/.test(b.textContent)).map((b) => b.textContent)).toEqual(["Download Excel"]);
     expect([...container.querySelectorAll('[data-seg="range"]')].map((b) => [b.textContent, b.getAttribute("aria-pressed")])).toEqual([["This month", "true"], ["Custom range", "false"], ["All records", "false"]]);
-    expect(container.querySelector('[data-role="contents"]').textContent).toMatch(/Orders, Payments, Users, Inventory and Customers/);
+    expect(container.querySelector('[data-role="contents"]').textContent).toMatch(/Orders, Payments, Users, Inventory, Operating Expenses and COGS/);
     container.querySelector('[data-act="download"]').click();
     await flush();
     expect(download).toHaveBeenCalledWith("workbook", { range: "month" });
@@ -84,7 +84,7 @@ describe("More → Download Excel (every workspace)", () => {
     mountOrders(container, session("manager"), { data: { listOrders: page([], false) } });
     mountPayments(container, session(), { data: { listPayments: page([], false) } });
     mountCustomers(container, session("manager"), { data: { listCustomers: page([], false) } });
-    mountExpenses(container, session(), { data: { listExpenses: page([], false) } });
+    mountExpenses(container, session(), { data: { listExpenses: page([], false) }, inventoryData: { listProducts: page([], false), loadCostDocs: vi.fn(async () => ({})) } });
     await flush();
     expect(container.querySelector('[data-act="export"]')).toBeNull();
   });
@@ -122,31 +122,15 @@ describe("More → Download Excel (every workspace)", () => {
     expect(listOrders).toHaveBeenCalledTimes(1);
   });
 
-  it("Reports: one workbook for the range on screen; CSV downloads stay", async () => {
-    const ex = exporter();
-    const report = { success: true, range: { from: "2026-10-01", to: "2026-10-08", granularity: "day" }, access: { financials: true }, overview: { ordersCreated: 1, fulfilledOrders: 1, cancelledOrders: 0 }, series: [{ period: "2026-10-01", ordersCreated: 1, fulfilledOrders: 1 }], sections: [] };
-    mountReports(container, session(), { api: vi.fn(async () => report), now: () => new Date("2026-10-08T06:00:00Z"), exportDeps: ex });
+  it("Reports carries no download of its own (simplified owner summary; More → Download Excel is the one download)", async () => {
+    const report = { success: true, range: { from: "2026-10-01", to: "2026-10-08", granularity: "day" }, access: { financials: true }, overview: { grossSales: 100, netSales: 100, estimatedOperatingProfit: 50 }, series: [], products: { rows: [], total: 0 }, sections: [] };
+    mountReports(container, session(), { api: vi.fn(async () => report), now: () => new Date("2026-10-08T06:00:00Z") });
     await flush();
-    await clickExport("reports");
-    expect(ex.download).toHaveBeenCalledWith("exports", { dataset: "reports", filters: { from: "2026-10-01", to: "2026-10-08" } });
-    container.querySelector('[data-act="tab"][data-tab="sales"]').click();
-    expect(container.querySelector('[data-act="csv"]')).not.toBeNull();
+    expect(container.querySelector('[data-act="export"], [data-act="csv"], [data-export]')).toBeNull();
   });
 });
 
 describe("who gets the button; errors are explained", () => {
-  it("Reports: reports.export, not data.export, decides (Phase 11 behaviour)", async () => {
-    const report = { success: true, range: { from: "2026-10-01", to: "2026-10-08", granularity: "day" }, access: { financials: false }, overview: {}, series: [], sections: [] };
-    mountReports(container, session("manager", { revoke: ["data.export"] }), { api: vi.fn(async () => report), now: () => new Date("2026-10-08T06:00:00Z") });
-    await flush();
-    expect(container.querySelector('[data-export="reports"]')).not.toBeNull();
-    document.body.innerHTML = '<main id="content"></main>';
-    container = document.getElementById("content");
-    mountReports(container, session("manager", { revoke: ["reports.export"] }), { api: vi.fn(async () => report), now: () => new Date("2026-10-08T06:00:00Z") });
-    await flush();
-    expect(container.querySelector('[data-export="reports"]')).toBeNull();
-  });
-
   it("too many rows: the server's message is shown and the button comes back", async () => {
     const download = vi.fn(async () => {
       throw new ApiError(413, "too-many-rows", "This download has too many rows. Choose a shorter range and try again.");
