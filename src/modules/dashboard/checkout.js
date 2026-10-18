@@ -72,7 +72,7 @@ export function mountCheckout(host, session, deps) {
           <details class="co-customer" data-role="co-customer">
             <summary>Customer <span class="co-optional">optional</span></summary>
             <div class="field"><label for="coName">Name</label><input class="input" id="coName" data-c="name" maxlength="120" placeholder="${WALK_IN}" autocomplete="off" value="${state.customer.name}" /></div>
-            <div class="field"><label for="coSource">Source</label><select class="input" id="coSource" data-c="source">${ORDER_SOURCE_IDS.filter((id) => id !== "other").map(opt)}</select></div>
+            <div class="field"><label for="coSource">Source</label><select class="input" id="coSource" data-c="source">${ORDER_SOURCE_IDS.filter((id) => id !== "other" && !ORDER_SOURCES[id].online).map(opt)}</select></div>
             <div class="field"><label for="coNote">Note</label><input class="input" id="coNote" data-c="note" maxlength="500" autocomplete="off" value="${state.customer.note}" /></div>
           </details>
           <p class="form-error" data-role="co-error" role="alert" hidden></p>

@@ -50,6 +50,8 @@ export const NOTIFICATION_CATEGORIES = Object.freeze({
   billing: { label: "Luna subscription payments", mandatory: true },
   // Owner-pilot Bridal: a guest answered their invitation (informational).
   guests: { label: "Guest RSVPs from invitations", mandatory: false },
+  // Owner pilot: a customer placed an order through the public menu link.
+  store: { label: "New orders from your online menu", mandatory: false },
 });
 export const NOTIFICATION_CATEGORY_IDS = Object.freeze(Object.keys(NOTIFICATION_CATEGORIES));
 
@@ -170,6 +172,14 @@ export const NOTIFICATION_TYPES = Object.freeze({
     permissions: ["billing.view"],
     excludeActor: false,
     action: { label: "View usage", route: "/settings" },
+  },
+  // Owner pilot: a customer ordered through the public menu link (one per order).
+  "order.online": {
+    category: "store",
+    module: "orders",
+    permissions: ["orders.view", "orders.fulfill"],
+    excludeActor: false,
+    action: { label: "View order", route: "/orders" },
   },
   "order.ready": {
     category: "orders",

@@ -31,6 +31,7 @@ export * from "./payroll.js";
 export * from "./baby.js";
 export * from "./grocery.js";
 export * from "./wedding.js";
+export * from "./storefront.js";
 export * from "./operators.js";
 export * from "./tenant-config.js";
 export * from "./metering.js";

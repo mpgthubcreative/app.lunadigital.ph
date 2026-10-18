@@ -59,8 +59,8 @@ describe("view helpers", () => {
   });
 
   it("categories follow what the user can receive", () => {
-    expect(myCategories(session("owner")).sort()).toEqual(["billing", "inventory", "orders", "payments", "usage"]);
-    expect(myCategories(session("staff")).sort()).toEqual(["orders"]);
+    expect(myCategories(session("owner")).sort()).toEqual(["billing", "inventory", "orders", "payments", "store", "usage"]);
+    expect(myCategories(session("staff")).sort()).toEqual(["orders", "store"]);
     expect(myCategories(session("owner", null, { workspaceTemplateId: "bridal-expense", planId: "pro" })).sort()).toEqual(["billing", "budget", "guests", "usage", "wedding"]);
   });
 });
@@ -190,7 +190,7 @@ describe("Notifications page", () => {
     form.elements.inventory.checked = false;
     form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
     await flush();
-    expect(data.savePreferences).toHaveBeenCalledWith({ inventory: { inApp: false }, orders: { inApp: true }, usage: { inApp: true } });
+    expect(data.savePreferences).toHaveBeenCalledWith({ inventory: { inApp: false }, orders: { inApp: true }, store: { inApp: true }, usage: { inApp: true } });
   });
 
   it("staff see only the categories they can receive", async () => {
@@ -198,7 +198,7 @@ describe("Notifications page", () => {
     mountPage(container, session("staff"), { data: fakeData([]), now: () => NOW, onChange: () => {} });
     await flush();
     const form = container.querySelector('[data-role="preferences"]');
-    expect([...form.querySelectorAll("input")].map((i) => i.name)).toEqual(["orders"]);
+    expect([...form.querySelectorAll("input")].map((i) => i.name)).toEqual(["store", "orders"]);
   });
 });
 

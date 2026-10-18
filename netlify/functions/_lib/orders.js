@@ -115,7 +115,9 @@ function movementsFor(lines, type, orderId, orderNumber, reason) {
 
 // ---------- Create ----------
 
-export async function createOrder({ db, tenant, FieldValue, business, entitlements, input, idempotencyKey, actor, canDiscount, canLinkCustomers = false, now = new Date() }) {
+// notify(order) (optional): notification events for this new order (e.g. the
+// public menu link's "new online order"), written in the same transaction.
+export async function createOrder({ db, tenant, FieldValue, business, entitlements, input, idempotencyKey, actor, canDiscount, canLinkCustomers = false, notify = null, now = new Date() }) {
   if (!isValidIdempotencyKey(idempotencyKey)) throw new OrderError("invalid-input", "A valid idempotency key is required");
   const data = validateOrderInput(input);
   if (data.customerId && !canLinkCustomers) throw new OrderError("customer-not-allowed", "You can't link orders to saved customers");
@@ -222,11 +224,13 @@ export async function createOrder({ db, tenant, FieldValue, business, entitlemen
       };
 
       const alerts = await prepareMonthlyAlerts(tx, { tenant, meterId: "ordersCreated", period: quota.period, before: quota.used, after: quota.used + 1, limit: quota.limit });
+      const notes = notify ? await prepareNotifications(tx, { tenant, actor, events: notify({ orderId: ref.id, ...order }) }) : null;
       tx.create(idemRef, { orderId: ref.id, orderNumber, requestHash, uid: actor.uid, createdAt: stamp });
       tx.create(ref, order);
       tx.set(counterRef, { next: seq + 1, day, updatedAt: stamp });
       meterActivity(tx, { tenant, FieldValue, timezone: business.timezone, now, period: quota.period, counts: { ordersCreated: 1 } });
       alerts.commit({ FieldValue });
+      notes?.commit({ FieldValue });
       recordDailyMetrics({ tx, tenant, FieldValue, timezone: business.timezone, at: now, operational: { orderCount: 1 } });
       adjustCurrentMetrics({ tx, tenant, FieldValue, operational: { pendingFulfillment: 1, unpaidOrders: totals.total > 0 ? 1 : 0 }, financial: { receivablesOutstanding: totals.total } });
       applyCustomerStats(tx, { tenant, FieldValue, customerId: data.customerId, orders: 1, total: totals.total, balance: totals.total, lastOrder: orderNumber });

@@ -28,6 +28,7 @@ import { listOrderPayments } from "../payments/data.js";
 import { listProducts } from "../inventory/data.js";
 import { orderRow, historyRows, costCorrectionRows, qtyText, sourceLabel, fulfillmentLabel, paymentLabel, FULFILLMENT_TONE, PAYMENT_TONE, when } from "./view.js";
 import { openOrderEditor } from "./editor.js";
+import { openShareMenu } from "./share-menu.js";
 import { recordPaymentDialog, editPaymentDialog, removePaymentDialog, showProof, methodLabel } from "../payments/actions.js";
 import { STATE_TONE } from "../payments/index.js";
 import { searchCustomers as defaultSearchCustomers } from "../customers/data.js";
@@ -86,7 +87,7 @@ export function mount(container, session, { data = defaultDeps.data, payments = 
     render(
       container,
       html`
-        ${pageHeader({ title: "Orders", subtitle: "What needs processing: take payment and move each order along, right in its row.", actions: can.create ? html`<button type="button" class="btn btn-primary" data-act="new">+ New order</button>` : "" })}
+        ${pageHeader({ title: "Orders", subtitle: "What needs processing: take payment and move each order along, right in its row.", actions: html`<button type="button" class="btn" data-act="share-menu">Share menu</button>${can.create ? html`<button type="button" class="btn btn-primary" data-act="new">+ New order</button>` : ""}` })}
         ${filterBar({
           fields: [
             { name: "fulfillmentStatus", label: "Fulfillment", type: "select", primary: true, all: "Any fulfillment", options: Object.entries(FULFILLMENT_STATUSES).map(([k, v]) => [k, v.label]), value: f.fulfillmentStatus },
@@ -309,6 +310,8 @@ export function mount(container, session, { data = defaultDeps.data, payments = 
         }
         return undefined;
       }
+      case "share-menu":
+        return openShareMenu({ session, api, toast, listActiveProducts });
       case "open":
         return openDetail(el.dataset.id);
       case "proof":

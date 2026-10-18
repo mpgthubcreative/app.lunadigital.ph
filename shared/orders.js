@@ -23,6 +23,9 @@ export const ORDER_SOURCES = Object.freeze({
   phone: { label: "Phone" },
   walk_in: { label: "Walk-in" },
   website: { label: "Website" },
+  // Owner pilot: placed by the customer through the public menu link
+  // (shared/storefront.js), never picked by staff at the checkout.
+  online_store: { label: "Online store", online: true },
   other: { label: "Other", needsNote: true },
 });
 export const ORDER_SOURCE_IDS = Object.freeze(Object.keys(ORDER_SOURCES));

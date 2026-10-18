@@ -218,6 +218,12 @@ function boot() {
     import("./invite.js").then((m) => m.renderInvitePage(root));
     return;
   }
+  // Owner pilot: a business's public menu / order link needs no login
+  // (/api/store resolves the slug to one business and shows only the menu).
+  if (window.location.pathname.startsWith("/store/")) {
+    import("./store.js").then((m) => m.renderStorePage(root));
+    return;
+  }
   // Phase 18.6: the account activation page needs no login either.
   if (window.location.pathname === "/activate") {
     import("./activate.js").then((m) => m.renderActivatePage(root));
