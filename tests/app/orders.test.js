@@ -226,6 +226,40 @@ describe("order detail", () => {
     expect(d.data.getOrderCosts).not.toHaveBeenCalled();
   });
 
+  it("Owner-pilot layout: number + 'Fulfilled · Paid'; customer only if any; stacked product lines; Total strongest, cost/profit quiet; compact payments; activity folded; Edit + Close", async () => {
+    const paid = { ...fulfilledOrder, id: "order0000000000000009", amountPaid: 150000, balance: 0, paymentStatus: "paid", paymentCount: 1 };
+    const pay = { id: "pay0000000000000001", amount: 150000, method: "gcash", reference: "GC-77", proof: null, state: "verified", receivedAt: new Date("2026-10-11T03:00:00Z") };
+    const d = deps({ rows: [paid] });
+    d.payments = { listOrderPayments: vi.fn(async () => [pay]) };
+    await show(session("owner"), d);
+    const detail = await open(paid.id);
+    const t = (sel) => detail.querySelector(sel).textContent.replace(/\s+/g, " ").trim();
+    expect(t(".od-number")).toBe("ORD-20261008-002");
+    expect(t('[data-role="status"]')).toBe("Fulfilled · Paid");
+    expect(t('[data-role="customer"]')).toMatch(/^Juan Dela Cruz\s?0917 · Messenger$/);
+    expect(detail.textContent).not.toMatch(/Created by/);
+    expect(detail.querySelector("table")).toBeNull(); // no wide tables
+    const item = detail.querySelector('[data-role="items"] .od-item');
+    expect([t('[data-role="items"] .od-item .od-name'), item.querySelector(".od-sub").textContent, item.querySelector(".od-amt").textContent]).toEqual(["Chicken Wings", "5 kg × ₱300.00 · cost ₱1,000.00", "₱1,500.00"]);
+    expect(t('[data-role="total"]')).toBe("₱1,500.00");
+    expect(detail.querySelector(".od-grand")).not.toBeNull();
+    expect(detail.querySelector('[data-role="cogs"]').closest(".od-quiet")).not.toBeNull();
+    expect(detail.textContent).not.toMatch(/Balance/); // nothing left to pay
+    const p = detail.querySelector('[data-role="payments"] .od-pay');
+    expect([p.querySelector(".od-pay-date").textContent.trim(), p.querySelector(".od-pay-amt").textContent.replace(/\s+/g, " ").trim(), p.querySelector(".od-sub").textContent]).toEqual(["Oct 11, 2026", "₱1,500.00 · GCash", "Ref GC-77"]);
+    expect(detail.querySelector('[data-role="fold-activity"]').open).toBe(false);
+    expect(detail.querySelector('[data-role="history"]').textContent).toMatch(/Order created/); // kept, folded
+    expect([...detail.querySelectorAll(".modal-footer > button")].map((b) => b.textContent.trim())).toEqual(["Edit", "Close"]);
+  });
+
+  it("a walk-in with no name shows no customer block, just where it came from", async () => {
+    const walk = { ...pendingOrder, id: "order0000000000000010", source: "walk_in", customer: { name: "Walk-in", phone: "" } };
+    await show(session("owner"), deps({ rows: [walk] }));
+    const detail = await open(walk.id);
+    expect(detail.querySelector('[data-role="customer"]')).toBeNull();
+    expect(detail.querySelector('[data-role="came"]').textContent).toBe("Walk-in");
+  });
+
   it("owner sees COGS and gross profit on fulfilled orders", async () => {
     await show(session("owner"));
     const detail = await open(fulfilledOrder.id);

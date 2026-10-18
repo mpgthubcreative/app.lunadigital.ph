@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 // Dashboard = Monitor (Phase 18.5). Honest empty states, values only from
 // metric documents / small list queries, money only for dashboard.financials,
-// the business-local date, no reads beyond the planned documents, and no
-// profitability analysis (that lives in Reports). Each workspace layout
+// the business-local date and no reads beyond the planned documents. The
+// Business Dashboard is the checkout (Owner pilot). Each workspace layout
 // answers its own question.
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
@@ -56,85 +56,146 @@ const DOCS = {
 const RICE = { id: "p1", sku: "RICE-25", name: "Rice 25kg", unit: "sack", available: 3000, reserved: 1000, reorderLevel: 5000, isLowStock: true };
 const ORDER = { id: "o1", orderNumber: "ORD-1058", customer: { name: "ABC Store" }, itemCount: 2, total: 450000, balance: 450000, paymentStatus: "unpaid", fulfillmentStatus: "preparing" };
 
-describe("Distributor: the store pulse", () => {
-  it("top figures: Total sales, Total orders (with fulfilled), Unpaid (balance + count, as of now)", async () => {
-    await show(sessionFixture(), DOCS);
-    expect([...container.querySelectorAll('[data-role="kpis"] [data-widget]')].map((e) => e.dataset.widget)).toEqual(["netSales", "ordersToday", "receivablesOutstanding"]);
+const COLA = { id: "p2", sku: "COLA-1L", name: "Cola 1L", unit: "pcs", available: 10000, reserved: 0, sellingPrice: 7500, status: "active" };
+const RICE_P = { ...RICE, sellingPrice: 125000, status: "active" };
+const OUT = { id: "p3", sku: "OIL-1", name: "Oil 1L", unit: "bottle", available: 0, sellingPrice: 9000, status: "active" };
+const products = () => vi.fn(async () => [COLA, RICE_P, OUT]);
+const co = (sel) => container.querySelector(`[data-role="checkout"] ${sel}`);
+const rowOf = (id) => co(`[data-product="${id}"]`);
+const tap = async (id, act, n = 1) => {
+  for (let i = 0; i < n; i += 1) rowOf(id).querySelector(`[data-act="co-${act}"]`).click();
+  await flush();
+};
+const text = (el) => el.textContent.replace(/\s+/g, " ").trim();
+
+describe("Distributor: the Dashboard is the checkout", () => {
+  it("top figures: Total sales, Total orders (with fulfilled), Gross profit (no Unpaid)", async () => {
+    await show(sessionFixture(), DOCS, {}, { listActiveProducts: products() });
+    expect([...container.querySelectorAll('[data-role="kpis"] [data-widget]')].map((e) => e.dataset.widget)).toEqual(["netSales", "ordersToday", "grossProfit"]);
     expect(value("netSales")).toBe("₱12,000.00");
     expect(value("ordersToday")).toBe("12");
     expect(widget("ordersToday").textContent).toMatch(/3 fulfilled/);
-    expect(value("receivablesOutstanding")).toBe("₱3,000.00");
-    expect(widget("receivablesOutstanding").textContent).toMatch(/2 orders · as of now/);
+    expect(value("grossProfit")).toBe("₱5,000.00");
+    expect(container.textContent).not.toMatch(/Unpaid/);
   });
 
-  it("profitability is NOT on the Dashboard (it lives in Reports)", async () => {
-    const fetch = await show(sessionFixture(), DOCS);
-    for (const id of ["cogs", "grossProfit", "operatingExpenses", "estimatedOperatingProfit", "paymentsReceived"]) expect(widget(id), id).toBeNull();
-    expect(container.textContent).not.toMatch(/COGS|Gross profit|Operating profit|Gross margin/i);
-    // The sales figure still comes from the same financial day documents as Reports.
-    expect(fetch.mock.calls[0][1].find((d) => d.source === "financial-day").ids).toEqual(["2026-10-08"]);
+  it("no Needs attention, Inventory summary or Orders summary; no list queries, no live counts", async () => {
+    const fetch = await show(sessionFixture(), DOCS, {}, { listActiveProducts: products() });
+    for (const id of ["attention", "inventory", "orders"]) expect(sectionOf(id), id).toBeNull();
+    expect(fetch.fetchLists).not.toHaveBeenCalled();
+    expect(fetch.mock.calls[0][1].filter((d) => d.count)).toEqual([]);
   });
 
-  it("with no metric documents every figure says No data yet, and no peso amount appears", async () => {
-    await show(sessionFixture());
-    for (const id of ["netSales", "ordersToday", "receivablesOutstanding"]) expect(value(id), id).toBe("No data yet");
-    expect(container.textContent).not.toMatch(/₱|PHP\s?\d/);
+  it("with no metric documents every figure says No data yet", async () => {
+    await show(sessionFixture(), {}, {}, { listActiveProducts: vi.fn(async () => []) });
+    for (const id of ["netSales", "ordersToday", "grossProfit"]) expect(value(id), id).toBe("No data yet");
     expect(container.textContent).not.toMatch(/\b0\.00\b/);
+    expect(co('[data-role="co-products"]').textContent).toMatch(/No products yet/);
   });
 
-  it("Needs attention lists only real items, each linking to where the work happens", async () => {
-    await show(sessionFixture(), DOCS, { lowStockItems: [RICE] }, {}, { "count:paymentsToVerify": 3, "count:ordersReady": 6, "count:ordersPending": 0 });
-    const items = [...sectionOf("attention").querySelectorAll("[data-attention]")];
-    expect(items.map((li) => li.dataset.attention)).toEqual(["verify", "lowStock", "ready"]);
-    expect(items[0].textContent).toMatch(/3 payments need verification/);
-    expect(items[0].querySelector("a").getAttribute("href")).toBe("/payments?state=for_verification");
-    expect(items[1].textContent).toMatch(/5 SKUs are low in stock.*Rice 25kg/s);
-    expect(items[2].querySelector("a").getAttribute("href")).toBe("/orders?fulfillmentStatus=ready");
+  it("products: name, SKU · price · what is left, and − qty + ; search by name or SKU; Create order disabled while empty", async () => {
+    await show(sessionFixture(), DOCS, {}, { listActiveProducts: products() });
+    expect([...container.querySelectorAll('[data-role="checkout"] [data-product]')].map((li) => li.dataset.product)).toEqual(["p2", "p3", "p1"]); // by name
+    expect(text(rowOf("p2").querySelector(".co-sub"))).toBe("COLA-1L · ₱75 · 10 pcs left");
+    expect(text(rowOf("p3").querySelector(".co-sub"))).toMatch(/Out of stock/);
+    expect(rowOf("p3").querySelector('[data-act="co-inc"]').disabled).toBe(true);
+    expect(rowOf("p2").querySelector('[data-act="co-dec"]').disabled).toBe(true);
+    expect(co('[data-act="co-create"]').disabled).toBe(true);
+    const search = co('[data-role="co-search"]');
+    search.value = "rice-";
+    search.dispatchEvent(new Event("input", { bubbles: true }));
+    expect([...container.querySelectorAll('[data-role="checkout"] [data-product]')].map((li) => li.dataset.product)).toEqual(["p1"]);
   });
 
-  it("nothing waiting = All clear (never a fabricated 0 item)", async () => {
-    await show(sessionFixture(), { "metrics/current": { pendingFulfillment: 0, unpaidOrders: 0, lowStockProducts: 0 } });
-    expect(sectionOf("attention").querySelector('[data-role="all-clear"]')).not.toBeNull();
-    expect(sectionOf("attention").querySelectorAll("[data-attention]")).toHaveLength(0);
+  it("tapping builds the summary: line subtotals, total items, total; stock left follows; + stops at what is available", async () => {
+    await show(sessionFixture(), DOCS, {}, { listActiveProducts: products() });
+    await tap("p2", "inc", 5);
+    await tap("p2", "dec");
+    await tap("p1", "inc", 4); // only 3 sacks left
+    expect(rowOf("p2").querySelector(".co-num").value).toBe("4");
+    expect(text(rowOf("p2").querySelector('[data-role="left"]'))).toBe("6 pcs left");
+    expect(rowOf("p1").querySelector(".co-num").value).toBe("3");
+    expect(rowOf("p1").querySelector('[data-act="co-inc"]').disabled).toBe(true);
+    const lines = [...container.querySelectorAll('[data-role="co-lines"] .co-line')].map((li) => [text(li.querySelector(".co-name")), text(li.querySelector(".co-sub")), text(li.querySelector(".co-amt"))]);
+    expect(lines).toEqual([["Cola 1L", "4 pcs × ₱75", "₱300"], ["Rice 25kg", "3 sack × ₱1,250", "₱3,750"]]);
+    expect(text(co('[data-role="co-items"]'))).toBe("7");
+    expect(text(co('[data-role="co-total"]'))).toBe("₱4,050");
+    expect(co('[data-act="co-create"]').disabled).toBe(false);
   });
 
-  it("order status: live counts per stage + fulfilled in the period", async () => {
-    await show(sessionFixture(), DOCS, {}, {}, { "count:ordersPending": 12, "count:ordersPreparing": 8, "count:ordersReady": 6 });
-    const tiles = Object.fromEntries([...sectionOf("orders").querySelectorAll("[data-count]")].map((t) => [t.dataset.count, t.querySelector("b").textContent]));
-    expect(tiles).toEqual({ pending: "12", preparing: "8", ready: "6", fulfilled: "3" });
+  it("a typed quantity counts too; an invalid one blocks Create order", async () => {
+    await show(sessionFixture(), DOCS, {}, { listActiveProducts: products() });
+    const box = rowOf("p2").querySelector(".co-num");
+    box.value = "12";
+    box.dispatchEvent(new Event("input", { bubbles: true }));
+    expect(text(co('[data-role="co-total"]'))).toBe("₱900");
+    box.value = "1.5";
+    box.dispatchEvent(new Event("input", { bubbles: true }));
+    expect(co('[data-act="co-create"]').disabled).toBe(true);
   });
 
-  it("inventory summary: quantities and status only, never costs; links to Inventory", async () => {
-    await show(sessionFixture(), DOCS, { inventorySummary: [RICE] });
-    const inv = sectionOf("inventory");
-    expect(inv.textContent).toMatch(/Rice 25kg/);
-    expect(inv.querySelector('[data-product="p1"]').textContent).toMatch(/3 sack/);
-    expect(inv.textContent).toMatch(/Low/);
-    expect(inv.textContent).not.toMatch(/₱/);
-    expect(inv.querySelector(".link-more").getAttribute("href")).toBe("/inventory");
-  });
-
-  it("recent orders keep the inline Fulfillment ▾ / Payment ▾ controls (same engine as Orders)", async () => {
-    const api = vi.fn(async () => ({ success: true }));
-    const fetch = await show(sessionFixture(), DOCS, { recentOrders: [ORDER] }, { api, toast: vi.fn() });
-    const sel = container.querySelector('select[data-act="fulfillment"][data-id="o1"]');
-    expect(container.querySelector('select[data-act="payment"][data-id="o1"]')).not.toBeNull();
-    sel.value = "ready";
-    sel.dispatchEvent(new Event("change", { bubbles: true }));
+  it("Create order: ONE order through the same orders create action (walk-in, not fulfilled); a double tap sends once; the cart resets and the figures reload", async () => {
+    let resolve;
+    const api = vi.fn(() => new Promise((r) => (resolve = r)));
+    const toast = vi.fn();
+    const fetch = await show(sessionFixture(), DOCS, {}, { listActiveProducts: products(), api, toast });
+    await tap("p2", "inc", 5);
+    co('[data-act="co-create"]').click();
+    co('[data-act="co-create"]').click();
+    expect(api).toHaveBeenCalledTimes(1);
+    const [path, { method, body }] = api.mock.calls[0];
+    expect([path, method, body.action]).toEqual(["orders", "POST", "create"]);
+    expect(body.idempotencyKey).toMatch(/^[A-Za-z0-9_-]{8,}$/);
+    expect(body.order).toEqual({ customer: { name: "Walk-in", phone: "", notes: "" }, source: "walk_in", sourceNote: "", deliveryAddress: "", items: [{ productId: "p2", quantity: 5000 }], notes: "" });
+    expect(Object.keys(body)).not.toContain("fulfill");
+    resolve({ success: true, orderId: "o9", orderNumber: "ORD-1060" });
     await flush();
-    expect(api).toHaveBeenCalledWith("orders", { method: "POST", body: { action: "stage", orderId: "o1", stage: "ready" } });
-    expect(fetch.fetchLists).toHaveBeenCalledTimes(2); // refreshed after the change
+    await flush();
+    expect(toast).toHaveBeenCalledWith("Order ORD-1060 created", "success");
+    expect(co('[data-role="co-none"]')).not.toBeNull();
+    expect(co('[data-act="co-create"]').disabled).toBe(true);
+    expect(fetch.mock.calls.length).toBeGreaterThan(1);
+    // The next order gets its own key.
+    await tap("p2", "inc");
+    co('[data-act="co-create"]').click();
+    expect(api.mock.calls[1][1].body.idempotencyKey).not.toBe(body.idempotencyKey);
   });
 
-  it("lists: one small query each (inventory summary, recent orders, low stock)", async () => {
-    const fetch = await show(sessionFixture());
-    expect(fetch.fetchLists.mock.calls[0][1].map((w) => w.id)).toEqual(["inventorySummary", "recentOrders", "lowStockItems"]);
-    expect(sectionOf("orders").textContent).toMatch(/No orders yet/);
+  it("optional customer: name, source and note are sent when given", async () => {
+    const api = vi.fn(async () => ({ orderNumber: "ORD-1061" }));
+    await show(sessionFixture(), DOCS, {}, { listActiveProducts: products(), api, toast: vi.fn() });
+    await tap("p1", "inc");
+    const set = (c, v) => {
+      const el = co(`[data-c="${c}"]`);
+      el.value = v;
+      el.dispatchEvent(new Event(el.tagName === "SELECT" ? "change" : "input", { bubbles: true }));
+    };
+    set("name", "ABC Store");
+    set("source", "messenger");
+    set("note", "Pick up at 3pm");
+    co('[data-act="co-create"]').click();
+    await flush();
+    expect(api.mock.calls[0][1].body.order).toMatchObject({ customer: { name: "ABC Store" }, source: "messenger", notes: "Pick up at 3pm", items: [{ productId: "p1", quantity: 1000 }] });
+    expect(co('[data-role="co-customer"]').open).toBe(false); // secondary: folded by default
+  });
+
+  it("a server refusal shows on the checkout and keeps the cart", async () => {
+    const api = vi.fn(async () => {
+      throw new Error("Only 2 sack of Rice 25kg available");
+    });
+    await show(sessionFixture(), DOCS, {}, { listActiveProducts: products(), api, toast: vi.fn() });
+    await tap("p1", "inc", 3);
+    co('[data-act="co-create"]').click();
+    await flush();
+    expect(co('[data-role="co-error"]').hidden).toBe(false);
+    expect(co('[data-role="co-error"]').textContent).toMatch(/Only 2 sack/);
+    expect(rowOf("p1").querySelector(".co-num").value).toBe("3");
   });
 
   it("a read error shows Couldn't load on just the affected figures", async () => {
     mount(container, sessionFixture(), {
       now: NOW,
+      listActiveProducts: products(),
       fetchLists: async () => ({}),
       fetchDocuments: async (_b, docs) => Object.fromEntries(docs.map((d) => [d.source, d.collection === "financialMetrics" ? { status: "error" } : { status: "missing" }])),
     });
@@ -146,9 +207,9 @@ describe("Distributor: the store pulse", () => {
 
 describe("who sees what", () => {
   it("staff: operations only, and the financial documents are never requested", async () => {
-    const fetch = await show(sessionFixture({ roleTemplate: "staff" }));
+    const fetch = await show(sessionFixture({ roleTemplate: "staff" }), {}, {}, { listActiveProducts: vi.fn(async () => []) });
     expect(widget("netSales")).toBeNull();
-    expect(widget("receivablesOutstanding")).toBeNull();
+    expect(widget("grossProfit")).toBeNull();
     expect(container.textContent).not.toMatch(/₱/);
     expect(value("ordersToday")).toBe("No data yet");
     const requested = fetch.mock.calls.flatMap((c) => c[1].map((d) => d.collection));
@@ -160,20 +221,25 @@ describe("who sees what", () => {
     expect(widget("netSales")).not.toBeNull();
   });
 
-  it("a module off for the business removes what depends on it", async () => {
-    await show(sessionFixture({ overrides: { modules: { inventory: false } } }), DOCS);
-    expect(sectionOf("inventory")).toBeNull();
-    expect(container.querySelector('[data-attention="lowStock"]')).toBeNull();
+  it("a module off for the business removes what depends on it (Gross profit needs Inventory)", async () => {
+    await show(sessionFixture({ overrides: { modules: { inventory: false } } }), DOCS, {}, { listActiveProducts: vi.fn(async () => []) });
+    expect(widget("grossProfit")).toBeNull();
     expect(widget("netSales")).not.toBeNull();
   });
 
-  it("the owner's dashboard for Today reads exactly four documents plus four live counts", async () => {
+  it("no orders.create: no checkout, a pointer to Orders instead", async () => {
+    await show(sessionFixture({ roleTemplate: "staff", permissions: resolvePermissions("staff", { revoke: ["orders.create"] }) }));
+    expect(container.querySelector('[data-role="checkout"]')).toBeNull();
+    expect(container.querySelector('a[href="/orders"]')).not.toBeNull();
+  });
+
+  it("the owner's dashboard for Today reads exactly two documents and no live counts", async () => {
     const fetch = await show(sessionFixture());
     expect(fetch).toHaveBeenCalledOnce();
     expect(fetch.mock.calls[0][0]).toBe("demo-distributor-a");
     const plan = fetch.mock.calls[0][1];
-    expect(plan.filter((d) => !d.count).flatMap((d) => d.ids.map((id) => `${d.collection}/${id}`)).sort()).toEqual(["financialMetrics/2026-10-08", "financialMetrics/current", "metrics/2026-10-08", "metrics/current"]);
-    expect(plan.filter((d) => d.count).map((d) => `${d.collection}:${d.where.map((w) => w.join("")).join()}`).sort()).toEqual(["orders:fulfillmentStatus==pending", "orders:fulfillmentStatus==preparing", "orders:fulfillmentStatus==ready", "payments:state==for_verification"]);
+    expect(plan.filter((d) => !d.count).flatMap((d) => d.ids.map((id) => `${d.collection}/${id}`)).sort()).toEqual(["financialMetrics/2026-10-08", "metrics/2026-10-08"]);
+    expect(plan.filter((d) => d.count)).toEqual([]);
   });
 });
 
@@ -209,17 +275,16 @@ describe("period filter: period figures vs live 'now' figures", () => {
     await flush();
   };
 
-  it("Yesterday / This week change the period figures; Unpaid (as of now) stays the same", async () => {
+  it("Yesterday / This week change the period figures (sales, orders, gross profit)", async () => {
     const fetch = await show(sessionFixture(), DOCS);
     await choose("yesterday");
     expect(fetch.mock.calls.at(-1)[1].find((d) => d.source === "financial-day").ids).toEqual(["2026-10-07"]);
     expect(value("netSales")).toBe("₱2,000.00");
     expect(value("ordersToday")).toBe("2");
-    expect(value("receivablesOutstanding")).toBe("₱3,000.00");
+    expect(value("grossProfit")).toBe("₱800.00");
     await choose("thisWeek"); // Mon Oct 5 .. Thu Oct 8
     expect(fetch.mock.calls.at(-1)[1].find((d) => d.source === "operational-day").ids).toEqual(["2026-10-05", "2026-10-06", "2026-10-07", "2026-10-08"]);
     expect(value("ordersToday")).toBe("14");
-    expect(fetch.mock.calls.at(-1)[1].find((d) => d.source === "operational-current").ids).toEqual(["current"]);
   });
 
   it("Last month with no summaries says No data yet (never ₱0); the header names the range", async () => {
@@ -228,7 +293,7 @@ describe("period filter: period figures vs live 'now' figures", () => {
     expect(container.querySelector(".page-subtitle").textContent).toMatch(/Last month: Sep 1, 2026 – Sep 30, 2026/);
     expect(value("netSales")).toBe("No data yet");
     expect(value("ordersToday")).toBe("No data yet");
-    expect(value("receivablesOutstanding")).toBe("₱3,000.00");
+    expect(value("grossProfit")).toBe("No data yet");
   });
 
   it("custom: inclusive, business-local; future ranges are refused", async () => {

@@ -10,10 +10,9 @@
 //   Bridal       "Are we on track?"
 
 import { html } from "../../lib/html.js";
-import { kpiStrip, attentionList, section, countTiles, itemList, barRows, emptyState, skeleton, budgetTone, badge, mobileCell } from "../../components/ui.js";
+import { kpiStrip, attentionList, section, countTiles, itemList, barRows, emptyState, skeleton, budgetTone, badge } from "../../components/ui.js";
 import { formatCentavos, formatNumber, formatDayId } from "../../lib/format.js";
-import { formatQuantity, UNITS, TASK_STATUSES, rsvpByCategory } from "@shared/index.js";
-import { paymentCell, fulfillmentCell } from "../orders/inline.js";
+import { TASK_STATUSES, rsvpByCategory } from "@shared/index.js";
 import { NO_DATA } from "./view.js";
 
 // ---------- helpers ----------
@@ -89,97 +88,23 @@ const loadingSection = (title) => section({ title, body: skeleton(3) });
 
 // ---------- Distributor ----------
 
+// Owner pilot: the Business Dashboard is the till. Three figures for the
+// period (Total sales, Total orders, Gross profit: money only with
+// dashboard.financials), then the checkout (./checkout.js) for anyone who
+// can create orders. Attention items, stock and order status live in their
+// own modules (Inventory, Orders, Payments).
 export function distributorDashboard(ctx) {
-  const { view, can, currency, periodLabel, today } = ctx;
+  const { view, can, periodLabel } = ctx;
   const a = access(view);
   const fulfilled = a.num("fulfilledOrders");
-  const unpaidCount = a.num("unpaidOrders");
   const k = [
     kpi(a.card("netSales"), "Total sales", periodLabel),
     kpi(a.card("ordersToday"), "Total orders", fulfilled !== null ? `${formatNumber(fulfilled)} fulfilled · ${periodLabel.toLowerCase()}` : periodLabel),
-    a.card("receivablesOutstanding")
-      ? kpi(a.card("receivablesOutstanding"), "Unpaid", unpaidCount !== null ? `${plural(unpaidCount, "order")} · as of now` : "As of now")
-      : kpi(a.card("unpaidOrders"), "Unpaid orders", "As of now"),
+    kpi(a.card("grossProfit"), "Gross profit", periodLabel),
   ].filter(Boolean);
-
-  // Needs attention: only real, non-zero items, each linking to its work.
-  const attention = [];
-  const verify = a.num("paymentsToVerify");
-  if (verify > 0) attention.push({ id: "verify", tone: "warning", text: `${plural(verify, "payment")} need${verify === 1 ? "s" : ""} verification`, detail: "Recorded by staff, waiting for an owner or manager", href: "/payments?state=for_verification" });
-  const low = a.num("lowStock");
-  if (low > 0) attention.push({ id: "lowStock", tone: "danger", text: `${plural(low, "SKU")} ${low === 1 ? "is" : "are"} low in stock`, detail: a.rows("lowStockItems").slice(0, 3).map((p) => p.name).join(", "), href: "/inventory?low=1" });
-  const ready = a.num("ordersReady");
-  if (ready > 0) attention.push({ id: "ready", tone: "info", text: `${plural(ready, "order")} ${ready === 1 ? "is" : "are"} ready`, detail: "Waiting for pickup or delivery", href: "/orders?fulfillmentStatus=ready" });
-  const pending = a.num("ordersPending");
-  if (pending > 0) attention.push({ id: "pending", tone: "info", text: `${plural(pending, "order")} not started yet`, detail: "Pending: start preparing", href: "/orders?fulfillmentStatus=pending" });
-  const hasAttention = ["paymentsToVerify", "lowStock", "ordersReady", "ordersPending"].some((id) => a.card(id));
-  const attentionLoading = ["paymentsToVerify", "lowStock", "ordersReady", "ordersPending"].some((id) => a.loading(id));
-
-  // Inventory summary (low first).
-  const inv = a.list("inventorySummary");
-  const invBody = !inv
-    ? ""
-    : inv.status === "loading"
-      ? skeleton(4)
-      : inv.status === "error"
-        ? emptyState({ title: "Couldn't load", body: "Try again in a moment." })
-        : !inv.raw.length
-          ? emptyState({ iconName: "inventory", title: "No products yet", body: inv.empty })
-          : html`<div class="table-wrap"><table class="table table-compact rows" data-role="inventory-summary">
-              <thead><tr><th>SKU</th><th class="num">Stock left</th><th class="num">Set aside</th><th>Status</th></tr></thead>
-              <tbody>${inv.raw.map((p) => {
-                const unit = UNITS[p.unit]?.label ?? p.unit ?? "";
-                const out = (p.available ?? 0) <= 0;
-                const status = out ? badge("Out", "danger") : p.isLowStock ? badge("Low", "warning") : badge("OK", "success");
-                return html`<tr data-product="${p.id}">${mobileCell({ title: p.name, sub: `${p.sku} · ${formatQuantity(p.reserved ?? 0)} reserved`, end: html`${formatQuantity(p.available ?? 0)} ${unit} ${status}` })}<td><span class="cell-strong">${p.name}</span><span class="cell-sub">${p.sku}</span></td>
-                  <td class="num">${formatQuantity(p.available ?? 0)} <span class="cell-sub-inline">${unit}</span></td><td class="num">${formatQuantity(p.reserved ?? 0)}</td>
-                  <td>${out ? badge("Out", "danger") : p.isLowStock ? badge("Low", "warning") : badge("OK", "success")}</td></tr>`;
-              })}</tbody></table></div>`;
-
-  // Order status: live counts + recent orders with inline controls.
-  const statusTiles = [
-    a.card("ordersPending") && { id: "pending", label: "Pending", value: a.card("ordersPending").value, href: "/orders?fulfillmentStatus=pending" },
-    a.card("ordersPreparing") && { id: "preparing", label: "Preparing", value: a.card("ordersPreparing").value, href: "/orders?fulfillmentStatus=preparing" },
-    a.card("ordersReady") && { id: "ready", label: "Ready", value: a.card("ordersReady").value, href: "/orders?fulfillmentStatus=ready", hot: ready > 0 },
-    a.card("fulfilledOrders") && { id: "fulfilled", label: "Fulfilled", value: a.card("fulfilledOrders").value },
-  ].filter(Boolean);
-  const recent = a.list("recentOrders");
-  const recentBody = !recent
-    ? ""
-    : recent.status === "loading"
-      ? skeleton(3)
-      : !recent.raw.length
-        ? emptyState({ iconName: "orders", title: "No orders yet", body: "Orders entered in Luna appear here." })
-        : itemList(
-            recent.raw.map((o) => ({
-              id: o.id,
-              title: `${o.orderNumber} · ${o.customer?.name ?? ""}`,
-              sub: `${o.itemCount ?? o.items?.length ?? 0} item${(o.itemCount ?? o.items?.length) === 1 ? "" : "s"}`,
-              end: formatCentavos(o.total, currency),
-              controls: html`${paymentCell(o, can)}${fulfillmentCell(o, can)}`,
-            })),
-            { role: "recent-orders", scroll: true }
-          );
-
   return html`
     ${k.length ? kpiStrip(k) : ""}
-    <div class="split section">
-      <div class="stack">
-        ${hasAttention ? section({ title: "Needs attention", id: "attention", body: attentionLoading ? skeleton(3) : attentionList(attention, { clear: "All clear. Nothing waiting on you right now." }) }) : ""}
-        ${inv ? section({ title: "Inventory", hint: "low stock first", id: "inventory", link: { href: "/inventory", label: "View inventory" }, body: invBody }) : ""}
-      </div>
-      <div class="stack">
-        ${statusTiles.length || recent
-          ? section({
-              title: "Orders",
-              hint: `now · fulfilled ${periodLabel.toLowerCase()}`,
-              id: "orders",
-              link: recent ? { href: "/orders", label: "View orders" } : null,
-              body: html`${statusTiles.length ? countTiles(statusTiles, { role: "order-status" }) : ""}${recentBody}`,
-            })
-          : ""}
-      </div>
-    </div>
+    ${can.create ? html`<div class="section" data-role="checkout-slot"></div>` : html`<p class="stat-hint section">Orders are created in <a href="/orders" data-link>Orders</a>.</p>`}
   `;
 }
 

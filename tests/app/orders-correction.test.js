@@ -76,8 +76,9 @@ const footer = (detail) => [...detail.querySelectorAll(".modal-footer > button, 
 describe("Edit -> Save on a fulfilled order", () => {
   it("owner: same Edit button; the editor explains and asks for a reason; Save sends update + reason", async () => {
     const { d, detail } = await openDetail(session("owner"), fulfilledOrder.id);
-    // Phase 8 adds "Record payment" while a balance remains.
-    expect(footer(detail)).toEqual(["Record payment", "Edit", "Close"]);
+    // Owner pilot: Edit and Close; Record payment (a balance remains) sits under ⋯ More.
+    expect(footer(detail)).toEqual(["⋯ More", "Edit", "Close"]);
+    expect([...detail.querySelectorAll('[data-role="more-menu"] button')].map((b) => b.textContent.trim())).toEqual(["Record payment"]);
     detail.querySelector('[data-act="edit"]').click();
     await flush();
     const form = document.querySelector(".modal-backdrop form");
@@ -93,7 +94,7 @@ describe("Edit -> Save on a fulfilled order", () => {
 
   it("staff (no orders.correct): no Edit on a fulfilled order", async () => {
     const { detail } = await openDetail(session("staff"), fulfilledOrder.id);
-    expect(footer(detail)).toEqual(["Record payment", "Close"]); // no Edit
+    expect(footer(detail)).toEqual(["⋯ More", "Close"]); // no Edit
   });
 
   it("no correction / reversal / COGS buttons exist anywhere", async () => {
@@ -126,12 +127,12 @@ describe("activity log", () => {
 describe("⋯ More holds cancel and delete for open orders", () => {
   it("owner: More menu with Cancel order and Delete order; Delete sends action delete", async () => {
     const { d, detail } = await openDetail(session("owner"), pendingOrder.id);
-    expect(footer(detail)).toEqual(["⋯ More", "Record payment", "Edit", "Mark fulfilled", "Close"]);
+    expect(footer(detail)).toEqual(["⋯ More", "Edit", "Close"]);
     const menu = detail.querySelector('[data-role="more-menu"]');
     expect(menu.hidden).toBe(true);
     detail.querySelector('[data-act="more"]').click();
     expect(menu.hidden).toBe(false);
-    expect([...menu.querySelectorAll("button")].map((b) => b.textContent.trim())).toEqual(["Cancel order", "Delete order"]);
+    expect([...menu.querySelectorAll("button")].map((b) => b.textContent.trim())).toEqual(["Record payment", "Mark fulfilled", "Cancel order", "Delete order"]);
     menu.querySelector('[data-act="delete"]').click();
     await flush();
     const form = [...document.querySelectorAll(".modal-backdrop form")].at(-1);
@@ -141,9 +142,10 @@ describe("⋯ More holds cancel and delete for open orders", () => {
     expect(d.api).toHaveBeenCalledWith("orders", { method: "POST", body: { action: "delete", orderId: pendingOrder.id, reason: "Duplicate entry" } });
   });
 
-  it("staff (no orders.cancel): no More menu; fulfilled orders never offer delete", async () => {
+  it("staff (no orders.cancel): no Cancel / Delete in ⋯ More; fulfilled orders never offer delete", async () => {
     const staff = await openDetail(session("staff"), pendingOrder.id);
-    expect(staff.detail.querySelector('[data-act="more"]')).toBeNull();
+    expect(staff.detail.querySelector('[data-act="cancel"]')).toBeNull();
+    expect(staff.detail.querySelector('[data-act="delete"]')).toBeNull();
     document.body.innerHTML = '<main id="content"></main>';
     container = document.getElementById("content");
     const owner = await openDetail(session("owner"), fulfilledOrder.id);

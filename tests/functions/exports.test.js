@@ -329,9 +329,10 @@ describe("Dashboard and Reports workbooks", () => {
     const ctx = await ctxFor(world.uids.ownera);
     const rep = await buildReport({ db: world.db, tenant: A, from: "2026-10-07", to: "2026-10-08", permissions: ctx.permissions, entitlements: ctx.entitlements });
     expect(s["Net sales"]).toBe(String(rep.overview.netSales / 100));
-    // Phase 18.5: the Dashboard workbook is the store pulse (what the screen
-    // shows); profitability (COGS, gross / operating profit) is the Reports workbook.
-    for (const k of ["COGS", "Gross profit", "Estimated operating profit", "Payments received"]) expect(s[k], k).toBeUndefined();
+    // The Dashboard workbook is the store pulse; Owner pilot adds Gross profit
+    // (the same figure as Reports). COGS / operating profit stay in Reports.
+    expect(s["Gross profit"]).toBe(String(rep.overview.grossProfit / 100));
+    for (const k of ["COGS", "Estimated operating profit", "Payments received"]) expect(s[k], k).toBeUndefined();
     expect(s.Orders).toBe("3");
     expect(s.Fulfilled).toBeDefined();
     expect(s["Current unpaid balance"]).toBeUndefined(); // not a period figure

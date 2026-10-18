@@ -94,10 +94,12 @@ const TEMPLATES = [
     navigation: ["dashboard", "orders", "payments", "inventory", "customers", "expenses", "reports", "imports", "users", "settings"],
     mobileTabs: ["orders", "inventory", "payments"],
     dashboard: {
-      // Selected period first, then current operations (Phase 12.5).
-      // Phase 18.5: the store pulse (Monitor). Profitability (COGS, gross
-      // profit, operating expenses / profit) lives in Reports only.
-      widgets: ["netSales", "ordersToday", "fulfilledOrders", "receivablesOutstanding", "unpaidOrders", "pendingFulfillment", "lowStock", "paymentsToVerify", "ordersPending", "ordersPreparing", "ordersReady", "inventorySummary", "recentOrders", "lowStockItems"],
+      // Selected period first, then current operations (Phase 12.5). The
+      // Dashboard workbook (Export & Backup) lists all of these. Owner pilot:
+      // the SCREEN is the checkout and shows only Total sales, Total orders
+      // and Gross profit (src/modules/dashboard SCREEN_WIDGETS); COGS and
+      // operating profit detail stay in Reports.
+      widgets: ["netSales", "ordersToday", "grossProfit", "fulfilledOrders", "receivablesOutstanding", "unpaidOrders", "pendingFulfillment", "lowStock", "paymentsToVerify", "ordersPending", "ordersPreparing", "ordersReady", "inventorySummary", "recentOrders", "lowStockItems"],
       empty: { title: "Nothing to show yet", body: "Your dashboard fills in as your business uses Luna." },
     },
     labels: { modules: { expenses: "Operating Expenses" } },

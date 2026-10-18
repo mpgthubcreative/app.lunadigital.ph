@@ -3,8 +3,8 @@
 // standard); phones show a 2-line record with Adjust. Safe fields are edited in place (selling price, reorder level,
 // status); stock is never typed over, only changed through Adjust (a signed
 // quantity + reason, logged by the server). Everything else lives in
-// View details: the full record, receiving, editing, delete-if-unused and
-// the paginated movement history.
+// View details: the essentials (stock left, category, unit, price), Receive,
+// Adjust, Edit product, delete-if-unused and the folded movement history.
 //
 // Permissions:
 //   inventory.view     the list and history (quantities)
@@ -262,7 +262,10 @@ export function mount(container, session, { data = defaultData, api = defaultApi
     if (result) await done(p ? "Product updated" : "Product created");
   }
 
-  // ---- View details: full record, actions, paginated history ----
+  // ---- View details (Owner pilot): SKU · Name, Category, Unit, Stock left,
+  // Selling price; Receive / Adjust / Edit product, Close quiet. The full
+  // record (in stock, set aside, costs) stays in the data and the export;
+  // the movement history is folded and read only when opened.
   async function openDetails(p) {
     const backdrop = document.createElement("div");
     backdrop.className = "modal-backdrop is-panel";
@@ -271,42 +274,43 @@ export function mount(container, session, { data = defaultData, api = defaultApi
     const rows = [];
     let hasMore = false;
     let error = null;
+    let loaded = false;
+    let historyOpen = false;
     const close = () => backdrop.remove();
+    const field = (k, v, role = "") => html`<div class="pd-field"${role ? html` data-role="${role}"` : ""}><dt>${k}</dt><dd>${v}</dd></div>`;
     const paint = () =>
       render(
         backdrop,
-        html`<div role="dialog" aria-modal="true" aria-label="Details for ${p.name}" class="modal modal-wide" data-role="details">
-          <div class="modal-header"><h2 class="card-title">${p.sku} · ${p.name}</h2></div>
+        html`<div role="dialog" aria-modal="true" aria-label="Details for ${p.name}" class="modal pd" data-role="details">
+          <div class="modal-header"><h2 class="card-title pd-title">${p.sku} · ${p.name}</h2>${p.status === "active" ? "" : html`<p class="pd-flag">${badge("Inactive", "neutral")}</p>`}</div>
           <div class="modal-body">
-            <dl class="dl dl-compact">
-              <dt>Category</dt><dd>${r.category}</dd><dt>Unit</dt><dd>${r.unit}</dd>
-              <dt>Stock left</dt><dd><strong>${r.available}</strong> to sell</dd><dt>In stock</dt><dd>${r.onHand}</dd><dt>Set aside for orders</dt><dd>${r.reserved}</dd>
-              <dt>Reorder at</dt><dd>${r.reorderLevel}</dd><dt>Selling price</dt><dd>${r.price}</dd><dt>Status</dt><dd>${r.status}</dd>
-              ${can.costs ? html`<dt>Cost (average)</dt><dd>${r.avgCost}</dd><dt>Profit per unit (est.)</dt><dd data-role="profit">${r.profitPerUnit}${r.margin !== "—" ? ` · ${r.margin} of the price` : ""}</dd><dt>Stock value (est.)</dt><dd>${r.value}</dd>` : ""}
-              <dt>Movements</dt><dd>${p.movementCount || 0}</dd>
+            <div class="pd-stock" data-role="stock-left"><span>Stock left</span><b>${r.available} ${r.unit}</b></div>
+            <dl class="pd-fields">
+              ${field("Category", r.category)}${field("Unit", r.unit)}
+              ${p.sellingPrice > 0 ? field("Selling price", r.price, "price") : ""}
             </dl>
-            ${can.costs ? html`<p class="stat-hint" data-role="cost-method">Cost is the average of what you paid for the stock you have; each delivery you receive updates it. Orders keep the cost from the day they were fulfilled, so past profit never changes. The Cost column below is your cost history.</p>` : ""}
-            <h3 class="section-title">History</h3>
-            <div data-role="history">
-              ${error ? html`<p class="form-error">${error}</p>` : ""}
-              ${!rows.length && !error ? emptyState({ title: "No movements yet" }) : ""}
-              ${rows.length
-                ? html`<div class="table-wrap"><table class="table table-compact"><thead><tr><th>Movement</th><th>When</th><th>By</th><th>Stock after</th><th>Reason / reference</th>${can.costs ? html`<th>Cost</th>` : ""}</tr></thead>
-                    <tbody>${rows.map(
-                      (h) => html`<tr data-tx="${h.id}"><td><strong>${h.label}</strong></td><td>${h.when}</td><td>${h.actor}</td><td>${h.balance}</td>
-                        <td>${[h.reason, h.note, h.reference && `Ref ${h.reference}`].filter(Boolean).join(" · ")}</td>${can.costs ? html`<td data-col="cost">${h.cost || ""}</td>` : ""}</tr>`
-                    )}</tbody></table></div>`
-                : ""}
-            </div>
+            <details class="dd-fold dd-quiet" data-role="fold-history" ${historyOpen ? "open" : ""}><summary><span class="dd-when-closed">View stock history</span><span class="dd-when-open">Hide stock history</span></summary>
+              <div data-role="history">
+                ${error ? html`<p class="form-error">${error}</p>` : ""}
+                ${!loaded && !error ? html`<p class="stat-hint">Loading…</p>` : ""}
+                ${loaded && !rows.length && !error ? html`<p class="stat-hint">No movements yet.</p>` : ""}
+                ${rows.length
+                  ? html`<ul class="dd-lines">${rows.map(
+                      (h) => html`<li class="dd-line" data-tx="${h.id}"><span class="dd-date"><b>${h.label}</b></span><span class="dd-amt">${h.when.replace(/,? \d{1,2}:\d{2}.*$/, "")}</span>
+                        <span class="dd-line-sub">${[h.actor !== "—" ? h.actor : "", h.reason, h.note, h.reference && `Ref ${h.reference}`].filter(Boolean).join(" · ")}${can.costs && h.cost ? html`<span data-col="cost"> · ${h.cost}</span>` : ""}</span></li>`
+                    )}</ul>`
+                  : ""}
+                ${hasMore ? html`<button type="button" class="btn btn-compact btn-ghost" data-act="more">Load more</button>` : ""}
+              </div>
+            </details>
           </div>
           <div class="modal-footer">
-            ${hasMore ? html`<button type="button" class="btn" data-act="more">Load more</button>` : ""}
             ${can.receive && p.status === "active" ? html`<button type="button" class="btn" data-act="d-receipt">Receive</button>` : ""}
             ${can.adjust && !(p.movementCount > 0) ? html`<button type="button" class="btn" data-act="d-opening">Starting stock</button>` : ""}
             ${can.adjust && p.movementCount > 0 ? html`<button type="button" class="btn" data-act="d-adjust">Adjust</button>` : ""}
             ${can.manage ? html`<button type="button" class="btn" data-act="d-edit">Edit product</button>` : ""}
-            ${can.manage && !(p.movementCount > 0) ? html`<button type="button" class="btn btn-danger" data-act="d-delete">Delete</button>` : ""}
-            <button type="button" class="btn btn-primary" data-act="close">Close</button>
+            ${can.manage && !(p.movementCount > 0) ? html`<button type="button" class="btn btn-danger-ghost" data-act="d-delete">Delete</button>` : ""}
+            <button type="button" class="btn btn-ghost" data-act="close">Close</button>
           </div>
         </div>`
       );
@@ -320,8 +324,18 @@ export function mount(container, session, { data = defaultData, api = defaultApi
         console.error("inventory: history failed:", err && (err.code || err.message));
         error = "Couldn't load history.";
       }
+      loaded = true;
       paint();
     }
+    backdrop.addEventListener(
+      "toggle",
+      (event) => {
+        if (!event.target.matches?.('[data-role="fold-history"]')) return;
+        historyOpen = event.target.open;
+        if (historyOpen && !loaded && !error) more();
+      },
+      true
+    );
     backdrop.addEventListener("click", async (event) => {
       const act = event.target.closest("[data-act]")?.dataset.act;
       if (event.target === backdrop || act === "close") return close();
@@ -344,7 +358,6 @@ export function mount(container, session, { data = defaultData, api = defaultApi
       }
     });
     paint();
-    await more();
   }
 
   const onClick = (event) => {

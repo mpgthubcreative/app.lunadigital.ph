@@ -10,7 +10,9 @@
 //   Fulfillment ▾   Pending / Preparing / Ready change the stage; Fulfilled
 //                   and Cancelled go through the protected fulfil / cancel
 //                   engines (stock, Sales, COGS), never a bare status write.
-// View details: items, totals, payments, activity log, Edit, ⋯ More.
+// View details: "Fulfilled · Paid", the customer (if any), stacked product
+// lines, Total strongest, compact payments, activity folded; Edit and
+// Close, everything else under ⋯ More.
 // Permissions decide every control; the server re-checks all of it.
 
 import { html, render } from "../../lib/html.js";
@@ -157,60 +159,73 @@ export function mount(container, session, { data = defaultDeps.data, payments = 
     const canEdit = can.update && (open || (fulfilled && can.correct));
     const canDelete = can.cancel && open && !(order.amountPaid > 0);
     const canRecord = can.recordPayment && order.fulfillmentStatus !== "cancelled" && (order.balance ?? 0) > 0;
+    // Owner pilot: Edit and Close are the two buttons; everything else an
+    // order can do (payment, fulfil, cancel, delete) sits under ⋯ More.
     const more = [
+      ...(canRecord ? [html`<button type="button" class="menu-item" data-act="record">Record payment</button>`] : []),
+      ...(open && can.fulfill ? [html`<button type="button" class="menu-item" data-act="fulfill">Mark fulfilled</button>`] : []),
       ...(open && can.cancel ? [html`<button type="button" class="menu-item" data-act="cancel">Cancel order</button>`] : []),
       ...(canDelete ? [html`<button type="button" class="menu-item menu-danger" data-act="delete">Delete order</button>`] : []),
     ];
     const costByLine = new Map((costs?.lines || []).map((l) => [l.lineId, l.costConsumed]));
+    const money = (c) => formatCentavos(c, currency);
+    const day = (at) => (when(at, timezone) || "").replace(/,? \d{1,2}:\d{2}.*$/, "");
+    // A plain walk-in (no name typed) shows no customer block.
+    const name = order.customer?.name ?? "";
+    const hasCustomer = Boolean(order.customerId || order.customer?.phone || (name && name !== "Walk-in"));
+    const came = sourceText(order.source, order.sourceNote) || sourceLabel(order.source);
+    const tone = (t) => `od-tone-${t || "neutral"}`;
+    const history = historyRows(order, { currency, timezone });
+    const payActions = (p) => [
+      ...(p.proof ? [html`<button type="button" class="menu-item" role="menuitem" data-act="p-proof" data-payment="${p.id}">View screenshot</button>`] : []),
+      ...(can.verifyPayment && p.state === "for_verification" ? [html`<button type="button" class="menu-item" role="menuitem" data-act="p-verify" data-payment="${p.id}">Verify</button>`] : []),
+      ...(can.verifyPayment && p.state !== "voided" ? [html`<button type="button" class="menu-item" role="menuitem" data-act="p-edit" data-payment="${p.id}">Edit</button>`, html`<div class="menu-sep" role="separator"></div><button type="button" class="menu-item menu-danger" role="menuitem" data-act="p-remove" data-payment="${p.id}">Remove</button>`] : []),
+    ];
     render(
       backdrop,
-      html`<div class="modal modal-wide" role="dialog" aria-modal="true" aria-label="Order ${order.orderNumber}" data-role="detail">
-        <div class="modal-header"><h2 class="card-title">${order.orderNumber}</h2>
-          <div class="page-actions">${badge(fulfillmentLabel(order.fulfillmentStatus), FULFILLMENT_TONE[order.fulfillmentStatus] || "neutral")} ${badge(paymentLabel(order.paymentStatus), PAYMENT_TONE[order.paymentStatus] || "neutral")}</div></div>
+      html`<div class="modal modal-wide od" role="dialog" aria-modal="true" aria-label="Order ${order.orderNumber}" data-role="detail">
+        <div class="modal-header od-head"><h2 class="card-title od-number">${order.orderNumber}</h2>
+          <p class="od-status" data-role="status"><span class="${tone(FULFILLMENT_TONE[order.fulfillmentStatus])}">${fulfillmentLabel(order.fulfillmentStatus)}</span> · <span class="${tone(PAYMENT_TONE[order.paymentStatus])}">${paymentLabel(order.paymentStatus)}</span></p></div>
         <div class="modal-body">
-          <dl class="dl">
-            <dt>Customer</dt><dd>${order.customer?.name}${order.customer?.phone ? ` · ${order.customer.phone}` : ""}${order.customerId ? html` ${badge("Saved customer", "info")}` : ""}</dd>
-            <dt>Came from</dt><dd>${sourceText(order.source, order.sourceNote) || sourceLabel(order.source)}</dd>
-            <dt>Created by</dt><dd>${order.createdBy?.name ?? ""}</dd>
-            ${order.deliveryAddress ? html`<dt>Delivery address</dt><dd>${order.deliveryAddress}</dd>` : ""}
-            ${order.notes ? html`<dt>Notes</dt><dd>${order.notes}</dd>` : ""}
-            ${order.cancellationReason ? html`<dt>Cancelled because</dt><dd>${order.cancellationReason}</dd>` : ""}
-          </dl>
-          <div class="table-wrap"><table class="table table-compact" data-role="items"><thead><tr><th>Product</th><th class="num">Qty</th><th class="num">Price</th><th class="num">Subtotal</th>${costs ? html`<th class="num">Cost (COGS)</th>` : ""}</tr></thead>
-            <tbody>${order.items.map(
-              (l) => html`<tr><td>${l.sku} · ${l.name}</td><td class="num">${qtyText(l.quantity, l.unit)}</td><td class="num">${formatCentavos(l.unitPrice, currency)}</td><td class="num">${formatCentavos(l.lineSubtotal, currency)}</td>${costs ? html`<td class="num">${formatCentavos(costByLine.get(l.lineId) ?? 0, currency)}</td>` : ""}</tr>`
-            )}</tbody></table></div>
-          <dl class="dl" data-role="totals">
-            <dt>Subtotal</dt><dd>${formatCentavos(order.subtotal, currency)}</dd>
-            <dt>Discount</dt><dd>${formatCentavos(order.discount, currency)}</dd>
-            <dt>Total</dt><dd><strong>${formatCentavos(order.total, currency)}</strong></dd>
-            <dt>Paid</dt><dd>${formatCentavos(order.amountPaid, currency)}</dd>
-            <dt>Balance</dt><dd>${formatCentavos(order.balance, currency)}</dd>
-            ${costs ? html`<dt>COGS</dt><dd data-role="cogs">${formatCentavos(costs.cogs, currency)}</dd><dt>Gross profit</dt><dd data-role="profit">${formatCentavos(costs.grossProfit, currency)}</dd>` : ""}
+          ${hasCustomer
+            ? html`<div class="od-customer" data-role="customer"><span class="od-name">${name}${order.customerId ? html` ${badge("Saved", "info")}` : ""}</span><span class="od-sub">${[order.customer?.phone, came].filter(Boolean).join(" · ")}</span></div>`
+            : html`<p class="od-sub od-came" data-role="came">${came}</p>`}
+          ${order.deliveryAddress ? html`<p class="od-note"><span class="od-k">Deliver to</span> ${order.deliveryAddress}</p>` : ""}
+          ${order.notes ? html`<p class="od-note" data-role="notes"><span class="od-k">Note</span> ${order.notes}</p>` : ""}
+          ${order.cancellationReason ? html`<p class="od-note"><span class="od-k">Cancelled because</span> ${order.cancellationReason}</p>` : ""}
+          <ul class="od-items" data-role="items">${order.items.map(
+            (l) => html`<li class="od-item"><span class="od-item-main"><span class="od-name">${l.name}</span><span class="od-sub">${qtyText(l.quantity, l.unit)} × ${money(l.unitPrice)}${costs ? html` · cost ${money(costByLine.get(l.lineId) ?? 0)}` : ""}</span></span><b class="od-amt">${money(l.lineSubtotal)}</b></li>`
+          )}</ul>
+          <dl class="od-totals" data-role="totals">
+            ${order.discount ? html`<div><dt>Subtotal</dt><dd>${money(order.subtotal)}</dd></div><div><dt>Discount</dt><dd>−${money(order.discount)}</dd></div>` : ""}
+            <div class="od-grand"><dt>Total</dt><dd data-role="total">${money(order.total)}</dd></div>
+            <div><dt>Paid</dt><dd>${money(order.amountPaid)}</dd></div>
+            ${(order.balance ?? 0) > 0 ? html`<div class="od-due"><dt>Balance</dt><dd>${money(order.balance)}</dd></div>` : ""}
+            ${costs ? html`<div class="od-quiet"><dt>COGS</dt><dd data-role="cogs">${money(costs.cogs)}</dd></div><div class="od-quiet"><dt>Gross profit</dt><dd data-role="profit">${money(costs.grossProfit)}</dd></div>` : ""}
           </dl>
           ${paymentRows.length
-            ? html`<h3 class="section-title">Payments</h3>
-              <div class="table-wrap"><table class="table table-compact" data-role="payments"><thead><tr><th>When</th><th class="num">Amount</th><th>Method</th><th>Reference</th><th>Proof</th><th>Status</th><th></th></tr></thead>
-              <tbody>${paymentRows.map(
-                (p) => html`<tr data-payment="${p.id}">
-                  <td>${when(p.receivedAt || p.createdAt, timezone)}</td><td class="num">${formatCentavos(p.amount, currency)}</td><td>${methodLabel(p.method)}</td><td>${p.reference || "—"}</td>
-                  <td>${p.proof ? html`<button type="button" class="cell-edit" data-act="p-proof" data-payment="${p.id}">View screenshot</button>` : "—"}</td>
-                  <td>${badge(PAYMENT_STATES[p.state]?.label ?? p.state, STATE_TONE[p.state] || "neutral")}</td>
-                  <td class="row-actions">${can.verifyPayment && p.state === "for_verification" ? html`<button type="button" class="btn btn-compact" data-act="p-verify" data-payment="${p.id}">Verify</button>` : ""}${can.verifyPayment && p.state !== "voided" ? html`<button type="button" class="btn btn-compact" data-act="p-edit" data-payment="${p.id}">Edit</button><button type="button" class="btn btn-compact" data-act="p-remove" data-payment="${p.id}" title="Remove payment">⋯</button>` : ""}</td>
-                </tr>`
-              )}</tbody></table></div>`
+            ? html`<h3 class="section-title od-section">Payments</h3>
+              <ul class="od-pays" data-role="payments">${paymentRows.map((p) => {
+                const acts = payActions(p);
+                const flag = p.state && p.state !== "verified" && p.state !== "recorded" ? PAYMENT_STATES[p.state]?.label ?? p.state : "";
+                return html`<li class="od-pay" data-payment="${p.id}">
+                  <span class="od-pay-main"><span class="od-pay-date">${day(p.receivedAt || p.createdAt)}${flag ? html` ${badge(flag, STATE_TONE[p.state] || "neutral")}` : ""}</span>
+                    <span class="od-pay-amt"><b>${money(p.amount)}</b> · ${methodLabel(p.method)}</span>
+                    ${p.reference || p.proof ? html`<span class="od-sub">${[p.reference ? `Ref ${p.reference}` : "", p.proof ? "Screenshot attached" : ""].filter(Boolean).join(" · ")}</span>` : ""}</span>
+                  ${acts.length ? html`<details class="line-menu"><summary class="btn btn-compact btn-ghost" aria-label="More for this payment">⋯</summary><div class="line-menu-list" role="menu">${acts}</div></details>` : ""}
+                </li>`;
+              })}</ul>`
             : ""}
-          <h3 class="section-title">Activity</h3>
-          <ul class="list activity" data-role="history">${historyRows(order, { currency, timezone }).map(
-            (h) => html`<li data-type="${h.type}"><span>${h.headline}</span>${h.effects.map((e) => html`<div class="stat-hint">${e}</div>`)}</li>`
-          )}</ul>
-          ${costs && costs.corrections?.length ? html`<ul class="list activity" data-role="cost-corrections">${costCorrectionRows(costs, { currency, timezone }).map((c) => html`<li><span class="stat-hint">${c.headline}</span><div class="stat-hint">${c.text}</div></li>`)}</ul>` : ""}
+          <details class="dd-fold dd-quiet od-activity" data-role="fold-activity"><summary><span class="dd-when-closed">View activity</span><span class="dd-when-open">Hide activity</span></summary>
+            <ul class="list activity" data-role="history">${history.map(
+              (h) => html`<li data-type="${h.type}"><span>${h.headline}</span>${h.effects.map((e) => html`<div class="stat-hint">${e}</div>`)}</li>`
+            )}</ul>
+            ${costs && costs.corrections?.length ? html`<ul class="list activity" data-role="cost-corrections">${costCorrectionRows(costs, { currency, timezone }).map((c) => html`<li><span class="stat-hint">${c.headline}</span><div class="stat-hint">${c.text}</div></li>`)}</ul>` : ""}
+          </details>
         </div>
         <div class="modal-footer">
-          ${more.length ? html`<div class="menu-wrap"><button type="button" class="btn" data-act="more" aria-haspopup="true" aria-expanded="false">⋯ More</button><div class="menu" data-role="more-menu" hidden>${more}</div></div>` : ""}
-          ${canRecord ? html`<button type="button" class="btn" data-act="record">Record payment</button>` : ""}
-          ${canEdit ? html`<button type="button" class="btn" data-act="edit">Edit</button>` : ""}
-          ${open && can.fulfill ? html`<button type="button" class="btn btn-primary" data-act="fulfill">Mark fulfilled</button>` : ""}
+          ${more.length ? html`<div class="menu-wrap"><button type="button" class="btn btn-ghost" data-act="more" aria-haspopup="true" aria-expanded="false">⋯ More</button><div class="menu" data-role="more-menu" hidden>${more}</div></div>` : ""}
+          ${canEdit ? html`<button type="button" class="btn btn-primary" data-act="edit">Edit</button>` : ""}
           <button type="button" class="btn" data-act="close">Close</button>
         </div>
       </div>`

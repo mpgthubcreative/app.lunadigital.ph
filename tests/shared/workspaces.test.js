@@ -492,9 +492,9 @@ describe("navigation", () => {
 describe("dashboard", () => {
   const ids = (t, role = "owner") => resolveDashboard(access(t, role)).map((w) => w.id);
 
-  it("Distributor (Phase 18.5): the store pulse; profitability (COGS, gross / operating profit) lives in Reports only", () => {
-    expect(ids("distributor")).toEqual(["netSales", "ordersToday", "fulfilledOrders", "receivablesOutstanding", "unpaidOrders", "pendingFulfillment", "lowStock", "paymentsToVerify", "ordersPending", "ordersPreparing", "ordersReady", "inventorySummary", "recentOrders", "lowStockItems"]);
-    for (const id of ["cogs", "grossProfit", "operatingExpenses", "estimatedOperatingProfit", "paymentsReceived"]) expect(ids("distributor")).not.toContain(id);
+  it("Distributor (Owner pilot): Gross profit joins the pulse; COGS and operating profit stay in Reports", () => {
+    expect(ids("distributor")).toEqual(["netSales", "ordersToday", "grossProfit", "fulfilledOrders", "receivablesOutstanding", "unpaidOrders", "pendingFulfillment", "lowStock", "paymentsToVerify", "ordersPending", "ordersPreparing", "ordersReady", "inventorySummary", "recentOrders", "lowStockItems"]);
+    for (const id of ["cogs", "operatingExpenses", "estimatedOperatingProfit", "paymentsReceived"]) expect(ids("distributor")).not.toContain(id);
     expect(ids("distributor", "staff")).toEqual(["ordersToday", "fulfilledOrders", "unpaidOrders", "pendingFulfillment", "lowStock", "paymentsToVerify", "ordersPending", "ordersPreparing", "ordersReady", "inventorySummary", "recentOrders", "lowStockItems"]);
   });
 

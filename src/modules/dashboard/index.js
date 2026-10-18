@@ -24,6 +24,7 @@ import { fetchMetricDocuments, fetchDashboardLists } from "./data.js";
 import { LAYOUTS } from "./layouts.js";
 import { orderPermissions, inlineOrderActions } from "../orders/inline.js";
 import { listOrderPayments as defaultListOrderPayments } from "../payments/data.js";
+import { mountCheckout } from "./checkout.js";
 
 // The workspace names its own dashboard ("Wedding Dashboard"); Distributor
 // keeps "Dashboard".
@@ -31,16 +32,19 @@ const titleOf = (session) => workspaceModuleLabel(snapshotWorkspaceTemplateId(se
 const rangeText = ({ from, to }) => (from === to ? formatDayId(from) : `${formatDayId(from)} – ${formatDayId(to)}`);
 // Budget workspaces look at the month; the store looks at today.
 const DEFAULT_PRESET = { "baby-expense": "thisMonth", "bridal-expense": "thisMonth" };
+// Owner pilot: the Business Dashboard screen is the checkout; it reads only
+// the three figures it shows (the workbook still lists every widget).
+const SCREEN_WIDGETS = { distributor: ["netSales", "ordersToday", "grossProfit", "fulfilledOrders"] };
 
 // options.fetchDocuments / fetchLists / now / exportDeps / api are injectable for tests.
-export function mount(container, session, { fetchDocuments = fetchMetricDocuments, fetchLists = fetchDashboardLists, now = new Date(), toast = defaultToast, exportDeps = {}, api = defaultApi, listOrderPayments = defaultListOrderPayments } = {}) {
+export function mount(container, session, { fetchDocuments = fetchMetricDocuments, fetchLists = fetchDashboardLists, now = new Date(), toast = defaultToast, exportDeps = {}, api = defaultApi, listOrderPayments = defaultListOrderPayments, listActiveProducts } = {}) {
   let alive = true;
   let today;
   let presets;
   let plan;
   const templateId = snapshotWorkspaceTemplateId(session.entitlements);
   try {
-    plan = dashboardPlan(session, now);
+    plan = dashboardPlan(session, now, null, SCREEN_WIDGETS[templateId] || null);
     today = plan.day;
     presets = reportPresets(today);
   } catch (err) {
@@ -100,6 +104,22 @@ export function mount(container, session, { fetchDocuments = fetchMetricDocument
     const body = nothing || !layout ? html`<div data-role="workspace-empty">${card({ body: emptyState({ title: empty.title, body: empty.body }) })}</div>` : layout({ session, view, can, currency, today, periodLabel: periodLabel(), range: state.range, summary: state.summary, hhStaff: state.hhStaff });
     render(container, html`${header()}<div class="dashboard" data-workspace-layout="${templateId || ""}">${body}</div>`);
     for (const btn of container.querySelectorAll('[data-act="export"]')) btn.classList.add("btn-ghost");
+    attachCheckout();
+  }
+
+  // The Business checkout keeps its own state (cart, search, customer) in a
+  // host element that survives the dashboard re-rendering around it.
+  let checkoutHost = null;
+  let unmountCheckout = () => {};
+  function attachCheckout() {
+    const slot = container.querySelector('[data-role="checkout-slot"]');
+    if (!slot) return;
+    if (!checkoutHost) {
+      checkoutHost = document.createElement("div");
+      checkoutHost.dataset.role = "checkout";
+      unmountCheckout = mountCheckout(checkoutHost, session, { api, toast, listActiveProducts, onCreated: () => alive && reloadAll() });
+    }
+    slot.appendChild(checkoutHost);
   }
 
   // e.g. Firebase not configured / SDK failed to load: affected figures say
@@ -114,7 +134,7 @@ export function mount(container, session, { fetchDocuments = fetchMetricDocument
 
   let listsOnce = null; // lists don't depend on the period: load them once
   function load() {
-    plan = dashboardPlan(session, now, state.range);
+    plan = dashboardPlan(session, now, state.range, SCREEN_WIDGETS[templateId] || null);
     const seq = ++state.seq;
     const loading = Object.fromEntries(plan.documents.map((d) => [d.source, { status: "loading" }]));
     state.view = buildDashboardView({ session, widgets: plan.widgets, docs: loading, lists: state.lists || {} });
@@ -193,5 +213,6 @@ export function mount(container, session, { fetchDocuments = fetchMetricDocument
     container.removeEventListener("submit", onSubmit);
     unbindMenus();
     unbindExport();
+    unmountCheckout();
   };
 }

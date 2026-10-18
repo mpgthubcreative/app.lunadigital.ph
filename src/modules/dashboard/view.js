@@ -52,8 +52,11 @@ function display(widget, result, currency) {
 }
 
 // range: { from, to } business-local days (default: the business's today).
-export function dashboardPlan(session, now = new Date(), range = null) {
-  const widgets = resolveDashboard({ entitlements: session.entitlements, permissions: session.member.permissions });
+// only: the widget ids a screen actually shows (null = all), so it never
+// reads documents, lists or counts it does not display.
+export function dashboardPlan(session, now = new Date(), range = null, only = null) {
+  const all = resolveDashboard({ entitlements: session.entitlements, permissions: session.member.permissions });
+  const widgets = only ? all.filter((w) => only.includes(w.id)) : all;
   const day = businessDate(session.business.timezone, now);
   const period = range || { from: day, to: day };
   // Count widgets (e.g. overdue tasks) are live queries against today, read

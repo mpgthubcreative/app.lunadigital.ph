@@ -189,14 +189,32 @@ describe("View details", () => {
     return document.querySelector('[data-role="details"]');
   };
 
-  it("full record + readable history; costs only for cost holders", async () => {
-    await show(session("owner"));
+  const openHistory = async (d) => {
+    const fold = d.querySelector('[data-role="fold-history"]');
+    fold.open = true;
+    fold.dispatchEvent(new Event("toggle"));
+    await flush();
+    await flush();
+    return document.querySelector('[data-role="details"]');
+  };
+
+  it("Owner-pilot layout: SKU · Name, Category, Unit, Stock left (strongest), Selling price; nothing else; history folded and read only when opened", async () => {
+    const deps = await show(session("owner"));
     const d = await openDetails("p1");
+    expect(d.querySelector(".pd-title").textContent).toMatch(/^\S+ · /);
+    expect([...d.querySelectorAll(".pd-fields dt")].map((x) => x.textContent)).toEqual(["Category", "Unit", "Selling price"]);
+    expect(d.querySelector('[data-role="stock-left"] b').textContent).toMatch(/sack$/);
     const text = d.textContent.replace(/\s+/g, " ");
-    expect(text).toMatch(/Cost \(average\)\s*₱53\.33/);
-    expect(text).toMatch(/Profit per unit \(est\.\)\s*₱1,196\.67 · 95\.7% of the price/);
-    expect(text).toMatch(/Stock value \(est\.\)\s*₱7,466\.67/);
-    expect(text).toMatch(/past profit never changes/);
+    for (const gone of [/In stock/, /Set aside/, /Reorder at/, /Status/, /Cost \(average\)/, /Profit per unit/, /Stock value/, /Movements/, /past profit never changes/]) expect(text).not.toMatch(gone);
+    expect(d.querySelector("table")).toBeNull();
+    expect(d.querySelector('[data-role="fold-history"]').open).toBe(false);
+    expect(deps.data.listHistory).not.toHaveBeenCalled();
+  });
+
+  it("stock history (folded): readable movements; costs only for cost holders", async () => {
+    await show(session("owner"));
+    const d = await openHistory(await openDetails("p1"));
+    const text = d.textContent.replace(/\s+/g, " ");
     expect(text).toMatch(/Adjustment −10 sack/);
     expect(text).toMatch(/Received \+50 sack/);
     expect(text).toMatch(/Starting stock \+100 sack/);
@@ -207,9 +225,9 @@ describe("View details", () => {
 
   it("staff details: no cost anywhere, no actions beyond Close", async () => {
     const deps = await show(session("staff"));
-    const d = await openDetails("p1");
+    const d = await openHistory(await openDetails("p1"));
     expect(d.querySelector('[data-col="cost"]')).toBeNull();
-    expect(d.textContent).not.toMatch(/Cost \(average\)|Profit per unit|past profit/);
+    expect(d.textContent).not.toMatch(/Cost \(average\)|Profit per unit|past profit|avg ₱/);
     expect([...d.querySelectorAll(".modal-footer button")].map((b) => b.textContent.trim())).toEqual(["Close"]);
     expect(deps.data.loadCostDocs).not.toHaveBeenCalled();
   });
@@ -218,6 +236,7 @@ describe("View details", () => {
     await show(session("owner"));
     let d = await openDetails("p1");
     expect([...d.querySelectorAll(".modal-footer button")].map((b) => b.textContent.trim())).toEqual(["Receive", "Adjust", "Edit product", "Close"]);
+    expect(d.querySelector('.modal-footer [data-act="close"]').classList.contains("btn-ghost")).toBe(true); // Close is the quiet one
     document.querySelector(".modal-backdrop").remove();
     d = await openDetails("p2");
     expect([...d.querySelectorAll(".modal-footer button")].map((b) => b.textContent.trim())).toEqual(["Receive", "Starting stock", "Edit product", "Delete", "Close"]);

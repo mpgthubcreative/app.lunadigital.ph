@@ -93,12 +93,12 @@ describe("dashboard", () => {
     expect(container.textContent).not.toMatch(/Today's sales|Orders today|Low stock|Unpaid/);
   });
 
-  it("Distributor: still requests its metric documents and lists", async () => {
+  it("Distributor: requests its metric documents; the checkout screen reads no lists", async () => {
     const fetchDocuments = vi.fn(async () => ({}));
     const fetchLists = vi.fn(async () => ({}));
     mountDashboard(document.getElementById("content"), sessionFixture(), { fetchDocuments, fetchLists, now: NOW });
     await new Promise((r) => setTimeout(r, 0));
     expect(fetchDocuments.mock.calls[0][1].map((d) => d.collection)).toEqual(expect.arrayContaining(["metrics", "financialMetrics"]));
-    expect(fetchLists.mock.calls[0][1].map((w) => w.id)).toEqual(["inventorySummary", "recentOrders", "lowStockItems"]);
+    expect(fetchLists).not.toHaveBeenCalled();
   });
 });

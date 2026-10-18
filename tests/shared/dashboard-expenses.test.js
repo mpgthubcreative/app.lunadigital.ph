@@ -28,13 +28,13 @@ describe("dashboard.financials separates profitability from operations", () => {
     expect(ids(widgets)).toEqual(expect.arrayContaining(["ordersToday", "pendingFulfillment", "lowStock", "unpaidOrders"]));
   });
 
-  it("owner sees sales and the unpaid balance on the Dashboard (Phase 18.5: profitability is in Reports)", () => {
+  it("owner sees sales, gross profit and the unpaid balance (Owner pilot; COGS / operating profit are in Reports)", () => {
     const widgets = resolveDashboard({ entitlements: growth(), permissions: resolvePermissions("owner") });
-    expect(ids(financial(widgets))).toEqual(["netSales", "receivablesOutstanding"]);
+    expect(ids(financial(widgets))).toEqual(["netSales", "grossProfit", "receivablesOutstanding"]);
   });
 
   it("a staff member granted dashboard.financials sees them; a manager with it revoked does not", () => {
-    expect(financial(resolveDashboard({ entitlements: growth(), permissions: resolvePermissions("staff", { grant: ["dashboard.financials"] }) })).length).toBe(2);
+    expect(financial(resolveDashboard({ entitlements: growth(), permissions: resolvePermissions("staff", { grant: ["dashboard.financials"] }) })).length).toBe(3);
     expect(financial(resolveDashboard({ entitlements: growth(), permissions: resolvePermissions("manager", { revoke: ["dashboard.financials"] }) }))).toEqual([]);
   });
 
