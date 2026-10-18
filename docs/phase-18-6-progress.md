@@ -994,6 +994,19 @@ The accepted Bridal design (Money | Tasks | Guests | More) is unchanged; this pa
     - Bridal: no invite token or slug in the file. Business: no UID, ids, SKU or costs.
     - Master Backup: Owner 403, Super Admin 200.
 
+
+### 2026-10-19 · Excel import hidden (not launched); export baseline confirmed (4e06f98)
+
+- **Direction for now:** Luna → Download Excel only. `UNLAUNCHED_MODULE_IDS = ["imports"]` in shared/modules.js:
+  - **Hidden:** `canUseModule` is false, so there is no navigation or More item and no route. `/imports` shows "Page not available" in Business and redirects home in the other workspaces. Settings shows no Imports module line, limit or meter, and there are no "Coming soon" placeholders.
+  - **Blocked on the server:** `requireTenant` refuses every `/api/imports` request (403 `module-not-launched`) for every tenant user, including the Owner.
+  - **Kept:** entitlements and plans are untouched (snapshots with `imports: true` stay valid), and the import code and its tests are kept.
+- **Future import:** see docs/IMPORT-DIRECTION.md (sheet → suggested column matches → user mapping → preview → validation → confirm). Not built.
+- **Tests:**
+  - **Unit:** 1680 pass (the API tests now assert 403 for preview, commit and cancel; Settings has no Import line; `/imports` isn't available).
+  - **CI:** passed for a494de0, 04b691f and c5581c0.
+  - **Live on staging (temporary tenants, removed after):** the export baseline passed 33 of 33 again. The import checks passed 57 of 57 at 390 and 1280 across Business, Household and Bridal: no Import in navigation or on the pages checked, Download Excel unchanged, and `/api/imports` returned 403 with no job written.
+
 ## Plan (decisions made from the brief)
 
 ### Stage 1: Distributor
