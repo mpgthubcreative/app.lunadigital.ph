@@ -107,7 +107,8 @@ export function profitColumns(periods, { aria = "", format = compactMoney, maxLa
   const hi = niceMax(Math.max(0, ...vals) || 1);
   const lo = Math.min(0, ...vals) < 0 ? -niceMax(-Math.min(...vals)) : 0;
   const top = 22;
-  const bottom = 172;
+  // Room under a loss for its value label, above the period labels.
+  const bottom = lo < 0 ? 158 : 172;
   const left = 40;
   const y = (v) => bottom - ((v - lo) / (hi - lo)) * (bottom - top);
   const step = (W - left - 8) / Math.max(1, periods.length);
