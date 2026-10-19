@@ -74,12 +74,12 @@ export async function overviewView(el, ctx) {
         </section>
         <section class="card section" data-role="income">
           <div class="card-header"><h2 class="card-title">Income by workspace</h2></div>
-          <ul class="sa-income">${o.incomeByWorkspace.map(
+          <div class="card-body"><ul class="sa-income">${o.incomeByWorkspace.map(
             (w) => html`<li data-workspace="${w.workspaceTemplateId}">
               <span class="sa-income-name">${ctx.workspaceName(w.workspaceTemplateId)}<small>${w.billingType === "monthly" ? `Recurring · ${formatNumber(w.active)} active` : w.billingType === "annual" ? `Annual renewals collected this month · ${formatNumber(w.active)} active` : `12-month access collected this month · ${formatNumber(w.active)} active`}</small></span>
               <strong class="sa-income-value">${w.billingType === "monthly" ? html`${peso(w.recurring)}<small>/ month</small>` : peso(w.collected)}</strong>
             </li>`
-          )}</ul>
+          )}</ul></div>
         </section>`
     );
   draw();
@@ -272,24 +272,24 @@ export async function businessDetailView(el, ctx, businessId) {
       ${b.status === "deleted" ? html`<div class="banner banner-danger" role="alert">Deleted. Access is off. Recoverable until ${dateText(r.purgeAfter)} (⋯ → Restore business).</div>` : ""}
       <div class="section grid grid-2">
         <section class="card" data-role="subscription">
-          <h2 class="card-title">Subscription</h2>
-          <dl class="dl dl-compact">
+          <div class="card-header"><h2 class="card-title">Subscription</h2></div>
+          <div class="card-body"><dl class="dl dl-compact">
             <dt>Plan</dt><dd>${b.planName ?? b.planId}${plan ? html`<span class="cell-sub">${priceLabel(plan)}</span>` : ""}</dd>
             <dt>Billing</dt><dd>${billingTypeLabel(r.billingType)}${r.amount ? html` · ${peso(r.amount)}` : ""}</dd>
             <dt>${r.billingType === "term" ? "Access" : "Next"}</dt><dd data-role="when">${whenText(r)}</dd>
             ${r.paidThrough ? html`<dt>Paid through</dt><dd>${dateText(r.paidThrough)}</dd>` : ""}
             <dt>Started</dt><dd>${dateText(r.startDate)}</dd>
-          </dl>
+          </dl></div>
         </section>
         <section class="card" data-role="usage">
-          <h2 class="card-title">Usage <span class="hint">this month</span></h2>
-          <dl class="dl dl-compact sa-usage">
+          <div class="card-header"><h2 class="card-title">Usage <span class="hint">this month</span></h2></div>
+          <div class="card-body"><dl class="dl dl-compact sa-usage">
             <dt>Active users</dt><dd data-usage="users">${ofLimit(u.users ?? 0, lim.users)}</dd>
             <dt>Storage</dt><dd data-usage="storage">${ofLimit(u.storageBytes ?? 0, lim.storageBytes, formatBytes)}</dd>
             <dt>Excel downloads</dt><dd data-usage="downloads">${formatNumber(u.downloads ?? 0)}</dd>
             <dt>Excel transfer</dt><dd data-usage="transfer">${formatBytes(u.transferBytes ?? 0)}</dd>
             ${u.orders === null || u.orders === undefined ? "" : html`<dt>Orders</dt><dd data-usage="orders">${formatNumber(u.orders)}</dd>`}
-          </dl>
+          </dl></div>
         </section>
       </div>
       <section class="section card" id="members" data-role="members">
@@ -307,7 +307,8 @@ export async function businessDetailView(el, ctx, businessId) {
           )}</tbody></table></div>
       </section>
       <details class="section card sa-advanced" data-role="advanced">
-        <summary class="card-title">Advanced</summary>
+        <summary class="card-header"><h2 class="card-title">Advanced</h2></summary>
+        <div class="card-body">
         <div class="page-actions">
           <button type="button" class="btn btn-compact" data-act="general">Edit name / timezone</button>
           <button type="button" class="btn btn-compact" data-act="backup">Master Backup</button>
@@ -342,6 +343,7 @@ export async function businessDetailView(el, ctx, businessId) {
           : ""}
         <h3 class="section-title">Recent changes</h3>
         <ul class="list activity" data-role="audit">${d.audit.length ? d.audit.map((a) => html`<li>${when(a.at)} · ${a.actor ?? ""} · ${a.summary ?? a.type}${a.reason ? ` · ${a.reason}` : ""}</li>`) : html`<li>No changes recorded yet.</li>`}</ul>
+        </div>
       </details>`
   );
   if (window.location.hash === "#members") el.querySelector("#members")?.scrollIntoView();

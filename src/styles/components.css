@@ -4045,11 +4045,21 @@ tr.is-saving {
 .sa-limits { list-style: none; margin: 0 0 var(--space-3); padding: 0; }
 .sa-limits li { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); padding: var(--space-2) 0; border-top: 1px solid var(--border); }
 .sa-limits li small { display: block; font-size: var(--text-xs); color: var(--text-muted); }
-.sa-advanced > summary { cursor: pointer; list-style: none; }
+.sa-advanced > summary { cursor: pointer; list-style: none; padding-bottom: var(--space-4); }
 .sa-advanced > summary::-webkit-details-marker { display: none; }
-.sa-advanced > summary::after { content: " ›"; color: var(--text-muted); }
-.sa-advanced[open] > summary { margin-bottom: var(--space-3); }
+.sa-advanced > summary .card-title::after { content: " ›"; color: var(--text-muted); }
+.sa-advanced[open] > summary { padding-bottom: var(--space-2); }
+.sa-advanced .section-title { margin-top: var(--space-4); }
+[data-role="overview-kpis"] .kpi-label { white-space: normal; }
+/* The ⋯ cell stays a table cell on desktop (.row-actions is flex elsewhere). */
+@media (min-width: 720px) {
+  .sa-rows td.row-actions { display: table-cell; text-align: right; }
+}
 .sa-usage dd { font-variant-numeric: tabular-nums; }
+@media (max-width: 719px) {
+  /* Phone: the ⋯ stays on the summary line (one compact row per record). */
+  .sa-rows td.m-only { flex: 1 1 0; }
+}
 @media (max-width: 720px) {
   .sa-filters { display: grid; grid-template-columns: 1fr 1fr; }
   .sa-filters .input { grid-column: 1 / -1; }
