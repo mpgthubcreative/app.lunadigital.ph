@@ -170,14 +170,18 @@ describe("advances: deducted exactly once", () => {
 });
 
 describe("receipt confirmation", () => {
-  it("the same link confirmed 6 times at once: confirmed once, one notification", async () => {
+  it("the same link confirmed 6 times at once by the signed-in helper: confirmed once, one notification, one audit entry", async () => {
     const w = await world();
     for (const d of daysIn({ start: "2026-10-01", end: "2026-10-15" })) await pay.setAttendance({ ...w.c, input: { staffId: w.staffId, date: d, status: "present" } });
     const { payrollId } = await pay.preparePayroll({ ...w.c, staffId: w.staffId, periodStart: "2026-10-01" });
     const { receiptToken } = await pay.releaseSalary({ ...w.c, payrollId, release: { method: "cash" } });
-    const r = await Promise.allSettled(Array.from({ length: 6 }, () => pay.confirmReceipt({ db, FieldValue, token: receiptToken, now: NOW })));
+    const link = await pay.findReceiptLink({ db, token: receiptToken, now: NOW });
+    const self = await import("../../netlify/functions/_lib/household-self.js");
+    const helper = { uid: `helper-${w.c.business.id}`, name: "Maria" };
+    const r = await Promise.allSettled(Array.from({ length: 6 }, () => self.confirmSalaryReceived({ db, tenant: w.tenant, FieldValue, staffId: w.staffId, payrollId: link.payrollId, linkHash: link.hash, expired: link.expired, actor: helper })));
     expectExplicit(r);
     expect(ok(r).filter((x) => x.value.confirmed).length).toBe(1);
+    expect((await w.tenant.collection("auditLog").where("type", "==", "payroll.receipt_confirmed").get()).size).toBe(1);
     expect((await w.tenant.doc("payrolls", payrollId).get()).data().receiptStatus).toBe("confirmed");
     const inbox = await w.tenant.member(w.c.actor.uid).collection("inbox").get();
     expect(inbox.docs.filter((d) => d.data().type === "payroll.receipt_confirmed")).toHaveLength(1);

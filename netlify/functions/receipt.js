@@ -1,18 +1,31 @@
-// POST /api/receipt   PUBLIC (no login): the employee's one-time salary receipt link.
-//   { action: "view", token }      what was paid (business name, employee name,
-//                                  period, amount, method, date, status)
-//   { action: "confirm", token }   "I received my salary" (once)
-// The token is the only credential: 24 random bytes, stored only as a
-// SHA-256 hash, valid for one payroll, replaced when a new link is issued,
-// expiring after RECEIPT_LINK_DAYS and used once. Every invalid token gets
-// the same answer, so a guess learns nothing. No ids, other records or
-// tenant data are ever returned. The token travels in the POST body (the
-// page reads it from the URL fragment), so it doesn't reach server logs.
+// POST /api/receipt   the kasambahay's salary receipt link (Owner pilot 2026-10-19)
+//   { action: "view", token }      the saved salary breakdown (records Opened once)
+//   { action: "confirm", token }   "Confirm received" (records once)
+//
+// The link is a pointer, not a credential on its own. The caller must be
+// signed in (Firebase ID token), and the receipt opens only when:
+//   the verified user → has an active membership in the link's business
+//   → that membership is linked to a Staff record (member.staffId, set by
+//     the server when the Owner created the login) with payroll.self
+//   → the payroll the link points to belongs to that Staff record
+//   → the link is the payroll's current one.
+// Any other signed-in account gets the same "not assigned to your account"
+// answer with no receipt data. Unknown tokens all get one 404, so a guess
+// learns nothing. The token travels in the POST body (the page keeps it out
+// of the address bar), so it doesn't reach server logs. Opening never
+// confirms.
 
 import { respond, withErrorHandling, requireMethod, parseJsonBody, RequestError } from "./_lib/http.js";
 import { getAdmin } from "./_lib/firebase-admin.js";
-import { readReceiptLink, confirmReceipt } from "./_lib/payroll.js";
+import { authenticate } from "./_lib/auth.js";
+import { resolveTenantContext } from "./_lib/tenant.js";
+import { findReceiptLink } from "./_lib/payroll.js";
+import { openSalaryReceipt, confirmSalaryReceived } from "./_lib/household-self.js";
 import { PayrollError } from "../../shared/payroll.js";
+
+export const NOT_YOURS_MESSAGE = "This salary receipt is not assigned to your account.";
+const NOT_YOURS = () => new RequestError("receipt-not-yours", NOT_YOURS_MESSAGE, 403);
+const STATUS = { "link-expired": 410, "link-invalid": 404, "not-found": 404, "payment-not-paid": 409, "not-linked": 403 };
 
 export function createReceiptHandler({ getAdmin: loadAdmin, now = () => new Date() }) {
   return withErrorHandling("receipt", async (event) => {
@@ -21,12 +34,27 @@ export function createReceiptHandler({ getAdmin: loadAdmin, now = () => new Date
     if (!body || typeof body !== "object" || Array.isArray(body) || Object.keys(body).some((k) => !["action", "token"].includes(k)) || !["view", "confirm"].includes(body.action)) {
       throw new RequestError("invalid-request", "Invalid request.", 400);
     }
-    const { db, admin } = await loadAdmin();
+    const { db, auth, admin } = await loadAdmin();
+    const user = await authenticate(event, auth);
     try {
-      if (body.action === "view") return respond(200, { success: true, receipt: await readReceiptLink({ db, token: body.token, now: now() }) });
-      return respond(200, { success: true, receipt: await confirmReceipt({ db, FieldValue: admin.firestore.FieldValue, token: body.token, now: now() }) });
+      const link = await findReceiptLink({ db, token: body.token, now: now() });
+      let ctx;
+      try {
+        ctx = await resolveTenantContext({ db, uid: user.uid, requestedBusinessId: link.businessId });
+      } catch {
+        throw NOT_YOURS(); // not a member of that business (or no longer active)
+      }
+      const staffId = ctx.member.staffId;
+      if (!staffId || ctx.permissions["payroll.self"] !== true || !link.payrollId.startsWith(`${staffId}_`)) throw NOT_YOURS();
+      const args = { db, tenant: ctx.tenant, FieldValue: admin.firestore.FieldValue, staffId, payrollId: link.payrollId, linkHash: link.hash, expired: link.expired, actor: { uid: user.uid, name: user.name || null } };
+      const receipt = body.action === "view" ? await openSalaryReceipt(args) : await confirmSalaryReceived(args);
+      return respond(200, { success: true, receipt });
     } catch (err) {
-      if (err instanceof PayrollError) throw new RequestError(err.code, err.message, err.code === "link-expired" ? 410 : 404);
+      if (err instanceof PayrollError) {
+        // The payroll id names this staff member but the record says otherwise: still not theirs.
+        if (err.code === "not-found") throw NOT_YOURS();
+        throw new RequestError(err.code, err.message, STATUS[err.code] ?? 409);
+      }
       throw err;
     }
   });

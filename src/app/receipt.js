@@ -1,23 +1,43 @@
-// Public salary receipt page (Phase 14): /receipt#<token>. No login: the
-// employee opens the link their employer sent, sees what was paid, and taps
-// "I received it". The token comes from the URL fragment (never sent to
-// the server as part of the page URL) and is posted to /api/receipt, which
-// shows only this payment and accepts the confirmation once.
+// Salary receipt page (Owner pilot 2026-10-19): /receipt#<token>.
+//   Owner pays → Luna makes this link → the Owner sends it to the helper →
+//   the helper opens it → signs in if needed (and comes straight back here)
+//   → the server checks the account is the Staff member this payroll
+//   belongs to → the saved salary breakdown → "Confirm received".
+// Opening the link never confirms. The token comes from the URL fragment
+// (never sent as part of a page URL), is kept for this tab only
+// (sessionStorage) so sign-in and refresh return to the same receipt, and is
+// posted to /api/receipt with the helper's ID token.
 
 import { html, render } from "../lib/html.js";
 import { lunaMark } from "../components/icons.js";
 import { formatCentavos, formatDayId } from "../lib/format.js";
+import { watchUser, signIn, signOutUser, currentIdToken, friendlyAuthError } from "./auth.js";
+import { renderLogin } from "./screens.js";
 
-async function call(action, token, fetchImpl) {
-  const res = await fetchImpl("/api/receipt", { method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json" }, body: JSON.stringify({ action, token }) });
-  const body = await res.json().catch(() => ({}));
-  if (!res.ok) throw Object.assign(new Error(body.message || "This link isn't valid. Ask your employer for a new one."), { status: res.status });
-  return body.receipt;
-}
+const KEY = "luna.receiptToken";
+const remember = (token) => {
+  try {
+    if (token) sessionStorage.setItem(KEY, token);
+    return token || sessionStorage.getItem(KEY) || "";
+  } catch {
+    return token || "";
+  }
+};
+const confirmedText = (iso, timeZone = "Asia/Manila") => {
+  if (!iso) return "";
+  const d = new Date(iso);
+  const day = d.toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "numeric", timeZone });
+  const time = d.toLocaleTimeString("en-PH", { hour: "numeric", minute: "2-digit", timeZone }).toUpperCase();
+  return `${day} · ${time}`;
+};
 
-export function renderReceiptPage(root, { token = window.location.hash.slice(1), fetchImpl = (...a) => window.fetch(...a) } = {}) {
-  const state = { status: "loading", receipt: null, message: "" };
-  // Don't keep the credential in the address bar / history longer than needed.
+const DEFAULT_AUTH = { watchUser, signIn, signOut: signOutUser, idToken: currentIdToken };
+
+export function renderReceiptPage(root, { token: given = window.location.hash.slice(1), fetchImpl = (...a) => window.fetch(...a), auth = DEFAULT_AUTH, login = renderLogin } = {}) {
+  const token = remember(given);
+  const state = { status: "loading", receipt: null, message: "", code: "", busy: false };
+  // Don't keep the credential in the address bar / history; the path stays
+  // /receipt so a refresh or a sign-in lands back on this receipt.
   try {
     window.history.replaceState(null, "", "/receipt");
   } catch {
@@ -25,62 +45,103 @@ export function renderReceiptPage(root, { token = window.location.hash.slice(1),
   }
   document.title = "Salary receipt · Luna";
 
+  async function call(action) {
+    const idToken = await auth.idToken();
+    const res = await fetchImpl("/api/receipt", { method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json", ...(idToken ? { Authorization: `Bearer ${idToken}` } : {}) }, body: JSON.stringify({ action, token }) });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw Object.assign(new Error(body.message || "This link isn't valid. Ask your employer for a new one."), { status: res.status, code: body.error || "" });
+    return body.receipt;
+  }
+
+  const row = (r) => html`<li data-line="${r.key}"><span class="slip-what">${r.label}${r.note ? html`<small>${r.note}</small>` : ""}</span><span class="slip-amt">${r.amount < 0 ? `− ${formatCentavos(-r.amount)}` : formatCentavos(r.amount)}</span></li>`;
+
   function draw() {
     const r = state.receipt;
+    const confirmed = r?.receiptStatus === "confirmed";
     render(
       root,
       html`<main class="receipt-page" data-role="receipt-page">
         <div class="card receipt-card">
           <div class="brand">${lunaMark()}<span class="brand-text">Luna</span></div>
           ${state.status === "loading"
-            ? html`<p>Loading…</p>`
+            ? html`<p>Loading your receipt…</p>`
             : state.status === "error"
-              ? html`<h1 class="card-title">Link not valid</h1><p data-role="message">${state.message}</p>`
-              : html`<h1 class="card-title">${r.confirmed || r.receiptStatus === "confirmed" ? "Thank you, receipt confirmed" : "Confirm your salary"}</h1>
-                  <dl class="dl dl-compact">
-                    <dt>From</dt><dd>${r.businessName}</dd>
-                    <dt>For</dt><dd>${r.employeeName}</dd>
-                    <dt>Pay period</dt><dd>${formatDayId(r.period.start)} – ${formatDayId(r.period.end)}</dd>
-                    <dt>Amount</dt><dd><strong data-role="amount">${formatCentavos(r.amount)}</strong></dd>
-                    ${r.paidDate ? html`<dt>Paid</dt><dd>${formatDayId(r.paidDate)}${r.method ? ` · ${r.method}` : ""}</dd>` : ""}
-                  </dl>
-                  ${r.receiptStatus === "confirmed"
-                    ? html`<p data-role="message">Your confirmation was recorded. You can close this page.</p>`
+              ? html`<h1 class="card-title">${state.code === "receipt-not-yours" ? "Not your receipt" : "Link not valid"}</h1>
+                  <p data-role="message">${state.message}</p>
+                  ${state.code === "receipt-not-yours" ? html`<button type="button" class="btn" data-act="switch">Sign in with another account</button>` : ""}`
+              : html`<h1 class="card-title">${confirmed ? "Salary received" : "Your salary"}</h1>
+                  <p class="stat-hint" data-role="who">${r.businessName} · ${r.employeeName} · ${formatDayId(r.period.start)} – ${formatDayId(r.period.end)}</p>
+                  <ul class="slip" data-role="breakdown">${r.rows.map(row)}</ul>
+                  <ul class="slip slip-total slip-total-paid"><li><span class="slip-what"><strong>Net pay</strong></span><span class="slip-amt"><strong class="receipt-net" data-role="net">${formatCentavos(r.netPay)}</strong></span></li></ul>
+                  ${r.paidDate ? html`<p class="stat-hint" data-role="paid">Paid ${formatDayId(r.paidDate)}${r.method ? ` · ${r.method}` : ""}</p>` : ""}
+                  ${confirmed
+                    ? html`<p data-role="message">${r.alreadyConfirmed || !r.confirmed ? "You already confirmed this salary" : "Thank you. Your confirmation was recorded"}${r.confirmedAt ? ` · ${confirmedText(r.confirmedAt, r.timezone || undefined)}` : ""}.</p>`
                     : r.expired
-                      ? html`<p data-role="message">This link has expired. Ask your employer for a new one.</p>`
-                      : html`<p>Only tap this if you received the full amount.</p><button type="button" class="btn btn-primary" data-act="confirm">I received my salary</button>`}`}
+                      ? html`<p data-role="message">This link has expired. Open Luna and confirm it under My salary.</p>`
+                      : html`<p class="stat-hint">Only confirm if you received the full amount.</p><button type="button" class="btn btn-primary btn-block" data-act="confirm" ${state.busy ? "disabled" : ""}>Confirm received</button>`}
+                  <p><a href="/" data-role="home">Open Luna</a></p>`}
         </div>
       </main>`
     );
   }
 
-  root.addEventListener("click", async (event) => {
-    if (!event.target.closest('[data-act="confirm"]')) return;
-    event.target.disabled = true;
+  const fail = (err) => {
+    state.status = "error";
+    state.code = err.code || "";
+    state.message = err.message;
+  };
+  async function load() {
+    state.status = "loading";
+    draw();
     try {
-      state.receipt = await call("confirm", token, fetchImpl);
+      state.receipt = await call("view");
+      state.status = "ok";
     } catch (err) {
-      state.status = "error";
-      state.message = err.message;
+      fail(err);
     }
+    draw();
+  }
+
+  root.addEventListener("click", async (event) => {
+    if (event.target.closest('[data-act="switch"]')) {
+      await auth.signOut(); // the watcher shows sign-in; this receipt stays remembered
+      return;
+    }
+    if (!event.target.closest('[data-act="confirm"]') || state.busy) return;
+    state.busy = true;
+    draw();
+    try {
+      state.receipt = await call("confirm");
+    } catch (err) {
+      fail(err);
+    }
+    state.busy = false;
     draw();
   });
 
-  draw();
   if (!token) {
-    state.status = "error";
-    state.message = "This link isn't valid. Ask your employer for a new one.";
+    fail({ message: "This link isn't valid. Ask your employer for a new one." });
     draw();
     return Promise.resolve();
   }
-  return call("view", token, fetchImpl)
-    .then((r) => {
-      state.status = "ok";
-      state.receipt = r;
-    })
-    .catch((err) => {
-      state.status = "error";
-      state.message = err.message;
-    })
-    .then(draw);
+  draw();
+  return new Promise((resolve) => {
+    auth.watchUser((user) => {
+      if (!user) {
+        login(root, {
+          notice: "Sign in with your Luna account to see your salary receipt.",
+          onSubmit: async (email, password) => {
+            try {
+              await auth.signIn(email, password);
+            } catch (err) {
+              throw new Error(friendlyAuthError(err));
+            }
+          },
+        });
+        resolve();
+        return;
+      }
+      load().then(resolve);
+    });
+  });
 }

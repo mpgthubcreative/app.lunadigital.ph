@@ -4007,11 +4007,14 @@ tr.is-saving {
 .rp-total.is-main .rp-value { font-size: var(--text-xl); }
 .rp-value.is-empty { color: var(--text-muted); font-size: var(--text-base); }
 .rp-value.is-loss { color: var(--danger); }
+.rp-note { font-size: var(--text-sm); color: var(--success, var(--text-muted)); }
+.rp-total:not(.is-main) .rp-note { color: var(--text-muted); }
+.rp-note.is-loss { color: var(--danger); }
 .rp-section { margin: 0 0 var(--space-4); padding: var(--space-3) var(--space-4); }
 .rp-title { margin: 0 0 var(--space-2); font-size: var(--text-lg); }
 .rp-title .hint { font-size: var(--text-sm); font-weight: 400; color: var(--text-muted); }
 @media (max-width: 560px) {
   .rp-totals { grid-template-columns: 1fr 1fr; }
-  .rp-total.is-main { grid-column: 1 / -1; }
+  .rp-total.is-main { grid-column: 1 / -1; order: -1; }
 }
 .rp-section .chart { max-width: 560px; }

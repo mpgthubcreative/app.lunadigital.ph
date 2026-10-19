@@ -12,11 +12,13 @@
 //    (backfill, and the oracle the tests compare the incremental ones to).
 
 import { rangePlan, sumMetricDocs, diffRollup, addRollup, orderContribution, paymentContribution, expenseContribution, ROLLUP_SECTIONS, REPORT_TOP_ROWS, WALK_IN_KEY } from "../../../shared/reports.js";
-import { financialSummary, grossMarginPct } from "../../../shared/finance.js";
+import { financialSummary, grossMarginPct, skuMargins } from "../../../shared/finance.js";
+import { costUnitsToCentavos } from "../../../shared/quantity.js";
 import { OPERATIONAL_COUNTERS, FINANCIAL_COUNTERS } from "../../../shared/metrics.js";
 import { canUseModule } from "../../../shared/modules.js";
 
 const ROLLUPS = "reportRollups";
+const SKU_MARGIN_LIMIT = 500;
 
 // ---------- 1. Writes ----------
 
@@ -152,6 +154,22 @@ export async function buildReport({ db, tenant, from, to, permissions, entitleme
       .sort((a, b) => (financials ? b.netSales - a.netSales : b.qty - a.qty) || (a.name || "").localeCompare(b.name || ""));
     report.products = { rows: anyRollup ? rows.slice(0, REPORT_TOP_ROWS) : null, total: rows.length };
     report.sections.push("products");
+  }
+
+  // Current pricing per active SKU (Owner pilot 2026-10-19): today's price
+  // and unit cost, independent of the period and of quantities sold. Needs
+  // money (dashboard.financials) and product costs (inventory.costs).
+  if (financials && can("inventory") && permissions["inventory.costs"] === true) {
+    const snap = await tenant.collection("products").where("status", "==", "active").limit(SKU_MARGIN_LIMIT).get();
+    const products = snap.docs.map((d) => ({ id: d.id, ...d.data() })).sort((a, b) => (a.name || "").localeCompare(b.name || "") || a.id.localeCompare(b.id));
+    const costs = await readDocs(tenant, "productCosts", products.map((p) => p.id));
+    report.skuMargins = skuMargins(
+      products.map((p) => {
+        const avg = costs.get(p.id)?.avgCostUnits;
+        return { productId: p.id, name: p.name, sku: p.sku, price: p.sellingPrice, unitCost: Number.isSafeInteger(avg) ? costUnitsToCentavos(avg) : null };
+      })
+    );
+    report.sections.push("skuMargins");
   }
 
   // Customers (customers module + customers.view, and orders.view).

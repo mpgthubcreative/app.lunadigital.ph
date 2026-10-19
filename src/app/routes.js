@@ -119,3 +119,27 @@ export function pathDisposition(session, routes, path, { justSwitched = false } 
   if (justSwitched || !workspacePaths(session).has(path)) return "home";
   return "not-available";
 }
+
+// ---------- Where a workspace switch lands (owner pilot, 2026-10-19) ----------
+// Pages that are the SAME page in every workspace. A path several templates
+// use for different screens (/expenses is Costs in Business, Expenses in
+// Household, Wedding Expenses in Bridal; "/" is each one's own home) is not
+// shared: switching from it opens the destination's default page.
+const SHARED_PAGE_IDS = new Set(["users", "settings", NOTIFICATIONS_ROUTE.moduleId, SUBSCRIPTION_ROUTE.moduleId, EXPORT_ROUTE.moduleId]);
+
+// The workspace's default page as a real path (the "/" alias resolved):
+// Business / Baby -> "/" (Dashboard), Household -> /payroll, Bridal -> /wedding-suppliers (Money).
+export function defaultPath(routes) {
+  const root = routes.find((r) => r.path === "/");
+  if (root) return root.redirect || "/";
+  return routes.find((r) => !r.redirect)?.path ?? "/";
+}
+
+// Decided BEFORE the new workspace renders: keep the current page only when
+// it's a genuinely shared page this membership may open (template has it,
+// module on, permission held); otherwise the destination's default.
+export function switchLandingPath(session, routes, path) {
+  const clean = path.length > 1 ? path.replace(/\/+$/, "") : path;
+  const route = routes.find((r) => r.path === clean && !r.redirect);
+  return route && SHARED_PAGE_IDS.has(route.moduleId) && routeAllowed(session, route) ? clean : defaultPath(routes);
+}

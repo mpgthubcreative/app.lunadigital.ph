@@ -11,7 +11,7 @@
 import { PayrollError, staffPeriod, paidPayrollLocks, advanceCapacity, cycleLabel, plannedEntries, scheduleOf, reconcileOf, paidTotal, daysIn, attendanceId, summarizeAttendance, isValidStaffId, advanceRemaining, nextDeduction, selfDayLock, MAX_DAYS_AHEAD, ATTENDANCE_STATUSES, ADVANCE_STATUSES, SALARY_METHODS, payrollId as payrollIdOf } from "../../../shared/payroll.js";
 import { businessDate, addDays, isDayId } from "../../../shared/metrics.js";
 import { prepareNotifications } from "./notifications.js";
-import { readProofFile, dayRange, overpaymentLinesFor, paidLeaveOf } from "./payroll.js";
+import { readProofFile, dayRange, overpaymentLinesFor, paidLeaveOf, receiptBreakdown, RECEIPT_LINK_INVALID } from "./payroll.js";
 
 const TX_OPTIONS = { maxAttempts: 10 };
 const MAX_HISTORY = 200;
@@ -191,16 +191,56 @@ async function ownPayroll(tx, tenant, staffId, payrollId) {
   return snap;
 }
 
-// "I received my salary". Independent of the Owner marking it paid: only a
-// salary the Owner marked paid can be confirmed, and confirming never
-// changes the payment itself. Also retires the one-time receipt link.
-export async function confirmSalaryReceived({ db, tenant, FieldValue, staffId, payrollId, actor }) {
+// The salary receipt the Owner's link points to (Owner pilot 2026-10-19),
+// for the signed-in helper whose Staff record the payroll belongs to
+// (receipt.js checked the account, business and record). Only the link the
+// payroll currently carries works. The first open is recorded as Opened;
+// opening never confirms.
+const receiptOut = (p, business, extra = {}) => ({
+  businessName: business?.name || "",
+  timezone: business?.timezone || "Asia/Manila",
+  employeeName: p.staffName,
+  period: { start: p.periodStart, end: p.periodEnd },
+  method: SALARY_METHODS[p.salary?.method]?.label ?? null,
+  paidDate: p.salary?.paidDate ?? null,
+  ...receiptBreakdown(p),
+  receiptStatus: p.receiptStatus === "confirmed" ? "confirmed" : "awaiting",
+  confirmedAt: iso(p.receiptConfirmation?.confirmedAt ?? p.receiptConfirmedAt) ?? null,
+  ...extra,
+});
+const currentLink = (p, linkHash) => {
+  if (linkHash !== null && p.receiptLinkHash !== linkHash) throw RECEIPT_LINK_INVALID(); // replaced by a newer link
+};
+export async function openSalaryReceipt({ db, tenant, FieldValue, staffId, payrollId, linkHash, expired = false, actor }) {
+  const id = linked(staffId);
+  return db.runTransaction(async (tx) => {
+    const snap = await ownPayroll(tx, tenant, id, payrollId);
+    const p = snap.data();
+    if (p.status !== "released") throw RECEIPT_LINK_INVALID();
+    currentLink(p, linkHash);
+    const business = (await tx.get(tenant.ref)).data();
+    if (!p.receiptOpenedAt) tx.update(snap.ref, { receiptOpenedAt: FieldValue.serverTimestamp(), receiptOpenedBy: { uid: actor.uid, name: p.staffName } });
+    return receiptOut(p, business, { expired: p.receiptStatus !== "confirmed" && expired });
+  }, TX_OPTIONS);
+}
+
+// "Confirm received" / "I received my salary". Independent of the Owner
+// marking it paid: only a salary the Owner marked paid can be confirmed,
+// and confirming never changes the payment itself. Records once, with the
+// evidence (who, which record, when, how); a second tap or a reopened link
+// changes nothing. linkHash: the receipt link it came through (null from
+// the staff screen). Also retires the receipt link.
+export async function confirmSalaryReceived({ db, tenant, FieldValue, staffId, payrollId, actor, linkHash = null, expired = false }) {
   const id = linked(staffId);
   return db.runTransaction(async (tx) => {
     const snap = await ownPayroll(tx, tenant, id, payrollId);
     const p = snap.data();
     if (p.status !== "released") throw new PayrollError("payment-not-paid", "Your employer hasn't marked this salary as paid yet");
-    if (p.receiptStatus === "confirmed") return { payrollId, receipt: "received", alreadyConfirmed: true };
+    if (linkHash !== null) currentLink(p, linkHash);
+    const business = linkHash !== null ? (await tx.get(tenant.ref)).data() : null;
+    const out = (q, extra) => (linkHash !== null ? { payrollId, receipt: "received", ...receiptOut(q, business, extra) } : { payrollId, receipt: "received", ...extra });
+    if (p.receiptStatus === "confirmed") return out(p, { alreadyConfirmed: true });
+    if (linkHash !== null && expired) throw new PayrollError("link-expired", "This link has expired. Open Luna and confirm it under My salary.");
     const linkRef = p.receiptLinkHash ? db.collection("receiptLinks").doc(p.receiptLinkHash) : null;
     const linkSnap = linkRef ? await tx.get(linkRef) : null;
     const notes = await prepareNotifications(tx, {
@@ -209,18 +249,33 @@ export async function confirmSalaryReceived({ db, tenant, FieldValue, staffId, p
       events: [{ type: "payroll.receipt_confirmed", key: snap.id, title: "Salary receipt confirmed", message: `${p.staffName} confirmed receiving ${peso(p.salary?.amount ?? p.netPay)} for ${p.periodStart} to ${p.periodEnd}.`, recordType: "payroll", recordId: snap.id }],
     });
     const stamp = FieldValue.serverTimestamp();
+    const confirmedAt = new Date();
+    const evidence = {
+      businessId: tenant.businessId,
+      staffId: id,
+      payrollId: snap.id,
+      paymentId: null, // a salary payment lives on its payroll; no separate payment record
+      uid: actor.uid,
+      staffName: p.staffName,
+      confirmedAt,
+      method: "kasambahay-account",
+      status: "confirmed",
+      receiptLinkRef: linkHash,
+    };
     tx.update(snap.ref, {
       receiptStatus: "confirmed",
       receiptConfirmedAt: stamp,
       receiptConfirmedVia: "staff-account",
-      receiptConfirmedBy: { uid: actor.uid, name: actor.name ?? null },
+      receiptConfirmedBy: { uid: actor.uid, name: p.staffName },
+      receiptConfirmation: evidence,
       ...(p.dispute?.state === "open" ? { dispute: { ...p.dispute, state: "resolved", resolvedAt: new Date(), resolution: "Employee confirmed receipt" }, ownerPayment: "paid" } : {}),
-      history: append(p.history, { at: new Date(), actor: { uid: actor.uid, name: actor.name ?? null }, label: `${p.staffName} confirmed receipt (own account)` }),
+      history: append(p.history, { at: new Date(), actor: { uid: actor.uid, name: p.staffName }, label: `${p.staffName} confirmed receipt (own account)` }),
       updatedAt: stamp,
     });
+    tx.set(tenant.collection("auditLog").doc(), { type: "payroll.receipt_confirmed", ...evidence, actor: { uid: actor.uid, name: p.staffName }, at: stamp });
     if (linkSnap?.exists && !linkSnap.data().usedAt) tx.update(linkRef, { usedAt: stamp });
     notes.commit({ FieldValue, actor });
-    return { payrollId, receipt: "received" };
+    return out({ ...p, receiptStatus: "confirmed", receiptConfirmation: evidence }, { confirmed: true });
   }, TX_OPTIONS);
 }
 

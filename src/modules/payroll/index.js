@@ -319,7 +319,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     const firstName = (n) => String(n || "").split(" ")[0];
     const statusLine = (q) => {
       if (q.status !== "released") return badge(q.automatic ? "Not paid yet · worked out automatically" : "Not paid yet", "neutral");
-      if (q.receiptStatus === "confirmed") return badge(`Confirmed by ${firstName(q.staffName)}${q.receiptConfirmedAt ? ` on ${short(String(q.receiptConfirmedAt).slice(0, 10))}` : ""}`, "success");
+      if (q.receiptStatus === "confirmed") return badge(`Confirmed by ${firstName(q.receiptView?.confirmedBy || q.staffName)}${q.receiptView?.confirmedAt ? ` on ${short(businessDate(session.business.timezone, new Date(q.receiptView.confirmedAt)))}` : ""}`, "success");
       if (q.dispute?.state === "open") return badge("Reported not received", "danger");
       return badge("Not yet confirmed", "warning");
     };
@@ -330,6 +330,19 @@ export function mount(container, session, { data = defaultData, toast = defaultT
       if (q.paymentTiming === "early") return (q.salary.earned ?? q.salary.amount) + (q.deductionsTotal || 0) - (q.additionsTotal || 0);
       return q.basePay;
     };
+    // The helper's receipt (Owner pilot 2026-10-19): Opened and Confirmed are separate facts.
+    const when = (iso) => {
+      const d = new Date(iso);
+      const tz = session.business.timezone;
+      return `${formatDayId(businessDate(tz, d))} · ${d.toLocaleTimeString("en-PH", { hour: "numeric", minute: "2-digit", timeZone: tz }).toUpperCase()}`;
+    };
+    const receiptFacts = (v) => html`<dl class="dl dl-compact receipt-facts" data-role="receipt">
+        <dt>Receipt</dt><dd data-role="receipt-status">${v.status === "confirmed" ? badge("Confirmed", "success") : v.status === "not_received" ? badge("Reported not received", "danger") : badge("Not confirmed yet", "warning")}</dd>
+        <dt>Opened</dt><dd data-role="receipt-opened">${v.openedAt ? when(v.openedAt) : "Not opened yet"}</dd>
+        ${v.status === "confirmed"
+          ? html`${v.confirmedBy ? html`<dt>Confirmed by</dt><dd data-role="receipt-by">${v.confirmedBy}</dd>` : ""}${v.verifiedVia ? html`<dt>Verified via</dt><dd data-role="receipt-via">${v.verifiedVia}</dd>` : ""}${v.confirmedAt ? html`<dt>Confirmed</dt><dd data-role="receipt-at">${when(v.confirmedAt)}</dd>` : ""}`
+          : ""}
+      </dl>`;
     const fixMenu = (label, items) => (correcting && canRelease ? lineMenu(label, items) : "");
 
     // Step 2: what will be paid, read-only. Opening it creates or changes nothing.
@@ -403,11 +416,13 @@ export function mount(container, session, { data = defaultData, toast = defaultT
               ${prepaid || (correcting && paid && p.paymentTiming === "early") ? html`<li data-line="prepaid"><span class="slip-what">Prepaid salary${prepaid ? ` ${range(prepaid.from, prepaid.to)}` : ""}<small>Paid early for upcoming days · not a cash advance</small></span><span class="slip-amt">${formatCentavos(prepaid?.amount ?? 0)}</span><span class="slip-act">${fixMenu("Correct the prepaid salary", [{ x: "fix-prepaid", label: "Correct prepaid salary", data: { id: p.id, amount: prepaid?.days ?? 0 } }])}</span></li>` : ""}
             </ul>
             <ul class="slip slip-total slip-total-paid"><li><span class="slip-what"><strong>${paid ? "Total paid" : "To pay"}</strong></span><span class="slip-amt"><strong data-role="net">${formatCentavos(paid ? totalPaid : p.netPay)}</strong></span><span class="slip-act"></span></li></ul>
+            ${paid && p.receiptView ? receiptFacts(p.receiptView) : ""}
             ${paid && r && (r.overpaid || r.additionalDue || r.waiting || !r.ended || r.diff) ? reconcileBlock(p) : ""}
             ${p.dispute?.state === "open" ? html`<p class="text-danger" data-role="dispute">Reported not received${p.dispute.note ? `: "${p.dispute.note}"` : ""}</p>` : ""}
             ${link
               ? html`<div class="card section" data-role="receipt-link"><strong>Send this link to ${p.staffName}</strong>
-                  <p class="stat-hint">If they don't use Luna, they tap it to confirm they received ${formatCentavos(p.salary?.amount ?? p.netPay)}. It works once and expires in 14 days.</p>
+                  <p class="stat-hint">They open it, sign in to their Luna account and confirm they received ${formatCentavos(p.salary?.amount ?? p.netPay)}. It expires in 14 days.</p>
+                  ${staffRec().login ? "" : html`<p class="stat-hint" data-role="needs-login">${p.staffName} needs a Luna login to confirm. Create one under Household Staff.</p>`}
                   <input class="input" readonly value="${link}" data-role="link-text" aria-label="Receipt link" />
                   <button type="button" class="btn btn-compact" data-x="copy">Copy link</button></div>`
               : ""}
@@ -416,7 +431,6 @@ export function mount(container, session, { data = defaultData, toast = defaultT
               <dl class="dl dl-compact">
                 <dt>Final salary${today > p.periodEnd ? "" : " so far"}</dt><dd data-role="final">${formatCentavos(p.netPay)}</dd>
                 <dt>Payment</dt><dd data-role="payment">${paymentState(p)[0]}${p.salary ? ` · ${formatCentavos(p.salary.amount)} on ${short(p.salary.paidDate)} by ${SALARY_METHODS[p.salary.method]?.label}${p.salary.reference ? ` · Ref ${p.salary.reference}` : ""}` : ""}${p.salary?.proof ? html` · <button type="button" class="btn-linklike" data-x="view-proof">See proof</button>` : ""}</dd>
-                <dt>Received by the helper</dt><dd data-role="receipt">${receivedState(p)[0]}${p.receiptConfirmedVia === "staff-account" ? " (from their Luna account)" : p.receiptConfirmedVia === "employee-link" ? " (from the link)" : ""}</dd>
               </dl>
               ${thm && thm.remaining > 0 ? html`<p class="stat-hint" data-role="thirteenth">13th month ${thm.year}: ${formatCentavos(thm.remaining)} left to give (1/12 of ${formatCentavos(thm.basicPay)} basic pay, minus ${formatCentavos(thm.onPayrolls)} given).</p>` : ""}
               ${(p.history || []).length ? html`<h3 class="slip-head">History</h3><ul class="list activity" data-role="history">${p.history.map((h) => html`<li>${h.label}${h.actor ? ` · ${h.actor.name}` : h.via === "employee-link" ? " · by the helper, via the secure link" : ""}</li>`)}</ul>` : ""}

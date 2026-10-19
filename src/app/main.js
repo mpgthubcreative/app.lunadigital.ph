@@ -20,7 +20,8 @@ import { watchUser, signIn, signOutUser, currentIdToken, friendlyAuthError, send
 import { loadSession, setPreferredBusinessId } from "./session.js";
 import { renderShell } from "./shell.js";
 import { createWorkspaceRouter } from "./workspace-router.js";
-import { buildRoutes, renderPageNotAvailable } from "./routes.js";
+import { buildRoutes, renderPageNotAvailable, switchLandingPath } from "./routes.js";
+import { resetWorkspaceUi, isStaleFileError, reloadForFreshFiles } from "./workspace-switch.js";
 import { renderLogin, renderAccessProblem, renderBoot } from "./screens.js";
 import { MODULE_LOADERS } from "../modules/loaders.js";
 import { render } from "../lib/html.js";
@@ -48,11 +49,21 @@ let pendingLoginNotice = "";
 setTokenProvider(currentIdToken);
 
 let currentShell = null;
-// Set by the business switcher: the next mount checks the URL against the
-// NEW membership and lands on that workspace's home if it can't be opened.
-let justSwitched = false;
+// The mounted page's cleanup, and a generation number: a page still loading
+// for a previous workspace (or an earlier mount) never mounts once it moved on.
+let currentCleanup = null;
+let mountGeneration = 0;
 
 function stopRouter() {
+  mountGeneration += 1;
+  if (typeof currentCleanup === "function") {
+    try {
+      currentCleanup();
+    } catch (err) {
+      console.error("Page cleanup failed:", err);
+    }
+  }
+  currentCleanup = null;
   if (router) router.stop();
   router = null;
   if (currentShell) currentShell.stopNotifications();
@@ -123,7 +134,6 @@ function mountApp(session) {
   // (lazy-loaded), not the Owner's app.
   if (isStaffPortalSession(session)) {
     // The portal has no pages of its own: drop another workspace's URL.
-    justSwitched = false;
     if (window.location.pathname !== "/") window.history.replaceState({}, "", "/");
     import("../staff/portal.js").then((m) => m.mountStaffPortal(root, session, { onSignOut: () => handleSignOut() }));
     stopRevalidation();
@@ -133,48 +143,49 @@ function mountApp(session) {
   }
   const shell = renderShell(root, session, {
     onSignOut: () => handleSignOut(),
-    onSwitchBusiness: (businessId) => {
-      setPreferredBusinessId(businessId);
-      justSwitched = true;
-      startApp();
-    },
+    onSwitchBusiness: (businessId) => switchWorkspace(businessId),
   });
   currentShell = shell;
 
-  let cleanup = null;
   let navToken = 0;
+  const generation = mountGeneration;
+  const current = (token) => token === navToken && generation === mountGeneration;
   const routes = buildRoutes(session);
   const showNotAvailable = () => {
     shell.setActive({ path: null, label: "Not available" });
     renderPageNotAvailable(shell.content);
   };
-  const switched = justSwitched;
-  justSwitched = false;
 
   // Switching business opens a valid page at once (./workspace-router.js).
   router = createWorkspaceRouter({
     session,
     routes,
-    justSwitched: switched,
     async onRoute(route) {
       const token = ++navToken;
-      if (typeof cleanup === "function") cleanup();
-      cleanup = null;
+      if (typeof currentCleanup === "function") currentCleanup();
+      currentCleanup = null;
       shell.setActive(route);
       try {
         const mod = await MODULE_LOADERS[route.moduleId](session);
-        if (token !== navToken) return;
-        cleanup = mod.mount(shell.content, session) || null;
+        if (!current(token)) return;
+        currentCleanup = mod.mount(shell.content, session) || null;
       } catch (err) {
+        if (!current(token)) return;
         console.error(`Failed to load module ${route.moduleId}:`, err);
+        // A tab opened before a deploy: its page files were renamed. Reload
+        // once to get the current ones instead of a broken page.
+        if (isStaleFileError(err) && reloadForFreshFiles()) {
+          renderBoot(root, "Updating Luna…");
+          return;
+        }
         render(shell.content, card({ body: emptyState({ title: "This page couldn't load", body: "Check your connection and refresh the page." }) }));
       }
       shell.content.focus({ preventScroll: true });
     },
     onNotAvailable: () => {
       ++navToken;
-      if (typeof cleanup === "function") cleanup();
-      cleanup = null;
+      if (typeof currentCleanup === "function") currentCleanup();
+      currentCleanup = null;
       showNotAvailable();
     },
   });
@@ -183,6 +194,26 @@ function mountApp(session) {
   stopRevalidation();
   revalidateTimer = setInterval(revalidate, REVALIDATE_MS);
   document.addEventListener("visibilitychange", onVisibility);
+}
+
+// Owner pilot (2026-10-19): switching workspace is one step. The old
+// workspace is torn down first (page cleanup, dialogs, menus, its URL's
+// filters), the new session and its routes are resolved, the landing page
+// is decided (a genuinely shared page it may open, else its default) and
+// only then does the new shell render, already on that page.
+async function switchWorkspace(businessId) {
+  stopRevalidation();
+  stopRouter();
+  resetWorkspaceUi();
+  setPreferredBusinessId(businessId);
+  renderBoot(root, "Switching workspace…");
+  try {
+    const session = await loadSession();
+    if (!isStaffPortalSession(session)) window.history.replaceState({}, "", switchLandingPath(session, buildRoutes(session), window.location.pathname));
+    mountApp(session);
+  } catch (err) {
+    showSessionError(err);
+  }
 }
 
 async function startApp() {
@@ -204,8 +235,13 @@ function boot() {
   // Every ⋯ / ▾ menu behaves like a popover (one open; outside tap, scroll,
   // navigation, a dialog and Escape close it): ../components/menus.js.
   installMenuBehavior(document);
-  // Phase 14: the employee's salary receipt page needs no login (the token
-  // in the URL fragment is the only credential, checked by the server).
+  // A page's CSS / helper file renamed by a deploy (Vite's preload error):
+  // reload once for the current files rather than a broken page.
+  window.addEventListener("vite:preloadError", (event) => {
+    if (reloadForFreshFiles()) event.preventDefault();
+  });
+  // The helper's salary receipt link (Owner pilot 2026-10-19): its own page,
+  // which asks the helper to sign in and comes back to the same receipt.
   if (window.location.pathname === "/receipt") {
     import("./receipt.js").then((m) => m.renderReceiptPage(root));
     return;

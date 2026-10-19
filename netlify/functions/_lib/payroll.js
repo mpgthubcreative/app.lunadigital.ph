@@ -75,7 +75,6 @@ import { payrollEligibility,
 } from "../../../shared/payroll.js";
 import { businessDate, isDayId, addDays } from "../../../shared/metrics.js";
 import { prepareNotifications } from "./notifications.js";
-import { tenantDb } from "./tenant-db.js";
 import { meterActivity } from "./metering.js";
 
 const TX_OPTIONS = { maxAttempts: 10 };
@@ -951,7 +950,7 @@ async function releaseOnce({ db, tenant, FieldValue, business, today, data, payr
       deductionsTotal: p.deductionsTotal,
       netPay: p.netPay,
       grossPay: p.grossPay,
-      salary: { amount: total, earned: p.netPay, prepaid, atPayment: { basePay: p.basePay ?? 0, additionsTotal: p.additionsTotal ?? 0, deductionsTotal: p.deductionsTotal ?? 0, payableDays: p.payableDays ?? 0 }, method: data.method, reference: data.reference, paidDate: data.paidDate, timing, releasedBy: actor, releasedAt: stamp, ...(stored ? { proof: stored } : {}) },
+      salary: { amount: total, earned: p.netPay, prepaid, atPayment: { basePay: p.basePay ?? 0, additionsTotal: p.additionsTotal ?? 0, deductionsTotal: p.deductionsTotal ?? 0, payableDays: p.payableDays ?? 0, additions: snapshotLines(p.additions), deductions: snapshotLines(p.deductions) }, method: data.method, reference: data.reference, paidDate: data.paidDate, timing, releasedBy: actor, releasedAt: stamp, ...(stored ? { proof: stored } : {}) },
       receiptStatus: "awaiting",
       receiptLinkHash: link.hash,
       receiptLinkExpiresAt: link.expiresAt,
@@ -1015,61 +1014,68 @@ export async function newReceiptLink({ db, tenant, FieldValue, payrollId, actor,
   }, TX_OPTIONS);
 }
 
-// ---------- Public receipt confirmation (no login) ----------
+// ---------- Salary receipt link (Owner pilot 2026-10-19) ----------
+//
+// The link is a pointer, not a login: /api/receipt needs the helper signed
+// in to their own Luna account, and the payroll must belong to the Staff
+// record linked to that account (netlify/functions/receipt.js +
+// household-self.js openSalaryReceipt / confirmSalaryReceived). Opening
+// never confirms; "Confirm received" records once.
 
 const TOKEN = /^[A-Za-z0-9_-]{20,64}$/;
-const NOT_VALID = () => new PayrollError("link-invalid", "This link isn't valid. Ask your employer for a new one.");
+export const RECEIPT_LINK_INVALID = () => new PayrollError("link-invalid", "This link isn't valid. Ask your employer for a new one.");
 
-async function linkState(tx, db, token, now) {
-  if (typeof token !== "string" || !TOKEN.test(token)) throw NOT_VALID();
-  const linkRef = db.collection("receiptLinks").doc(hashToken(token));
-  const linkSnap = await tx.get(linkRef);
-  if (!linkSnap.exists) throw NOT_VALID();
-  const link = linkSnap.data();
-  const tenantRoot = db.collection("businesses").doc(link.businessId);
-  const [bizSnap, paySnap] = await Promise.all([tx.get(tenantRoot), tx.get(tenantRoot.collection("payrolls").doc(link.payrollId))]);
-  if (!bizSnap.exists || !paySnap.exists) throw NOT_VALID();
-  const p = paySnap.data();
-  if (p.receiptLinkHash !== linkSnap.id) throw NOT_VALID(); // replaced by a newer link
+// Which payroll a token points to. Every unknown token gets the same error.
+export async function findReceiptLink({ db, token, now = new Date() }) {
+  if (typeof token !== "string" || !TOKEN.test(token)) throw RECEIPT_LINK_INVALID();
+  const snap = await db.collection("receiptLinks").doc(hashToken(token)).get();
+  if (!snap.exists) throw RECEIPT_LINK_INVALID();
+  const link = snap.data();
   const expires = link.expiresAt instanceof Date ? link.expiresAt : link.expiresAt?.toDate?.();
-  return { linkRef, link, payRef: paySnap.ref, p, business: bizSnap.data(), expired: !expires || expires.getTime() < now.getTime() };
+  return { hash: snap.id, businessId: link.businessId, payrollId: link.payrollId, expired: !expires || expires.getTime() < now.getTime() };
 }
 
-// Only what the employee needs to recognise the payment: no ids, no other
-// records, nothing about the business beyond its name.
-const publicView = ({ p, business, expired }) => ({
-  businessName: business.name || "",
-  employeeName: p.staffName,
-  period: { start: p.periodStart, end: p.periodEnd },
-  amount: p.salary?.amount ?? p.netPay,
-  method: SALARY_METHODS[p.salary?.method]?.label ?? null,
-  paidDate: p.salary?.paidDate ?? null,
-  receiptStatus: p.receiptStatus,
-  expired: p.receiptStatus === "awaiting" && expired,
-});
+// The lines as they were when the salary was paid (release saves them).
+const snapshotLines = (lines) => (Array.isArray(lines) ? lines : []).map((l) => ({ type: l.type ?? null, description: l.description ?? null, amount: l.amount, ...(l.year ? { year: l.year } : {}) }));
 
-export async function readReceiptLink({ db, token, now = new Date() }) {
-  return db.runTransaction(async (tx) => publicView(await linkState(tx, db, token, now)));
+// The salary receipt breakdown from what was SAVED at payment, never a
+// recalculation: Basic pay, bonuses / additions, advance deduction, other
+// deductions, prepaid salary, net pay. No zero rows. (A payroll paid before
+// the lines were saved at payment falls back to its stored lines.)
+export function receiptBreakdown(p) {
+  const at = p.salary?.atPayment || {};
+  const additions = Array.isArray(at.additions) ? at.additions : snapshotLines(p.additions);
+  const deductions = Array.isArray(at.deductions) ? at.deductions : snapshotLines(p.deductions);
+  const sum = (list) => list.reduce((t, l) => t + (Number.isSafeInteger(l.amount) ? l.amount : 0), 0);
+  const advance = sum(deductions.filter((d) => d.type === "advance"));
+  const other = deductions.filter((d) => d.type !== "advance" && d.amount);
+  const rows = [
+    { key: "basic", label: "Basic pay", amount: Number.isSafeInteger(at.basePay) ? at.basePay : p.basePay ?? 0 },
+    ...additions.filter((a) => a.amount).map((a) => ({ key: "addition", label: a.type === "thirteenth" ? `13th month pay${a.year ? ` ${a.year}` : ""}` : a.description || "Bonus", amount: a.amount })),
+    ...(advance ? [{ key: "advance", label: "Advance deduction", amount: -advance }] : []),
+    ...(other.length ? [{ key: "other", label: "Other deductions", note: other.map((d) => (d.type === "overpayment" ? "Previous salary overpayment" : d.description)).filter(Boolean).join(", "), amount: -sum(other) }] : []),
+    ...(p.salary?.prepaid?.amount ? [{ key: "prepaid", label: "Prepaid salary", note: `${p.salary.prepaid.days} upcoming day${p.salary.prepaid.days === 1 ? "" : "s"}`, amount: p.salary.prepaid.amount }] : []),
+    ...(p.salary?.additional || []).filter((x) => x.amount).map((x) => ({ key: "additional", label: "Additional payment", note: x.paidDate, amount: x.amount })),
+  ].filter((r) => r.amount);
+  return { rows, netPay: paidTotal(p) };
 }
 
-export async function confirmReceipt({ db, FieldValue, token, now = new Date() }) {
-  return db.runTransaction(async (tx) => {
-    const s = await linkState(tx, db, token, now);
-    if (s.p.receiptStatus === "confirmed") return { ...publicView(s), alreadyConfirmed: true };
-    if (s.expired) throw new PayrollError("link-expired", "This link has expired. Ask your employer for a new one.");
-    if (s.link.usedAt) throw NOT_VALID();
-    const tenant = tenantDb(db, s.link.businessId);
-    const notes = await prepareNotifications(tx, {
-      tenant,
-      events: [{ type: "payroll.receipt_confirmed", key: s.payRef.id, title: "Salary receipt confirmed", message: `${s.p.staffName} confirmed receiving ${peso(s.p.salary?.amount ?? s.p.netPay)} for ${s.p.periodStart} to ${s.p.periodEnd}.`, recordType: "payroll", recordId: s.payRef.id }],
-    });
-    const stamp = FieldValue.serverTimestamp();
-    // Attributed to the employee, through the secure link (there is no Luna user).
-    tx.update(s.payRef, { receiptStatus: "confirmed", receiptConfirmedAt: stamp, receiptConfirmedVia: "employee-link", history: append(s.p.history, entry(null, `${s.p.staffName} confirmed receipt`, { via: "employee-link" })), updatedAt: stamp });
-    tx.update(s.linkRef, { usedAt: stamp });
-    notes.commit({ FieldValue });
-    return { ...publicView({ ...s, p: { ...s.p, receiptStatus: "confirmed" } }), confirmed: true };
-  }, TX_OPTIONS);
+const isoOf = (v) => {
+  const d = v instanceof Date ? v : typeof v?.toDate === "function" ? v.toDate() : null;
+  return d ? d.toISOString() : null;
+};
+// The Owner's view of the helper's receipt: Opened and Confirmed are separate facts.
+export function receiptView(p) {
+  if (p.status !== "released") return null;
+  const c = p.receiptConfirmation;
+  const confirmed = p.receiptStatus === "confirmed";
+  return {
+    status: confirmed ? "confirmed" : p.dispute?.state === "open" ? "not_received" : "awaiting",
+    openedAt: isoOf(p.receiptOpenedAt),
+    confirmedAt: confirmed ? isoOf(c?.confirmedAt ?? p.receiptConfirmedAt) : null,
+    confirmedBy: confirmed ? c?.staffName ?? p.receiptConfirmedBy?.name ?? (p.receiptConfirmedVia ? p.staffName : null) : null,
+    verifiedVia: confirmed ? (c?.method === "kasambahay-account" || p.receiptConfirmedVia === "staff-account" ? "Kasambahay account" : p.receiptConfirmedVia === "employee-link" ? "Receipt link (no sign-in)" : null) : null,
+  };
 }
 
 export { PayrollError, isPeriodOf };
@@ -1679,7 +1685,7 @@ async function periodRow({ db, tenant, s, period, today }) {
     const p = { id, ...snap.data() };
     // Paid: final salary vs paid, and where its overpayment is carried.
     const reconcile = reconcileOf(p, today);
-    return { ...p, notTaken, automatic: false, ...(reconcile ? { reconcile: { ...reconcile, carriedTo: overpaymentTargets(p, s, payrolls, today) } } : {}) };
+    return { ...p, notTaken, automatic: false, receiptView: receiptView(p), ...(reconcile ? { reconcile: { ...reconcile, carriedTo: overpaymentTargets(p, s, payrolls, today) } } : {}) };
   }
   const lineSnaps = await db.getAll(...days.map((d) => tenant.doc("attendance", attendanceId(s.id, d))));
   const fig = draftFigures({ id, period, lines: lineSnaps.filter((x) => x.exists).map((x) => x.data()), advances, extra: overpaymentLinesFor(period.start, s, payrolls, today) });

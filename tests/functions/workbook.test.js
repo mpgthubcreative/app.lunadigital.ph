@@ -376,7 +376,31 @@ describe("Luna Business workbook", () => {
     expect(lines.reduce((t, l) => t + l.costConsumed, 0)).toBe(13600);
   });
 
-  it("Reports reconcile: Total Net Margin = net sales − COGS − operating expenses; product Net Margin = product sales − product COGS", async () => {
+  it("Overall SKU Margin / product margins: current price − current unit cost for EVERY active SKU (zero sales too); quantities sold never change it", async () => {
+    const ids = await shop();
+    await createProduct({ ...ids.common, input: { sku: "HAYST-MATCHA", name: "Hayst Matcha", unit: "pcs", sellingPrice: 9000, reorderLevel: 0, category: "Coffee" } });
+    const report = async (uid = world.uids.ownera) => JSON.parse((await createReportsHandler(deps())({ ...request({ uid, businessId: "biz-a", method: "GET" }), queryStringParameters: { from: "2026-10-01", to: "2026-10-18" } })).body);
+    const before = await report();
+    // Nothing fulfilled yet: every active SKU is listed anyway.
+    expect(before.products.rows).toEqual([]);
+    expect(before.skuMargins.rows.map((r) => [r.name, r.price, r.unitCost, r.unitProfit, r.marginPct])).toEqual([
+      ["Hayst Choco", 8000, 5000, 3000, 37.5],
+      ["Hayst Kopi", 7500, 4300, 3200, 42.7],
+      ["Hayst Matcha", 9000, null, null, null], // no cost yet: shown, left out of the overall
+    ]);
+    // (₱30 + ₱32) ÷ (₱80 + ₱75) = 40.0%: summed unit profits over summed prices, never added percentages.
+    expect(before.skuMargins.overall).toEqual({ included: 2, priceTotal: 15500, unitProfitTotal: 6200, marginPct: 40 });
+    await fulfillOrder({ ...ids.common, business: ids.business, orderId: ids.orderId, now: clock });
+    const after = await report();
+    expect(after.overview.grossSales).toBe(23000);
+    expect(after.skuMargins).toEqual(before.skuMargins);
+    // Money and costs only: staff (reports, no money) and a manager without cost access get none.
+    const x = await ensureAuthUser({ auth: world.auth, email: "nocost2@t.test", name: "No Cost" });
+    await addMember({ ...world, businessId: "biz-a", uid: x.uid, email: x.email, name: "No Cost", roleTemplate: "manager", permissionOverrides: { revoke: ["inventory.costs"] } });
+    expect((await report(x.uid)).skuMargins).toBeUndefined();
+  });
+
+  it("Reports reconcile: Total Net Profit = net sales − COGS − operating expenses; the Net Profit bars add up to it", async () => {
     const ids = await shop();
     await fulfillOrder({ ...ids.common, business: ids.business, orderId: ids.orderId, now: clock });
     const res = await createReportsHandler(deps())({ ...request({ uid: world.uids.ownera, businessId: "biz-a", method: "GET" }), queryStringParameters: { from: "2026-10-01", to: "2026-10-18" } });

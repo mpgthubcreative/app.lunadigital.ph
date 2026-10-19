@@ -1,18 +1,23 @@
-// Reports (Luna Business, Owner pilot 2026-10-19): a simple owner summary
-// for the chosen period. Everything comes from GET /api/reports, which
-// aggregates on the server and returns money only to dashboard.financials
-// holders; this page computes no money of its own.
+// Reports (Luna Business, Owner pilot 2026-10-19): a simple owner summary.
+// Everything comes from GET /api/reports, which aggregates on the server and
+// returns money only to dashboard.financials holders; this page computes no
+// money of its own. Two separate questions:
 //
-//   Total Sales        gross sales of fulfilled orders (before discounts)
-//   Total Net Sales    sales − discounts − returns / refunds
-//   Total Net Margin   net sales − COGS − operating expenses
-//                      (shared/finance.js estimatedOperatingProfit)
-//   Net Profit         one bar per day (≤ 62 days) or per month: the same
-//                      Net Margin formula for each period
-//   Products           one row per product, Total Sales (the product's
-//                      sales after its share of order discounts) and Net
-//                      Margin (those sales − the product's COGS), highest
-//                      sales first
+// How did the business do in this period? (actual transactions)
+//   Total Sales         gross sales of fulfilled orders (before discounts)
+//   Total Net Profit    a peso amount: net sales (sales − discounts −
+//                       returns) − actual COGS of the units sold − operating
+//                       expenses (shared/finance.js estimatedOperatingProfit)
+//   Net Profit graph    one bar per day (≤ 62 days) or per month, the same
+//                       formula for each period
+//
+// Are my products priced profitably right now? (current lineup, no sales)
+//   Overall SKU Margin  Σ (price − unit cost) ÷ Σ price over the active SKUs
+//                       with a cost, as a % (shared/finance.js skuMargins);
+//                       quantities sold never weigh in
+//   Products            every active SKU: Current Price, Profit / Unit
+//                       (price − current unit cost), Net Margin % (Profit /
+//                       Unit ÷ price)
 // Business has no payroll module: operating expenses are the Costs page's
 // expenses only, so nothing is counted twice. null = no data, never 0.
 
@@ -67,17 +72,21 @@ export function mount(container, session, { api = defaultApi, now = () => new Da
     if (alive) draw();
   }
 
-  const total = (role, label, amount, main = false) => html`<div class="rp-total${main ? " is-main" : ""}" data-total="${role}"><span class="rp-label">${label}</span><strong class="rp-value${amount === null || amount === undefined ? " is-empty" : ""}${main && amount < 0 ? " is-loss" : ""}">${money(amount)}</strong></div>`;
+  const pct = (v) => (v === null || v === undefined ? NO_DATA : `${v.toFixed(1)}%`);
+  const total = (role, label, value, { main = false, loss = false, note = "" } = {}) =>
+    html`<div class="rp-total${main ? " is-main" : ""}" data-total="${role}"><span class="rp-label">${label}</span><strong class="rp-value${value === NO_DATA ? " is-empty" : ""}${loss ? " is-loss" : ""}">${value}</strong>${note ? html`<span class="rp-note${loss ? " is-loss" : ""}" data-role="${role}-note">${note}</span>` : ""}</div>`;
+  const profitNote = (v) => (v === null || v === undefined ? "" : v > 0 ? "Profitable" : v < 0 ? "Loss" : "Break-even");
 
   function summary(r) {
     const o = r.overview;
     const series = (r.series || []).filter((s) => s.netProfit !== null && s.netProfit !== undefined);
-    const products = (r.products?.rows || []).filter((p) => p.netSales || p.cogs);
+    const sku = r.skuMargins;
+    const profit = o.estimatedOperatingProfit;
     return html`
       <div class="rp-totals" data-role="totals">
-        ${total("sales", "Total Sales", o.grossSales)}
-        ${total("net-sales", "Total Net Sales", o.netSales)}
-        ${total("net-margin", "Total Net Margin", o.estimatedOperatingProfit, true)}
+        ${total("sales", "Total Sales", money(o.grossSales))}
+        ${total("net-profit", "Total Net Profit", money(profit), { main: true, loss: profit < 0, note: profitNote(profit) })}
+        ${total("sku-margin", "Overall SKU Margin", pct(sku?.overall.marginPct), { loss: sku?.overall.marginPct < 0, note: sku ? "Current prices and costs" : "" })}
       </div>
       <section class="card rp-section" data-chart="net-profit">
         <h2 class="rp-title">Net Profit <span class="hint">${r.range.granularity === "day" ? "by day" : "by month"}</span></h2>
@@ -85,19 +94,23 @@ export function mount(container, session, { api = defaultApi, now = () => new Da
           ? html`<div class="chart">${profitColumns(series.map((s) => ({ label: shortPeriod(s.period), value: s.netProfit })), { format: (v) => compactMoney(v).replace(/\.0(?=[kM])/, ""), aria: series.map((s) => `${shortPeriod(s.period)} ${formatCentavos(s.netProfit, currency)}`).join(", ") })}</div>`
           : html`<p class="stat-hint">No sales or costs recorded in this period yet.</p>`}
       </section>
-      <section class="card rp-section" data-section="products">
-        <h2 class="rp-title">Products</h2>
-        ${r.products === undefined
-          ? ""
-          : r.products.rows === null
-            ? html`<p class="stat-hint">${NO_DATA}</p>`
-            : products.length
+      ${sku
+        ? html`<section class="card rp-section" data-section="products">
+            <h2 class="rp-title">Product margins <span class="hint">current prices and costs</span></h2>
+            ${sku.rows.length
               ? html`<div class="table-wrap"><table class="table table-compact rp-products" data-table="products">
-                  <thead><tr><th>Product</th><th class="num">Total Sales</th><th class="num">Net Margin</th></tr></thead>
-                  <tbody>${products.map((p) => html`<tr data-product="${p.productId}"><td>${p.name ?? p.sku ?? "Product"}</td><td class="num">${money(p.netSales)}</td><td class="num${p.grossProfit < 0 ? " tone-danger" : ""}">${money(p.grossProfit)}</td></tr>`)}</tbody>
+                  <thead><tr><th>Product</th><th class="num">Current Price</th><th class="num">Profit / Unit</th><th class="num">Net Margin</th></tr></thead>
+                  <tbody>${sku.rows.map(
+                    (p) => html`<tr data-product="${p.productId}"><td>${p.name ?? p.sku ?? "Product"}</td><td class="num">${p.price === null ? NO_DATA : formatCentavos(p.price, currency)}</td>${
+                      p.unitProfit === null
+                        ? html`<td class="num stat-hint" colspan="2">${p.unitCost === null ? "No cost set" : "No price set"}</td>`
+                        : html`<td class="num${p.unitProfit < 0 ? " tone-danger" : ""}">${formatCentavos(p.unitProfit, currency)}</td><td class="num${p.marginPct < 0 ? " tone-danger" : ""}">${pct(p.marginPct)}</td>`
+                    }</tr>`
+                  )}</tbody>
                 </table></div>`
-              : html`<p class="stat-hint">No products sold in this period.</p>`}
-      </section>`;
+              : html`<p class="stat-hint">No active products yet.</p>`}
+          </section>`
+        : ""}`;
   }
 
   function draw() {

@@ -235,7 +235,8 @@ describe("financial and module permissions are enforced by the SERVER", () => {
     const u = await ensureAuthUser({ auth: world.auth, email: "mgr2@t.test", name: "Mgr" });
     await addMember({ ...world, businessId: "biz-a", uid: u.uid, email: u.email, name: "Mgr", roleTemplate: "manager", permissionOverrides: { revoke: ["customers.view", "payments.view"] } });
     const r = await report(u.uid, "2026-10-08", "2026-10-08");
-    expect(r.body.sections).toEqual(["products", "expenses", "inventory"]);
+    // skuMargins: current pricing (money + inventory costs, which a manager keeps).
+    expect(r.body.sections).toEqual(["products", "skuMargins", "expenses", "inventory"]);
     expect(r.body.customers).toBeUndefined();
     expect(r.body.payments).toBeUndefined();
   });

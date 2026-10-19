@@ -6,7 +6,8 @@
 // the workspace's home; unknown / forbidden pages still say not available.
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { buildRoutes, pathDisposition, homePath, workspacePaths, isKnownAppPath } from "../../src/app/routes.js";
+import { buildRoutes, pathDisposition, homePath, workspacePaths, isKnownAppPath, switchLandingPath, defaultPath, routeAllowed } from "../../src/app/routes.js";
+import { resetWorkspaceUi, isStaleFileError, reloadForFreshFiles } from "../../src/app/workspace-switch.js";
 import { createWorkspaceRouter } from "../../src/app/workspace-router.js";
 import { sessionFixture } from "../helpers/session-fixture.js";
 
@@ -138,5 +139,82 @@ describe("helpers", () => {
     expect(pathDisposition(h, routes, "/payroll")).toBe("ok");
     expect(pathDisposition(h, routes, "/guests")).toBe("home");
     expect(pathDisposition(h, routes, "/nope")).toBe("not-available");
+  });
+});
+
+// Owner pilot (2026-10-19): the switch decides the landing page BEFORE the
+// new workspace renders (main.js switchWorkspace -> switchLandingPath).
+describe("switchLandingPath: always a valid, authorized page of the destination", () => {
+  const PLANS = { distributor: "growth", "household-payroll": "household-plus", "bridal-expense": "bridal-plus", "baby-expense": "baby-plus" };
+  const as = (template, roleTemplate) => sessionFixture({ roleTemplate, planId: PLANS[template], workspaceTemplateId: template });
+  const DEFAULTS = { distributor: "/", "household-payroll": "/payroll", "bridal-expense": "/wedding-suppliers", "baby-expense": "/" };
+  const SHARED = new Set(["/users", "/settings", "/notifications", "/subscription", "/export"]);
+
+  it("default page per template: Business Dashboard, Household Payroll, Bridal Money, Baby Dashboard", () => {
+    for (const [t, path] of Object.entries(DEFAULTS)) expect(defaultPath(buildRoutes(as(t, "owner"))), t).toBe(path);
+  });
+
+  it("every page of every workspace, switched to every other workspace, as Owner / Admin / Staff", () => {
+    let cases = 0;
+    for (const role of ["owner", "manager", "staff"]) {
+      for (const from of Object.keys(PLANS)) {
+        const fromPaths = [...new Set([...workspacePaths(as(from, "owner")), ...buildRoutes(as(from, "owner")).map((r) => r.path)])];
+        for (const to of Object.keys(PLANS)) {
+          if (from === to) continue;
+          const dest = as(to, role);
+          const routes = buildRoutes(dest);
+          for (const path of fromPaths) {
+            const landing = switchLandingPath(dest, routes, path);
+            const route = routes.find((r) => r.path === landing);
+            expect(route && !route.redirect && routeAllowed(dest, route), `${role} ${from} ${path} -> ${to}: ${landing}`).toBe(true);
+            // Kept only when it's the same page in both; otherwise the destination's default.
+            expect(landing, `${role} ${from} ${path} -> ${to}`).toBe(SHARED.has(path) && route && landing === path ? path : defaultPath(routes));
+            if (!SHARED.has(path)) expect(landing).toBe(defaultPath(routes));
+            cases++;
+          }
+        }
+      }
+    }
+    expect(cases).toBeGreaterThan(200);
+  });
+
+  it("Business Orders -> Bridal: Money; Bridal Music & Program -> Business: Dashboard; Business Costs (/expenses) -> Bridal: Money, not Wedding Expenses", () => {
+    const bridal = as("bridal-expense", "owner");
+    const biz = as("distributor", "owner");
+    expect(switchLandingPath(bridal, buildRoutes(bridal), "/orders")).toBe("/wedding-suppliers");
+    expect(switchLandingPath(biz, buildRoutes(biz), "/wedding-program")).toBe("/");
+    expect(switchLandingPath(bridal, buildRoutes(bridal), "/expenses")).toBe("/wedding-suppliers");
+    expect(switchLandingPath(bridal, buildRoutes(bridal), "/users/")).toBe("/users");
+  });
+
+  it("a shared page the destination membership may not open goes to the default", () => {
+    const staff = as("distributor", "staff");
+    const routes = buildRoutes(staff);
+    const usersAllowed = routes.some((r) => r.path === "/users");
+    expect(switchLandingPath(staff, routes, "/users")).toBe(usersAllowed ? "/users" : defaultPath(routes));
+  });
+});
+
+describe("resetWorkspaceUi and stale page files", () => {
+  it("removes dialogs / panels left on <body>, closes ⋯ menus, clears toasts", () => {
+    document.body.innerHTML = '<div id="app"><details class="line-menu" open><summary>⋯</summary></details></div><div class="modal-backdrop"><div class="modal">Add item</div></div><div class="modal-backdrop is-panel"></div><div class="toast-region"><div class="toast">Saved</div></div>';
+    resetWorkspaceUi(document);
+    expect(document.querySelectorAll(".modal-backdrop")).toHaveLength(0);
+    expect(document.querySelector("details").open).toBe(false);
+    expect(document.querySelector(".toast-region").children).toHaveLength(0);
+  });
+
+  it("a file renamed by a deploy reloads ONCE per page per minute; other errors don't", () => {
+    expect(isStaleFileError(new TypeError("Failed to fetch dynamically imported module: https://x/assets/expenses-DXcDtmhk.js"))).toBe(true);
+    expect(isStaleFileError(new TypeError("Importing a module script failed."))).toBe(true);
+    expect(isStaleFileError(new Error("x is undefined"))).toBe(false);
+    const store = new Map();
+    const storage = { getItem: (k) => store.get(k) ?? null, setItem: (k, v) => store.set(k, v) };
+    const reload = vi.fn();
+    expect(reloadForFreshFiles({ path: "/expenses", storage, reload, now: 1000 })).toBe(true);
+    expect(reloadForFreshFiles({ path: "/expenses", storage, reload, now: 30000 })).toBe(false); // no loop
+    expect(reloadForFreshFiles({ path: "/expenses", storage, reload, now: 70000 })).toBe(true);
+    expect(reload).toHaveBeenCalledTimes(2);
+    expect(reloadForFreshFiles({ path: "/x", storage: { getItem: () => null, setItem: () => { throw new Error("blocked"); } }, reload })).toBe(false);
   });
 });

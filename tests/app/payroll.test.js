@@ -570,28 +570,147 @@ describe("Household Staff: ⋯ Delete (added by mistake)", () => {
   });
 });
 
-describe("public receipt page", () => {
-  const receipt = { businessName: "Santos Household", employeeName: "Maria", period: { start: "2026-10-01", end: "2026-10-15" }, amount: 670000, method: "GCash", paidDate: "2026-10-16", receiptStatus: "awaiting", expired: false };
-  it("shows only what was paid and confirms once", async () => {
-    const calls = [];
-    const fetchImpl = vi.fn(async (_url, init) => {
+describe("salary receipt page (sign-in required)", () => {
+  const TOKEN = "tokTOKtokTOKtokTOKtokTOK";
+  const receipt = {
+    businessName: "Santos Household",
+    timezone: "Asia/Manila",
+    employeeName: "Maria",
+    period: { start: "2026-10-01", end: "2026-10-15" },
+    method: "GCash",
+    paidDate: "2026-10-16",
+    rows: [
+      { key: "basic", label: "Basic pay", amount: 720000 },
+      { key: "addition", label: "Fiesta bonus", amount: 100000 },
+      { key: "advance", label: "Advance deduction", amount: -50000 },
+      { key: "other", label: "Other deductions", note: "Broken glass", amount: -20000 },
+      { key: "prepaid", label: "Prepaid salary", note: "2 upcoming days", amount: 120000 },
+    ],
+    netPay: 870000,
+    receiptStatus: "awaiting",
+    confirmedAt: null,
+    expired: false,
+  };
+  // A fake Firebase Auth: watchUser fires now and again on sign-in / sign-out.
+  function fakeAuth(signedIn) {
+    let user = signedIn ? { uid: "helper1" } : null;
+    let listener = null;
+    return {
+      watchUser: (cb) => {
+        listener = cb;
+        cb(user);
+      },
+      signIn: vi.fn(async () => {
+        user = { uid: "helper1" };
+        listener(user);
+      }),
+      signOut: vi.fn(async () => {
+        user = null;
+        listener(null);
+      }),
+      idToken: async () => (user ? "id-token-helper1" : null),
+    };
+  }
+  const okFetch = (calls, confirmTo = { ...receipt, receiptStatus: "confirmed", confirmed: true, confirmedAt: "2026-10-19T10:45:00.000Z" }) =>
+    vi.fn(async (_url, init) => {
       const body = JSON.parse(init.body);
-      calls.push(body);
-      return { ok: true, json: async () => ({ receipt: body.action === "confirm" ? { ...receipt, receiptStatus: "confirmed", confirmed: true } : receipt }) };
+      calls.push({ ...body, auth: init.headers.Authorization });
+      return { ok: true, json: async () => ({ receipt: body.action === "confirm" ? confirmTo : receipt }) };
     });
-    await renderReceiptPage(container, { token: "tokTOKtokTOKtokTOKtokTOK", fetchImpl });
-    expect(container.querySelector('[data-role="amount"]').textContent).toBe("₱6,700.00");
-    expect(container.textContent).toMatch(/Santos Household/);
+
+  it("signed out: asks to sign in on the same page, then comes straight back to THIS receipt (opening doesn't confirm)", async () => {
+    const calls = [];
+    const auth = fakeAuth(false);
+    const login = vi.fn();
+    await renderReceiptPage(container, { token: TOKEN, fetchImpl: okFetch(calls), auth, login });
+    expect(login).toHaveBeenCalledTimes(1);
+    expect(login.mock.calls[0][1].notice).toMatch(/Sign in with your Luna account to see your salary receipt/);
+    expect(calls).toEqual([]);
+    expect(window.location.pathname).toBe("/receipt");
+    expect(window.location.hash).toBe("");
+    await login.mock.calls[0][1].onSubmit("maria.4821@staff", "pw");
+    await flush();
+    expect(calls).toEqual([{ action: "view", token: TOKEN, auth: "Bearer id-token-helper1" }]);
+    expect(container.querySelector('[data-act="confirm"]').textContent).toBe("Confirm received");
+  });
+
+  it("a refresh after sign-in finds the receipt again (the token is kept for this tab only)", async () => {
+    const calls = [];
+    await renderReceiptPage(container, { token: TOKEN, fetchImpl: okFetch(calls), auth: fakeAuth(true) });
+    await renderReceiptPage(container, { token: "", fetchImpl: okFetch(calls), auth: fakeAuth(true) });
+    expect(calls.map((c) => c.token)).toEqual([TOKEN, TOKEN]);
+  });
+
+  it("the saved breakdown: each line, Net pay strongest; Confirm received records once", async () => {
+    const calls = [];
+    await renderReceiptPage(container, { token: TOKEN, fetchImpl: okFetch(calls), auth: fakeAuth(true) });
+    const lines = [...container.querySelectorAll('[data-role="breakdown"] li')].map((li) => [li.dataset.line, li.querySelector(".slip-what").childNodes[0].textContent.trim(), li.querySelector(".slip-amt").textContent]);
+    expect(lines).toEqual([
+      ["basic", "Basic pay", "₱7,200.00"],
+      ["addition", "Fiesta bonus", "₱1,000.00"],
+      ["advance", "Advance deduction", "− ₱500.00"],
+      ["other", "Other deductions", "− ₱200.00"],
+      ["prepaid", "Prepaid salary", "₱1,200.00"],
+    ]);
+    expect(container.querySelector('[data-role="net"]').textContent).toBe("₱8,700.00");
+    expect(container.querySelector('[data-role="net"]').closest("strong")).not.toBeNull();
+    expect(calls.map((c) => c.action)).toEqual(["view"]);
     container.querySelector('[data-act="confirm"]').click();
     await flush();
-    expect(calls).toEqual([{ action: "view", token: "tokTOKtokTOKtokTOKtokTOK" }, { action: "confirm", token: "tokTOKtokTOKtokTOKtokTOK" }]);
-    expect(container.textContent).toMatch(/receipt confirmed/i);
+    expect(calls.map((c) => c.action)).toEqual(["view", "confirm"]);
+    expect(container.querySelector('[data-act="confirm"]')).toBeNull();
+    expect(container.querySelector('[data-role="message"]').textContent).toBe("Thank you. Your confirmation was recorded · Oct 19, 2026 · 6:45 PM.");
   });
+
+  it("an already-confirmed receipt shows no button", async () => {
+    const done = { ...receipt, receiptStatus: "confirmed", confirmedAt: "2026-10-19T10:45:00.000Z" };
+    await renderReceiptPage(container, { token: TOKEN, fetchImpl: vi.fn(async () => ({ ok: true, json: async () => ({ receipt: done }) })), auth: fakeAuth(true) });
+    expect(container.querySelector('[data-act="confirm"]')).toBeNull();
+    expect(container.querySelector('[data-role="message"]').textContent).toMatch(/You already confirmed this salary/);
+  });
+
+  it("the wrong account: 'not assigned to your account', no figures, and a way to switch accounts", async () => {
+    const auth = fakeAuth(true);
+    const login = vi.fn();
+    await renderReceiptPage(container, { token: TOKEN, fetchImpl: async () => ({ ok: false, status: 403, json: async () => ({ error: "receipt-not-yours", message: "This salary receipt is not assigned to your account." }) }), auth, login });
+    expect(container.querySelector('[data-role="message"]').textContent).toBe("This salary receipt is not assigned to your account.");
+    expect(container.textContent).not.toMatch(/₱/);
+    container.querySelector('[data-act="switch"]').click();
+    await flush();
+    expect(auth.signOut).toHaveBeenCalled();
+    expect(login).toHaveBeenCalledTimes(1);
+  });
+
   it("an invalid or missing link says so", async () => {
-    await renderReceiptPage(container, { token: "", fetchImpl: vi.fn() });
+    sessionStorage.clear();
+    await renderReceiptPage(container, { token: "", fetchImpl: vi.fn(), auth: fakeAuth(true) });
     expect(container.querySelector('[data-role="message"]').textContent).toMatch(/isn't valid/);
-    await renderReceiptPage(container, { token: "nope", fetchImpl: async () => ({ ok: false, status: 404, json: async () => ({ message: "This link isn't valid. Ask your employer for a new one." }) }) });
+    await renderReceiptPage(container, { token: "nope", fetchImpl: async () => ({ ok: false, status: 404, json: async () => ({ message: "This link isn't valid. Ask your employer for a new one." }) }), auth: fakeAuth(true) });
     expect(container.querySelector('[data-role="message"]').textContent).toMatch(/isn't valid/);
+  });
+});
+
+describe("Owner view of the helper's receipt", () => {
+  it("Receipt: Confirmed · Opened · Confirmed by · Verified via Kasambahay account · Confirmed date and time", async () => {
+    const paid = payroll({ staffName: "Loriza Ibanez", status: "released", ownerPayment: "paid", receiptStatus: "confirmed", salary: { amount: 670000, paidDate: "2026-10-16", method: "cash" }, receiptView: { status: "confirmed", openedAt: "2026-10-19T10:30:00.000Z", confirmedAt: "2026-10-19T10:45:00.000Z", confirmedBy: "Loriza Ibanez", verifiedVia: "Kasambahay account" } });
+    const data = fakeData({ getPayroll: vi.fn(async () => paid), payrollApi: vi.fn(async (b) => (b.action === "period" ? periodView([paid]) : {})) });
+    mountPayroll(container, home(), { data, now: NOW, toast: () => {} });
+    await flush();
+    container.querySelector('[data-act="view"]').click();
+    await flush();
+    const facts = [...document.querySelectorAll('[data-role="receipt"] dt')].map((dt) => `${dt.textContent}: ${dt.nextElementSibling.textContent.trim()}`);
+    expect(facts).toEqual(["Receipt: Confirmed", "Opened: Oct 19, 2026 · 6:30 PM", "Confirmed by: Loriza Ibanez", "Verified via: Kasambahay account", "Confirmed: Oct 19, 2026 · 6:45 PM"]);
+    expect(document.querySelector('[data-role="pay-status"]').textContent).toMatch(/Confirmed by Loriza on Oct 19/);
+  });
+  it("opened but not confirmed: the two stay separate", async () => {
+    const paid = payroll({ status: "released", ownerPayment: "paid", receiptStatus: "awaiting", salary: { amount: 670000, paidDate: "2026-10-16", method: "cash" }, receiptView: { status: "awaiting", openedAt: "2026-10-19T10:30:00.000Z", confirmedAt: null, confirmedBy: null, verifiedVia: null } });
+    const data = fakeData({ getPayroll: vi.fn(async () => paid), payrollApi: vi.fn(async (b) => (b.action === "period" ? periodView([paid]) : {})) });
+    mountPayroll(container, home(), { data, now: NOW, toast: () => {} });
+    await flush();
+    container.querySelector('[data-act="view"]').click();
+    await flush();
+    const facts = [...document.querySelectorAll('[data-role="receipt"] dt')].map((dt) => `${dt.textContent}: ${dt.nextElementSibling.textContent.trim()}`);
+    expect(facts).toEqual(["Receipt: Not confirmed yet", "Opened: Oct 19, 2026 · 6:30 PM"]);
   });
 });
 
@@ -683,7 +802,7 @@ describe("Payroll: automatic pay periods (Owner-pilot batch)", () => {
     expect(data.payrollApi).toHaveBeenCalledWith({ action: "addAddition", payrollId: "staffMaria0001_2026-10-16", addition: { type: "bonus", amount: 20000 } });
   });
   it("a salary paid early shows earned + prepaid = paid, the final salary, and the difference (additional salary due)", async () => {
-    const paid = payroll({ status: "released", paymentTiming: "early", ownerPayment: "paid", receiptStatus: "awaiting", netPay: 730000, salary: { amount: 670000, earned: 610000, prepaid: { days: 1, from: "2026-10-12", to: "2026-10-12", amount: 60000 }, paidDate: "2026-10-11", method: "cash", timing: "early" }, reconcile: { ended: true, waiting: false, paid: 670000, final: 730000, diff: 60000, overpaid: 0, outstanding: 0, additionalDue: 60000, settled: false, carriedTo: [] } });
+    const paid = payroll({ status: "released", paymentTiming: "early", ownerPayment: "paid", receiptStatus: "awaiting", netPay: 730000, salary: { amount: 670000, earned: 610000, prepaid: { days: 1, from: "2026-10-12", to: "2026-10-12", amount: 60000 }, paidDate: "2026-10-11", method: "cash", timing: "early" }, reconcile: { ended: true, waiting: false, paid: 670000, final: 730000, diff: 60000, overpaid: 0, outstanding: 0, additionalDue: 60000, settled: false, carriedTo: [] }, receiptView: { status: "awaiting", openedAt: null, confirmedAt: null, confirmedBy: null, verifiedVia: null } });
     const data = fakeData({ getPayroll: vi.fn(async () => paid), payrollApi: vi.fn(async (b) => (b.action === "period" ? periodView([paid]) : {})) });
     mountPayroll(container, home(), { data, now: NOW, toast: () => {} });
     await flush();

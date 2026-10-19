@@ -8,7 +8,8 @@ import { createHouseholdStaffHandler } from "../../netlify/functions/household-s
 import { createAttendanceHandler } from "../../netlify/functions/attendance.js";
 import { createPayrollHandler } from "../../netlify/functions/payroll.js";
 import { createAdvancesHandler } from "../../netlify/functions/advances.js";
-import { createReceiptHandler } from "../../netlify/functions/receipt.js";
+import { createReceiptHandler, NOT_YOURS_MESSAGE } from "../../netlify/functions/receipt.js";
+import { createActivateHandler } from "../../netlify/functions/activate.js";
 import { createBusiness, addMember, ensureAuthUser } from "../../netlify/functions/_lib/provisioning.js";
 import { buildWorld, request } from "../helpers/tenants.js";
 import { notificationId } from "../../shared/notifications.js";
@@ -41,8 +42,9 @@ async function api(kind, uid, body, businessId = H) {
   const res = await HANDLERS[kind](deps())({ ...request({ uid, businessId, method: "POST" }), body: JSON.stringify(body) });
   return { status: res.statusCode, body: JSON.parse(res.body) };
 }
-async function receipt(body) {
-  const res = await createReceiptHandler(deps())({ httpMethod: "POST", headers: {}, body: JSON.stringify(body) });
+// The receipt link needs the helper signed in (Owner pilot 2026-10-19): uid = who calls (null = signed out).
+async function receipt(body, uid = null) {
+  const res = await createReceiptHandler(deps())({ ...request({ uid: uid ?? undefined, method: "POST" }), body: JSON.stringify(body) });
   return { status: res.statusCode, body: JSON.parse(res.body) };
 }
 const docAt = (p) => world.db.docs.get(`businesses/${H}/${p}`);
@@ -232,54 +234,125 @@ describe("salary release and the one-time receipt link", () => {
     expect(world.db.docs.get(`receiptLinks/${p.receiptLinkHash}`)).toMatchObject({ businessId: H, payrollId, usedAt: null });
   });
 
-  it("the employee sees only what was paid, confirms once; owner and manager are notified", async () => {
-    const { payrollId, r } = await released();
-    const view = await receipt({ action: "view", token: r.body.receiptToken });
-    expect(view.body.receipt).toEqual({ businessName: "Santos Household", employeeName: "Maria", period: { start: "2026-10-01", end: "2026-10-15" }, amount: 720000, method: "GCash", paidDate: "2026-10-16", receiptStatus: "awaiting", expired: false });
+  // Maria's own Luna login (activation link; she sets the password).
+  async function mariaLogin(staffId, businessId = H, owner = u.mom) {
+    const r = await api("staff", owner, { action: "createLogin", staffId }, businessId);
+    expect(r.status, JSON.stringify(r.body)).toBe(201);
+    const act = await createActivateHandler(deps())({ httpMethod: "POST", headers: {}, body: JSON.stringify({ action: "activate", token: r.body.activationToken, password: "kape-at-pandesal" }) });
+    expect(act.statusCode).toBe(200);
+    return r.body.uid;
+  }
+
+  it("the helper must sign in; opening shows the SAVED breakdown and records Opened, never Confirmed", async () => {
+    const { id, payrollId, r } = await released();
+    const helper = await mariaLogin(id);
+    expect(await receipt({ action: "view", token: r.body.receiptToken })).toMatchObject({ status: 401 });
+    expect(await receipt({ action: "confirm", token: r.body.receiptToken })).toMatchObject({ status: 401 });
+    const view = await receipt({ action: "view", token: r.body.receiptToken }, helper);
+    expect(view.status).toBe(200);
+    expect(view.body.receipt).toMatchObject({ businessName: "Santos Household", employeeName: "Maria", period: { start: "2026-10-01", end: "2026-10-15" }, method: "GCash", paidDate: "2026-10-16", receiptStatus: "awaiting", expired: false, rows: [{ key: "basic", label: "Basic pay", amount: 720000 }], netPay: 720000 });
+    const p = payroll(payrollId);
+    expect(p.receiptStatus).toBe("awaiting");
+    expect(p.receiptOpenedAt).toBeTruthy();
+    expect(p.receiptOpenedBy).toEqual({ uid: helper, name: "Maria" });
+    expect(p.receiptConfirmation).toBeUndefined();
+    // The Owner sees Opened separately from Confirmed.
+    const owner = await api("payroll", u.mom, { action: "period", period: { start: "2026-10-01", end: "2026-10-15" }, staffId: id });
+    expect(owner.body.view.rows[0].receiptView).toMatchObject({ status: "awaiting", confirmedAt: null, confirmedBy: null });
+    expect(owner.body.view.rows[0].receiptView.openedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+  });
+
+  it("full breakdown: bonus, advance deduction, other deduction, prepaid salary, net pay; no zero rows; a later edit doesn't rewrite it", async () => {
+    clock = new Date("2026-10-10T04:00:00Z"); // paid early, on Oct 10
+    const id = await maria();
+    await markPeriod(id, "2026-10-01", OCT_1_15.slice(0, 10));
+    const adv = await api("advances", u.mom, { action: "create", advance: { staffId: id, date: "2026-10-05", amount: 50000, description: "Fare home" } });
+    await api("advances", u.mom, { action: "markPaid", advanceId: adv.body.advanceId, release: { paidDate: "2026-10-05", method: "cash" } });
+    const { payrollId } = (await api("payroll", u.mom, { action: "prepare", staffId: id, periodStart: "2026-10-01" })).body;
+    const add = await api("payroll", u.mom, { action: "addAddition", payrollId, addition: { type: "bonus", amount: 100000, description: "Fiesta bonus" } });
+    expect(add.status, JSON.stringify(add.body)).toBeLessThan(300);
+    const ded = await api("payroll", u.mom, { action: "addDeduction", payrollId, deduction: { description: "Broken glass", amount: 20000 } });
+    expect(ded.status, JSON.stringify(ded.body)).toBeLessThan(300);
+    const before = payroll(payrollId);
+    const r = await api("payroll", u.mom, { action: "release", payrollId, payment: { method: "cash", prepaidDays: 2 } });
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    const helper = await mariaLogin(id);
+    const view = (await receipt({ action: "view", token: r.body.receiptToken }, helper)).body.receipt;
+    const net = before.basePay + 100000 - 50000 - 20000 + 2 * 60000;
+    expect(view.rows).toEqual([
+      { key: "basic", label: "Basic pay", amount: before.basePay },
+      { key: "addition", label: "Fiesta bonus", amount: 100000 },
+      { key: "advance", label: "Advance deduction", amount: -50000 },
+      { key: "other", label: "Other deductions", note: "Broken glass", amount: -20000 },
+      { key: "prepaid", label: "Prepaid salary", note: "2 upcoming days", amount: 120000 },
+    ]);
+    expect(view.netPay).toBe(net);
+    expect(view.rows.reduce((t, x) => t + x.amount, 0)).toBe(net);
+    // The stored lines change later (a correction): the receipt still shows what was paid.
+    world.db.seed(`businesses/${H}/payrolls/${payrollId}`, { ...payroll(payrollId), additions: [], basePay: 1 });
+    expect((await receipt({ action: "view", token: r.body.receiptToken }, helper)).body.receipt.rows.map((x) => x.amount)).toEqual([before.basePay, 100000, -50000, -20000, 120000]);
+  });
+
+  it("Confirm received records once with the evidence; the Owner sees who, how and when; reopening creates nothing new", async () => {
+    const { id, payrollId, r } = await released();
+    const helper = await mariaLogin(id);
     const before = structuredClone(payroll(payrollId));
-    const c = await receipt({ action: "confirm", token: r.body.receiptToken });
-    expect(c.body.receipt).toMatchObject({ receiptStatus: "confirmed", confirmed: true });
+    const c = await receipt({ action: "confirm", token: r.body.receiptToken }, helper);
+    expect(c.status).toBe(200);
+    expect(c.body.receipt).toMatchObject({ receiptStatus: "confirmed", confirmed: true, netPay: 720000 });
     const after = payroll(payrollId);
-    expect(after).toMatchObject({ receiptStatus: "confirmed", receiptConfirmedVia: "employee-link" });
-    // calculated -> paid -> confirmed: confirming touches only the receipt, never the salary
+    expect(after).toMatchObject({ receiptStatus: "confirmed", receiptConfirmedVia: "staff-account", receiptConfirmedBy: { uid: helper, name: "Maria" } });
+    expect(after.receiptConfirmation).toMatchObject({ businessId: H, staffId: id, payrollId, paymentId: null, uid: helper, staffName: "Maria", method: "kasambahay-account", status: "confirmed", receiptLinkRef: after.receiptLinkHash });
+    expect(after.receiptConfirmation.confirmedAt).toBeInstanceOf(Date);
+    // Confirming touches only the receipt, never the salary.
     for (const k of ["status", "salary", "netPay", "basePay", "deductions", "deductionsTotal"]) expect(after[k], k).toEqual(before[k]);
-    expect(after.history.at(-1)).toMatchObject({ actor: null, via: "employee-link", label: "Maria confirmed receipt" });
+    const audits = () => [...world.db.docs.entries()].filter(([k, v]) => k.startsWith(`businesses/${H}/auditLog/`) && v.type === "payroll.receipt_confirmed");
+    expect(audits()).toHaveLength(1);
     for (const who of ["mom", "dad"]) expect(world.db.docs.get(`businesses/${H}/members/${u[who]}/inbox/${notificationId("payroll.receipt_confirmed", payrollId)}`), who).toMatchObject({ title: "Salary receipt confirmed", message: "Maria confirmed receiving ₱7,200.00 for 2026-10-01 to 2026-10-15." });
-    expect(world.db.docs.get(`businesses/${H}/members/${u.helper}/inbox/${notificationId("payroll.receipt_confirmed", payrollId)}`)).toBeUndefined();
-    // again: already confirmed, nothing changes, no second notification
-    expect((await receipt({ action: "confirm", token: r.body.receiptToken })).body.receipt.alreadyConfirmed).toBe(true);
+    // Reopened and tapped again: already confirmed, nothing new.
+    const evidence = structuredClone(after.receiptConfirmation);
+    expect((await receipt({ action: "view", token: r.body.receiptToken }, helper)).body.receipt.receiptStatus).toBe("confirmed");
+    expect((await receipt({ action: "confirm", token: r.body.receiptToken }, helper)).body.receipt.alreadyConfirmed).toBe(true);
+    expect(audits()).toHaveLength(1);
+    expect(payroll(payrollId).receiptConfirmation).toEqual(evidence);
+    const owner = await api("payroll", u.mom, { action: "period", period: { start: "2026-10-01", end: "2026-10-15" }, staffId: id });
+    expect(owner.body.view.rows[0].receiptView).toMatchObject({ status: "confirmed", confirmedBy: "Maria", verifiedVia: "Kasambahay account" });
+    expect(owner.body.view.rows[0].receiptView.confirmedAt).toBe(evidence.confirmedAt.toISOString());
+  });
+
+  it("the wrong account can't see or confirm it: Owner, Admin, a staff user, another helper, another household's owner", async () => {
+    const { id, payrollId, r } = await released();
+    await mariaLogin(id);
+    const rosa = await maria({ name: "Rosa" });
+    const rosaUid = await mariaLogin(rosa);
+    const B = "biz-home-b";
+    await createBusiness({ ...world, name: "Reyes Household", planId: "household-plus", workspaceTemplateId: "household-payroll", businessId: B });
+    const other = await ensureAuthUser({ auth: world.auth, email: "reyes@home.test", name: "reyes" });
+    await addMember({ ...world, businessId: B, uid: other.uid, email: other.email, name: "reyes", roleTemplate: "owner", isAccountOwner: true });
+    for (const uid of [u.mom, u.dad, u.helper, rosaUid, other.uid]) {
+      for (const action of ["view", "confirm"]) {
+        const res = await receipt({ action, token: r.body.receiptToken }, uid);
+        expect(res, `${uid} ${action}`).toMatchObject({ status: 403, body: { error: "receipt-not-yours", message: NOT_YOURS_MESSAGE } });
+        expect(JSON.stringify(res.body)).not.toMatch(/Maria|7,200|720000|Santos/);
+      }
+    }
+    expect(payroll(payrollId)).toMatchObject({ receiptStatus: "awaiting" });
+    expect(payroll(payrollId).receiptOpenedAt).toBeUndefined();
   });
 
   it("garbage, unknown and replaced tokens all get the same 404; expired links 410; a new link works", async () => {
-    const { payrollId, r } = await released();
+    const { id, payrollId, r } = await released();
+    const helper = await mariaLogin(id);
     const msg = "This link isn't valid. Ask your employer for a new one.";
-    for (const token of ["x", "A".repeat(32), "../../etc", undefined]) expect(await receipt({ action: "view", token })).toMatchObject({ status: 404, body: { message: msg } });
+    for (const token of ["x", "A".repeat(32), "../../etc", undefined]) expect(await receipt({ action: "view", token }, helper)).toMatchObject({ status: 404, body: { message: msg } });
     const fresh = await api("payroll", u.mom, { action: "newReceiptLink", payrollId });
-    expect(await receipt({ action: "view", token: r.body.receiptToken })).toMatchObject({ status: 404, body: { message: msg } });
+    expect(await receipt({ action: "view", token: r.body.receiptToken }, helper)).toMatchObject({ status: 404, body: { message: msg } });
     clock = new Date(NOW.getTime() + 15 * 86400000);
-    expect((await receipt({ action: "view", token: fresh.body.receiptToken })).body.receipt.expired).toBe(true);
-    expect((await receipt({ action: "confirm", token: fresh.body.receiptToken })).status).toBe(410);
+    expect((await receipt({ action: "view", token: fresh.body.receiptToken }, helper)).body.receipt.expired).toBe(true);
+    expect((await receipt({ action: "confirm", token: fresh.body.receiptToken }, helper)).status).toBe(410);
     const newest = await api("payroll", u.mom, { action: "newReceiptLink", payrollId });
-    expect((await receipt({ action: "confirm", token: newest.body.receiptToken })).status).toBe(200);
+    expect((await receipt({ action: "confirm", token: newest.body.receiptToken }, helper)).status).toBe(200);
     expect((await api("payroll", u.mom, { action: "newReceiptLink", payrollId })).body.error).toBe("receipt-not-awaited");
-  });
-
-  it("a token reaches only its own payment: household B's link never shows or confirms A's", async () => {
-    const a = await released();
-    const B = "biz-home-b";
-    await createBusiness({ ...world, name: "Reyes Household", planId: "household-plus", workspaceTemplateId: "household-payroll", businessId: B });
-    const owner = await ensureAuthUser({ auth: world.auth, email: "reyes@home.test", name: "reyes" });
-    await addMember({ ...world, businessId: B, uid: owner.uid, email: owner.email, name: "reyes", roleTemplate: "owner", isAccountOwner: true });
-    const rosa = (await api("staff", owner.uid, { action: "create", staff: { name: "Rosa", dailyWage: 50000, payCycle: "semi_monthly" } }, B)).body.staffId;
-    await api("attendance", owner.uid, { action: "set", staffId: rosa, date: "2026-10-01", status: "present" }, B);
-    const pb = (await api("payroll", owner.uid, { action: "prepare", staffId: rosa, periodStart: "2026-10-01" }, B)).body.payrollId;
-    const rb = await api("payroll", owner.uid, { action: "release", payrollId: pb, payment: { method: "cash" } }, B);
-    expect((await receipt({ action: "view", token: a.r.body.receiptToken })).body.receipt).toMatchObject({ businessName: "Santos Household", employeeName: "Maria", amount: 720000 });
-    expect((await receipt({ action: "view", token: rb.body.receiptToken })).body.receipt).toMatchObject({ businessName: "Reyes Household", employeeName: "Rosa", amount: 50000 });
-    expect((await receipt({ action: "confirm", token: rb.body.receiptToken })).status).toBe(200);
-    expect(world.db.docs.get(`businesses/${B}/payrolls/${pb}`).receiptStatus).toBe("confirmed");
-    expect(payroll(a.payrollId).receiptStatus).toBe("awaiting");
-    expect(JSON.stringify((await receipt({ action: "view", token: rb.body.receiptToken })).body)).not.toMatch(/Santos|Maria|biz-home"/);
   });
 
   it("a receipt token is not a Luna login: it opens nothing in the workspace", async () => {
@@ -293,12 +366,13 @@ describe("salary release and the one-time receipt link", () => {
   });
 
   it("a link document that isn't the payroll's CURRENT link is refused (defence in depth)", async () => {
-    const { payrollId } = await released();
+    const { id, payrollId } = await released();
+    const helper = await mariaLogin(id);
     const { createHash } = await import("node:crypto");
     const stray = "StrayTokenStrayTokenStrayToken01";
     world.db.seed(`receiptLinks/${createHash("sha256").update(stray).digest("hex")}`, { businessId: H, payrollId, expiresAt: new Date(NOW.getTime() + 86400000), usedAt: null });
-    expect((await receipt({ action: "view", token: stray })).status).toBe(404);
-    expect((await receipt({ action: "confirm", token: stray })).status).toBe(404);
+    expect((await receipt({ action: "view", token: stray }, helper)).status).toBe(404);
+    expect((await receipt({ action: "confirm", token: stray }, helper)).status).toBe(404);
     expect(payroll(payrollId).receiptStatus).toBe("awaiting");
   });
 
@@ -346,9 +420,9 @@ describe("access", () => {
     expect((await api("payroll", u.mom, { action: "prepare", staffId: "aaaaaaaaaaaa", periodStart: "2026-10-01", netPay: 1 })).status).toBe(400);
   });
 
-  it("the public receipt endpoint accepts only {action, token}", async () => {
-    expect((await receipt({ action: "confirm", token: "x", businessId: H })).status).toBe(400);
-    expect((await receipt({ action: "list" })).status).toBe(400);
+  it("the receipt endpoint accepts only {action, token}", async () => {
+    expect((await receipt({ action: "confirm", token: "x", businessId: H }, u.helper)).status).toBe(400);
+    expect((await receipt({ action: "list" }, u.helper)).status).toBe(400);
   });
 });
 
