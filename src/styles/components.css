@@ -4049,7 +4049,7 @@ tr.is-saving {
 .sa-advanced > summary .card-title::after { content: " ›"; color: var(--text-muted); }
 .sa-advanced[open] > summary { padding-bottom: var(--space-2); }
 .sa-advanced .section-title { margin-top: var(--space-4); }
-[data-role="overview-kpis"] .kpi-label { white-space: normal; }
+[data-role="overview-kpis"] .kpi-label { white-space: normal; overflow: visible; hyphens: auto; }
 /* The ⋯ cell stays a table cell on desktop (.row-actions is flex elsewhere). */
 @media (min-width: 720px) {
   .sa-rows td.row-actions { display: table-cell; width: 1%; white-space: nowrap; text-align: right; }
