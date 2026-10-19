@@ -168,6 +168,12 @@ function mountApp(session) {
       try {
         const mod = await MODULE_LOADERS[route.moduleId](session);
         if (!current(token)) return;
+        // No module: its file was renamed by a deploy and the
+        // vite:preloadError handler (boot) is already reloading the page.
+        if (!mod) {
+          renderBoot(root, "Updating Luna…");
+          return;
+        }
         currentCleanup = mod.mount(shell.content, session) || null;
       } catch (err) {
         if (!current(token)) return;
