@@ -1042,6 +1042,40 @@ The accepted Bridal design (Money | Tasks | Guests | More) is unchanged; this pa
     - The workbook opens in openpyxl with warnings as errors.
     - `setUnitCost` from a Household returns 403; unit cost changes are audited.
 
+
+### 2026-10-19 · Final brief corrections (7683c4b, 1feb88f, 6991d31): Reports cards + SKU margins, signed-in salary receipt, atomic workspace switch
+
+c6e6ffd was NOT the final baseline: the owner's final spec for Reports and the Household salary confirmation weren't fully implemented, and a workspace-switch defect was reported.
+
+- **Business Reports** (supersedes the Reports part of the entry above):
+  - Top cards, exactly: **Total Sales** (gross qualifying fulfilled sales), **Total Net Profit** (pesos, with Profitable / Loss / Break-even), **Overall SKU Margin** (%).
+  - Total Net Profit = net sales (gross − discounts − returns) − actual COGS of the units sold − operating expenses (`estimatedOperatingProfit`). The single Net Profit bar graph uses the same formula per day / month (actual transactions).
+  - Overall SKU Margin % = Σ (current price − current unit cost) ÷ Σ current price over the active SKUs that have a cost × 100 (`shared/finance.js skuMargins`). Percentages are never added; quantities sold never weigh in. Example: Kopi ₱75/₱43 + Choco ₱75/₱38 → 69 / 150 = 46.0%.
+  - **Product margins** table: every active SKU (zero sales too), Product | Current Price | Profit / Unit | Net Margin %. A product without a cost shows "No cost set" and is left out of the overall. No per-product sales.
+  - Server: `report.skuMargins` needs dashboard.financials + inventory.costs (bounded to 500 active products).
+- **Household salary receipt** (`netlify/functions/receipt.js`, `_lib/household-self.js`, `src/app/receipt.js`):
+  - Owner pays → secure link → helper opens it → signs in on the receipt page if needed and returns to that exact receipt (token kept for the tab, not in the address bar).
+  - The server verifies: authenticated user → active membership in the link's business → linked Staff record (member.staffId, payroll.self) → the payroll belongs to that Staff record → the link is the payroll's current one. Anyone else: "This salary receipt is not assigned to your account." with no figures.
+  - Breakdown from what was saved at payment (release now stores `salary.atPayment.additions/deductions`): Basic pay, bonuses / additions, Advance deduction, Other deductions, Prepaid salary, Net pay (strongest); no zero rows.
+  - Opening records Opened only (`receiptOpenedAt`). "Confirm received" records once: `receiptConfirmation { businessId, staffId, payrollId, paymentId: null (a salary payment lives on its payroll), uid, staffName, confirmedAt, method: "kasambahay-account", status: "confirmed", receiptLinkRef }` + auditLog `payroll.receipt_confirmed`. Reopening or tapping again creates nothing.
+  - Owner payslip: Receipt / Opened / Confirmed by / Verified via / Confirmed (date · time).
+  - The old no-login confirmation is removed. A helper needs a Luna login to confirm (the Owner's link card says so).
+- **Workspace switch:**
+  - Root cause: (1) a switch kept any path the new workspace also had, but `/expenses` is a different page per template (Costs, Expenses, Wedding Expenses); (2) a tab opened before a deploy couldn't fetch that page's renamed file → "This page couldn't load"; (3) dialogs and panels appended to `<body>` survived the switch, and the old page's cleanup never ran.
+  - Shared fix (`src/app/main.js switchWorkspace`, `src/app/routes.js switchLandingPath / defaultPath`, `src/app/workspace-switch.js`): tear down the old page (cleanup, dialogs, ⋯ menus, toasts, query string) → "Switching workspace…" → resolve the new session and routes → keep the page only if it's a genuinely shared one (Users, Settings, Notifications, Subscription, Download Excel) this membership may open, else the template default → render the shell already on that page. A page still loading for a previous mount never mounts. A renamed page file reloads once (per page per minute) with "Updating Luna…".
+  - Defaults: Business → Dashboard (/), Household → Payroll, Bridal / Bridal+ → Money (/wedding-suppliers), Baby → Baby Dashboard (/).
+- **Tests:**
+  - **Unit:** 1695 pass.
+  - **Emulator security suite:** 2970 pass locally.
+  - **CI:** passed on 7683c4b, 1feb88f and 6991d31.
+  - Temporary `switch-*-tmp` workspaces and their fake users were removed afterwards.
+  - **Live on staging (temporary `switch-*-tmp` workspaces, fake data):**
+    - Reports 18/18 at 390 and 1280. Selling 10 more Kopi moved Total Sales and Net Profit, not the SKU margin.
+    - Receipt and Owner view 40/40 at 390 and 1280: signed out → back to the receipt; wrong account refused and nothing recorded; opened ≠ confirmed; confirmed once with evidence; reopen = no second record; Owner sees who / how / when.
+    - Switch matrix (12 directions × default / deep / dialog open / /expenses?filter / Settings, plus Back / Forward): Owner 66/66 at 390 and 1280, Admin 66/66 at 390 and 1280, Staff (Business ↔ Baby) 16/16 at 390 and 1280.
+    - Stale page file: reloads once into Bridal Money with no error flash.
+- **Production migration baseline:** the commit that adds this entry (its code is identical to 6991d31), once CI passes on it. It supersedes c6e6ffd. Feature work is frozen; Singapore production waits for the owner's explicit approval.
+
 ## Plan (decisions made from the brief)
 
 ### Stage 1: Distributor
