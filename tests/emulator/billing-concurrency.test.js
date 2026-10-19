@@ -28,7 +28,9 @@ async function world(amount = 29900) {
   run += 1;
   const id = `bill-${Date.now().toString(36)}-${run}`;
   await prov.createBusiness({ db, admin, name: `Billing ${run}`, planId: "household-plus", workspaceTemplateId: "household-payroll", businessId: id });
-  await db.doc(`businesses/${id}`).update({ "subscription.status": "past_due" });
+  // A ₱299 calendar-month subscription (the shape from before billing types):
+  // these tests are about races, not the billing model (super-admin.test.js).
+  await db.doc(`businesses/${id}`).update({ subscription: { planId: "household-plus", status: "past_due", renewalAt: null, graceUntil: null, monthlyAmount: 29900, paidThrough: null, nextRenewal: null } });
   await billing.ensureInvoice({ db, FieldValue, businessId: id, period: "2026-10" });
   const paymentId = `sp${id.replace(/[^a-z0-9]/g, "")}`.slice(0, 40);
   await db.doc(`subscriptionPayments/${paymentId}`).set({ businessId: id, businessName: id, workspaceTemplateId: "household-payroll", planId: "household-plus", planNameSnapshot: "Household Plus", period: "2026-10", invoiceId: `${id}_2026-10`, amountDue: 29900, amountSubmitted: amount, method: "bank_transfer", paymentDate: "2026-10-15", reference: "BT", status: "for_verification", submittedAt: FieldValue.serverTimestamp() });
