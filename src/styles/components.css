@@ -4018,3 +4018,16 @@ tr.is-saving {
   .rp-total.is-main { grid-column: 1 / -1; order: -1; }
 }
 .rp-section .chart { max-width: 560px; }
+/* Product margins fit a phone: four short columns, no sideways scroll. */
+@media (max-width: 560px) {
+  .rp-section .table-wrap { margin: 0 calc(-1 * var(--space-2)); }
+  .table-compact.rp-products th,
+  .table-compact.rp-products td,
+  .table-compact.rp-products th:first-child,
+  .table-compact.rp-products td:first-child,
+  .table-compact.rp-products th:last-child,
+  .table-compact.rp-products td:last-child { padding: var(--space-2) 6px; font-size: var(--text-sm); }
+  .table-compact.rp-products th,
+  .table-compact.rp-products td:first-child { white-space: normal; }
+}
+.receipt-card [data-role="home"] { display: inline-block; margin-top: var(--space-3); }

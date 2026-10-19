@@ -102,6 +102,8 @@ export function stackedColumns(periods, { aria = "", format = compactMoney, maxL
 // periods: [{ label, value }] -> one bar per period from a zero line (a
 // loss goes below it, in the loss color). Values sit on the bars while
 // there are few enough to read (Reports: Net Profit).
+// An axis label too close to the 0 line (a small profit over a big loss) is
+// left out so the two never overlap.
 export function profitColumns(periods, { aria = "", format = compactMoney, maxLabels = 8, valueLabels = 12 } = {}) {
   const vals = periods.map((p) => p.value || 0);
   const hi = niceMax(Math.max(0, ...vals) || 1);
@@ -116,7 +118,7 @@ export function profitColumns(periods, { aria = "", format = compactMoney, maxLa
   const every = Math.ceil(periods.length / maxLabels);
   const showValues = periods.length <= valueLabels;
   return html`<svg viewBox="0 0 ${W} 196" role="img" aria-label="${aria}">
-    ${[...new Set([lo, 0, hi])].map((v) => html`<line class="grid-line" x1="${left}" y1="${y(v).toFixed(1)}" x2="${W - 6}" y2="${y(v).toFixed(1)}"></line><text x="${left - 6}" y="${(y(v) + 4).toFixed(1)}" text-anchor="end">${format(v)}</text>`)}
+    ${[...new Set([lo, 0, hi])].map((v) => html`<line class="grid-line" x1="${left}" y1="${y(v).toFixed(1)}" x2="${W - 6}" y2="${y(v).toFixed(1)}"></line>${v !== 0 && Math.abs(y(v) - y(0)) < 12 ? "" : html`<text x="${left - 6}" y="${(y(v) + 4).toFixed(1)}" text-anchor="end">${format(v)}</text>`}`)}
     ${periods.map((p, i) => {
       const v = p.value || 0;
       const x = left + i * step + (step - bw) / 2;
