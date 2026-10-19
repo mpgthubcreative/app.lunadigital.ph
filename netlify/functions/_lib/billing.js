@@ -7,6 +7,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import { BillingError, BILLING_SCHEMA_VERSION, BILLING_TIMEZONE, BILLABLE_STATUSES, invoiceId, periodOfDay, periodEnd, dayAfter, dueDateOf, nextPeriod, validatePaymentSubmission, checkProof, validateRejectReason, validateBillingSettings, PAYMENT_STATUSES } from "../../../shared/billing.js";
 import { businessDate } from "../../../shared/metrics.js";
+import { subscriptionTerms, coverEnd, amountFor, shiftDay, isDayString, BILLING_TYPES } from "../../../shared/plan-billing.js";
 import { tenantDb } from "./tenant-db.js";
 import { prepareNotifications } from "./notifications.js";
 
@@ -24,16 +25,40 @@ const PROOF_PREFIX = (businessId) => `platformBilling/${businessId}/`;
 
 // ---------- Invoices ----------
 
-// Inside a transaction (after the caller's reads): creates the month's
-// invoice for a billed subscription if it doesn't exist yet. The amount is
-// the subscription's price SNAPSHOT; "still to collect" grows by it.
-// `existing` is the already-read invoice snapshot.
+// The bill a subscription has for `period` (YYYY-MM), from its billing
+// terms (shared/plan-billing.js), or null:
+//   monthly  every month; due on the start day of the month (businesses
+//            from before billing types: the 7th), never before the start
+//   annual   the month the first payment / the renewal is due
+//   term     the month of the one purchase (no renewal)
+// The amount is the subscription's price SNAPSHOT (founding price while it lasts).
+export function billFor(business, period) {
+  const sub = business.subscription || {};
+  const created = business.createdAt?.toDate ? businessDate(BILLING_TIMEZONE, business.createdAt.toDate()) : null;
+  const t = subscriptionTerms(sub, { createdDay: created });
+  if (t.billingType === "monthly") {
+    const anchored = isDayString(sub.startDate);
+    if (anchored && period < periodOfDay(sub.startDate)) return null;
+    const day = anchored ? Math.min(Number(sub.startDate.slice(8)), Number(periodEnd(period).slice(8))) : null;
+    const dueDate = anchored ? `${period}-${String(day).padStart(2, "0")}` : dueDateOf(period);
+    const amountDue = anchored ? amountFor(sub, dueDate) : Number.isSafeInteger(sub.monthlyAmount) ? sub.monthlyAmount : null;
+    return amountDue ? { billingType: "monthly", dueDate, amountDue, coverFrom: anchored ? dueDate : `${period}-01`, coverTo: anchored ? coverEnd("monthly", dueDate) : periodEnd(period) } : null;
+  }
+  if (!t.dueDate || periodOfDay(t.dueDate) !== period) return null;
+  const amountDue = amountFor(sub, t.dueDate);
+  return amountDue ? { billingType: t.billingType, dueDate: t.dueDate, amountDue, coverFrom: t.dueDate, coverTo: t.billingType === "term" ? t.accessUntil ?? coverEnd("term", t.dueDate, t.termMonths) : coverEnd("annual", t.dueDate, t.termMonths) } : null;
+}
+
+// Inside a transaction (after the caller's reads): creates the period's
+// invoice for a billed subscription if it doesn't exist yet; "still to
+// collect" grows by it. `existing` is the already-read invoice snapshot.
 function planInvoice(tx, { db, FieldValue, businessId, business, period, existing }) {
   if (existing.exists) return existing.data();
   const sub = business.subscription || {};
   if (!BILLABLE_STATUSES.includes(sub.status)) return null;
-  const amountDue = Number.isSafeInteger(sub.monthlyAmount) ? sub.monthlyAmount : null;
-  if (amountDue === null || amountDue <= 0) return null;
+  const bill = billFor(business, period);
+  if (!bill) return null;
+  const amountDue = bill.amountDue;
   const inv = {
     schemaVersion: BILLING_SCHEMA_VERSION,
     businessId,
@@ -42,7 +67,10 @@ function planInvoice(tx, { db, FieldValue, businessId, business, period, existin
     planId: sub.planId ?? null,
     planName: business.entitlements?.planName ?? sub.planId ?? null,
     period,
-    dueDate: dueDateOf(period),
+    billingType: bill.billingType,
+    dueDate: bill.dueDate,
+    coverFrom: bill.coverFrom,
+    coverTo: bill.coverTo,
     amountDue,
     amountPaid: 0,
     status: "due",
@@ -140,8 +168,12 @@ export async function tenantSubscription({ db, FieldValue, businessId, now = new
   ]);
   const business = b.data();
   const sub = business.subscription || {};
+  const created = business.createdAt?.toDate ? businessDate(BILLING_TIMEZONE, business.createdAt.toDate()) : null;
+  const terms = subscriptionTerms(sub, { createdDay: created });
   return {
     plan: { id: sub.planId, name: business.entitlements?.planName ?? sub.planId },
+    // How this plan is billed: monthly, annual access or 12-month access.
+    billing: { type: terms.billingType, amount: terms.amount, dueDate: terms.dueDate, renewal: terms.renewal, accessUntil: terms.accessUntil, autoRenew: terms.autoRenew },
     status: sub.status,
     monthlyAmount: sub.monthlyAmount ?? null,
     paidThrough: sub.paidThrough ?? null,
@@ -271,10 +303,13 @@ export async function confirmPayment({ db, FieldValue, paymentId, operator, now 
     const before = { status: sub.status, paidThrough: sub.paidThrough ?? null, nextRenewal: sub.nextRenewal ?? null };
     const subChanges = {};
     if (fullyPaid) {
-      const end = periodEnd(i.period);
+      // What the bill covers (its billing type's term), else the month.
+      const end = i.coverTo || periodEnd(i.period);
       const paidThrough = sub.paidThrough && sub.paidThrough > end ? sub.paidThrough : end;
       subChanges["subscription.paidThrough"] = paidThrough;
       subChanges["subscription.nextRenewal"] = dayAfter(paidThrough);
+      // An operator's changed due date is settled by the payment.
+      if (sub.dueDate) subChanges["subscription.dueDate"] = null;
       // A paid bill brings a past-due subscription back; a suspension stays
       // the operator's own decision.
       if (sub.status === "past_due") subChanges["subscription.status"] = "active";
@@ -283,7 +318,10 @@ export async function confirmPayment({ db, FieldValue, paymentId, operator, now 
     tx.update(invRef, { amountPaid, status: fullyPaid ? "paid" : pendingLeft ? "for_verification" : "due", paidAt: fullyPaid ? stamp : null, updatedAt: stamp });
     if (Object.keys(subChanges).length) tx.update(bizRef, { ...subChanges, updatedAt: stamp });
     const ws = pay.workspaceTemplateId || "unknown";
-    tx.set(metricsRef(db, verifiedMonth), { period: verifiedMonth, verifiedRevenue: FieldValue.increment(amount), paymentsVerified: FieldValue.increment(1), revenueByWorkspace: { [ws]: FieldValue.increment(amount) }, revenueByPlan: { [pay.planId || "unknown"]: FieldValue.increment(amount) }, updatedAt: stamp }, { merge: true });
+    // Revenue by workspace, plan and billing type (recurring monthly vs
+    // annual / 12-month access): Bridal is never counted as monthly income.
+    const btype = i.billingType || sub.billingType || "monthly";
+    tx.set(metricsRef(db, verifiedMonth), { period: verifiedMonth, verifiedRevenue: FieldValue.increment(amount), paymentsVerified: FieldValue.increment(1), revenueByWorkspace: { [ws]: FieldValue.increment(amount) }, revenueByPlan: { [pay.planId || "unknown"]: FieldValue.increment(amount) }, revenueByBillingType: { [btype]: FieldValue.increment(amount) }, updatedAt: stamp }, { merge: true });
     tx.set(metricsRef(db, "current"), { awaitingCount: FieldValue.increment(-1), awaitingAmount: FieldValue.increment(-amount), outstanding: FieldValue.increment(-Math.min(amount, Math.max(0, i.amountDue - i.amountPaid))), updatedAt: stamp }, { merge: true });
     const after = { status: subChanges["subscription.status"] ?? sub.status, paidThrough: subChanges["subscription.paidThrough"] ?? before.paidThrough, nextRenewal: subChanges["subscription.nextRenewal"] ?? before.nextRenewal };
     tx.set(audit(db), { type: "subscription.payment-confirmed", businessId: pay.businessId, paymentId, period: pay.period, amount, actor: operator, before, after, at: stamp });
@@ -331,6 +369,97 @@ export async function readPaymentProof({ db, bucket, paymentId }) {
   if (!proof || typeof proof.path !== "string" || !proof.path.startsWith(PROOF_PREFIX(p.data().businessId))) throw new BillingError("not-found", "No proof on this payment");
   const [data] = await (await bucket()).file(proof.path).download();
   return { contentType: proof.contentType, dataBase64: data.toString("base64") };
+}
+
+// ---------- Operator: record a payment, change a date, remind ----------
+
+// Luna records a payment it received outside the app (cash, a transfer the
+// business didn't upload): the bill for the subscription's next due date
+// is created if needed, then the payment is confirmed like any other
+// (credits the period, moves the dates, counts the revenue, once).
+export async function recordOperatorPayment({ db, FieldValue, businessId, input, operator, now = new Date() }) {
+  const today = businessDate(BILLING_TIMEZONE, now);
+  if (!input || typeof input !== "object" || Array.isArray(input)) throw new BillingError("invalid-input", "Invalid payment");
+  for (const k of Object.keys(input)) if (!["amount", "paymentDate", "reference", "note"].includes(k)) throw new BillingError("invalid-input", `Field ${k} can't be set`);
+  if (!isDayString(input.paymentDate) || input.paymentDate > today) throw new BillingError("invalid-input", "Choose the date it was paid (not in the future)");
+  const reference = typeof input.reference === "string" && input.reference.trim() ? input.reference.trim().slice(0, 80) : "Recorded by Luna";
+  const note = typeof input.note === "string" && input.note.trim() ? input.note.trim().slice(0, 300) : null;
+  const bizRef = db.collection("businesses").doc(businessId);
+  const b = await bizRef.get();
+  if (!b.exists) throw new BillingError("not-found", "Business not found");
+  const business = b.data();
+  const created = business.createdAt?.toDate ? businessDate(BILLING_TIMEZONE, business.createdAt.toDate()) : null;
+  const terms = subscriptionTerms(business.subscription || {}, { createdDay: created });
+  const due = terms.dueDate;
+  if (!due) throw new BillingError("already-paid", "Nothing is due: this access is already paid");
+  const period = periodOfDay(due);
+  const invRef = invoices(db).doc(invoiceId(businessId, period));
+  await db.runTransaction(async (tx) => {
+    const inv = await tx.get(invRef);
+    if (inv.exists) return;
+    const bill = billFor(business, period);
+    if (!bill) throw new BillingError("no-invoice", "There's no bill for that date");
+    planInvoice(tx, { db, FieldValue, businessId, business: { ...business, subscription: { ...business.subscription, status: BILLABLE_STATUSES.includes(business.subscription?.status) ? business.subscription.status : "active" } }, period, existing: inv });
+  }, TX);
+  const inv = (await invRef.get()).data();
+  if (inv.status === "paid") throw new BillingError("already-paid", "That bill is already paid");
+  const amount = input.amount === undefined ? inv.amountDue - inv.amountPaid : input.amount;
+  if (!Number.isSafeInteger(amount) || amount <= 0) throw new BillingError("invalid-input", "Amount must be more than ₱0");
+  const paymentId = `sp${createHash("sha256").update(`${businessId}:recorded:${period}:${inv.paymentIds?.length ?? 0}:${input.paymentDate}:${amount}`).digest("hex").slice(0, 30)}`;
+  const payRef = payments(db).doc(paymentId);
+  await db.runTransaction(async (tx) => {
+    const [p, i] = await Promise.all([tx.get(payRef), tx.get(invRef)]);
+    if (p.exists) return;
+    const stamp = FieldValue.serverTimestamp();
+    tx.create(payRef, { schemaVersion: BILLING_SCHEMA_VERSION, businessId, businessName: business.name ?? businessId, workspaceTemplateId: i.data().workspaceTemplateId, planId: i.data().planId, planNameSnapshot: i.data().planName, period, invoiceId: invRef.id, amountDue: i.data().amountDue, amountSubmitted: amount, method: "recorded", paymentDate: input.paymentDate, reference, note, proof: null, status: "for_verification", submittedBy: { name: "Luna", email: operator }, submittedAt: stamp, verifiedBy: null, verifiedAt: null, rejectedBy: null, rejectedAt: null, rejectionReason: null, updatedAt: stamp });
+    tx.update(invRef, { paymentIds: [...(i.data().paymentIds || []), paymentId], updatedAt: stamp });
+    tx.set(metricsRef(db, "current"), { awaitingCount: FieldValue.increment(1), awaitingAmount: FieldValue.increment(amount), updatedAt: stamp }, { merge: true });
+  }, TX);
+  return confirmPayment({ db, FieldValue, paymentId, operator, now });
+}
+
+// The date that matters for this billing type: the next due date (monthly
+// and annual) or the access end (12-month access: a later end = Extended).
+export async function setBillingDate({ db, FieldValue, businessId, date, reason, operator }) {
+  if (!isDayString(date)) throw new BillingError("invalid-input", "Choose a date");
+  const why = typeof reason === "string" ? reason.trim() : "";
+  if (why.length < 3) throw new BillingError("reason-required", "Give a reason (it's recorded)");
+  const ref = db.collection("businesses").doc(businessId);
+  return db.runTransaction(async (tx) => {
+    const b = await tx.get(ref);
+    if (!b.exists) throw new BillingError("not-found", "Business not found");
+    const business = b.data();
+    const created = business.createdAt?.toDate ? businessDate(BILLING_TIMEZONE, business.createdAt.toDate()) : null;
+    const t = subscriptionTerms(business.subscription || {}, { createdDay: created });
+    const term = t.billingType === "term" && t.paidThrough;
+    const field = term ? "accessUntil" : "dueDate";
+    const before = term ? t.accessUntil : t.dueDate;
+    const changes = { [`subscription.${field}`]: date, ...(term ? { "subscription.extended": Boolean(before && date > before) || business.subscription?.extended === true } : {}), updatedAt: FieldValue.serverTimestamp() };
+    tx.update(ref, changes);
+    const record = { type: term ? "subscription.access-changed" : "subscription.due-date-changed", summary: term ? `Access end ${before ?? "—"} → ${date}` : `Due date ${before ?? "—"} → ${date}`, businessId, actor: operator, reason: why, before: { [field]: before }, after: { [field]: date }, at: FieldValue.serverTimestamp() };
+    tx.set(audit(db), record);
+    tx.set(tenantDb(db, businessId).collection("auditLog").doc(), record);
+    return { businessId, field, date };
+  }, TX);
+}
+
+// A billing reminder to the business's owners (in-app notification).
+export async function sendBillingReminder({ db, FieldValue, businessId, message = null, operator, now = new Date() }) {
+  const b = await db.collection("businesses").doc(businessId).get();
+  if (!b.exists) throw new BillingError("not-found", "Business not found");
+  const business = b.data();
+  const created = business.createdAt?.toDate ? businessDate(BILLING_TIMEZONE, business.createdAt.toDate()) : null;
+  const t = subscriptionTerms(business.subscription || {}, { createdDay: created });
+  const when = t.dueDate ? `${t.billingType === "annual" && t.renewal ? "Renewal due" : "Payment due"} ${t.dueDate}` : t.accessUntil ? `Access ends ${t.accessUntil}` : "Billing update";
+  const text = typeof message === "string" && message.trim() ? message.trim().slice(0, 300) : `${when}. ${t.amount ? `Amount: ${peso(t.amount)}.` : ""} Open Subscription to see how to pay.`.trim();
+  const tenant = tenantDb(db, businessId);
+  const sent = await db.runTransaction(async (tx) => {
+    const notes = await prepareNotifications(tx, { tenant, events: [{ type: "billing.payment_update", key: `reminder-${businessDate(BILLING_TIMEZONE, now)}-${createHash("sha256").update(text).digest("hex").slice(0, 8)}`, title: `Luna ${BILLING_TYPES[t.billingType]?.label.toLowerCase() ?? "subscription"}: ${when}`, message: text, recordType: "subscription", recordId: businessId }] });
+    const stamp = FieldValue.serverTimestamp();
+    tx.set(audit(db), { type: "subscription.reminder-sent", summary: `Reminder sent: ${when}`, businessId, actor: operator, after: { message: text }, at: stamp });
+    return notes.commit({ FieldValue });
+  }, TX);
+  return { businessId, sent, message: text };
 }
 
 export { nextPeriod };

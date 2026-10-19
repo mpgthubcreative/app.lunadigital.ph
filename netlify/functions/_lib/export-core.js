@@ -128,13 +128,11 @@ export async function runExport({ db, ctx, admin, descriptor, builder, rawFilter
   const stamp = FieldValue.serverTimestamp();
   const month = monthKey(business.timezone, now);
   const batch = db.batch();
-  batch.set(tenant.collection("auditLog").doc(), { type: "export.generated", dataset: descriptor.id, filters, rowCount: built.rowCount, actor, at: stamp });
+  batch.set(tenant.collection("auditLog").doc(), { type: "export.generated", dataset: descriptor.id, businessId: tenant.businessId, workspaceTemplateId: ctx.workspace?.templateId ?? null, bytes: bytes.length, filters, rowCount: built.rowCount, actor, at: stamp });
   // Phase 18: meter-only counters (no plan limit; the row ceiling above is a
   // technical safety limit, not a commercial one).
-  meterActivity(batch, { tenant, FieldValue, timezone: business.timezone, now, period: month, counts: { exportsGenerated: 1, rowsExported: built.rowCount } });
-  // Phase 18.6: bytes downloaded, for Luna's own usage-cost estimate (not a
-  // tenant meter: never shown as a limit).
-  batch.set(tenant.doc("usage", month), { exportBytes: FieldValue.increment(bytes.length) }, { merge: true });
+  // Downloads, rows and bytes (Excel transfer): informational, never a limit.
+  meterActivity(batch, { tenant, FieldValue, timezone: business.timezone, now, period: month, counts: { exportsGenerated: 1, rowsExported: built.rowCount, exportBytes: bytes.length } });
   await batch.commit();
 
   return { fileName, bytes, rowCount: built.rowCount, filters };

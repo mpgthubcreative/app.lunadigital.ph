@@ -14,7 +14,7 @@
 // reloaded. Settings now asks the server for the CURRENT usage every time
 // it opens and redraws the meters.
 
-import { isModuleLaunched, accessPolicy, MODULES, FEATURE_DEFINITIONS, LIMIT_KEYS, LIMIT_METER, LIMIT_DEFINITIONS, METERS, MONTHLY_METER_IDS, isEnforced, meterApplies } from "@shared/index.js";
+import { isModuleLaunched, accessPolicy, MODULES, FEATURE_DEFINITIONS, LIMIT_KEYS, LIMIT_METER, LIMIT_DEFINITIONS, METERS, MONTHLY_METER_IDS, isEnforced, meterApplies, isHiddenMeter, isHiddenLimit, isNoLimit } from "@shared/index.js";
 import { html, render } from "../../lib/html.js";
 import { pageHeader, card, meter, badge } from "../../components/ui.js";
 import { canArrange, mountArrangeNav } from "./arrange-nav.js";
@@ -33,25 +33,25 @@ function featureValue(key, value) {
 
 // Informational monthly counters that mean something for this business.
 // A module not launched to customers (Excel import) shows no meter or limit here.
-const launchedMeter = (id) => METERS[id]?.module == null || isModuleLaunched(METERS[id].module);
+const launchedMeter = (id) => !isHiddenMeter(id) && (METERS[id]?.module == null || isModuleLaunched(METERS[id].module));
 const activityMeters = (entitlements) => MONTHLY_METER_IDS.filter((id) => !isEnforced(id) && meterApplies(id, entitlements) && launchedMeter(id));
 // Monthly columns of the history table: limited ones first, then activity.
 const historyMeters = (entitlements) => MONTHLY_METER_IDS.filter((id) => meterApplies(id, entitlements) && launchedMeter(id));
 
 function historyTable(rows, entitlements) {
   const ids = historyMeters(entitlements);
-  const cell = (v) => (v === null ? html`<span class="stat-hint">—</span>` : formatNumber(v));
+  const cell = (v, id) => (v === null ? html`<span class="stat-hint">—</span>` : fmtFor(METERS[id].unit)(v));
   return html`<div class="table-wrap"><table class="table table-compact" data-role="usage-history">
     <thead><tr><th>Month</th>${ids.map((id) => html`<th class="num">${METERS[id].label}</th>`)}</tr></thead>
     <tbody>${rows.map((r) =>
       r.recorded
-        ? html`<tr data-period="${r.period}"><td>${r.period}</td>${ids.map((id) => html`<td class="num">${cell(r.values[id])}</td>`)}</tr>`
+        ? html`<tr data-period="${r.period}"><td>${r.period}</td>${ids.map((id) => html`<td class="num">${cell(r.values[id], id)}</td>`)}</tr>`
         : html`<tr data-period="${r.period}"><td>${r.period}</td><td colspan="${ids.length}" class="stat-hint">No recorded usage</td></tr>`
     )}</tbody></table></div>
     <p class="stat-hint">— = not measured that month. File storage and active users are current totals (above), not monthly.</p>`;
 }
 
-const ACTIVITY_TEXT = { exportsGenerated: (n) => `${formatNumber(n)} this month`, rowsExported: (n) => `${formatNumber(n)} rows this month` };
+const ACTIVITY_TEXT = { exportsGenerated: (n) => `${formatNumber(n)} this month`, rowsExported: (n) => `${formatNumber(n)} rows this month`, exportBytes: (n) => `${formatBytes(n)} this month` };
 
 function packageCards(session, fresh = null) {
   const { modules, limits, features } = session.entitlements;
@@ -75,10 +75,12 @@ function packageCards(session, fresh = null) {
       title: "Plan limits",
       body: html`
         <div data-role="limits">
-          ${LIMIT_KEYS.filter((key) => launchedMeter(LIMIT_METER[key])).map((key) => {
+          ${LIMIT_KEYS.filter((key) => !isHiddenLimit(key) && launchedMeter(LIMIT_METER[key])).map((key) => {
             const meterId = LIMIT_METER[key];
             const m = METERS[meterId];
             const label = m.kind === "monthly" ? `${LIMIT_DEFINITIONS[key].label} (this month)` : LIMIT_DEFINITIONS[key].label;
+            // No commercial limit (orders today): the count only.
+            if (isNoLimit(key, limits[key])) return html`<div data-limit="${key}"><dl class="dl dl-compact"><dt>${m.label}${m.kind === "monthly" ? " this month" : ""}</dt><dd>${fmtFor(m.unit)(values[meterId] ?? 0)} <span class="stat-hint">No limit</span></dd></dl></div>`;
             return html`<div data-limit="${key}">${meter({ label, used: values[meterId] ?? 0, limit: limits[key], format: fmtFor(m.unit), showPercent: true })}</div>`;
           })}
         </div>

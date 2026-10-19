@@ -26,6 +26,21 @@ function readRaw(file) {
   });
 }
 // Screenshot (shrunk in the browser) or a PDF receipt (as is, max 3 MB).
+// How the plan is billed (2026-10-19): monthly, annual access, or 12-month
+// wedding access (no automatic renewal).
+function priceLine(s, money) {
+  const b = s.billing;
+  if (!b) return s.monthlyAmount ? `${money(s.monthlyAmount)} a month` : "";
+  if (!b.amount) return "";
+  return b.type === "annual" ? `${money(b.amount)} a year` : b.type === "term" ? `${money(b.amount)} for 12 months` : `${money(b.amount)} a month`;
+}
+function nextLine(s) {
+  const b = s.billing;
+  if (b?.type === "term") return b.dueDate ? `Payment due ${formatDayId(b.dueDate)}` : b.accessUntil ? `Access until ${formatDayId(b.accessUntil)} · no automatic renewal` : "";
+  if (b?.dueDate) return `${b.type === "annual" ? (b.renewal ? "Renews" : "Payment due") : "Next due"} ${formatDayId(b.dueDate)}`;
+  return s.nextRenewal ? `Next renewal ${formatDayId(s.nextRenewal)}` : s.current ? `${monthName(s.current.period)} · due ${formatDayId(s.current.dueDate)}` : "";
+}
+
 export async function prepareSubscriptionProof(file) {
   if (!file) throw new Error("Attach your payment screenshot or receipt");
   if (file.type === "application/pdf") {
@@ -83,9 +98,9 @@ export function mount(container, session, { api = defaultApi, toast = defaultToa
             : html`
               <section class="card hero-card" data-role="plan">
                 <div class="kpis" data-cols="3">
-                  <div class="kpi"><div class="kpi-label">Plan</div><div class="kpi-value">${s.plan.name}</div><div class="kpi-hint">${s.monthlyAmount ? `${money(s.monthlyAmount)} a month` : ""}</div></div>
+                  <div class="kpi"><div class="kpi-label">Plan</div><div class="kpi-value">${s.plan.name}</div><div class="kpi-hint" data-role="price">${priceLine(s, money)}</div></div>
                   <div class="kpi"><div class="kpi-label">Status</div><div class="kpi-value">${badge(SUBSCRIPTION_LABELS[s.status] ?? s.status, STATUS_TONE[s.status] ?? "neutral")}</div><div class="kpi-hint">${s.paidThrough ? `Paid through ${formatDayId(s.paidThrough)}` : "Not paid yet"}</div></div>
-                  <div class="kpi" data-role="amount-due"><div class="kpi-label">Amount due</div><div class="kpi-value">${money(totalDue)}</div><div class="kpi-hint">${s.nextRenewal ? `Next renewal ${formatDayId(s.nextRenewal)}` : s.current ? `${monthName(s.current.period)} · due ${formatDayId(s.current.dueDate)}` : ""}</div></div>
+                  <div class="kpi" data-role="amount-due"><div class="kpi-label">Amount due</div><div class="kpi-value">${money(totalDue)}</div><div class="kpi-hint" data-role="next">${nextLine(s)}</div></div>
                 </div>
               </section>
               <section class="section" data-role="bills">

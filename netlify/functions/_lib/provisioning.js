@@ -12,6 +12,8 @@
 // validates, recomputes the snapshot and writes an audit record to
 // businesses/{bid}/auditLog and platformAudit.
 
+import { newSubscriptionTerms, amountFor, usesSeat } from "../../../shared/plan-billing.js";
+import { businessDate as seatDay } from "../../../shared/metrics.js";
 import { planWorkspace, PLAN_SEED } from "../../../shared/plans.seed.js";
 import { computeEntitlements, validatePlan, validateEntitlementsSnapshot, isValidPlanId, EntitlementError } from "../../../shared/entitlements.js";
 import { resolvePermissions, ROLE_TEMPLATES } from "../../../shared/permissions.js";
@@ -126,6 +128,9 @@ export async function createBusiness({
   businessId = null,
   isDemo = false,
   createdBy = "cli",
+  // The plan's founding price for its founding months (Super Admin choice).
+  founding = false,
+  clock = new Date(),
 }) {
   const businessName = cleanName(name, "Business name");
   assertTimezone(timezone);
@@ -156,9 +161,10 @@ export async function createBusiness({
       adminRevision: 0,
       isDemo: Boolean(isDemo),
       workspaceTemplateId: template.id,
-      // monthlyAmount: the plan price when assigned (Phase 18.6), so MRR and
-      // invoices never re-read today's price for an older subscription.
-      subscription: { planId: plan.id, status: subscriptionStatus, renewalAt: null, graceUntil: null, monthlyAmount: plan.pricing.monthly, paidThrough: null, nextRenewal: null },
+      // The plan's price and billing terms when assigned (shared/plan-billing.js):
+      // invoices never re-read today's price for an older subscription, and
+      // monthlyAmount is recurring income only (0 for annual / 12-month access).
+      subscription: { planId: plan.id, status: subscriptionStatus, renewalAt: null, graceUntil: null, paidThrough: null, nextRenewal: null, ...newSubscriptionTerms(plan, seatDay(timezone, clock), { founding }) },
       moduleOverrides: {},
       limitOverrides: {},
       featureOverrides: {},
@@ -267,7 +273,8 @@ async function changeEntitlements({ db, admin, businessId, actor, reason, action
     // anything unknown or not allowed.
     const entitlements = buildEntitlementsSnapshot(plan, next.overrides, template.id);
     const overrides = { modules: { ...next.overrides.modules }, limits: { ...next.overrides.limits }, features: { ...next.overrides.features } };
-    const activeMembers = (await tx.get(tenant.collection("members").where("status", "==", "active"))).size;
+    // Paid seats: active members except a kasambahay's own login.
+    const activeMembers = (await tx.get(tenant.collection("members").where("status", "==", "active"))).docs.filter((d) => usesSeat(d.data())).length;
     // Phase 18: current usage against the NEW effective limits. Nothing is
     // ever deleted or rewritten; the operator is told, and the owner gets the
     // 80% / 100% warnings the new limit implies (deduplicated as usual).
@@ -277,7 +284,7 @@ async function changeEntitlements({ db, admin, businessId, actor, reason, action
     const now = FieldValue.serverTimestamp();
     tx.update(tenant.ref, {
       "subscription.planId": plan.id,
-      ...(planChanged || business.subscription?.monthlyAmount === undefined ? { "subscription.monthlyAmount": plan.pricing.monthly } : {}),
+      ...(planChanged || business.subscription?.monthlyAmount === undefined ? planTermsUpdate(business, plan) : {}),
       workspaceTemplateId: template.id,
       moduleOverrides: overrides.modules,
       limitOverrides: overrides.limits,
@@ -317,6 +324,18 @@ async function changeEntitlements({ db, admin, businessId, actor, reason, action
     }
     return { businessId, planId: plan.id, workspaceTemplateId: template.id, previousWorkspaceTemplateId: current.templateId, overrides, entitlements, warnings, adminRevision: adminRevisionOf(business) + 1 };
   });
+}
+
+// A new plan's price snapshot (shared/plan-billing.js). While the billing
+// type stays the same, the start date, what's paid and the access end carry
+// over; a different billing type starts its terms today.
+function planTermsUpdate(business, plan) {
+  const sub = business.subscription || {};
+  const fresh = newSubscriptionTerms(plan, seatDay(business.timezone || "Asia/Manila", new Date()));
+  if (!fresh.billingType) return { "subscription.monthlyAmount": fresh.monthlyAmount };
+  const sameType = (sub.billingType ?? "monthly") === fresh.billingType && typeof sub.startDate === "string";
+  const next = sameType ? { ...fresh, startDate: sub.startDate, accessUntil: sub.accessUntil ?? fresh.accessUntil, founding: sub.founding ?? null, monthlyAmount: fresh.billingType === "monthly" ? amountFor({ ...fresh, founding: sub.founding ?? null }, seatDay(business.timezone || "Asia/Manila", new Date())) : 0 } : { ...fresh, paidThrough: null, dueDate: null };
+  return Object.fromEntries(Object.entries(next).map(([k, v]) => [`subscription.${k}`, v]));
 }
 
 const adminRevisionOf = (business) => (Number.isSafeInteger(business.adminRevision) ? business.adminRevision : 0);
@@ -547,14 +566,18 @@ export async function addMember({
 
     if (!businessSnap.exists) throw new ProvisioningError("not-found", `Business ${businessId} not found.`);
 
-    const wasActive = memberSnap.exists && memberSnap.data().status === "active";
-    if (status === "active" && !wasActive) {
+    // The user limit counts PAID SEATS: active members except a kasambahay's
+    // own login (shared/plan-billing.js usesSeat), which never takes one.
+    const seats = activeSnap.docs.filter((d) => d.id !== uid && usesSeat(d.data())).length;
+    const seat = usesSeat({ roleTemplate });
+    const wasSeat = memberSnap.exists && memberSnap.data().status === "active" && usesSeat(memberSnap.data());
+    if (status === "active" && seat && !wasSeat) {
       const limit = userLimit(businessSnap, businessId);
-      if (activeSnap.size >= limit) {
-        throw userLimitError(`Business ${businessId} already has ${activeSnap.size}/${limit} active users.`, activeSnap.size, limit);
+      if (seats >= limit) {
+        throw userLimitError(`Business ${businessId} already has ${seats}/${limit} active users.`, seats, limit);
       }
     }
-    const activeAfter = activeSnap.size + (status === "active" && !wasActive ? 1 : 0) - (wasActive && status !== "active" ? 1 : 0);
+    const activeAfter = seats + (status === "active" && seat ? 1 : 0);
     const userAlerts = await prepareUserAlerts(tx, { tenant, businessSnap, usersUsage, activeAfter });
     const withinCommit = within ? await within(tx, { memberSnap, businessSnap }) : null;
     const kept = memberSnap.exists ? Object.fromEntries(["staffId", "activation", "invitedBy"].filter((k) => memberSnap.data()[k] !== undefined).map((k) => [k, memberSnap.data()[k]])) : {};
@@ -621,11 +644,12 @@ export async function setMemberStatus({ db, admin, businessId, uid, status, audi
     if (status === "disabled" && member.isAccountOwner) {
       throw new ProvisioningError("owner-protected", "The business owner's membership can't be disabled.");
     }
-    if (status === "active" && member.status !== "active") {
+    const seats = activeSnap.docs.filter((d) => d.id !== uid && usesSeat(d.data())).length;
+    if (status === "active" && member.status !== "active" && usesSeat(member)) {
       const limit = userLimit(businessSnap, businessId);
-      if (activeSnap.size >= limit) throw userLimitError(`User limit reached (${activeSnap.size}/${limit}).`, activeSnap.size, limit);
+      if (seats >= limit) throw userLimitError(`User limit reached (${seats}/${limit}).`, seats, limit);
     }
-    const activeAfter = activeSnap.size + (status === "active" && member.status !== "active" ? 1 : 0) - (member.status === "active" && status !== "active" ? 1 : 0);
+    const activeAfter = seats + (status === "active" && usesSeat(member) ? 1 : 0);
     const userAlerts = await prepareUserAlerts(tx, { tenant, businessSnap, usersUsage, activeAfter });
     if (audit && member.status !== status) writeAudit(tx, db, tenant, { type: status === "active" ? "member.reactivated" : "member.deactivated", businessId, actor: audit.actor, reason: audit.reason ?? null, member: { uid, email: member.email ?? null }, before: { status: member.status }, after: { status }, at: admin.firestore.FieldValue.serverTimestamp() });
     tx.update(memberRef, { status, updatedAt: admin.firestore.FieldValue.serverTimestamp() });
@@ -664,7 +688,8 @@ export async function removeMember({ db, admin, businessId, uid, audit = null, w
     if (member.isAccountOwner === true) throw new ProvisioningError("owner-protected", "The business owner can't be removed.");
     if (member.roleTemplate === "owner" && ownersSnap.docs.filter((d) => d.id !== uid && d.data().status === "active").length === 0) throw new ProvisioningError("owner-protected", "The last owner can't be removed.");
     const wasActive = member.status === "active";
-    const userAlerts = await prepareUserAlerts(tx, { tenant, businessSnap, usersUsage, activeAfter: activeSnap.size - (wasActive ? 1 : 0) });
+    const seats = activeSnap.docs.filter((d) => usesSeat(d.data())).length;
+    const userAlerts = await prepareUserAlerts(tx, { tenant, businessSnap, usersUsage, activeAfter: seats - (wasActive && usesSeat(member) ? 1 : 0) });
     const withinCommit = within ? await within(tx, { member }) : null;
     if (audit) writeAudit(tx, db, tenant, { type: "member.removed", businessId, actor: audit.actor, reason: audit.reason ?? null, member: { uid, email: member.email ?? null }, before: { roleTemplate: member.roleTemplate, status: member.status, name: member.name ?? null, staffId: member.staffId ?? null }, after: null, at: FieldValue.serverTimestamp() });
     tx.delete(memberRef);
@@ -860,7 +885,7 @@ export async function provisionBusiness({ db, admin, auth, request, actor = "cli
 
   // 2. The business (create() never overwrites; "exists" here = our own retry).
   try {
-    await createBusiness({ db, admin, name: req.name, planId: req.planId, workspaceTemplateId: req.workspaceTemplateId, timezone: req.timezone, businessId: req.businessId, isDemo, createdBy: actor });
+    await createBusiness({ db, admin, name: req.name, planId: req.planId, workspaceTemplateId: req.workspaceTemplateId, timezone: req.timezone, businessId: req.businessId, isDemo, createdBy: actor, founding: req.founding === true });
   } catch (err) {
     if (!(err instanceof ProvisioningError && err.code === "business-exists")) throw err;
     const existing = (await bRef.get()).data();

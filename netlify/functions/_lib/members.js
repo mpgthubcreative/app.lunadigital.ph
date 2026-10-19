@@ -190,23 +190,23 @@ export async function removeMemberFromBusiness({ db, admin, auth, tenant, busine
   const snap = await tenant.member(uid).get();
   if (!snap.exists) return { uid, removed: false, alreadyRemoved: true };
   if (snap.data().isAccountOwner === true) throw new MemberError("owner-protected", "The business owner can't be removed.");
-  const r = await removeMember({
-    db,
-    admin,
-    businessId,
-    uid,
-    audit: { actor, reason: "Removed from the Users page" },
-    within: async (tx, { member }) => {
-      if (!member.staffId) return null;
-      const ref = tenant.doc("householdStaff", member.staffId);
-      const s = await tx.get(ref);
-      if (!s.exists || s.data().memberUid !== uid) return null;
-      const history = Array.isArray(s.data().history) ? s.data().history : [];
-      return () => tx.update(ref, { memberUid: null, login: null, history: [...history, { at: new Date(), actor: { uid: actor.uid, name: actor.name ?? null }, label: `Luna access removed (login ${loginName(member.email || "")})` }].slice(-200) });
-    },
-  });
+  const r = await removeMember({ db, admin, businessId, uid, audit: { actor, reason: "Removed from the Users page" }, within: unlinkStaffLogin(tenant, uid, actor) });
   await auth.revokeRefreshTokens(uid).catch(() => {});
   return { uid, removed: r.removed, ...(r.alreadyRemoved ? { alreadyRemoved: true } : {}) };
+}
+
+// removeMember's `within`: a kasambahay's login leaves their household staff
+// record too (the record and its history stay). Also used by Super Admin.
+export function unlinkStaffLogin(tenant, uid, actor) {
+  return async (tx, { member }) => {
+    if (!member.staffId) return null;
+    const ref = tenant.doc("householdStaff", member.staffId);
+    const s = await tx.get(ref);
+    if (!s.exists || s.data().memberUid !== uid) return null;
+    const history = Array.isArray(s.data().history) ? s.data().history : [];
+    const who = typeof actor === "string" ? { uid: null, name: actor } : { uid: actor.uid ?? null, name: actor.name ?? null };
+    return () => tx.update(ref, { memberUid: null, login: null, history: [...history, { at: new Date(), actor: who, label: `Luna access removed (login ${loginName(member.email || "")})` }].slice(-200) });
+  };
 }
 
 // Owner: a new activation link, for someone who hasn't set up their

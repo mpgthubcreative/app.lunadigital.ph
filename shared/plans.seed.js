@@ -1,4 +1,14 @@
-// INITIAL plan configuration — not validated final pricing.
+// Plan configuration (Super Admin consolidation, 2026-10-19).
+//
+// The sold catalog is TWO plans per workspace:
+//   Distributor / Distributor+          monthly subscription + setup fee
+//   Luna Household / Luna Household+    annual access
+//   Luna Bridal / Luna Bridal+          12-month wedding access (no auto-renew)
+//   (Baby keeps its two plans.)
+// Commercial limits are users and storage only (no order limit for now;
+// imports aren't launched). A kasambahay login never uses a Household seat;
+// wedding guests aren't users. Starter / Growth / Pro are LEGACY: hidden from
+// Super Admin, kept only so businesses already on them stay valid.
 //
 // This file is the seed for the Firestore `plans/{planId}` collection,
 // which becomes the editable source of truth (Super Admin, Phase 14). Code
@@ -12,6 +22,8 @@
 // (e.g. Pro "₱19,990+").
 
 export const CURRENCY = "PHP";
+// No commercial limit (shared/plan-billing.js UNLIMITED): shown as "No limit".
+const NO_LIMIT = 1_000_000;
 
 const GB = 1024 ** 3;
 const MB = 1024 ** 2;
@@ -22,29 +34,55 @@ const ALL_SELLABLE_OFF = Object.freeze({ orders: false, payments: false, invento
 const HOUSEHOLD_MODULES = ["household", "attendance", "payroll", "advances", "expenses", "budget", "schedule", "grocery"];
 const BABY_MODULES = ["expenses", "budget", "schedule", "providers"];
 const BRIDAL_MODULES = ["expenses", "budget", "vendors", "vendorpayments", "tasks", "guests"];
-function personalPlan({ id, name, workspace, monthly, sortOrder, users, storage, modules, plus = false }) {
+// pricing: `monthly` stays the RECURRING monthly price (0 for annual / term
+// plans, so they never count as recurring income); `billingType`, `price`,
+// `termMonths`, `autoRenew` and `founding` describe how the plan is sold
+// (shared/plan-billing.js planBilling).
+function personalPlan({ id, name, workspace, monthly = 0, sortOrder, users, storage, modules, plus = false, billing = null }) {
   return {
     id,
     name,
     workspaceTemplateId: workspace,
     recommended: plus,
     sortOrder,
-    pricing: { currency: CURRENCY, setupFee: 0, setupFeeIsMinimum: false, monthly, monthlyIsMinimum: false },
+    pricing: billing
+      ? { currency: CURRENCY, setupFee: 0, setupFeeIsMinimum: false, monthly: 0, monthlyIsMinimum: false, ...billing }
+      : { currency: CURRENCY, setupFee: 0, setupFeeIsMinimum: false, monthly, monthlyIsMinimum: false },
     limits: { users, ordersPerMonth: 0, storageBytes: storage, importsPerMonth: 0 },
     modules: { ...ALL_SELLABLE_OFF, ...Object.fromEntries(modules.map((m) => [m, true])) },
     features: { reportsLevel: plus ? "advanced" : "basic", inAppNotifications: true, pushNotifications: plus, googleSheets: false, advancedPermissions: false, workflowCustomization: false, support: plus ? "priority" : "standard" },
   };
 }
 
+// Distributor (sold): monthly + ₱999 setup; users and storage only, no order limit.
+const DISTRIBUTOR_MODULES = ["orders", "payments", "inventory", "customers", "reports", "imports", "expenses"];
+function distributorPlan({ id, name, sortOrder, price, users, storage, plus = false, founding = null }) {
+  return {
+    id,
+    name,
+    workspaceTemplateId: "distributor",
+    recommended: plus,
+    sortOrder,
+    pricing: { currency: CURRENCY, setupFee: 99900, setupFeeIsMinimum: false, monthly: price, monthlyIsMinimum: false, billingType: "monthly", price, termMonths: 1, autoRenew: true, founding },
+    limits: { users, ordersPerMonth: NO_LIMIT, storageBytes: storage, importsPerMonth: 0 },
+    modules: { ...ALL_SELLABLE_OFF, ...Object.fromEntries(DISTRIBUTOR_MODULES.map((m) => [m, true])) },
+    features: { reportsLevel: plus ? "advanced" : "basic", inAppNotifications: true, pushNotifications: plus, googleSheets: false, advancedPermissions: false, workflowCustomization: false, support: plus ? "priority" : "standard" },
+  };
+}
 
 export const PLAN_SEED = Object.freeze({
-  // ---- Distributor (Phase 18.6: each plan belongs to ONE workspace) ----
+  // ---- Distributor (sold) ----
+  "distributor-basic": distributorPlan({ id: "distributor-basic", name: "Distributor", sortOrder: 1, price: 49900, users: 2, storage: 500 * MB, founding: { price: 39900, months: 12, label: "₱399 / month for the first 12 months" } }),
+  "distributor-plus": distributorPlan({ id: "distributor-plus", name: "Distributor+", sortOrder: 2, price: 89900, users: 4, storage: 1 * GB, plus: true }),
+
+  // ---- Distributor, LEGACY (Phase 18.6 plans; hidden, kept for existing businesses) ----
   starter: {
     id: "starter",
+    legacy: true,
     name: "Starter",
     workspaceTemplateId: "distributor",
     recommended: false,
-    sortOrder: 1,
+    sortOrder: 101,
     pricing: {
       currency: CURRENCY,
       setupFee: 499000,
@@ -97,10 +135,11 @@ export const PLAN_SEED = Object.freeze({
 
   growth: {
     id: "growth",
+    legacy: true,
     name: "Growth",
     workspaceTemplateId: "distributor",
     recommended: true,
-    sortOrder: 2,
+    sortOrder: 102,
     pricing: {
       currency: CURRENCY,
       setupFee: 999000,
@@ -153,10 +192,11 @@ export const PLAN_SEED = Object.freeze({
 
   pro: {
     id: "pro",
+    legacy: true,
     name: "Pro",
     workspaceTemplateId: "distributor",
     recommended: false,
-    sortOrder: 3,
+    sortOrder: 103,
     pricing: {
       currency: CURRENCY,
       setupFee: 1999000,
@@ -211,16 +251,22 @@ export const PLAN_SEED = Object.freeze({
   // PRICING HYPOTHESES, not final prices. Each plan enables only its own
   // workspace's modules; limits use the shared vocabulary (orders and imports
   // are 0: those modules don't exist in personal workspaces).
-  "household-basic": personalPlan({ id: "household-basic", name: "Luna Household", workspace: "household-payroll", monthly: 14900, sortOrder: 11, users: 3, storage: 500 * MB, modules: HOUSEHOLD_MODULES }),
-  "household-plus": personalPlan({ id: "household-plus", name: "Household Plus", workspace: "household-payroll", monthly: 29900, sortOrder: 12, users: 6, storage: 2 * GB, modules: HOUSEHOLD_MODULES, plus: true }),
+  // Household: annual access. Users = paid household / family seats (a
+  // kasambahay's own login never uses one).
+  "household-basic": personalPlan({ id: "household-basic", name: "Luna Household", workspace: "household-payroll", sortOrder: 11, users: 1, storage: 500 * MB, modules: HOUSEHOLD_MODULES, billing: { billingType: "annual", price: 119000, termMonths: 12, autoRenew: true, founding: { price: 99000, months: 12, label: "₱990 for the first year" } } }),
+  "household-plus": personalPlan({ id: "household-plus", name: "Luna Household+", workspace: "household-payroll", sortOrder: 12, users: 3, storage: 1 * GB, modules: HOUSEHOLD_MODULES, plus: true, billing: { billingType: "annual", price: 199000, termMonths: 12, autoRenew: true, founding: { price: 169000, months: 12, label: "₱1,690 to ₱1,790 for the first year" } } }),
   "baby-basic": personalPlan({ id: "baby-basic", name: "Baby Basic", workspace: "baby-expense", monthly: 14900, sortOrder: 21, users: 2, storage: 500 * MB, modules: BABY_MODULES }),
   "baby-plus": personalPlan({ id: "baby-plus", name: "Baby Plus", workspace: "baby-expense", monthly: 24900, sortOrder: 22, users: 5, storage: 2 * GB, modules: BABY_MODULES, plus: true }),
-  "bridal-basic": personalPlan({ id: "bridal-basic", name: "Luna Bridal", workspace: "bridal-expense", monthly: 19900, sortOrder: 31, users: 3, storage: 1 * GB, modules: BRIDAL_MODULES }),
-  "bridal-plus": personalPlan({ id: "bridal-plus", name: "Luna Bridal+", workspace: "bridal-expense", monthly: 39900, sortOrder: 32, users: 6, storage: 5 * GB, modules: BRIDAL_MODULES, plus: true }),
+  // Bridal: 12-month wedding access, bought once, no automatic renewal.
+  // Users = planning users (guests and invitation visitors aren't users).
+  "bridal-basic": personalPlan({ id: "bridal-basic", name: "Luna Bridal", workspace: "bridal-expense", sortOrder: 31, users: 1, storage: 500 * MB, modules: BRIDAL_MODULES, billing: { billingType: "term", price: 149000, termMonths: 12, autoRenew: false, founding: { price: 99000, months: 12, label: "₱990 / 12 months" } } }),
+  "bridal-plus": personalPlan({ id: "bridal-plus", name: "Luna Bridal+", workspace: "bridal-expense", sortOrder: 32, users: 3, storage: 1 * GB, modules: BRIDAL_MODULES, plus: true, billing: { billingType: "term", price: 399000, priceIsMinimum: true, termMonths: 12, autoRenew: false, founding: { price: 299000, months: 12, label: "₱2,990 / 12 months" } } }),
 });
 
 // The workspace a plan belongs to (older stored plans had none: Distributor).
 export const planWorkspace = (plan) => (plan && typeof plan.workspaceTemplateId === "string" ? plan.workspaceTemplateId : "distributor");
+// The plans Super Admin offers (create, change plan, Plans page); legacy ones stay valid but hidden.
+export const isCatalogPlan = (plan) => Boolean(plan) && plan.legacy !== true;
 
 // Vocabulary every plan and override is validated against
 // (shared/entitlements.js). Adding a limit or feature means adding it here
@@ -229,7 +275,8 @@ export const LIMIT_DEFINITIONS = Object.freeze({
   users: { label: "Active users", unit: "count" },
   ordersPerMonth: { label: "Orders per month", unit: "count" },
   storageBytes: { label: "File storage", unit: "bytes" },
-  importsPerMonth: { label: "Spreadsheet imports per month", unit: "count" },
+  // Imports aren't launched: kept in the vocabulary, never shown.
+  importsPerMonth: { label: "Spreadsheet imports per month", unit: "count", hidden: true },
 });
 
 export const LIMIT_KEYS = Object.freeze(Object.keys(LIMIT_DEFINITIONS));

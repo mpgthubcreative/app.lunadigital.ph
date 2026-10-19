@@ -25,6 +25,7 @@ import { prepareNotifications } from "./notifications.js";
 import { tenantDb } from "./tenant-db.js";
 import { guestTotalsWrite } from "./wedding.js";
 import { roleLabel } from "../../../shared/wedding-roles.js";
+import { accessPolicy } from "../../../shared/subscription.js";
 import { attendingMarksFor } from "./wedding-roles.js";
 import { liveDesignFor, ownerInvitationStatus, previewDesign } from "./invitation-design.js";
 
@@ -201,6 +202,8 @@ async function resolve(db, token) {
   const biz = db.collection("businesses").doc(businessId);
   const [b, g] = await Promise.all([biz.get(), biz.collection("guests").doc(guestId).get()]);
   if (!b.exists || !g.exists || b.data().entitlements?.workspaceTemplateId !== "bridal-expense") throw BAD_LINK();
+  // A deleted business (Super Admin, recoverable) or an unknown status: the link stops working at once.
+  if (!accessPolicy(b.data().subscription?.status).canRead) throw BAD_LINK();
   return { businessId, guestId, biz, business: b.data(), guest: g.data(), linkRef: link.ref };
 }
 const publicSetup = (s) => Object.fromEntries(["coupleNames", "weddingDate", "ceremonyTime", "ceremonyVenue", "ceremonyAddress", "ceremonyMap", "receptionTime", "receptionVenue", "receptionAddress", "receptionMap", "dressCode", "welcomeMessage", "rsvpDeadline", "story", "footerNote", "faq"].map((k) => [k, s[k] ?? null]));

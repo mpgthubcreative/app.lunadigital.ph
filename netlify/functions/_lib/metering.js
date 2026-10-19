@@ -16,6 +16,7 @@
 
 import { METERS, MONTHLY_METER_IDS, LIMIT_METER, MeteringError, crossedThresholds, monthlyAlertKey, runningAlerts, runningAlertKey, previousPeriods, historyRows, effectiveLimit } from "../../../shared/metering.js";
 import { monthKey } from "./usage.js";
+import { usesSeat } from "../../../shared/plan-billing.js";
 import { prepareNotifications } from "./notifications.js";
 
 export const usageMonthRef = (tenant, period) => tenant.doc("usage", period);
@@ -137,9 +138,10 @@ export async function readStorageCurrent(tenant) {
 // stored bytes.
 export async function readCurrentUsage(tenant, timezone, now = new Date()) {
   const period = monthKey(timezone, now);
-  const [month, active, storage] = await Promise.all([usageMonthRef(tenant, period).get(), tenant.collection("members").where("status", "==", "active").count().get(), readStorageCurrent(tenant)]);
+  const [month, active, storage] = await Promise.all([usageMonthRef(tenant, period).get(), tenant.collection("members").where("status", "==", "active").get(), readStorageCurrent(tenant)]);
   const m = month.exists ? month.data() : {};
-  const values = { activeUsers: active.data().count, storageBytes: storage.bytes };
+  // Paid seats: a kasambahay's own login never uses one.
+  const values = { activeUsers: active.docs.filter((d) => usesSeat(d.data())).length, storageBytes: storage.bytes };
   for (const id of MONTHLY_METER_IDS) values[id] = nonNegative(m[id]);
   return { period, recorded: month.exists, values, storage };
 }

@@ -23,6 +23,10 @@ beforeEach(async () => {
   const owner = await ensureAuthUser({ auth: world.auth, email: "ownerh@t.test", name: "ownerh" });
   world.uids.ownerh = owner.uid;
   await addMember({ ...world, businessId: "biz-home", uid: owner.uid, email: owner.email, name: "ownerh", roleTemplate: "owner", isAccountOwner: true });
+  // These tests cover the MONTHLY bill flow (calendar months, due the 7th),
+  // so this household keeps a subscription from before billing types
+  // (₱299 a month). Annual / 12-month access: tests/functions/super-admin.test.js.
+  world.db.docs.get("businesses/biz-home").subscription = { planId: "household-plus", status: "active", renewalAt: null, graceUntil: null, monthlyAmount: 29900, paidThrough: null, nextRenewal: null };
 });
 
 const docAt = (p) => world.db.docs.get(p);
@@ -47,7 +51,7 @@ describe("plans and invoices", () => {
     expect(r2.ran).toBe(false);
     // biz-a growth ₱1,990, biz-b starter ₱990, biz-home household-plus ₱299; suspended / cancelled not billed.
     expect(docAt("subscriptionInvoices/biz-a_2026-10")).toMatchObject({ amountDue: 199000, planId: "growth", planName: "Growth", status: "due", dueDate: "2026-10-07", workspaceTemplateId: "distributor" });
-    expect(docAt("subscriptionInvoices/biz-home_2026-10")).toMatchObject({ amountDue: 29900, planName: "Household Plus" });
+    expect(docAt("subscriptionInvoices/biz-home_2026-10")).toMatchObject({ amountDue: 29900, planName: "Luna Household+" });
     expect(docAt("subscriptionInvoices/biz-s_2026-10")).toBeUndefined();
     expect(docAt("subscriptionInvoices/biz-x_2026-10")).toBeUndefined();
     // Opening the page as a suspended / cancelled business doesn't bill it either.
@@ -62,14 +66,15 @@ describe("plans and invoices", () => {
   });
 
   it("changing plan snapshots the new price for the NEXT bills only", async () => {
-    await ensureInvoice({ db: world.db, FieldValue: FV(), businessId: "biz-home", period: "2026-10" });
+    await ensureInvoice({ db: world.db, FieldValue: FV(), businessId: "biz-a", period: "2026-10" });
+    await assignPlan({ ...world, businessId: "biz-a", planId: "starter", actor: "ops", reason: "downgrade" });
+    expect(docAt("businesses/biz-a").subscription.monthlyAmount).toBe(99000);
+    expect(docAt("subscriptionInvoices/biz-a_2026-10").amountDue).toBe(199000);
+    await ensureInvoice({ db: world.db, FieldValue: FV(), businessId: "biz-a", period: "2026-11" });
+    expect(docAt("subscriptionInvoices/biz-a_2026-11")).toMatchObject({ amountDue: 99000, planName: "Starter" });
+    // A household plan change: orders / imports don't exist there, so no limit warning about them.
     const r = await assignPlan({ ...world, businessId: "biz-home", planId: "household-basic", actor: "ops", reason: "downgrade" });
-    // Orders / imports don't exist in a household: no limit warning about them.
     expect(r.warnings.join(" ")).not.toMatch(/Orders|imports/i);
-    expect(docAt("businesses/biz-home").subscription.monthlyAmount).toBe(14900);
-    expect(docAt("subscriptionInvoices/biz-home_2026-10").amountDue).toBe(29900);
-    await ensureInvoice({ db: world.db, FieldValue: FV(), businessId: "biz-home", period: "2026-11" });
-    expect(docAt("subscriptionInvoices/biz-home_2026-11")).toMatchObject({ amountDue: 14900, planName: "Luna Household" });
   });
 });
 
@@ -78,7 +83,7 @@ describe("tenant Subscription page", () => {
     await op({ action: "saveBillingSettings", settings: { bankName: "BDO", accountName: "Luna Digital", accountNumber: "0012-3456-78", instructions: "Put your business name in the note." } });
     const r = await sub(world.uids.ownerh, "biz-home");
     expect(r.status).toBe(200);
-    expect(r.body.subscription).toMatchObject({ plan: { id: "household-plus", name: "Household Plus" }, status: "active", monthlyAmount: 29900, current: { period: "2026-10", dueDate: "2026-10-07", amountDue: 29900, balance: 29900, status: "due" }, instructions: { bankName: "BDO", accountNumber: "0012-3456-78" } });
+    expect(r.body.subscription).toMatchObject({ plan: { id: "household-plus", name: "Luna Household+" }, status: "active", monthlyAmount: 29900, current: { period: "2026-10", dueDate: "2026-10-07", amountDue: 29900, balance: 29900, status: "due" }, instructions: { bankName: "BDO", accountNumber: "0012-3456-78" } });
     expect((await sub(world.uids.staffa, "biz-a")).status).toBe(403);
     expect((await sub(world.uids.managera, "biz-a")).status).toBe(403); // managers have no billing.view
     expect((await sub(world.uids.ownera, "biz-home")).status).toBe(403); // not a member
@@ -94,7 +99,7 @@ describe("tenant Subscription page", () => {
     const ok = await submit(world.uids.ownerh, "biz-home", { amount: 29900 });
     expect(ok.status).toBe(201);
     const p = docAt(`subscriptionPayments/${ok.body.paymentId}`);
-    expect(p).toMatchObject({ status: "for_verification", businessId: "biz-home", workspaceTemplateId: "household-payroll", planId: "household-plus", planNameSnapshot: "Household Plus", period: "2026-10", amountDue: 29900, amountSubmitted: 29900, reference: "BT-001" });
+    expect(p).toMatchObject({ status: "for_verification", businessId: "biz-home", workspaceTemplateId: "household-payroll", planId: "household-plus", planNameSnapshot: "Luna Household+", period: "2026-10", amountDue: 29900, amountSubmitted: 29900, reference: "BT-001" });
     expect(p.proof.path).toMatch(/^platformBilling\/biz-home\//);
     expect(docAt("subscriptionInvoices/biz-home_2026-10").status).toBe("for_verification");
     expect(docAt("businesses/biz-home").subscription.paidThrough).toBeNull();

@@ -50,7 +50,8 @@ describe("Settings usage (owner)", () => {
     expect(storage.querySelector('[data-role="percent"]').textContent).toBe("86%");
     expect(el.querySelector('[data-limit="users"] [data-role="percent"]').textContent).toBe("100%");
     const activity = el.querySelector('[data-role="activity"]');
-    expect(activity.textContent).toMatch(/Excel exports\s*14/);
+    expect(activity.textContent).toMatch(/Excel downloads\s*14 this month/);
+    expect(activity.textContent).toMatch(/Excel transfer\s*0 B this month/);
     expect(activity.textContent).toMatch(/Customer payments recorded\s*31/);
     expect(activity.querySelector("progress")).toBeNull();
     expect(activity.textContent).not.toMatch(/Payroll|Guests/); // not this workspace's meters
@@ -108,15 +109,15 @@ describe("console: limits, overrides and usage", () => {
     audit: [],
   };
 
-  it("the Limits table shows Plan | Override | Effective | Current (Storage 100 MB plan, 250 MB override, 86 MB used)", async () => {
+  it("Advanced: each limit reads 'used of limit' (a business override says so), no Plan / Override / Effective columns", async () => {
     businessDetailView(el, ctxWith(vi.fn(async () => DETAIL)), "abc");
     await flush();
-    const row = (k) => [...el.querySelector(`[data-limit="${k}"]`).querySelectorAll("td")].map((td) => td.textContent.replace(/\s+/g, " ").trim());
-    expect(row("ordersPerMonth").slice(0, 5)).toEqual(["Orders per month / month", "500", "1,000", "1,000", "284 28%"]);
-    expect(row("storageBytes").slice(0, 5)).toEqual(["File storage", "1.0 GB", "250 MB", "250 MB", "86 MB 34%"]);
-    expect(row("users")[4]).toMatch(/2 100% At limit/);
+    const row = (k) => el.querySelector(`[data-limit="${k}"]`).textContent.replace(/\s+/g, " ").trim();
+    expect(row("ordersPerMonth")).toMatch(/^Orders per month ?284 of 1,000 · business override/);
+    expect(row("storageBytes")).toMatch(/^File storage ?86 MB of 250 MB · business override/);
+    expect(row("users")).toMatch(/^Active users ?2 of 2/);
+    expect(el.textContent).not.toMatch(/Effective|OVERRIDE|CURRENT/);
     expect(el.querySelector('[data-role="history"] [data-period="2026-09"]').textContent).toMatch(/No recorded usage/);
-    expect(el.querySelector('[data-role="usage"]').textContent).toMatch(/Excel exports\s*3/);
   });
 
   it("set override sends intent only: { limitKey, value, reason, expectedRevision }; storage typed in MB, sent in bytes", async () => {

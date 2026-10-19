@@ -16,8 +16,13 @@ import { WORKSPACE_TEMPLATE_IDS, getWorkspaceTemplate } from "../../../shared/wo
 import { validateEntitlementsSnapshot } from "../../../shared/entitlements.js";
 import { isValidBusinessId } from "../../../shared/tenancy.js";
 import { resolveTenantConfig, termsFor, TENANT_CONFIG_DOC_ID } from "../../../shared/tenant-config.js";
-import { METERS, MONTHLY_METER_IDS, limitRows, meterApplies, isEnforced, RECORD_CREATION_METER_IDS } from "../../../shared/metering.js";
+import { METERS, MONTHLY_METER_IDS, limitRows, meterApplies, isEnforced, isHiddenMeter, RECORD_CREATION_METER_IDS } from "../../../shared/metering.js";
 import { readCurrentUsage, readUsageHistory } from "./metering.js";
+import { billingRow } from "./platform.js";
+import { usesSeat } from "../../../shared/plan-billing.js";
+import { businessDate } from "../../../shared/metrics.js";
+
+const todayManila = () => businessDate("Asia/Manila", new Date());
 
 // One answer for "not an operator", "disabled operator" and "unknown role".
 const NOT_OPERATOR = () => new RequestError("not-operator", "This area is for Luna staff only.", 403);
@@ -61,7 +66,18 @@ async function rowsWithOwners(db, docs, timezoneDefault = "Asia/Manila") {
       const tenant = tenantDb(db, d.id);
       const [owner, usage] = await Promise.all([tenant.collection("members").where("isAccountOwner", "==", true).limit(1).get(), tenant.doc("usage", monthKey(b.timezone || timezoneDefault)).get()]);
       const u = usage.exists ? usage.data() : {};
+      const br = billingRow(d.id, b, {}, todayManila());
       return {
+        // Billing state for the status chip and the ⋯ actions.
+        state: br.state,
+        attention: br.attention,
+        billingType: br.billingType,
+        amount: br.amount,
+        dueDate: br.dueDate,
+        renewal: br.renewal,
+        accessUntil: br.accessUntil,
+        paidThrough: br.paidThrough,
+        planName: b.entitlements?.planName ?? null,
         id: d.id,
         name: b.name,
         workspaceTemplateId: b.workspaceTemplateId ?? null,
@@ -70,7 +86,8 @@ async function rowsWithOwners(db, docs, timezoneDefault = "Asia/Manila") {
         status: b.subscription?.status ?? null,
         owner: owner.empty ? null : { email: owner.docs[0].data().email, status: owner.docs[0].data().status },
         createdAt: ts(b.createdAt),
-        usage: { orders: int(u.ordersCreated), imports: int(u.excelImports), exports: int(u.exportsGenerated) },
+        purgeAfter: b.deletion?.purgeAfter ?? null,
+        usage: { orders: int(u.ordersCreated), exports: int(u.exportsGenerated), exportBytes: int(u.exportBytes) },
       };
     })
   );
@@ -83,10 +100,11 @@ async function rowsWithOwners(db, docs, timezoneDefault = "Asia/Manila") {
 export async function listBusinesses({ db, FieldPath, filters = {}, after = null }) {
   for (const k of Object.keys(filters)) if (!["workspaceTemplateId", "planId", "status", "search"].includes(k)) throw new RequestError("invalid-request", `Unknown filter ${k}.`, 400);
   if (filters.workspaceTemplateId && !WORKSPACE_TEMPLATE_IDS.includes(filters.workspaceTemplateId)) throw new RequestError("invalid-request", "Unknown workspace.", 400);
-  if (filters.status && !SUBSCRIPTION_STATUSES.includes(filters.status)) throw new RequestError("invalid-request", "Unknown status.", 400);
+  if (filters.status && ![...SUBSCRIPTION_STATUSES, "deleted"].includes(filters.status)) throw new RequestError("invalid-request", "Unknown status.", 400);
   if (filters.planId && (typeof filters.planId !== "string" || !/^[a-z][a-z0-9-]{1,31}$/.test(filters.planId))) throw new RequestError("invalid-request", "Unknown plan.", 400);
   const col = db.collection("businesses");
-  const keep = (b) => Object.entries(FILTER_FIELDS).every(([k, path]) => !filters[k] || path.split(".").reduce((o, p) => o?.[p], b) === filters[k]);
+  // A deleted (recoverable) business shows only under the Deleted filter.
+  const keep = (b) => Object.entries(FILTER_FIELDS).every(([k, path]) => !filters[k] || path.split(".").reduce((o, p) => o?.[p], b) === filters[k]) && (filters.status === "deleted" || b.subscription?.status !== "deleted");
   const term = typeof filters.search === "string" ? filters.search.trim().toLocaleLowerCase("en").slice(0, 60) : "";
   if (term) {
     const end = `${term}`;
@@ -105,7 +123,7 @@ export async function listBusinesses({ db, FieldPath, filters = {}, after = null
   }
   const snap = await q.limit(PAGE + 1).get();
   const docs = snap.docs.slice(0, PAGE);
-  return { rows: await rowsWithOwners(db, docs), next: snap.docs.length > PAGE ? docs.at(-1).id : null };
+  return { rows: await rowsWithOwners(db, docs.filter((d) => keep(d.data()))), next: snap.docs.length > PAGE ? docs.at(-1).id : null };
 }
 
 // ---------- One business ----------
@@ -156,13 +174,17 @@ export async function businessDetail({ db, businessId }) {
     modules: moduleTable({ templateId: b.workspaceTemplateId, plan, overrides: b.moduleOverrides || {}, snapshot: b.entitlements }),
     overridable: overridableModules(b.workspaceTemplateId),
     limits: b.entitlements?.limits ?? null,
-    members: members.docs.map((d) => ({ uid: d.id, email: d.data().email, name: d.data().name, roleTemplate: d.data().roleTemplate, status: d.data().status, isAccountOwner: d.data().isAccountOwner === true })),
+    // seat: uses a paid seat (a kasambahay's own login doesn't).
+    members: members.docs.map((d) => ({ uid: d.id, email: d.data().email, name: d.data().name, roleTemplate: d.data().roleTemplate, status: d.data().status, isAccountOwner: d.data().isAccountOwner === true, seat: usesSeat(d.data()) })),
+    billing: billingRow(businessId, b, plan ? { [planId]: plan.name } : {}, todayManila()),
+    plan: plan ? { id: plan.id, name: plan.name, pricing: plan.pricing, limits: plan.limits, legacy: plan.legacy === true } : null,
+    current: { users: current.values.activeUsers, storageBytes: current.values.storageBytes, downloads: current.values.exportsGenerated, transferBytes: current.values.exportBytes, orders: meterApplies("ordersCreated", b.entitlements) ? current.values.ordersCreated : null },
     usage: { period: monthKey(b.timezone || "Asia/Manila"), activeUsers: activeMembers, userLimit: b.entitlements?.limits?.users ?? null, ordersThisMonth: int(u.ordersCreated), importsThisMonth: int(u.excelImports), exportsGenerated: int(u.exportsGenerated), rowsExported: int(u.rowsExported) },
     limitRows: limitRows({ plan, overrides: b.limitOverrides || {}, entitlements: b.entitlements, usage: current.values }),
     meters: meterRows(current.values, b.entitlements),
     storage: current.storage,
     history,
-    historyMeters: MONTHLY_METER_IDS.filter((id) => meterApplies(id, b.entitlements)),
+    historyMeters: MONTHLY_METER_IDS.filter((id) => meterApplies(id, b.entitlements) && !isHiddenMeter(id)),
     config: resolveTenantConfig(config.exists ? config.data() : null, b.workspaceTemplateId),
     terms: termsFor(b.workspaceTemplateId).map((t) => ({ id: t.id, label: t.label, options: Object.entries(t.options).map(([id, o]) => ({ id, label: o.singular })) })),
     audit: audit.docs.map((d) => auditRow(d)),
@@ -171,7 +193,7 @@ export async function businessDetail({ db, businessId }) {
 
 // Informational (meter-only) counters that apply to this business, this month.
 export function meterRows(values, entitlements) {
-  return MONTHLY_METER_IDS.filter((id) => !isEnforced(id) && meterApplies(id, entitlements)).map((id) => ({ id, label: METERS[id].label, definition: METERS[id].definition, value: values[id] ?? 0 }));
+  return MONTHLY_METER_IDS.filter((id) => !isEnforced(id) && meterApplies(id, entitlements) && !isHiddenMeter(id)).map((id) => ({ id, label: METERS[id].label, definition: METERS[id].definition, value: values[id] ?? 0 }));
 }
 
 // ---------- Usage across businesses (Phase 18) ----------
@@ -188,10 +210,11 @@ export async function usageOverview({ db, FieldPath, after = null }) {
   const snap = await q.limit(PAGE + 1).get();
   const docs = snap.docs.slice(0, PAGE);
   const rows = await Promise.all(
-    docs.map(async (d) => {
+    docs.filter((d) => d.data().subscription?.status !== "deleted").map(async (d) => {
       const b = d.data();
       const current = await readCurrentUsage(tenantDb(db, d.id), b.timezone || "Asia/Manila");
       const recordsCreated = RECORD_CREATION_METER_IDS.reduce((sum, id) => sum + (meterApplies(id, b.entitlements) ? current.values[id] : 0), 0);
+      const lim = b.entitlements?.limits || {};
       return {
         id: d.id,
         name: b.name,
@@ -199,7 +222,17 @@ export async function usageOverview({ db, FieldPath, after = null }) {
         planId: b.subscription?.planId ?? null,
         status: b.subscription?.status ?? null,
         period: current.period,
-        limits: limitRows({ overrides: b.limitOverrides || {}, entitlements: b.entitlements, usage: current.values }).map((r) => ({ limitKey: r.limitKey, label: r.label, unit: r.unit, current: r.current, effective: r.effective, percent: r.percent, override: r.override, atOrOver: r.atOrOver })),
+        // Workspace usage, plain: "2 of 4", "184 MB of 1 GB", downloads and transfer this month.
+        usage: {
+          users: current.values.activeUsers,
+          userLimit: Number.isSafeInteger(lim.users) ? lim.users : null,
+          storageBytes: current.values.storageBytes,
+          storageLimit: Number.isSafeInteger(lim.storageBytes) ? lim.storageBytes : null,
+          downloads: current.values.exportsGenerated,
+          transferBytes: current.values.exportBytes,
+          orders: meterApplies("ordersCreated", b.entitlements) ? current.values.ordersCreated : null,
+        },
+        limits: limitRows({ overrides: b.limitOverrides || {}, entitlements: b.entitlements, usage: current.values }).map((r) => ({ limitKey: r.limitKey, label: r.label, unit: r.unit, current: r.current, effective: r.effective, percent: r.percent, override: r.override, atOrOver: r.atOrOver, unlimited: r.unlimited })),
         exports: current.values.exportsGenerated,
         recordsCreated,
       };

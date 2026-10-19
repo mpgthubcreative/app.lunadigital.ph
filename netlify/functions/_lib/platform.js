@@ -10,6 +10,9 @@ import { WORKSPACE_TEMPLATE_IDS } from "../../../shared/workspaces.js";
 import { tenantDb } from "./tenant-db.js";
 import { readStorageCurrent } from "./metering.js";
 import { billingRun, currentPeriod } from "./billing.js";
+import { subscriptionTerms, attentionOf, accessState, BILLING_TYPES } from "../../../shared/plan-billing.js";
+import { businessDate } from "../../../shared/metrics.js";
+import { BILLING_TIMEZONE } from "../../../shared/billing.js";
 
 const TX = { maxAttempts: 10 };
 const int = (v) => (Number.isSafeInteger(v) ? v : 0);
@@ -240,6 +243,85 @@ export async function platformOverview({ db, FieldValue, AggregateField, now = n
   };
 }
 
+// ---------- Super Admin Overview + Action Center (2026-10-19) ----------
+//
+// Short and actionable: active subscriptions / access, recurring income,
+// annual / 12-month income collected this month, what Needs Attention (due,
+// overdue, expiring, expired: real dates) and Income by Workspace. No cost,
+// profit or margin here. Recurring income is Distributor monthly prices
+// only: Household annual and Bridal 12-month access are never turned into a
+// monthly number.
+
+const OVERVIEW_LIMIT = 500;
+const WORKSPACE_BILLING = { distributor: "monthly", "household-payroll": "annual", "bridal-expense": "term", "baby-expense": "monthly" };
+const ATTENTION_ORDER = { overdue: 0, expired: 1, due: 2, expiring: 3 };
+const createdDayOf = (b) => (b.createdAt?.toDate ? businessDate(BILLING_TIMEZONE, b.createdAt.toDate()) : null);
+
+// One business's billing state as the console shows it.
+export function billingRow(id, b, planNames = {}, today) {
+  const sub = b.subscription || {};
+  const terms = subscriptionTerms(sub, { createdDay: createdDayOf(b) });
+  return {
+    id,
+    name: b.name ?? id,
+    workspaceTemplateId: b.workspaceTemplateId ?? null,
+    planId: sub.planId ?? null,
+    planName: planNames[sub.planId] ?? b.entitlements?.planName ?? sub.planId ?? null,
+    status: sub.status ?? null,
+    state: accessState(terms, { status: sub.status, today }),
+    billingType: terms.billingType,
+    amount: terms.amount,
+    startDate: terms.startDate,
+    dueDate: terms.dueDate,
+    renewal: terms.renewal,
+    accessUntil: terms.accessUntil,
+    paidThrough: terms.paidThrough,
+    extended: terms.extended,
+    attention: attentionOf(terms, { status: sub.status, today }),
+    purgeAfter: b.deletion?.purgeAfter ?? null,
+  };
+}
+
+export async function lunaOverview({ db, FieldValue, now = new Date() }) {
+  const period = currentPeriod(now);
+  const today = businessDate(BILLING_TIMEZONE, now);
+  await billingRun({ db, FieldValue, period });
+  const [snap, metric, current, plans] = await Promise.all([
+    db.collection("businesses").limit(OVERVIEW_LIMIT).get(),
+    db.collection("platformMetrics").doc(period).get(),
+    db.collection("platformMetrics").doc("current").get(),
+    db.collection("plans").get(),
+  ]);
+  const planNames = Object.fromEntries(plans.docs.map((d) => [d.id, d.data().name]));
+  const rows = snap.docs.map((d) => billingRow(d.id, d.data(), planNames, today)).filter((r) => r.status !== "deleted");
+  const m = metric.exists ? metric.data() : {};
+  const c = current.exists ? current.data() : {};
+  const live = rows.filter((r) => BILLABLE_STATUSES.includes(r.status) && r.state !== "expired");
+  const byType = m.revenueByBillingType || {};
+  const workspaces = WORKSPACE_TEMPLATE_IDS.filter((w) => rows.some((r) => r.workspaceTemplateId === w));
+  return {
+    period,
+    today,
+    activeAccess: live.length,
+    // Only workspaces sold monthly: a Household / Bridal business still on its
+    // old monthly terms (before billing types) isn't recurring income.
+    recurringIncome: live.filter((r) => r.billingType === "monthly" && (WORKSPACE_BILLING[r.workspaceTemplateId] ?? "monthly") === "monthly").reduce((t, r) => t + (Number.isSafeInteger(r.amount) ? r.amount : 0), 0),
+    annualIncomeThisMonth: int(byType.annual) + int(byType.term),
+    collectedThisMonth: int(m.verifiedRevenue),
+    awaiting: { count: Math.max(0, int(c.awaitingCount)), amount: Math.max(0, int(c.awaitingAmount)) },
+    needsAttention: rows
+      .filter((r) => r.attention && !r.attention.quiet && r.status !== "cancelled")
+      .sort((a, b) => ATTENTION_ORDER[a.attention.kind] - ATTENTION_ORDER[b.attention.kind] || (a.attention.kind === "overdue" ? b.attention.days - a.attention.days : a.attention.date < b.attention.date ? -1 : 1))
+      .slice(0, 50),
+    incomeByWorkspace: workspaces.map((w) => {
+      const mine = live.filter((r) => r.workspaceTemplateId === w);
+      // How the workspace is sold (businesses from before billing types still pay monthly).
+      const type = WORKSPACE_BILLING[w] ?? "monthly";
+      return { workspaceTemplateId: w, billingType: type, billingLabel: BILLING_TYPES[type].label, collected: int(m.revenueByWorkspace?.[w]), recurring: type === "monthly" ? mine.filter((r) => r.billingType === "monthly").reduce((t, r) => t + (Number.isSafeInteger(r.amount) ? r.amount : 0), 0) : null, active: mine.length };
+    }),
+  };
+}
+
 // ---------- Payments queue ----------
 
 const paymentRow = (d) => {
@@ -291,7 +373,7 @@ export async function paymentDetail({ db, paymentId }) {
 // ---------- Subscriptions ----------
 
 // filters: { status?, workspaceTemplateId? }; 25 per page by business id,
-// each with the current month's bill.
+// each with its billing state (dates, attention) and the current month's bill.
 export async function listSubscriptions({ db, filters = {}, after = null, now = new Date() }) {
   const f = filters && typeof filters === "object" ? filters : {};
   const period = currentPeriod(now);
@@ -302,13 +384,14 @@ export async function listSubscriptions({ db, filters = {}, after = null, now = 
   if (after) q = q.startAfter(String(after));
   const docs = (await q.get()).docs;
   const page = docs.slice(0, PAGE);
+  const today = businessDate(BILLING_TIMEZONE, now);
   const invs = await Promise.all(page.map((d) => db.collection("subscriptionInvoices").doc(invoiceId(d.id, period)).get()));
   return {
     period,
     rows: page.map((d, i) => {
       const b = d.data();
       const inv = invs[i].exists ? invs[i].data() : null;
-      return { id: d.id, name: b.name, workspaceTemplateId: b.workspaceTemplateId ?? null, planId: b.subscription?.planId ?? null, planName: b.entitlements?.planName ?? null, status: b.subscription?.status ?? null, monthlyAmount: b.subscription?.monthlyAmount ?? null, paidThrough: b.subscription?.paidThrough ?? null, nextRenewal: b.subscription?.nextRenewal ?? null, bill: inv ? { amountDue: inv.amountDue, amountPaid: inv.amountPaid, status: inv.status, dueDate: inv.dueDate } : null };
+      return { ...billingRow(d.id, b, {}, today), planName: b.entitlements?.planName ?? null, monthlyAmount: b.subscription?.monthlyAmount ?? null, nextRenewal: b.subscription?.nextRenewal ?? null, bill: inv ? { amountDue: inv.amountDue, amountPaid: inv.amountPaid, status: inv.status, dueDate: inv.dueDate } : null };
     }),
     next: docs.length > PAGE ? page.at(-1).id : null,
   };

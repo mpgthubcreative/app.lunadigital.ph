@@ -95,9 +95,9 @@ export async function buildWorkbook({ db, ctx, admin, input, now = new Date() })
   const actor = { uid: ctx.uid, name: ctx.user?.name || "", email: ctx.user?.email || "" };
   const month = monthKey(timezone, now);
   const batch = db.batch();
-  batch.set(tenant.collection("auditLog").doc(), { type: "export.generated", dataset: "workbook", range: { range: range.range, from: range.from, to: range.to }, sheets: parts.map((p) => p.name), rowCount, actor, at: FieldValue.serverTimestamp() });
-  meterActivity(batch, { tenant, FieldValue, timezone, now, period: month, counts: { exportsGenerated: 1, rowsExported: rowCount } });
-  batch.set(tenant.doc("usage", month), { exportBytes: FieldValue.increment(bytes.length) }, { merge: true });
+  // The download record: business, workspace, time, file size; and the meters (downloads + bytes).
+  batch.set(tenant.collection("auditLog").doc(), { type: "export.generated", dataset: "workbook", businessId: tenant.businessId, workspaceTemplateId: ctx.workspace?.templateId ?? null, bytes: bytes.length, range: { range: range.range, from: range.from, to: range.to }, sheets: parts.map((p) => p.name), rowCount, actor, at: FieldValue.serverTimestamp() });
+  meterActivity(batch, { tenant, FieldValue, timezone, now, period: month, counts: { exportsGenerated: 1, rowsExported: rowCount, exportBytes: bytes.length } });
   await batch.commit();
   return { bytes, fileName, rowCount, sheets: parts.map((p) => p.name) };
 }

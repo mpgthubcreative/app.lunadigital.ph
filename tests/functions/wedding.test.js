@@ -15,7 +15,7 @@ import { createExportsHandler } from "../../netlify/functions/exports.js";
 import { createProvidersHandler } from "../../netlify/functions/providers.js";
 import { createWeddingAttentionHandler } from "../../netlify/functions/wedding-attention.js";
 import { createNotificationsHandler } from "../../netlify/functions/notifications.js";
-import { createBusiness, addMember, ensureAuthUser } from "../../netlify/functions/_lib/provisioning.js";
+import { createBusiness, addMember, ensureAuthUser, setLimitOverride } from "../../netlify/functions/_lib/provisioning.js";
 import { buildWorld, request } from "../helpers/tenants.js";
 import { notificationId } from "../../shared/notifications.js";
 import { weddingSummary, rsvpSummary, supplierBalance, SUGGESTED_WEDDING_CATEGORIES } from "../../shared/wedding.js";
@@ -41,6 +41,8 @@ beforeEach(async () => {
     await addMember({ ...world, businessId, uid: x.uid, email: x.email, name: key, roleTemplate: role, isAccountOwner: role === "owner", ...extra });
     u[key] = x.uid;
   };
+  // Luna Bridal+ has 3 planning users (2026-10-19); this test wedding gets 4 through a business limit override.
+  await setLimitOverride({ ...world, businessId: W, limitKey: "users", value: 6, actor: "test", reason: "test wedding with four planners" });
   await add("camille", W, "owner");
   await add("mon", W, "manager");
   await add("helper", W, "staff");

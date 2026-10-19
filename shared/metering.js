@@ -38,7 +38,7 @@ export const METERS = Object.freeze({
     unit: "count",
     limitKey: "users",
     module: null,
-    definition: "Memberships with status Active right now (a live count, not a stored counter). Deactivated members don't count.",
+    definition: "Paid seats in use right now: active memberships (a live count, not a stored counter). Deactivated members and a kasambahay's own login don't count; wedding guests aren't users.",
   },
   storageBytes: {
     kind: "running",
@@ -61,6 +61,8 @@ export const METERS = Object.freeze({
   },
   excelImports: {
     kind: "monthly",
+    // Imports aren't launched (shared/modules.js): never shown.
+    hidden: true,
     label: "Spreadsheet imports",
     unit: "count",
     limitKey: "importsPerMonth",
@@ -70,12 +72,21 @@ export const METERS = Object.freeze({
   },
   exportsGenerated: {
     kind: "monthly",
-    label: "Excel exports",
+    label: "Excel downloads",
     unit: "count",
     limitKey: null,
     module: null,
     since: null,
-    definition: "Excel files generated this month (every dataset and the reports workbook).",
+    definition: "Excel files downloaded this month (Download Excel, and any dataset export).",
+  },
+  exportBytes: {
+    kind: "monthly",
+    label: "Excel transfer",
+    unit: "bytes",
+    limitKey: null,
+    module: null,
+    since: P18,
+    definition: "Total size of the Excel files downloaded this month.",
   },
   rowsExported: {
     kind: "monthly",
@@ -198,10 +209,20 @@ export function effectiveLimit(entitlements, limitKey) {
 }
 
 // Limit | Plan | Override | Effective | Current, for the console and Settings.
+// A meter / limit that isn't shown anywhere (imports: not launched).
+export const isHiddenMeter = (id) => METERS[id]?.hidden === true;
+export const isHiddenLimit = (limitKey) => LIMIT_DEFINITIONS[limitKey]?.hidden === true;
+// A limit no business reaches (orders today): shown as "No limit".
+export const NO_LIMIT_FROM = 1_000_000;
+
+// Only COUNT limits can mean "no limit" (a storage limit in bytes is always large).
+export const isNoLimit = (limitKey, value) => LIMIT_DEFINITIONS[limitKey]?.unit === "count" && Number.isSafeInteger(value) && value >= NO_LIMIT_FROM;
+
 export function limitRows({ plan = null, overrides = {}, entitlements, usage = {} }) {
-  return LIMIT_KEYS.map((limitKey) => {
+  return LIMIT_KEYS.filter((k) => !isHiddenLimit(k)).map((limitKey) => {
     const meterId = LIMIT_METER[limitKey];
     const effective = effectiveLimit(entitlements, limitKey);
+    const none = isNoLimit(limitKey, effective);
     const current = Number.isSafeInteger(usage[meterId]) ? usage[meterId] : 0;
     return {
       limitKey,
@@ -213,8 +234,9 @@ export function limitRows({ plan = null, overrides = {}, entitlements, usage = {
       override: Object.hasOwn(overrides || {}, limitKey) ? overrides[limitKey] : null,
       effective,
       current,
-      percent: usagePercent(current, effective),
-      atOrOver: effective !== null && current >= effective,
+      percent: none ? null : usagePercent(current, effective),
+      atOrOver: !none && effective !== null && current >= effective,
+      unlimited: none,
     };
   });
 }

@@ -36,9 +36,34 @@ export function creatableWorkspaces() {
     .map((t) => ({ id: t.id, name: t.name, version: t.version }));
 }
 
-export const SUBSCRIPTION_LABELS = Object.freeze({ active: "Active", past_due: "Past due", suspended: "Suspended", cancelled: "Cancelled" });
-// Status changes that need a confirmation + reason in the console.
-export const SUBSCRIPTION_ACTIONS = Object.freeze({ past_due: "Mark past due", suspended: "Suspend", cancelled: "Cancel", active: "Reactivate" });
+export const SUBSCRIPTION_LABELS = Object.freeze({ active: "Active", past_due: "Past due", suspended: "Suspended", cancelled: "Cancelled", deleted: "Deleted" });
+// Status changes that need a confirmation + reason in the console. None
+// deletes data:
+//   past_due   still fully usable (grace period)
+//   suspended  temporarily read-only
+//   cancelled  subscription / access ended; data kept (owner can export)
+//   active     full access restored
+export const SUBSCRIPTION_ACTIONS = Object.freeze({ past_due: "Mark as past due", suspended: "Suspend access", cancelled: "Cancel subscription", active: "Reactivate subscription" });
+export const SUBSCRIPTION_ACTION_HELP = Object.freeze({
+  past_due: "They keep full access during the grace period.",
+  suspended: "Access becomes read-only until it's reactivated. Nothing is deleted.",
+  cancelled: "The subscription ends. All data is kept; the owner can still sign in to export.",
+  active: "Full access is restored.",
+});
+
+// A business ID from its name: "Carlo & Yanie's Wedding" -> "carlo-yanies-wedding".
+export function businessIdFromName(name) {
+  const base = String(name || "")
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/['’]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 40)
+    .replace(/-+$/g, "");
+  return base.length >= 3 ? base : base ? `${base}-biz` : "";
+}
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 export const NEW_BUSINESS_ID = /^[a-z0-9][a-z0-9-]{2,39}$/;
@@ -60,7 +85,7 @@ export function validTimezone(tz) {
 
 // "Create business" input. businessId is the slug; the workspace must be
 // a live template; the owner's email resolves or creates their account.
-const CREATE_FIELDS = ["name", "businessId", "workspaceTemplateId", "planId", "ownerEmail", "ownerName", "timezone"];
+const CREATE_FIELDS = ["name", "businessId", "workspaceTemplateId", "planId", "ownerEmail", "ownerName", "timezone", "founding"];
 export function validateCreateBusinessInput(input) {
   if (!input || typeof input !== "object" || Array.isArray(input)) throw new OperatorError("invalid-input", "Invalid business");
   for (const k of Object.keys(input)) if (!CREATE_FIELDS.includes(k)) throw new OperatorError("invalid-input", `Field ${k} can't be set here`);
@@ -72,7 +97,9 @@ export function validateCreateBusinessInput(input) {
     ownerEmail: typeof input.ownerEmail === "string" ? input.ownerEmail.trim().toLowerCase() : "",
     ownerName: text(input.ownerName, "Owner name", 120),
     timezone: input.timezone || "Asia/Manila",
+    founding: input.founding === true,
   };
+  if (input.founding !== undefined && typeof input.founding !== "boolean") throw new OperatorError("invalid-input", "Founding price: yes or no");
   // New ids are clean slugs (stricter than isValidBusinessId, which also
   // accepts older auto-generated ids).
   if (!isValidBusinessId(out.businessId) || !NEW_BUSINESS_ID.test(out.businessId)) throw new OperatorError("invalid-input", "Business ID: 3-40 lowercase letters, digits or dashes");

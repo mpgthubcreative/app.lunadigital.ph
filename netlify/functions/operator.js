@@ -10,6 +10,10 @@
 // Writes:  createBusiness, changePlan, setModuleOverride, setLimitOverride,
 //          setStatus, addMember, setMemberStatus, updateGeneral,
 //          setTerminology, setupLink
+// Super Admin consolidation (2026-10-19):
+//   overview (the short Overview + Action Center), recordPayment,
+//   setBillingDate, sendReminder, removeMember, deleteBusiness (typed name,
+//   recoverable), restoreBusiness, savePlan
 // Phase 18.6 (Luna's own money; operators only):
 //   money (Overview story), subscriptions, payments, payment, paymentProof,
 //   confirmPayment, rejectPayment, billingSettings, saveBillingSettings,
@@ -25,8 +29,12 @@ import { OperatorError, validateCreateBusinessInput, validateSubscriptionStatus,
 import { ROLE_TEMPLATES } from "../../shared/permissions.js";
 import { isValidBusinessId } from "../../shared/tenancy.js";
 import { BillingError } from "../../shared/billing.js";
-import { confirmPayment, rejectPayment, readPaymentProof, getBillingSettings, setBillingSettings } from "./_lib/billing.js";
-import { platformOverview, listSubscriptionPayments, paymentDetail, listSubscriptions, listPlatformExpenses, createPlatformExpense, updatePlatformExpense, removePlatformExpense, copyRecurringExpenses, listCostRates, addCostRate, usageCost, economics } from "./_lib/platform.js";
+import { confirmPayment, rejectPayment, readPaymentProof, getBillingSettings, setBillingSettings, recordOperatorPayment, setBillingDate, sendBillingReminder } from "./_lib/billing.js";
+import { removeMember } from "./_lib/provisioning.js";
+import { unlinkStaffLogin } from "./_lib/members.js";
+import { deleteBusiness, restoreBusiness } from "./_lib/lifecycle.js";
+import { savePlan } from "./_lib/plans-admin.js";
+import { lunaOverview, platformOverview, listSubscriptionPayments, paymentDetail, listSubscriptions, listPlatformExpenses, createPlatformExpense, updatePlatformExpense, removePlatformExpense, copyRecurringExpenses, listCostRates, addCostRate, usageCost, economics } from "./_lib/platform.js";
 
 const STATUS = {
   "invalid-input": 400,
@@ -44,6 +52,7 @@ const STATUS = {
   "invalid-proof": 400,
   "no-invoice": 404,
   "already-paid": 409,
+  "confirm-mismatch": 400,
 };
 const obj = (v) => (v && typeof v === "object" && !Array.isArray(v) ? v : {});
 
@@ -72,7 +81,9 @@ async function memberDoc(db, businessId, uid) {
 // name -> { fields, run(ctx, body) }
 const ACTIONS = {
   session: { fields: [], run: async ({ op }) => ({ operator: { email: op.email, name: op.name, role: op.role }, workspaces: creatableWorkspaces() }) },
-  overview: { fields: [], run: async ({ db }) => ({ overview: await overview({ db, planIds: (await listPlans({ db })).map((p) => p.id) }) }) },
+  // The short Overview: active access, recurring and annual income, Needs Attention, Income by Workspace.
+  overview: { fields: [], run: async ({ db, admin }) => ({ overview: await lunaOverview({ db, FieldValue: admin.firestore.FieldValue }) }) },
+  counts: { fields: [], run: async ({ db }) => ({ overview: await overview({ db, planIds: (await listPlans({ db })).map((p) => p.id) }) }) },
   plans: {
     fields: [],
     run: async ({ db }) => {
@@ -168,6 +179,27 @@ const ACTIONS = {
     fields: ["businessId", "terminology", "reason"],
     run: async ({ db, admin, op }, b) => setTenantTerminology({ db, admin, businessId: bid(b.businessId), terminology: b.terminology, actor: actorOf(op), reason: b.reason }),
   },
+
+  // ---- Super Admin consolidation (2026-10-19) ----
+  recordPayment: { fields: ["businessId", "payment"], run: async ({ db, admin, op }, b) => recordOperatorPayment({ db, FieldValue: admin.firestore.FieldValue, businessId: bid(b.businessId), input: obj(b.payment), operator: actorOf(op) }) },
+  setBillingDate: { fields: ["businessId", "date", "reason"], run: async ({ db, admin, op }, b) => setBillingDate({ db, FieldValue: admin.firestore.FieldValue, businessId: bid(b.businessId), date: b.date, reason: b.reason, operator: actorOf(op) }) },
+  sendReminder: { fields: ["businessId", "message"], run: async ({ db, admin, op }, b) => sendBillingReminder({ db, FieldValue: admin.firestore.FieldValue, businessId: bid(b.businessId), message: b.message ?? null, operator: actorOf(op) }) },
+  // Removes a membership for good (confirmation in the console). The account
+  // owner and the last owner can't be removed; a kasambahay login leaves its
+  // staff record. The person's sessions are revoked.
+  removeMember: {
+    fields: ["businessId", "uid", "reason"],
+    run: async ({ db, admin, auth, op }, b) => {
+      const businessId = bid(b.businessId);
+      await memberDoc(db, businessId, b.uid);
+      const r = await removeMember({ db, admin, businessId, uid: b.uid, audit: { actor: actorOf(op), reason: typeof b.reason === "string" && b.reason.trim() ? b.reason.trim().slice(0, 300) : "Removed by Luna Super Admin" }, within: unlinkStaffLogin(tenantDb(db, businessId), b.uid, actorOf(op)) });
+      await auth.revokeRefreshTokens(b.uid).catch(() => {});
+      return r;
+    },
+  },
+  deleteBusiness: { fields: ["businessId", "confirmName", "reason"], run: async ({ db, admin, op }, b) => deleteBusiness({ db, FieldValue: admin.firestore.FieldValue, businessId: bid(b.businessId), confirmName: b.confirmName, reason: b.reason ?? null, operator: actorOf(op) }) },
+  restoreBusiness: { fields: ["businessId"], run: async ({ db, admin, op }, b) => restoreBusiness({ db, FieldValue: admin.firestore.FieldValue, businessId: bid(b.businessId), operator: actorOf(op) }) },
+  savePlan: { fields: ["planId", "changes"], run: async ({ db, admin, op }, b) => savePlan({ db, FieldValue: admin.firestore.FieldValue, planId: b.planId, changes: obj(b.changes), operator: actorOf(op) }) },
 
   // ---- Phase 18.6: Luna subscriptions, revenue and platform costs ----
   money: { fields: [], run: async ({ db, admin }) => ({ money: await platformOverview({ db, FieldValue: admin.firestore.FieldValue, AggregateField: admin.firestore.AggregateField }) }) },

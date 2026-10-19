@@ -35,4 +35,5 @@ export * from "./storefront.js";
 export * from "./operators.js";
 export * from "./tenant-config.js";
 export * from "./metering.js";
+export * from "./plan-billing.js";
 export * from "./navigation-prefs.js";

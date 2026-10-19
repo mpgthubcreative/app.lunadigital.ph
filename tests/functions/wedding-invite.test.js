@@ -11,6 +11,7 @@ import { createExpensesHandler } from "../../netlify/functions/expenses.js";
 import { createBudgetHandler } from "../../netlify/functions/budget.js";
 import { createBusiness, addMember, ensureAuthUser } from "../../netlify/functions/_lib/provisioning.js";
 import { hashInviteToken } from "../../netlify/functions/_lib/invitations.js";
+import { deleteBusiness, restoreBusiness } from "../../netlify/functions/_lib/lifecycle.js";
 import { buildWorld, request, asOperator } from "../helpers/tenants.js";
 import { rsvpSummary, rsvpOpen, validateWeddingSetup } from "../../shared/wedding.js";
 import { readXlsx } from "../../shared/xlsx.js";
@@ -103,6 +104,15 @@ describe("invitation links: secure, revocable, tenant-safe", () => {
     expect((await guest({ action: "respond", token, rsvp: { status: "declined" } })).status).toBe(404);
     expect(ok(await guest({ action: "view", token: fresh })).invitation.guest.name).toBe("Maria Santos");
     expect(docAt(`guests/${g}`).history.at(-1).label).toBe("Invitation link replaced (the old link no longer works)");
+  });
+
+  it("a deleted wedding (Super Admin, recoverable): its links stop working at once; Restore brings them back", async () => {
+    const { token } = await maria();
+    await deleteBusiness({ db: world.db, FieldValue: world.admin.firestore.FieldValue, businessId: W, confirmName: "Reyes-Prado Wedding", operator: "ops@luna.test" });
+    expect((await guest({ action: "view", token })).status).toBe(404);
+    expect((await guest({ action: "respond", token, rsvp: { status: "declined" } })).status).toBe(404);
+    await restoreBusiness({ db: world.db, FieldValue: world.admin.firestore.FieldValue, businessId: W, operator: "ops@luna.test" });
+    expect(ok(await guest({ action: "view", token })).invitation.guest.name).toBe("Maria Santos");
   });
 
   it("bad / guessed tokens and other weddings' guests: the same 'not valid' answer; one wedding can't make links for another's guests", async () => {

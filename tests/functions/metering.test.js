@@ -392,7 +392,7 @@ describe("operator: per-business limit overrides (separate from module overrides
     expect(orders).toMatchObject({ plan: 2000, override: 1000, effective: 1000, current: 1, kind: "monthly", percent: 0 });
     expect(d.limitRows.find((l) => l.limitKey === "users")).toMatchObject({ plan: 5, override: null, effective: 5, current: 4, percent: 80 });
     expect(d.limitRows.find((l) => l.limitKey === "storageBytes")).toMatchObject({ kind: "running", current: 0 });
-    expect(d.meters.map((m) => m.id)).toEqual(["exportsGenerated", "rowsExported", "paymentsRecorded", "expensesCreated"]);
+    expect(d.meters.map((m) => m.id)).toEqual(["exportsGenerated", "exportBytes", "rowsExported", "paymentsRecorded", "expensesCreated"]);
     expect(d.historyMeters).toContain("ordersCreated");
     expect(d.historyMeters).not.toContain("payrollsReleased");
     expect(d.history).toHaveLength(12);

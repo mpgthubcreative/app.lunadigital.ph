@@ -1,45 +1,95 @@
-// Luna Super Admin console views (Phase 17). Every read and write goes
-// through POST /api/operator (ctx.call), which re-checks the operator on
-// every request; nothing here talks to Firestore directly, and nothing the
-// browser holds decides access. The browser sends intent (business id +
-// plan id + reason), never entitlement objects or permission lists.
+// Luna Super Admin console views. Every read and write goes through POST
+// /api/operator (ctx.call), which re-checks the operator on every request;
+// nothing here talks to Firestore directly, and nothing the browser holds
+// decides access. The browser sends intent (business id + plan id +
+// reason), never entitlement objects or permission lists.
+//
+// Super Admin consolidation (2026-10-19): understood in 3 seconds.
+// Important state first, one obvious action, secondary actions under ⋯,
+// destructive ones confirmed, compact rows, phone-first.
 
 import { html, render } from "../lib/html.js";
-import { pageHeader, card, emptyState, badge, statCard, kpiStrip } from "../components/ui.js";
+import { pageHeader, card, emptyState, badge, kpiStrip, mobileCell, rowMenu } from "../components/ui.js";
 import { formDialog } from "../components/form-dialog.js";
-import { formatMoney, planWorkspace, WORKSPACE_TEMPLATES, SUBSCRIPTION_LABELS, SUBSCRIPTION_ACTIONS, OVERRIDE_CHOICES, ROLE_TEMPLATES, METERS, MONTHLY_METER_IDS, overrideImpact } from "@shared/index.js";
+import { confirmDialog } from "../components/feedback.js";
+import { planWorkspace, isCatalogPlan, priceLabel, planBilling, businessIdFromName, BILLING_TYPES, SUBSCRIPTION_LABELS, OVERRIDE_CHOICES, ROLE_TEMPLATES, METERS, MONTHLY_METER_IDS, overrideImpact, NO_LIMIT_FROM } from "@shared/index.js";
 import { formatBytes, formatNumber } from "../lib/format.js";
-import { moneySections } from "./money.js";
 import { invitationDesignView } from "./design.js";
 import { apiDownload } from "../lib/api.js";
 import { saveBlob } from "../lib/export.js";
+import { peso, dateText, whenText, stateChip, subscriptionMenu, toggleMenus, runSubscriptionAction, billingTypeLabel } from "./actions.js";
 
-const TONE = { active: "success", past_due: "warning", suspended: "danger", cancelled: "neutral" };
-const statusBadge = (s) => badge(SUBSCRIPTION_LABELS[s] ?? s ?? "—", TONE[s] || "neutral");
-const day = (iso) => (iso ? new Date(iso).toLocaleDateString("en-PH", { year: "numeric", month: "short", day: "numeric" }) : "—");
 const when = (iso) => (iso ? new Date(iso).toLocaleString("en-PH", { dateStyle: "medium", timeStyle: "short" }) : "—");
-const loading = () => card({ body: emptyState({ title: "Loading…" }) });
-const failed = (err) => card({ body: emptyState({ title: "Couldn't load", body: err?.message || "Try again." }) });
+const loading = (title) => html`${pageHeader({ title })}${card({ body: emptyState({ title: "Loading…" }) })}`;
+const failed = (title, err) => html`${pageHeader({ title })}${card({ body: emptyState({ title: "Couldn't load", body: err?.message || "Try again." }) })}`;
+const plansFor = (ctx, workspaceId) => ctx.plans.filter((p) => planWorkspace(p) === workspaceId && isCatalogPlan(p));
+const pagers = (state) => html`<div class="pager"><button type="button" class="btn btn-compact" data-act="prev" ${state.cursors.length > 1 ? "" : "disabled"}>Previous</button><button type="button" class="btn btn-compact" data-act="next" ${state.page?.next ? "" : "disabled"}>Next</button></div>`;
+// "2 of 4", "184 MB of 1 GB"; a count with no limit is just the count.
+const ofLimit = (used, limit, fmt = formatNumber) => (limit === null || limit === undefined || (fmt === formatNumber && limit >= NO_LIMIT_FROM) ? fmt(used) : `${fmt(used)} of ${fmt(limit)}`);
 
 // ---------- Overview ----------
+// Active access, recurring income, annual / 12-month income, Needs
+// Attention (real dates) and Income by Workspace. No cost or profit here.
 
 export async function overviewView(el, ctx) {
-  render(el, html`${pageHeader({ title: "Overview", subtitle: "How is Luna doing?" })}${loading()}`);
+  render(el, loading("Overview"));
+  let o;
   try {
-    // Phase 18.6: the money story first, then the tenant counts.
-    const [{ money: m }, { overview: o }] = await Promise.all([ctx.call("money"), ctx.call("overview")]);
-    const row = (title, map, label = (k) => k) => card({ title, body: html`<dl class="dl dl-compact">${Object.entries(map).map(([k, v]) => html`<dt>${label(k)}</dt><dd>${formatNumber(v)}</dd>`)}</dl>` });
+    o = (await ctx.call("overview")).overview;
+  } catch (err) {
+    render(el, failed("Overview", err));
+    return;
+  }
+  const rows = o.needsAttention;
+  const draw = () =>
     render(
       el,
-      html`${pageHeader({ title: "Overview", subtitle: "How is Luna doing? Money collected, recurring revenue, what's owed, costs and estimated gross profit." })}
-        ${moneySections(m, ctx)}
-        <h2 class="section-title">Businesses</h2>
-        <section class="card hero-card section" data-role="counts">${kpiStrip([{ id: "total", label: "Total businesses", value: formatNumber(o.total) }, ...Object.entries(o.byStatus).map(([k, n]) => ({ id: k, label: SUBSCRIPTION_LABELS[k] ?? k, value: formatNumber(n) }))], { role: "business-counts" })}</section>
-        <div class="section grid grid-2">${row("Subscription mix by workspace", o.byWorkspace, (k) => ctx.workspaceName(k))}${row("Subscription mix by plan", o.byPlan, (k) => ctx.planName(k))}</div>`
+      html`${pageHeader({ title: "Overview" })}
+        <section class="card hero-card" data-role="overview-kpis">
+          ${kpiStrip(
+            [
+              { id: "active", label: "Active subscriptions", value: formatNumber(o.activeAccess), hint: "Paying or with access now" },
+              { id: "recurring", label: "Recurring income", value: `${peso(o.recurringIncome)}`, hint: "Distributor, per month" },
+              { id: "annual", label: "Annual / 12-month income", value: peso(o.annualIncomeThisMonth), hint: "Collected this month" },
+            ],
+            { role: "kpis" }
+          )}
+          ${o.awaiting.count ? html`<p class="stat-note" data-role="awaiting"><a href="${ctx.base}/payments" data-link>${formatNumber(o.awaiting.count)} payment${o.awaiting.count === 1 ? "" : "s"} to verify · ${peso(o.awaiting.amount)}</a></p>` : ""}
+        </section>
+        <section class="card section" data-role="attention">
+          <div class="card-header"><h2 class="card-title">Needs attention</h2><span class="stat-hint">${rows.length ? `${rows.length}` : ""}</span></div>
+          ${rows.length
+            ? html`<div class="table-wrap"><table class="table table-compact rows sa-rows" data-role="attention-rows">
+                <thead><tr><th class="m-only"></th><th>Name / plan</th><th>Date</th><th>Status</th><th></th></tr></thead>
+                <tbody>${rows.map(
+                  (r) => html`<tr data-business="${r.id}" data-kind="${r.attention.kind}">
+                    ${mobileCell({ title: r.name, sub: `${r.planName ?? ""} · ${whenText(r)}`, end: stateChip(r) })}
+                    <td><span class="cell-strong">${r.name}</span><span class="cell-sub">${r.planName ?? ctx.planName(r.planId)}</span></td>
+                    <td data-role="when">${whenText(r)}${r.attention.kind === "overdue" ? html`<span class="cell-sub tone-danger">${r.attention.label}</span>` : ""}</td>
+                    <td>${stateChip(r)}</td>
+                    <td class="row-actions" data-m="more">${subscriptionMenu(r)}</td>
+                  </tr>`
+                )}</tbody></table></div>`
+            : html`<p class="all-clear" data-role="all-clear">✓ Nobody is due, overdue or expiring.</p>`}
+        </section>
+        <section class="card section" data-role="income">
+          <div class="card-header"><h2 class="card-title">Income by workspace</h2></div>
+          <ul class="sa-income">${o.incomeByWorkspace.map(
+            (w) => html`<li data-workspace="${w.workspaceTemplateId}">
+              <span class="sa-income-name">${ctx.workspaceName(w.workspaceTemplateId)}<small>${w.billingType === "monthly" ? `Recurring · ${formatNumber(w.active)} active` : w.billingType === "annual" ? `Annual renewals collected this month · ${formatNumber(w.active)} active` : `12-month access collected this month · ${formatNumber(w.active)} active`}</small></span>
+              <strong class="sa-income-value">${w.billingType === "monthly" ? html`${peso(w.recurring)}<small>/ month</small>` : peso(w.collected)}</strong>
+            </li>`
+          )}</ul>
+        </section>`
     );
-  } catch (err) {
-    render(el, failed(err));
-  }
+  draw();
+  el.onclick = async (e) => {
+    if (toggleMenus(e, el)) return;
+    const t = e.target.closest("[data-act]");
+    if (!t || !t.dataset.act.startsWith("s-")) return;
+    const r = rows.find((x) => x.id === t.dataset.id);
+    if (r && (await runSubscriptionAction(ctx, t.dataset.act, r))) overviewView(el, ctx);
+  };
 }
 
 // ---------- Businesses ----------
@@ -50,6 +100,8 @@ export function businessesView(el, ctx) {
   if (params.get("b")) return businessDetailView(el, ctx, params.get("b"));
   const state = { filters: {}, cursors: [null], page: null, error: null, loading: true };
   const opt = (v, l, sel) => html`<option value="${v}" ${sel === v ? "selected" : ""}>${l}</option>`;
+  // The sold plans of the chosen workspace (all workspaces: every sold plan).
+  const planOptions = (workspaceId, sel) => html`${opt("", "All plans", sel || "")}${ctx.plans.filter((p) => isCatalogPlan(p) && (!workspaceId || planWorkspace(p) === workspaceId)).map((p) => opt(p.id, p.name, sel))}`;
 
   async function load() {
     state.loading = true;
@@ -69,12 +121,12 @@ export function businessesView(el, ctx) {
     const rows = state.page?.rows || [];
     render(
       el,
-      html`${pageHeader({ title: "Businesses", subtitle: "Tenants, their workspace, plan and subscription.", actions: html`<button type="button" class="btn btn-primary" data-act="create">Create business</button>` })}
-        <form class="section card filters filters-inline" data-role="filters">
-          <input class="input" name="search" placeholder="Business ID or name starts with…" value="${f.search || ""}" autocomplete="off" aria-label="Search" />
-          <select class="select" name="workspaceTemplateId" aria-label="Workspace">${opt("", "Any workspace", f.workspaceTemplateId || "")}${ctx.workspaces.map((w) => opt(w.id, w.name, f.workspaceTemplateId))}</select>
-          <select class="select" name="planId" aria-label="Plan">${opt("", "Any plan", f.planId || "")}${ctx.plans.map((p) => opt(p.id, p.name, f.planId))}</select>
-          <select class="select" name="status" aria-label="Status">${opt("", "Any status", f.status || "")}${Object.entries(SUBSCRIPTION_LABELS).map(([k, l]) => opt(k, l, f.status))}</select>
+      html`${pageHeader({ title: "Businesses", actions: html`<button type="button" class="btn btn-primary" data-act="create">Create business</button>` })}
+        <form class="section card filters filters-inline sa-filters" data-role="filters">
+          <input class="input" name="search" placeholder="Search name or ID" value="${f.search || ""}" autocomplete="off" aria-label="Search" />
+          <select class="select" name="workspaceTemplateId" aria-label="Workspace">${opt("", "All workspaces", f.workspaceTemplateId || "")}${ctx.workspaces.map((w) => opt(w.id, w.name, f.workspaceTemplateId))}</select>
+          <select class="select" name="planId" aria-label="Plan">${planOptions(f.workspaceTemplateId, f.planId)}</select>
+          <select class="select" name="status" aria-label="Status">${opt("", "All statuses", f.status || "")}${Object.entries(SUBSCRIPTION_LABELS).map(([k, l]) => opt(k, l, f.status))}</select>
           <button type="submit" class="btn">Apply</button>
         </form>
         <section class="section card">
@@ -84,22 +136,19 @@ export function businessesView(el, ctx) {
               ? emptyState({ title: "Loading…" })
               : !rows.length
                 ? emptyState({ iconName: "businesses", title: "No businesses match" })
-                : html`<div class="table-wrap"><table class="table table-compact" data-role="businesses">
-                    <thead><tr><th>Business</th><th>Workspace</th><th>Plan</th><th>Status</th><th class="col-secondary">Owner</th><th class="col-secondary">Created</th><th class="num col-secondary">Orders / imports / exports (month)</th><th></th></tr></thead>
+                : html`<div class="table-wrap"><table class="table table-compact rows sa-rows" data-role="businesses">
+                    <thead><tr><th class="m-only"></th><th>Name</th><th>Workspace</th><th>Plan</th><th>Status</th><th></th></tr></thead>
                     <tbody>${rows.map(
                       (b) => html`<tr data-business="${b.id}">
-                        <td>${b.name}<div class="stat-hint">${b.id}</div></td>
-                        <td>${ctx.workspaceName(b.workspaceTemplateId)} <span class="stat-hint">v${b.workspaceTemplateVersion ?? "?"}</span></td>
-                        <td>${ctx.planName(b.planId)}</td><td>${statusBadge(b.status)}</td>
-                        <td class="col-secondary">${b.owner?.email ?? "—"}</td><td class="col-secondary">${day(b.createdAt)}</td>
-                        <td class="num col-secondary">${b.usage.orders} / ${b.usage.imports} / ${b.usage.exports}</td>
-                        <td class="row-actions"><a class="btn btn-compact" href="${ctx.base}/businesses?b=${b.id}" data-link>Manage</a></td>
+                        ${mobileCell({ title: b.name, sub: `${ctx.workspaceName(b.workspaceTemplateId)} · ${b.planName ?? ctx.planName(b.planId)}`, end: stateChip(b) })}
+                        <td><a class="cell-strong" href="${ctx.base}/businesses?b=${b.id}" data-link>${b.name}</a></td>
+                        <td>${ctx.workspaceName(b.workspaceTemplateId)}</td>
+                        <td>${b.planName ?? ctx.planName(b.planId)}</td>
+                        <td>${stateChip(b)}</td>
+                        <td class="row-actions" data-m="more">${subscriptionMenu(b)}</td>
                       </tr>`
                     )}</tbody></table></div>
-                  <div class="modal-footer">
-                    <button type="button" class="btn" data-act="prev" ${state.cursors.length > 1 ? "" : "disabled"}>Previous</button>
-                    <button type="button" class="btn" data-act="next" ${state.page?.next ? "" : "disabled"}>Next</button>
-                  </div>`}
+                  ${pagers(state)}`}
         </section>`
     );
   }
@@ -112,8 +161,17 @@ export function businessesView(el, ctx) {
     state.cursors = [null];
     load();
   };
+  // Workspace first: the Plan list follows it.
+  el.onchange = (e) => {
+    if (e.target.name !== "workspaceTemplateId" || e.target.form?.dataset.role !== "filters") return;
+    const planSel = e.target.form.elements.planId;
+    const keep = ctx.plans.some((p) => p.id === planSel.value && planWorkspace(p) === e.target.value) ? planSel.value : "";
+    render(planSel, planOptions(e.target.value, keep));
+  };
   el.onclick = async (e) => {
-    const act = e.target.closest("[data-act]")?.dataset.act;
+    if (toggleMenus(e, el)) return;
+    const t = e.target.closest("[data-act]");
+    const act = t?.dataset.act;
     if (act === "next") {
       state.cursors.push(state.page.next);
       load();
@@ -123,175 +181,176 @@ export function businessesView(el, ctx) {
     } else if (act === "create") {
       const r = await createBusinessDialog(ctx);
       if (r) ctx.navigate(`/businesses?b=${r.businessId}`);
+    } else if (act?.startsWith("s-")) {
+      const r = (state.page?.rows || []).find((x) => x.id === t.dataset.id);
+      if (r && (await runSubscriptionAction(ctx, act, r))) load();
     }
   };
   load();
 }
 
-// Create business: one call, one retry-safe workflow on the server. A
-// double click or retry converges on the same business.
-// Phase 18.6: plans belong to a workspace; the Plan list follows the
-// chosen Workspace (the server refuses a mismatch anyway).
-const plansFor = (ctx, workspaceId) => ctx.plans.filter((p) => planWorkspace(p) === workspaceId);
-const planLabel = (p) => `${p.name} · ${formatMoney(p.pricing.monthly, { minimum: p.pricing.monthlyIsMinimum })}/mo`;
+// ---------- Create business ----------
+// Workspace first; the plan list, billing type, price and limits follow
+// it. The business ID is made from the name (editable under Advanced).
 
+const limitsText = (p) => `${formatNumber(p.limits.users)} user${p.limits.users === 1 ? "" : "s"} · ${formatBytes(p.limits.storageBytes)}`;
 export function createBusinessDialog(ctx) {
-  const first = ctx.workspaces[0]?.id;
+  const ws = ctx.workspaces.filter((w) => plansFor(ctx, w.id).length);
+  const first = ws[0]?.id;
   const firstPlans = plansFor(ctx, first);
-  const done = formDialog({
+  const firstPlan = firstPlans.find((p) => p.recommended) ?? firstPlans[0];
+  let idTouched = false;
+  return formDialog({
     title: "Create business",
-    intro: "Creates the business, its owner's account (if new) and owner membership, at the workspace's current version.",
     fields: [
-      { name: "name", label: "Business name", required: true },
-      { name: "businessId", label: "Business ID (lowercase, digits, dashes)", required: true, hint: "Permanent. e.g. abc-test-trading" },
-      { name: "workspaceTemplateId", label: "Workspace", type: "select", options: ctx.workspaces.map((w) => ({ value: w.id, label: w.name })), value: ctx.workspaces[0]?.id },
-      { name: "planId", label: "Plan", type: "select", options: firstPlans.map((p) => ({ value: p.id, label: planLabel(p) })), value: firstPlans.find((p) => p.recommended)?.id ?? firstPlans[0]?.id },
-      { name: "ownerEmail", label: "Owner email", required: true },
+      { name: "workspaceTemplateId", label: "Workspace", type: "select", options: ws.map((w) => ({ value: w.id, label: w.name })), value: first },
+      { name: "planId", label: "Plan", type: "select", options: firstPlans.map((p) => ({ value: p.id, label: p.name })), value: firstPlan?.id, hint: firstPlan ? `${priceLabel(firstPlan)} · ${limitsText(firstPlan)}` : "" },
+      { name: "name", label: "Business / workspace name", required: true },
       { name: "ownerName", label: "Owner name", required: true },
-      { name: "timezone", label: "Timezone", value: "Asia/Manila" },
+      { name: "ownerEmail", label: "Owner email", required: true, inputmode: "email" },
+      { name: "founding", label: "Price", type: "select", options: [{ value: "no", label: "Regular price" }, { value: "yes", label: "Founding price" }], value: "no", more: true, default: true },
+      { name: "businessId", label: "Business ID", hint: "Made from the name. Permanent.", more: true, default: true },
+      { name: "timezone", label: "Timezone", value: "Asia/Manila", more: true, default: true },
     ],
+    moreLabel: "Advanced",
     submitLabel: "Create business",
+    onFormChange: (form) => {
+      const els = form.elements;
+      const list = plansFor(ctx, els.workspaceTemplateId.value);
+      if (![...els.planId.options].every((o) => list.some((p) => p.id === o.value)) || els.planId.options.length !== list.length) {
+        render(els.planId, html`${list.map((p) => html`<option value="${p.id}" ${p.recommended ? "selected" : ""}>${p.name}</option>`)}`);
+      }
+      const plan = list.find((p) => p.id === els.planId.value) ?? list[0];
+      const hint = els.planId.closest(".field")?.querySelector(".stat-hint");
+      if (hint && plan) hint.textContent = `${priceLabel(plan)} · ${limitsText(plan)}${planBilling(plan).type === "term" ? " · no automatic renewal" : ""}`;
+      const fp = plan ? planBilling(plan).founding : null;
+      const fSel = els.founding;
+      if (fSel) fSel.options[1].textContent = fp ? `Founding price (${fp.label ?? peso(fp.price)})` : "Founding price (none for this plan)";
+      if (fSel) fSel.options[1].disabled = !fp;
+      if (!idTouched && els.businessId) els.businessId.value = businessIdFromName(els.name.value);
+      if (els.businessId && !els.businessId.dataset.watch) {
+        els.businessId.dataset.watch = "1";
+        els.businessId.addEventListener("input", () => (idTouched = true));
+      }
+    },
     onSubmit: async (v) => {
-      const r = await ctx.call("createBusiness", { business: { ...v, businessId: v.businessId.trim().toLowerCase() } });
+      const businessId = (v.businessId || businessIdFromName(v.name)).trim().toLowerCase();
+      if (!businessId) throw new Error("Enter a name (or a Business ID under Advanced)");
+      const r = await ctx.call("createBusiness", { business: { name: v.name, businessId, workspaceTemplateId: v.workspaceTemplateId, planId: v.planId, ownerName: v.ownerName, ownerEmail: v.ownerEmail, timezone: v.timezone || "Asia/Manila", founding: v.founding === "yes" } });
       ctx.toast(r.created ? "Business created." : "Already created: nothing was duplicated.", "success");
       return r;
     },
   });
-  const form = [...document.querySelectorAll(".modal-backdrop form")].at(-1);
-  const ws = form?.elements.workspaceTemplateId;
-  const planSel = form?.elements.planId;
-  if (ws && planSel) {
-    ws.addEventListener("change", () => {
-      const list = plansFor(ctx, ws.value);
-      render(planSel, html`${list.map((p) => html`<option value="${p.id}" ${p.recommended ? "selected" : ""}>${planLabel(p)}</option>`)}`);
-      if (!list.some((p) => p.recommended) && list[0]) planSel.value = list[0].id;
-    });
-  }
-  return done;
 }
 
 // ---------- One business ----------
 
 export async function businessDetailView(el, ctx, businessId) {
-  render(el, html`${pageHeader({ title: "Business" })}${loading()}`);
+  render(el, loading("Business"));
   let d;
   try {
     d = await ctx.call("business", { businessId });
   } catch (err) {
-    render(el, failed(err));
+    render(el, failed("Business", err));
     return;
   }
   const b = d.business;
-  const yes = (on) => (on ? "Yes" : "—");
+  const r = { ...d.billing, name: b.name, workspaceTemplateId: b.workspaceTemplateId };
+  const lim = d.limits || {};
+  const u = d.current || {};
+  const plan = d.plan;
   const ov = (v) => (v === true ? "Enabled" : v === false ? "Disabled" : "Default");
+  const memberMenu = (m) =>
+    rowMenu(m.uid, [
+      { act: "m-link", label: "Setup link" },
+      ...(m.isAccountOwner ? [] : [{ act: "m-status", label: m.status === "active" ? "Deactivate" : "Reactivate" }, { sep: true }, { act: "m-remove", label: "Remove member", danger: true }]),
+    ], { label: `Actions for ${m.name || m.email}` });
   render(
     el,
-    html`${pageHeader({ title: b.name, subtitle: `${b.id} · ${b.workspaceName ?? b.workspaceTemplateId} v${b.workspaceTemplateVersion ?? "?"}`, actions: html`<a class="btn" href="${ctx.base}/businesses" data-link>All businesses</a>` })}
+    html`${pageHeader({ title: b.name, subtitle: `${b.workspaceName ?? b.workspaceTemplateId} · ${b.planName ?? b.planId}`, actions: html`<span class="sa-head-status">${stateChip(r)}</span>${b.status === "deleted" ? "" : html`<button type="button" class="btn btn-primary" data-act="s-pay" data-id="${b.id}">Record payment</button>`}${subscriptionMenu(r, { detail: true })}` })}
       ${b.entitlementsValid ? "" : html`<div class="banner banner-danger" role="alert">Entitlements are invalid (${b.entitlementProblems.join("; ")}). The business is blocked until they're recomputed.</div>`}
+      ${b.status === "deleted" ? html`<div class="banner banner-danger" role="alert">Deleted. Access is off. Recoverable until ${dateText(r.purgeAfter)} (⋯ → Restore business).</div>` : ""}
       <div class="section grid grid-2">
-        ${card({
-          title: "Overview",
-          body: html`<dl class="dl dl-compact" data-role="overview">
-            <dt>Business ID</dt><dd>${b.id}</dd>
-            <dt>Workspace</dt><dd>${b.workspaceName} (v${b.workspaceTemplateVersion}) <span class="stat-hint">fixed after creation</span></dd>
-            <dt>Plan</dt><dd>${b.planName ?? b.planId}</dd>
-            <dt>Subscription</dt><dd>${statusBadge(b.status)}</dd>
-            <dt>Timezone</dt><dd>${b.timezone}</dd>
-            <dt>Created</dt><dd>${when(b.createdAt)} ${b.createdBy ? html`<span class="stat-hint">by ${b.createdBy}</span>` : ""}</dd>
-            <dt>Owner(s)</dt><dd>${d.members.filter((m) => m.isAccountOwner).map((m) => m.email).join(", ") || "—"}</dd>
-          </dl>`,
-          actions: html`<div class="page-actions">
-            <button type="button" class="btn btn-compact" data-act="plan">Change plan</button>
-            <button type="button" class="btn btn-compact" data-act="status">Subscription…</button>
-            <button type="button" class="btn btn-compact" data-act="general">Edit name / timezone</button>
-            <button type="button" class="btn btn-compact" data-act="backup" title="Every record, technical (recovery, migration, support). Recorded in the audit log.">Master Backup</button>
-            ${b.workspaceTemplateId === "bridal-expense" ? html`<a class="btn btn-compact" href="${ctx.base}/businesses?b=${b.id}&design=1" data-link data-role="design-link">Invitation design</a>` : ""}
-          </div>`,
-        })}
-        ${card({
-          title: `Activity · ${d.usage.period}`,
-          body: html`<dl class="dl dl-compact" data-role="usage">
-            ${(d.meters || []).map((m) => html`<dt title="${m.definition}">${m.label}</dt><dd>${formatNumber(m.value)}</dd>`)}
+        <section class="card" data-role="subscription">
+          <h2 class="card-title">Subscription</h2>
+          <dl class="dl dl-compact">
+            <dt>Plan</dt><dd>${b.planName ?? b.planId}${plan ? html`<span class="cell-sub">${priceLabel(plan)}</span>` : ""}</dd>
+            <dt>Billing</dt><dd>${billingTypeLabel(r.billingType)}${r.amount ? html` · ${peso(r.amount)}` : ""}</dd>
+            <dt>${r.billingType === "term" ? "Access" : "Next"}</dt><dd data-role="when">${whenText(r)}</dd>
+            ${r.paidThrough ? html`<dt>Paid through</dt><dd>${dateText(r.paidThrough)}</dd>` : ""}
+            <dt>Started</dt><dd>${dateText(r.startDate)}</dd>
           </dl>
-          <p class="stat-hint">Informational counters: not plan limits, never enforced.</p>`,
-        })}
+        </section>
+        <section class="card" data-role="usage">
+          <h2 class="card-title">Usage <span class="hint">this month</span></h2>
+          <dl class="dl dl-compact sa-usage">
+            <dt>Active users</dt><dd data-usage="users">${ofLimit(u.users ?? 0, lim.users)}</dd>
+            <dt>Storage</dt><dd data-usage="storage">${ofLimit(u.storageBytes ?? 0, lim.storageBytes, formatBytes)}</dd>
+            <dt>Excel downloads</dt><dd data-usage="downloads">${formatNumber(u.downloads ?? 0)}</dd>
+            <dt>Excel transfer</dt><dd data-usage="transfer">${formatBytes(u.transferBytes ?? 0)}</dd>
+            ${u.orders === null || u.orders === undefined ? "" : html`<dt>Orders</dt><dd data-usage="orders">${formatNumber(u.orders)}</dd>`}
+          </dl>
+        </section>
       </div>
-      ${d.limitRows
-        ? html`<section class="section card">
-            <div class="card-header"><h2 class="card-title">Plan limits</h2><span class="stat-hint">Effective = the business override if set, otherwise the plan's limit. Commercial limits are enforced by the server.</span></div>
-            <div class="table-wrap"><table class="table table-compact" data-role="limits">
-              <thead><tr><th>Limit</th><th class="num">Plan</th><th class="num">Override</th><th class="num">Effective</th><th class="num">Current</th><th></th></tr></thead>
-              <tbody>${d.limitRows.map((l) => {
-                const f = limitFormat(l.unit);
-                return html`<tr data-limit="${l.limitKey}">
-                  <td>${l.label}${l.kind === "monthly" ? html` <span class="stat-hint">/ month</span>` : ""}</td>
-                  <td class="num">${l.plan === null ? "—" : f(l.plan)}</td>
-                  <td class="num">${l.override === null ? "—" : f(l.override)}</td>
-                  <td class="num">${l.effective === null ? "—" : f(l.effective)}</td>
-                  <td class="num">${f(l.current)}${l.percent !== null ? html` <span class="stat-hint">${l.percent}%</span>` : ""}${l.atOrOver ? html` ${badge("At limit", "warning")}` : ""}</td>
-                  <td class="row-actions"><button type="button" class="btn btn-compact" data-act="limit" data-id="${l.limitKey}">Set override</button>${l.override !== null ? html` <button type="button" class="btn btn-compact" data-act="limit-default" data-id="${l.limitKey}">Default</button>` : ""}</td>
-                </tr>`;
-              })}</tbody></table></div>
-            ${d.storage?.reservedBytes ? html`<p class="stat-hint">${formatBytes(d.storage.reservedBytes)} reserved by uploads in progress.</p>` : ""}
-          </section>`
-        : ""}
-      ${d.history
-        ? html`<section class="section card">
-            <div class="card-header"><h2 class="card-title">Usage history</h2><span class="stat-hint">Last 12 months. — = not measured that month. Storage and users are current totals, not monthly.</span></div>
-            <div class="table-wrap"><table class="table table-compact" data-role="history">
-              <thead><tr><th>Month</th>${historyColumns(d).map((id) => html`<th class="num">${METERS[id].label}</th>`)}<th class="num">Records created</th></tr></thead>
-              <tbody>${d.history.map((r) =>
-                r.recorded
-                  ? html`<tr data-period="${r.period}"><td>${r.period}${r.timezone && r.timezone !== b.timezone ? html` <span class="stat-hint">${r.timezone}</span>` : ""}</td>${historyColumns(d).map((id) => html`<td class="num">${r.values[id] === null ? "—" : formatNumber(r.values[id])}</td>`)}<td class="num">${r.recordsCreated === null ? "—" : formatNumber(r.recordsCreated)}</td></tr>`
-                  : html`<tr data-period="${r.period}"><td>${r.period}</td><td colspan="${historyColumns(d).length + 1}" class="stat-hint">No recorded usage</td></tr>`
-              )}</tbody></table></div>
-          </section>`
-        : ""}
-      <section class="section card">
-        <div class="card-header"><h2 class="card-title">Modules</h2><span class="stat-hint">Effective = in the workspace template AND (override Enabled, or the plan includes it and it isn't Disabled). Only the workspace's own modules can be changed.</span></div>
-        <div class="table-wrap"><table class="table table-compact" data-role="modules">
-          <thead><tr><th>Module</th><th>Workspace</th><th>Plan</th><th>Override</th><th>Effective</th><th></th></tr></thead>
-          <tbody>${d.modules.map(
-            (m) => html`<tr data-module="${m.id}">
-              <td>${m.label}</td><td>${yes(m.template)}</td><td>${yes(m.plan)}</td><td>${ov(m.override)}</td>
-              <td>${m.effective ? badge("On", "success") : badge("Off", "neutral")}</td>
-              <td class="row-actions">${m.editable ? html`<select class="select select-compact" data-act="override" data-id="${m.id}" aria-label="Override ${m.label}">${Object.entries(OVERRIDE_CHOICES).map(([k, l]) => html`<option value="${k}" ${(m.override === true ? "enabled" : m.override === false ? "disabled" : "default") === k ? "selected" : ""}>${l}</option>`)}</select>` : html`<span class="stat-hint">${m.template ? "core" : "not in this workspace"}</span>`}</td>
-            </tr>`
-          )}</tbody></table></div>
-      </section>
-      <section class="section card">
+      <section class="section card" id="members" data-role="members">
         <div class="card-header"><h2 class="card-title">Members</h2><button type="button" class="btn btn-compact" data-act="add-member">Add member</button></div>
-        <div class="table-wrap"><table class="table table-compact" data-role="members">
-          <thead><tr><th>User</th><th>Role</th><th>Status</th><th></th></tr></thead>
+        <div class="table-wrap"><table class="table table-compact rows sa-rows" data-role="member-rows">
+          <thead><tr><th class="m-only"></th><th>Name</th><th>Role</th><th>Status</th><th></th></tr></thead>
           <tbody>${d.members.map(
             (m) => html`<tr data-member="${m.uid}">
-              <td>${m.name ?? ""}<div class="stat-hint">${m.email}</div></td>
-              <td>${ROLE_TEMPLATES[m.roleTemplate]?.label ?? m.roleTemplate}${m.isAccountOwner ? html` ${badge("Account owner", "primary")}` : ""}</td>
+              ${mobileCell({ title: m.name || m.email, sub: `${ROLE_TEMPLATES[m.roleTemplate]?.label ?? m.roleTemplate}${m.isAccountOwner ? " · Account owner" : ""}${m.seat ? "" : " · no seat"}`, end: m.status === "active" ? badge("Active", "success") : badge("Disabled", "neutral") })}
+              <td><span class="cell-strong">${m.name || "—"}</span><span class="cell-sub">${m.email}</span></td>
+              <td>${ROLE_TEMPLATES[m.roleTemplate]?.label ?? m.roleTemplate}${m.isAccountOwner ? html` ${badge("Owner", "primary")}` : ""}${m.seat ? "" : html` <span class="stat-hint">no seat</span>`}</td>
               <td>${m.status === "active" ? badge("Active", "success") : badge("Disabled", "neutral")}</td>
-              <td class="row-actions">
-                <button type="button" class="btn btn-compact" data-act="setup-link" data-id="${m.uid}">Setup link</button>
-                ${m.isAccountOwner ? "" : html`<button type="button" class="btn btn-compact" data-act="member-status" data-id="${m.uid}">${m.status === "active" ? "Deactivate" : "Reactivate"}</button>`}
-              </td>
+              <td class="row-actions" data-m="more">${memberMenu(m)}</td>
             </tr>`
           )}</tbody></table></div>
       </section>
-      ${d.terms.length
-        ? card({
-            title: "Configuration",
-            body: html`<dl class="dl dl-compact" data-role="config">${d.terms.map((t) => html`<dt>${t.label}</dt><dd><select class="select select-compact" data-act="term" data-id="${t.id}">${t.options.map((o) => html`<option value="${o.id}" ${d.config.terminology[t.id]?.choice === o.id ? "selected" : ""}>${o.label}</option>`)}</select></dd>`)}</dl>`,
-          })
-        : ""}
-      <section class="section card">
-        <h2 class="card-title">Recent changes</h2>
-        <ul class="list activity" data-role="audit">${d.audit.length ? d.audit.map((a) => html`<li>${when(a.at)} • ${a.actor ?? ""} • ${a.summary ?? a.type}${a.reason ? ` · ${a.reason}` : ""}</li>`) : html`<li>No changes recorded yet.</li>`}</ul>
-      </section>`
+      <details class="section card sa-advanced" data-role="advanced">
+        <summary class="card-title">Advanced</summary>
+        <div class="page-actions">
+          <button type="button" class="btn btn-compact" data-act="general">Edit name / timezone</button>
+          <button type="button" class="btn btn-compact" data-act="backup">Master Backup</button>
+          ${b.workspaceTemplateId === "bridal-expense" ? html`<a class="btn btn-compact" href="${ctx.base}/businesses?b=${b.id}&design=1" data-link data-role="design-link">Invitation design</a>` : ""}
+        </div>
+        <dl class="dl dl-compact"><dt>Business ID</dt><dd>${b.id}</dd><dt>Timezone</dt><dd>${b.timezone}</dd><dt>Created</dt><dd>${when(b.createdAt)}${b.createdBy ? ` by ${b.createdBy}` : ""}</dd></dl>
+        ${d.limitRows
+          ? html`<h3 class="section-title">Limits for this business</h3>
+            <ul class="sa-limits" data-role="limits">${d.limitRows.map((l) => {
+              const f = limitFormat(l.unit);
+              return html`<li data-limit="${l.limitKey}"><span>${l.label}<small>${l.unlimited ? "No limit" : `${f(l.current)} of ${l.effective === null ? "—" : f(l.effective)}`}${l.override !== null ? " · business override" : ""}</small></span>
+                ${rowMenu(`limit-${l.limitKey}`, [{ act: "limit", label: "Set a different limit" }, ...(l.override !== null ? [{ act: "limit-default", label: "Use the plan's limit" }] : [])], { label: `${l.label} limit` })}</li>`;
+            })}</ul>`
+          : ""}
+        <h3 class="section-title">Modules</h3>
+        <div class="table-wrap"><table class="table table-compact" data-role="modules">
+          <thead><tr><th>Module</th><th>On</th><th></th></tr></thead>
+          <tbody>${d.modules.filter((m) => m.template).map(
+            (m) => html`<tr data-module="${m.id}"><td>${m.label}</td><td>${m.effective ? badge("On", "success") : badge("Off", "neutral")}</td>
+              <td class="row-actions">${m.editable ? html`<select class="select select-compact" data-act="override" data-id="${m.id}" aria-label="Override ${m.label}">${Object.entries(OVERRIDE_CHOICES).map(([k, l]) => html`<option value="${k}" ${(m.override === true ? "enabled" : m.override === false ? "disabled" : "default") === k ? "selected" : ""}>${l}</option>`)}</select>` : html`<span class="stat-hint">core</span>`}</td></tr>`
+          )}</tbody></table></div>
+        ${d.terms.length ? html`<h3 class="section-title">Configuration</h3><dl class="dl dl-compact" data-role="config">${d.terms.map((t) => html`<dt>${t.label}</dt><dd><select class="select select-compact" data-act="term" data-id="${t.id}" aria-label="${t.label}">${t.options.map((o) => html`<option value="${o.id}" ${d.config.terminology[t.id]?.choice === o.id ? "selected" : ""}>${o.label}</option>`)}</select></dd>`)}</dl>` : ""}
+        ${d.history
+          ? html`<h3 class="section-title">Usage history</h3>
+            <div class="table-wrap"><table class="table table-compact" data-role="history">
+              <thead><tr><th>Month</th>${historyColumns(d).map((id) => html`<th class="num">${METERS[id].label}</th>`)}</tr></thead>
+              <tbody>${d.history.map((h) =>
+                h.recorded
+                  ? html`<tr data-period="${h.period}"><td>${h.period}</td>${historyColumns(d).map((id) => html`<td class="num">${h.values[id] === null ? "—" : (METERS[id].unit === "bytes" ? formatBytes : formatNumber)(h.values[id])}</td>`)}</tr>`
+                  : html`<tr data-period="${h.period}"><td>${h.period}</td><td colspan="${historyColumns(d).length}" class="stat-hint">No recorded usage</td></tr>`
+              )}</tbody></table></div>`
+          : ""}
+        <h3 class="section-title">Recent changes</h3>
+        <ul class="list activity" data-role="audit">${d.audit.length ? d.audit.map((a) => html`<li>${when(a.at)} · ${a.actor ?? ""} · ${a.summary ?? a.type}${a.reason ? ` · ${a.reason}` : ""}</li>`) : html`<li>No changes recorded yet.</li>`}</ul>
+      </details>`
   );
+  if (window.location.hash === "#members") el.querySelector("#members")?.scrollIntoView();
 
   const reload = () => businessDetailView(el, ctx, businessId);
   const run = async (fn, ok) => {
     try {
-      const r = await fn();
-      if (r) {
+      const res = await fn();
+      if (res) {
         if (ok) ctx.toast(ok, "success");
         reload();
       }
@@ -300,26 +359,31 @@ export async function businessDetailView(el, ctx, businessId) {
       reload();
     }
   };
-  const withReason = (title, intro, fields, submitLabel, send) => formDialog({ title, intro, fields: [...fields, { name: "reason", label: "Reason (recorded in the audit log)", type: "textarea", required: true }], submitLabel, onSubmit: send });
+  const withReason = (title, intro, fields, submitLabel, send) => formDialog({ title, intro, fields: [...fields, { name: "reason", label: "Reason", required: true }], submitLabel, onSubmit: send });
 
   el.onclick = async (e) => {
+    if (toggleMenus(e, el)) return;
     const t = e.target.closest("[data-act]");
     if (!t || t.tagName === "SELECT") return;
     const act = t.dataset.act;
-    if (act === "plan") {
-      run(() => withReason("Change plan", "Entitlements are recomputed; the workspace ceiling and valid overrides are kept. A downgrade never deletes data: modules become unavailable.", [{ name: "planId", label: "Plan", type: "select", options: plansFor(ctx, b.workspaceTemplateId).map((p) => ({ value: p.id, label: planLabel(p) })), value: b.planId }], "Change plan", (v) => ctx.call("changePlan", { businessId, planId: v.planId, reason: v.reason, expectedRevision: b.adminRevision })), "Plan changed.");
-    } else if (act === "status") {
-      run(() => withReason(`Subscription · now ${SUBSCRIPTION_LABELS[b.status] ?? b.status}`, "Suspended businesses become read-only; cancelled keeps all data (owner export only). Nothing is deleted.", [{ name: "status", label: "New status", type: "select", options: Object.entries(SUBSCRIPTION_ACTIONS).map(([k, l]) => ({ value: k, label: l })), value: b.status === "active" ? "suspended" : "active" }], "Confirm", (v) => ctx.call("setStatus", { businessId, status: v.status, reason: v.reason, expectedRevision: b.adminRevision })), "Subscription updated.");
-    } else if (act === "general") {
+    if (act.startsWith("s-")) {
+      if (await runSubscriptionAction(ctx, act, r)) reload();
+      return;
+    }
+    if (act === "general") {
       run(() => withReason("Edit name / timezone", "A timezone change doesn't move records already dated.", [{ name: "name", label: "Business name", value: b.name, required: true }, { name: "timezone", label: "Timezone", value: b.timezone }], "Save", (v) => ctx.call("updateGeneral", { businessId, changes: { name: v.name, timezone: v.timezone }, reason: v.reason, expectedRevision: b.adminRevision })), "Saved.");
     } else if (act === "limit" || act === "limit-default") {
-      const l = d.limitRows.find((x) => x.limitKey === t.dataset.id);
-      run(() => limitOverrideDialog(ctx, { businessId, row: l, clear: act === "limit-default", expectedRevision: b.adminRevision }), act === "limit" ? "Limit override saved." : "Back to the plan's limit.");
+      const l = d.limitRows.find((x) => `limit-${x.limitKey}` === t.dataset.id);
+      run(() => limitOverrideDialog(ctx, { businessId, row: l, clear: act === "limit-default", expectedRevision: b.adminRevision }), act === "limit" ? "Limit saved." : "Back to the plan's limit.");
     } else if (act === "add-member") {
-      run(() => formDialog({ title: "Add member", intro: "Roles come from Luna's role templates. A new person gets an account without a password: share a setup link.", fields: [{ name: "email", label: "Email", required: true }, { name: "name", label: "Name", required: true }, { name: "roleTemplate", label: "Role", type: "select", options: Object.entries(ROLE_TEMPLATES).map(([k, r]) => ({ value: k, label: r.label })), value: "staff" }], submitLabel: "Add member", onSubmit: (v) => ctx.call("addMember", { businessId, email: v.email, name: v.name, roleTemplate: v.roleTemplate }) }), "Member saved.");
-    } else if (act === "member-status") {
+      run(() => formDialog({ title: "Add member", intro: "A new person gets an account without a password: share a setup link.", fields: [{ name: "email", label: "Email", required: true }, { name: "name", label: "Name", required: true }, { name: "roleTemplate", label: "Role", type: "select", options: Object.entries(ROLE_TEMPLATES).filter(([k]) => k !== "household_staff").map(([k, x]) => ({ value: k, label: x.label })), value: "staff" }], submitLabel: "Add member", onSubmit: (v) => ctx.call("addMember", { businessId, email: v.email, name: v.name, roleTemplate: v.roleTemplate }) }), "Member saved.");
+    } else if (act === "m-status") {
       const m = d.members.find((x) => x.uid === t.dataset.id);
-      run(() => withReason(`${m.status === "active" ? "Deactivate" : "Reactivate"} ${m.email}?`, "Their membership is kept (and can be reactivated).", [], m.status === "active" ? "Deactivate" : "Reactivate", (v) => ctx.call("setMemberStatus", { businessId, uid: m.uid, status: m.status === "active" ? "disabled" : "active", reason: v.reason })), "Member updated.");
+      run(() => withReason(`${m.status === "active" ? "Deactivate" : "Reactivate"} ${m.name || m.email}?`, "Their membership is kept (and can be reactivated).", [], m.status === "active" ? "Deactivate" : "Reactivate", (v) => ctx.call("setMemberStatus", { businessId, uid: m.uid, status: m.status === "active" ? "disabled" : "active", reason: v.reason })), "Member updated.");
+    } else if (act === "m-remove") {
+      const m = d.members.find((x) => x.uid === t.dataset.id);
+      const ok = await confirmDialog({ title: `Remove ${m.name || m.email} from ${b.name}?`, body: "They lose access to this business at once. Their records stay. This can't be undone (add them again if needed).", confirmLabel: "Remove member", danger: true });
+      if (ok) run(() => ctx.call("removeMember", { businessId, uid: m.uid }), "Member removed.");
     } else if (act === "backup") {
       // Luna Super Admin only (the server checks): the technical copy of every record.
       const label = t.textContent;
@@ -334,10 +398,10 @@ export async function businessDetailView(el, ctx, businessId) {
       }
       t.disabled = false;
       t.textContent = label;
-    } else if (act === "setup-link") {
+    } else if (act === "m-link") {
       try {
-        const r = await ctx.call("setupLink", { businessId, uid: t.dataset.id });
-        await formDialog({ title: `Setup link for ${r.email}`, intro: "Share it privately. It lets the person set their password; it expires.", fields: [{ name: "link", label: "Link", value: r.link }], submitLabel: "Done", onSubmit: () => ({}) });
+        const res = await ctx.call("setupLink", { businessId, uid: t.dataset.id });
+        await formDialog({ title: `Setup link for ${res.email}`, intro: "Share it privately. It lets the person set their password; it expires.", fields: [{ name: "link", label: "Link", value: res.link }], submitLabel: "Done", onSubmit: () => ({}) });
       } catch (err) {
         ctx.toast(err.message, "danger");
       }
@@ -347,31 +411,29 @@ export async function businessDetailView(el, ctx, businessId) {
     const t = e.target;
     if (t.dataset.act === "override") {
       const choice = t.value;
-      run(() => withReason(`Override ${t.dataset.id}: ${OVERRIDE_CHOICES[choice]}`, "Stays inside the workspace template; recorded in the audit log.", [], "Apply", (v) => ctx.call("setModuleOverride", { businessId, moduleId: t.dataset.id, choice, reason: v.reason, expectedRevision: b.adminRevision })), "Override applied.");
+      run(() => withReason(`${ctx.moduleLabel(t.dataset.id)}: ${OVERRIDE_CHOICES[choice]}`, "For this business only.", [], "Apply", (v) => ctx.call("setModuleOverride", { businessId, moduleId: t.dataset.id, choice, reason: v.reason, expectedRevision: b.adminRevision })), "Saved.");
     } else if (t.dataset.act === "term") {
-      run(() => ctx.call("setTerminology", { businessId, terminology: { [t.dataset.id]: t.value } }), "Configuration saved.");
+      run(() => ctx.call("setTerminology", { businessId, terminology: { [t.dataset.id]: t.value } }), "Saved.");
     }
   };
 }
 
-// ---------- Limit overrides (Phase 18) ----------
+// ---------- Limit overrides (Advanced) ----------
 
 const MB = 1024 * 1024;
 const limitFormat = (unit) => (unit === "bytes" ? formatBytes : formatNumber);
-// The monthly meters that apply to this business (from the registry, via the server).
 const historyColumns = (d) => d.historyMeters || MONTHLY_METER_IDS;
 
 // Sends intent only: { limitKey, value } (value null = back to the plan).
 // Storage is typed in MB and sent in bytes. Lowering a limit to or below
-// what's already used shows a warning and needs a second confirmation;
-// nothing is ever deleted.
+// what's already used needs a second confirmation; nothing is ever deleted.
 export async function limitOverrideDialog(ctx, { businessId, row, clear = false, expectedRevision }) {
   const bytes = row.unit === "bytes";
   const v = await formDialog({
-    title: clear ? `${row.label}: back to the plan's limit` : `${row.label}: business override`,
-    intro: `Plan limit: ${row.plan === null ? "—" : limitFormat(row.unit)(row.plan)}. Current: ${limitFormat(row.unit)(row.current)}. Separate from module overrides; recorded in the audit log.`,
-    fields: [...(clear ? [] : [{ name: "value", label: bytes ? "New limit (MB)" : "New limit", value: row.override === null ? "" : String(bytes ? Math.round(row.override / MB) : row.override), required: true, inputmode: "numeric" }]), { name: "reason", label: "Reason (recorded in the audit log)", type: "textarea", required: true }],
-    submitLabel: clear ? "Use the plan's limit" : "Save override",
+    title: clear ? `${row.label}: the plan's limit` : `${row.label} for this business`,
+    intro: `Plan: ${row.plan === null ? "—" : limitFormat(row.unit)(row.plan)}. Now: ${limitFormat(row.unit)(row.current)}.`,
+    fields: [...(clear ? [] : [{ name: "value", label: bytes ? "New limit (MB)" : "New limit", value: row.override === null ? "" : String(bytes ? Math.round(row.override / MB) : row.override), required: true, inputmode: "numeric" }]), { name: "reason", label: "Reason", required: true }],
+    submitLabel: clear ? "Use the plan's limit" : "Save",
     onSubmit: (x) => {
       if (clear) return { value: null, reason: x.reason };
       const n = Number(String(x.value).replace(/,/g, "").trim());
@@ -389,47 +451,89 @@ export async function limitOverrideDialog(ctx, { businessId, row, clear = false,
   return ctx.call("setLimitOverride", { businessId, limitKey: row.limitKey, value: v.value, reason: v.reason, expectedRevision });
 }
 
-// ---------- Usage across businesses (Phase 18) ----------
-
-// ---------- Plans (read-only) ----------
+// ---------- Plans ----------
+// Two plans per workspace; prices, billing type, duration and limits are
+// edited here (applied to new businesses and plan changes).
 
 export async function plansView(el, ctx) {
-  render(el, html`${pageHeader({ title: "Plans" })}${loading()}`);
-  let counts = {};
+  render(el, loading("Plans"));
+  let data;
   try {
-    counts = (await ctx.call("plans")).subscribers || {};
-  } catch {
-    counts = {};
+    data = await ctx.call("plans");
+  } catch (err) {
+    render(el, failed("Plans", err));
+    return;
   }
-  const moduleLabel = (id) => ctx.moduleLabel(id);
-  // Phase 18.6: what Luna sells, grouped by workspace (each plan belongs to one).
-  const groups = ctx.workspaces.map((w) => ({ w, plans: plansFor(ctx, w.id) })).filter((g) => g.plans.length);
-  const distributorLike = (wId) => wId === "distributor";
+  const plans = data.plans.filter(isCatalogPlan);
+  const counts = data.subscribers || {};
+  const groups = ctx.workspaces.map((w) => ({ w, plans: plans.filter((p) => planWorkspace(p) === w.id) })).filter((g) => g.plans.length);
   render(
     el,
-    html`${pageHeader({ title: "Plans", subtitle: "What Luna sells, per workspace. Prices for Household, Baby and Bridal are hypotheses. Subscribers = active + past due." })}
+    html`${pageHeader({ title: "Plans" })}
       ${groups.map(
-        (g) => html`<section class="section" data-workspace="${g.w.id}">
-          <h2 class="section-title">${g.w.name}</h2>
-          ${card({
-            body: html`<div class="table-wrap"><table class="table table-compact" data-role="plans">
-              <thead><tr><th>Plan</th><th class="num">Monthly</th><th class="num col-secondary">Setup</th><th class="num">Users</th><th class="num">Storage</th>${distributorLike(g.w.id) ? html`<th class="num">Orders / mo</th><th class="num">Imports / mo</th>` : ""}<th class="col-secondary">Included</th><th class="num">Subscribers</th></tr></thead>
-              <tbody>${g.plans.map(
-                (p) => html`<tr data-plan="${p.id}">
-                  <td><span class="cell-strong">${p.name}</span> ${p.recommended ? badge("Recommended", "primary") : ""}</td>
-                  <td class="num">${formatMoney(p.pricing.monthly, { minimum: p.pricing.monthlyIsMinimum })}</td>
-                  <td class="num col-secondary">${p.pricing.setupFee ? formatMoney(p.pricing.setupFee, { minimum: p.pricing.setupFeeIsMinimum }) : "—"}</td>
-                  <td class="num">${formatNumber(p.limits.users)}</td>
-                  <td class="num">${formatBytes(p.limits.storageBytes)}</td>
-                  ${distributorLike(g.w.id) ? html`<td class="num">${formatNumber(p.limits.ordersPerMonth)}</td><td class="num">${formatNumber(p.limits.importsPerMonth)}</td>` : ""}
-                  <td class="col-secondary col-wrap">${Object.entries(p.modules).filter(([id, on]) => on && WORKSPACE_TEMPLATES[g.w.id]?.modules.includes(id)).map(([id]) => moduleLabel(id)).join(", ")}</td>
-                  <td class="num" data-col="subscribers">${formatNumber(counts[p.id] ?? 0)}</td>
-                </tr>`
-              )}</tbody></table></div>`,
-          })}
+        (g) => html`<section class="section card" data-workspace="${g.w.id}">
+          <div class="card-header"><h2 class="card-title">${g.w.name}</h2><span class="stat-hint">${BILLING_TYPES[planBilling(g.plans[0]).type].label}</span></div>
+          <div class="table-wrap"><table class="table table-compact rows sa-rows" data-role="plans">
+            <thead><tr><th class="m-only"></th><th>Plan</th><th>Price</th><th>Users</th><th>Storage</th><th class="num">Subscribers</th><th></th></tr></thead>
+            <tbody>${g.plans.map((p) => {
+              const b = planBilling(p);
+              return html`<tr data-plan="${p.id}">
+                ${mobileCell({ title: p.name, sub: `${priceLabel(p)} · ${limitsText(p)}`, end: formatNumber(counts[p.id] ?? 0), endSub: "active" })}
+                <td><span class="cell-strong">${p.name}</span>${b.founding ? html`<span class="cell-sub">Founding: ${b.founding.label ?? peso(b.founding.price)}</span>` : ""}</td>
+                <td>${priceLabel(p)}${b.type === "term" ? html`<span class="cell-sub">No automatic renewal</span>` : ""}</td>
+                <td>${formatNumber(p.limits.users)}</td>
+                <td>${formatBytes(p.limits.storageBytes)}</td>
+                <td class="num" data-col="subscribers">${formatNumber(counts[p.id] ?? 0)}</td>
+                <td class="row-actions" data-m="more"><button type="button" class="btn btn-compact" data-act="edit" data-id="${p.id}">Edit</button></td>
+              </tr>`;
+            })}</tbody></table></div>
         </section>`
-      )}`
+      )}
+      <p class="stat-note">A change applies to new businesses and plan changes. Existing businesses keep their price and limits until their plan is changed.</p>`
   );
+  el.onclick = async (e) => {
+    const t = e.target.closest('[data-act="edit"]');
+    if (!t) return;
+    const p = plans.find((x) => x.id === t.dataset.id);
+    const b = planBilling(p);
+    const pesos = (c) => (c ? String(c / 100) : "");
+    const cents = (v, label, { optional = false } = {}) => {
+      const s = String(v ?? "").replace(/[₱,\s]/g, "");
+      if (optional && !s) return null;
+      const n = Math.round(Number(s) * 100);
+      if (!Number.isSafeInteger(n) || n < 0) throw new Error(`${label}: enter an amount in pesos`);
+      return n;
+    };
+    const r = await formDialog({
+      title: `Edit ${p.name}`,
+      fields: [
+        { name: "name", label: "Plan name", value: p.name, required: true },
+        { name: "billingType", label: "Billing", type: "select", options: Object.entries(BILLING_TYPES).map(([value, x]) => ({ value, label: x.label })), value: b.type },
+        { name: "price", label: `Price (₱ per ${BILLING_TYPES[b.type].per})`, value: pesos(b.price), inputmode: "decimal", required: true },
+        { name: "setupFee", label: "Setup fee (₱)", value: pesos(b.setupFee) || "0", inputmode: "decimal" },
+        { name: "termMonths", label: "Access duration (months, annual / 12-month only)", value: String(b.termMonths), inputmode: "numeric" },
+        { name: "users", label: "Users", value: String(p.limits.users), inputmode: "numeric", required: true },
+        { name: "storageMb", label: "Storage (MB)", value: String(Math.round(p.limits.storageBytes / MB)), inputmode: "numeric", required: true },
+        { name: "foundingPrice", label: "Founding price (₱, optional)", value: pesos(b.founding?.price), inputmode: "decimal", more: true },
+        { name: "priceIsMinimum", label: "Price shown as", type: "select", options: [{ value: "no", label: "Exact price" }, { value: "yes", label: "Starting at" }], value: b.priceIsMinimum ? "yes" : "no", more: true, default: true },
+      ],
+      moreLabel: "Founding price and display",
+      onSubmit: (v) => {
+        const whole = (x, label) => {
+          const n = Number(String(x).replace(/,/g, "").trim());
+          if (!Number.isSafeInteger(n) || n < 1) throw new Error(`${label}: a whole number`);
+          return n;
+        };
+        return ctx.call("savePlan", { planId: p.id, changes: { name: v.name, billingType: v.billingType, price: cents(v.price, "Price"), setupFee: cents(v.setupFee || "0", "Setup fee"), ...(v.billingType === "monthly" ? {} : { termMonths: whole(v.termMonths, "Access duration") }), users: whole(v.users, "Users"), storageMb: whole(v.storageMb, "Storage"), foundingPrice: cents(v.foundingPrice, "Founding price", { optional: true }), priceIsMinimum: v.priceIsMinimum === "yes" } });
+      },
+    });
+    if (r) {
+      ctx.toast("Plan saved.", "success");
+      const fresh = await ctx.call("plans");
+      ctx.plans.splice(0, ctx.plans.length, ...fresh.plans);
+      plansView(el, ctx);
+    }
+  };
 }
 
 // ---------- Audit ----------
@@ -437,22 +541,22 @@ export async function plansView(el, ctx) {
 export function auditView(el, ctx) {
   const state = { cursors: [null], page: null };
   async function load() {
-    render(el, html`${pageHeader({ title: "Audit" })}${loading()}`);
+    render(el, loading("Audit"));
     try {
       state.page = await ctx.call("audit", { after: state.cursors.at(-1) });
     } catch (err) {
-      render(el, failed(err));
+      render(el, failed("Audit", err));
       return;
     }
     render(
       el,
-      html`${pageHeader({ title: "Audit", subtitle: "Operator and configuration changes across Luna, newest first." })}
+      html`${pageHeader({ title: "Audit" })}
         ${card({
-          body: html`<div class="table-wrap"><table class="table table-compact" data-role="audit">
-            <thead><tr><th>When</th><th>Business</th><th>Change</th><th>By</th><th class="col-secondary">Reason</th></tr></thead>
-            <tbody>${state.page.rows.map((a) => html`<tr><td>${when(a.at)}</td><td>${a.businessId ?? (a.operator ? `operator ${a.operator.email}` : "—")}</td><td>${a.summary ?? a.type}</td><td>${a.actor ?? ""}</td><td class="col-secondary">${a.reason ?? ""}</td></tr>`)}</tbody>
+          body: html`<div class="table-wrap"><table class="table table-compact rows sa-rows" data-role="audit">
+            <thead><tr><th class="m-only"></th><th>When</th><th>Business</th><th>Change</th><th>By</th></tr></thead>
+            <tbody>${state.page.rows.map((a) => html`<tr>${mobileCell({ title: a.summary ?? a.type, sub: `${when(a.at)} · ${a.businessId ?? ""} · ${a.actor ?? ""}` })}<td>${when(a.at)}</td><td>${a.businessId ?? (a.operator ? `operator ${a.operator.email}` : "—")}</td><td>${a.summary ?? a.type}${a.reason ? html`<span class="cell-sub">${a.reason}</span>` : ""}</td><td>${a.actor ?? ""}</td></tr>`)}</tbody>
           </table></div>
-          <div class="modal-footer"><button type="button" class="btn" data-act="prev" ${state.cursors.length > 1 ? "" : "disabled"}>Newer</button><button type="button" class="btn" data-act="next" ${state.page.next ? "" : "disabled"}>Older</button></div>`,
+          ${pagers(state)}`,
         })}`
     );
   }

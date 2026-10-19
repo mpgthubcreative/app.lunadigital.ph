@@ -162,7 +162,7 @@ describe("operator tooling: assign / change template", () => {
     await updateOverrides({ ...world, businessId: "biz-a", set: { modules: { inventory: false } }, ...op });
     expect(biz("biz-a").entitlements.modules.inventory).toBe(false);
     await assignPlan({ ...world, businessId: "biz-w", planId: "bridal-basic", ...op });
-    expect(biz("biz-w")).toMatchObject({ workspaceTemplateId: "bridal-expense", subscription: { planId: "bridal-basic", monthlyAmount: 19900 }, entitlements: { planId: "bridal-basic", workspaceTemplateId: "bridal-expense", modules: { orders: false, guests: true } } });
+    expect(biz("biz-w")).toMatchObject({ workspaceTemplateId: "bridal-expense", subscription: { planId: "bridal-basic", billingType: "term", amount: 149000, monthlyAmount: 0 }, entitlements: { planId: "bridal-basic", workspaceTemplateId: "bridal-expense", modules: { orders: false, guests: true } } });
     // Phase 18.6: a Distributor plan never reaches a Bridal business (or the reverse).
     await expect(assignPlan({ ...world, businessId: "biz-w", planId: "starter", ...op })).rejects.toMatchObject({ code: "plan-wrong-workspace" });
     await expect(assignPlan({ ...world, businessId: "biz-a", planId: "baby-plus", ...op })).rejects.toMatchObject({ code: "plan-wrong-workspace" });
