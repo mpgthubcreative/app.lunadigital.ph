@@ -1075,6 +1075,66 @@ c6e6ffd was NOT the final baseline: the owner's final spec for Reports and the H
     - Switch matrix (12 directions × default / deep / dialog open / /expenses?filter / Settings, plus Back / Forward): Owner 66/66 at 390 and 1280, Admin 66/66 at 390 and 1280, Staff (Business ↔ Baby) 16/16 at 390 and 1280.
     - Stale page file: reloads once into Bridal Money with no error flash.
 - **Production migration baseline:** the commit that adds this entry (its code is identical to 6991d31), once CI passes on it. It supersedes c6e6ffd. Feature work is frozen; Singapore production waits for the owner's explicit approval.
+- **Superseded:** the owner then sent "Super Admin — consolidated final tasks" (next entry). No baseline is final until that is green.
+
+### 2026-10-20 · Super Admin consolidation (bf95d21, a3fefc6, 86ea15b, a2ad74e, 5f8b1e0)
+
+- **Usage:**
+  - Excel downloads and Excel transfer (bytes) are monthly meters, written in the same batch as the file. Each download leaves an `export.generated` record with businessId, workspaceTemplateId, bytes and time.
+  - Import usage is hidden everywhere (the meter and limit stay in the vocabulary).
+  - The Usage page shows "2 of 4", "184 MB of 1 GB", downloads, transfer and orders, with a Refresh button. Provider bills (Firebase / Netlify, project-wide) are a separate tab, and their dashboards remain the source of truth.
+  - **"Carlo's usage didn't increase":** the meter was correct. The owner's three downloads on Oct 19 went to carlo-business (6.4 KB), veah-bridal (10.2 KB) and rwp-d419 (7.6 KB), one each. The old Usage page didn't show downloads or bytes clearly.
+- **Plans** (`shared/plans.seed.js`, `shared/plan-billing.js`; staging re-seeded with `seed:plans --overwrite`, approved):
+
+  | Plan | Price | Users | Storage |
+  |---|---|---|---|
+  | Distributor | ₱499 / month + ₱999 setup (founding ₱399 for 12 months) | 2 | 500 MB |
+  | Distributor+ | ₱899 / month + ₱999 setup | 4 | 1 GB |
+  | Luna Household | ₱1,190 / year (founding ₱990) | 1 | 500 MB |
+  | Luna Household+ | ₱1,990 / year (founding ₱1,690) | 3 | 1 GB |
+  | Luna Bridal | ₱1,490 / 12 months (founding ₱990) | 1 | 500 MB |
+  | Luna Bridal+ | starting at ₱3,990 / 12 months (founding ₱2,990) | 3 | 1 GB |
+
+  - Bridal has no automatic renewal. There's no order limit. Starter / Growth / Pro are hidden legacy plans. Baby keeps its two plans.
+  - Prices, billing type, duration, limits and founding prices are edited in Super Admin → Plans (`savePlan`, audited). An edit applies to new businesses and plan changes only.
+- **Seats:** a kasambahay's own login never uses a paid Household seat (`usesSeat`). Wedding guests aren't members.
+- **Billing by workspace:**
+  - Monthly: due on the start day.
+  - Annual: payment due, then "Renewal due" a year after.
+  - 12-month access: Access until; Active / Expiring soon / Expired / Extended; never Past Due.
+  - Invoices carry billingType, coverFrom and coverTo. Revenue is split by billing type.
+  - Recurring income counts monthly workspaces only. A Household or Bridal business from before billing types (veah-bridal, rwp-d419, the demo tenants) keeps its old monthly terms until its plan is changed, but is never counted as recurring income.
+- **Overview:**
+  - Shows active subscriptions, recurring income, annual / 12-month income this month, Needs Attention (real dates, "N days overdue", Renewal due, Access ends) and Income by Workspace.
+  - Cost, profit, margins, subscription mixes and the Businesses block are gone.
+- **⋯ actions** (Overview, Subscriptions, Businesses, business page):
+  - Record payment, Send notification, Change due date / access end, Change plan, Members.
+  - Mark as past due, Suspend access, Cancel subscription, Reactivate subscription, Delete business.
+  - None of them deletes data.
+- **Businesses:** compact rows; the plan filter follows the workspace (sold plans only).
+- **Create Business:** Workspace → Plan (its two plans, price, billing, limits) → name → owner. The ID is made from the name; ID, timezone and founding price are under Advanced.
+- **Members:** Super Admin removes a member with a confirmation. The account owner and last owner are protected, sessions are revoked, a kasambahay login leaves its staff record, and `member.removed` is audited.
+- **Delete business** (`_lib/lifecycle.js`):
+  - Needs the exact name typed. Sets status `deleted` and records `deletion { deletedBy, deletedAt, purgeAfter (+30 days), prior { status, planId }, reason }`.
+  - Access is refused at once: session, API, Firestore rules (unknown status fails closed) and public wedding invitation links.
+  - Nothing is erased. `business.deleted` / `business.restored` are audited. Restore brings back the prior status. A permanent purge is a later, separate tool.
+- **Tests:**
+  - **Unit:** 1711 pass (105 files).
+  - **Emulator:** 41 files / 2970 pass locally.
+  - The billing race fixture now pins the pre-billing-type monthly shape (CI caught it on bf95d21).
+- **Live on staging:** 71/72 (temporary `sa-*-tmp` businesses and a temporary operator, removed afterwards). Covered:
+  - download → +1 and the exact bytes on the business page and Usage;
+  - kasambahay and guests seatless;
+  - due → 7 days overdue;
+  - Household payment → annual income and renewal next year;
+  - Bridal → access until, not recurring;
+  - notification reaches the owner;
+  - change plan;
+  - past due / suspended / cancelled / reactivated read and write as designed, data kept;
+  - member removal and its audit; owner protected; Owner can't call it;
+  - delete (typed name, all access refused incl. the guest link, audited, Deleted filter) and restore;
+  - layouts at 390 and 1280 with no page overflow.
+  - The one open item: the 12-month Usage history table under the business page's Advanced section scrolls inside its own box on a phone.
 
 ## Plan (decisions made from the brief)
 
