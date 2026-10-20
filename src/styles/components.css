@@ -4146,3 +4146,11 @@ tr.is-saving {
 .sa-bills .btn { margin-top: var(--space-2); }
 .sa-remove { margin-left: var(--space-1); font-size: var(--text-xs); color: var(--danger, #b42318); text-decoration: underline; }
 .tone-warning { color: var(--warning-text, #92400e); }
+/* New order on wider screens: the product rows fit the sheet (Remove included). */
+@media (min-width: 720px) {
+  .oe-lines { width: 100%; table-layout: auto; }
+  .oe-lines th, .oe-lines td { padding: var(--space-2) var(--space-2); }
+  .oe-lines td.oe-line-name { white-space: normal; min-width: 7rem; }
+  .oe-lines .input-qty { width: 5rem; }
+  .oe-lines td.oe-line-remove { width: 1%; white-space: nowrap; }
+}
