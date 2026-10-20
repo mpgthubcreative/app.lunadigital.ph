@@ -29,15 +29,15 @@ describe("operator data is server-only", () => {
   for (const uid of ["opsUid", "ownerA", "managerA", "staffA"]) {
     it(`${uid}: can't read or write operators, provisioning or the platform audit`, async () => {
       const db = dbAs(env, uid);
-      for (const p of ["operators/opsUid", `operators/${uid}`, `provisioning/${A}`, "platformAudit/a1"]) {
+      for (const p of ["operators/opsUid", `operators/${uid}`, `provisioning/${A}`, "platformAudit/a1", "supportSessions/sup1"]) {
         await assertFails(db.doc(p).get());
         await assertFails(db.doc(p).set({ role: "superadmin", status: "active" }));
       }
-      for (const c of ["operators", "provisioning", "platformAudit", "businesses"]) await assertFails(db.collection(c).get());
+      for (const c of ["operators", "provisioning", "platformAudit", "supportSessions", "businesses"]) await assertFails(db.collection(c).get());
     });
   }
   it("signed out: nothing", async () => {
-    for (const p of ["operators/opsUid", `provisioning/${A}`, "platformAudit/a1"]) await assertFails(dbAnon(env).doc(p).get());
+    for (const p of ["operators/opsUid", `provisioning/${A}`, "platformAudit/a1", "supportSessions/sup1"]) await assertFails(dbAnon(env).doc(p).get());
   });
 });
 

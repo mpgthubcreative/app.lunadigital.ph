@@ -15,8 +15,7 @@ import { confirmDialog } from "../components/feedback.js";
 import { planWorkspace, isCatalogPlan, priceLabel, planBilling, termLabel, addOnLabel, monthsText, businessIdFromName, BILLING_TYPES, SUBSCRIPTION_LABELS, OVERRIDE_CHOICES, ROLE_TEMPLATES, METERS, MONTHLY_METER_IDS, overrideImpact, NO_LIMIT_FROM } from "@shared/index.js";
 import { formatBytes, formatNumber } from "../lib/format.js";
 import { invitationDesignView } from "./design.js";
-import { apiDownload } from "../lib/api.js";
-import { saveBlob } from "../lib/export.js";
+import { invitationCard, supportCard, supportView, startSupportDialog, previewInvitation, publishInvitation } from "./support.js";
 import { peso, dateText, whenText, stateChip, billingCell, subscriptionMenu, toggleMenus, runSubscriptionAction, termText, adjustmentDialog } from "./actions.js";
 
 const when = (iso) => (iso ? new Date(iso).toLocaleString("en-PH", { dateStyle: "medium", timeStyle: "short" }) : "—");
@@ -97,6 +96,7 @@ export async function overviewView(el, ctx) {
 export function businessesView(el, ctx) {
   const params = new URLSearchParams(ctx.search || "");
   if (params.get("b") && params.get("design")) return invitationDesignView(el, ctx, params.get("b"));
+  if (params.get("b") && params.get("support")) return supportView(el, ctx, params.get("b"));
   if (params.get("b")) return businessDetailView(el, ctx, params.get("b"));
   const state = { filters: {}, cursors: [null], page: null, error: null, loading: true };
   const opt = (v, l, sel) => html`<option value="${v}" ${sel === v ? "selected" : ""}>${l}</option>`;
@@ -329,6 +329,7 @@ export async function businessDetailView(el, ctx, businessId) {
           </dl></div>
         </section>
       </div>
+      ${invitationCard(d.invitation, b, ctx)}
       ${billsCard(d.bills || [], b)}
       <section class="section card" id="members" data-role="members">
         <div class="card-header"><h2 class="card-title">Members</h2><button type="button" class="btn btn-compact" data-act="add-member">Add member</button></div>
@@ -344,13 +345,12 @@ export async function businessDetailView(el, ctx, businessId) {
             </tr>`
           )}</tbody></table></div>
       </section>
+      ${b.status === "deleted" ? "" : supportCard(d.support, b, ctx)}
       <details class="section card sa-advanced" data-role="advanced">
         <summary class="card-header"><h2 class="card-title">Advanced</h2></summary>
         <div class="card-body">
         <div class="page-actions">
           <button type="button" class="btn btn-compact" data-act="general">Edit name / timezone</button>
-          <button type="button" class="btn btn-compact" data-act="backup">Master Backup</button>
-          ${b.workspaceTemplateId === "bridal-expense" ? html`<a class="btn btn-compact" href="${ctx.base}/businesses?b=${b.id}&design=1" data-link data-role="design-link">Invitation design</a>` : ""}
         </div>
         <dl class="dl dl-compact"><dt>Business ID</dt><dd>${b.id}</dd><dt>Timezone</dt><dd>${b.timezone}</dd><dt>Created</dt><dd>${when(b.createdAt)}${b.createdBy ? ` by ${b.createdBy}` : ""}</dd></dl>
         ${d.limitRows
@@ -410,6 +410,27 @@ export async function businessDetailView(el, ctx, businessId) {
       if (await runSubscriptionAction(ctx, act, r)) reload();
       return;
     }
+    if (act === "inv-preview") {
+      try {
+        await previewInvitation(businessId, t.dataset.which, b.name);
+      } catch (err) {
+        ctx.toast(err.message || "Couldn't open the preview", "danger");
+      }
+      return;
+    }
+    if (act === "inv-publish") {
+      run(() => publishInvitation(businessId), "Published. Guest links show the design; their links didn't change.");
+      return;
+    }
+    if (act === "support-start") {
+      const v = await startSupportDialog(ctx, b);
+      if (v) ctx.navigate(`/businesses?b=${businessId}&support=1`);
+      return;
+    }
+    if (act === "support-end") {
+      run(() => ctx.call("supportEnd", { sessionId: t.dataset.id }), "Support session ended.");
+      return;
+    }
     if (act === "bill-adjust") {
       run(() => adjustmentDialog(ctx, r, { invoiceId: t.dataset.id, title: `Add discount / deduction · ${t.dataset.label}` }), "Added.");
       return;
@@ -433,20 +454,6 @@ export async function businessDetailView(el, ctx, businessId) {
       const m = d.members.find((x) => x.uid === t.dataset.id);
       const ok = await confirmDialog({ title: `Remove ${m.name || m.email} from ${b.name}?`, body: "They lose access to this business at once. Their records stay. This can't be undone (add them again if needed).", confirmLabel: "Remove member", danger: true });
       if (ok) run(() => ctx.call("removeMember", { businessId, uid: m.uid }), "Member removed.");
-    } else if (act === "backup") {
-      // Luna Super Admin only (the server checks): the technical copy of every record.
-      const label = t.textContent;
-      t.disabled = true;
-      t.textContent = "Preparing…";
-      try {
-        const { blob, fileName } = await (ctx.download || apiDownload)("backup", { businessId });
-        (ctx.save || saveBlob)(fileName, blob);
-        ctx.toast("Master Backup downloaded. It's recorded in the audit log.", "success");
-      } catch (err) {
-        ctx.toast(err.message || "Couldn't prepare the backup.", "danger");
-      }
-      t.disabled = false;
-      t.textContent = label;
     } else if (act === "m-link") {
       try {
         const res = await ctx.call("setupLink", { businessId, uid: t.dataset.id });

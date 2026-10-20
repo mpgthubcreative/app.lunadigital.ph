@@ -1617,7 +1617,7 @@ describe("Luna Bridal / Luna Bridal+ invitations (one engine, per-wedding design
     };
     expect(await mountWith({ level: "standard", live: "standard" })).toMatchObject({ name: "Standard Invitation", state: null, plus: false });
     expect(container.textContent).toContain("Included with Luna Bridal");
-    expect((await mountWith({ level: "standard", live: "standard" })).line).toMatch(/Customized Invitation comes with Luna Bridal\+/);
+    expect((await mountWith({ level: "standard", live: "standard" })).line).toMatch(/Customized Invitation comes with Luna Bridal Custom/);
     const draft = await mountWith({ level: "custom", live: "standard", hasDraft: true, draftState: "draft" });
     expect(draft).toMatchObject({ name: "Customized Invitation", state: "Draft", plus: true });
     expect(draft.line).toBe("Draft · Your current Standard invitation remains live.");

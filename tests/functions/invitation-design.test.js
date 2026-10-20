@@ -98,7 +98,7 @@ describe("Luna Super Admin edits one wedding's design; the couple can't", () => 
     ok(await design({ action: "saveDraft", businessId: W, config: { templateId: "classic" } }));
     const pub = await design({ action: "publish", businessId: W });
     expect(pub.status).toBe(409);
-    expect(pub.body.message).toMatch(/needs Luna Bridal\+/);
+    expect(pub.body.message).toMatch(/needs Luna Bridal Custom/);
     expect(ok(await invite({ action: "view", token })).invitation.design).toBe(null);
   });
 });
@@ -115,7 +115,7 @@ describe("Bridal → Bridal+ upgrade, draft → publish, downgrade: appearance o
     expect(v.design).toBe(null); // Standard still live
     expect(v.guest).toMatchObject({ name: "Sanrah", seats: 5, confirmed: 3 });
     const s = ok(await owner("setup", { action: "get" })).invitation;
-    expect(s).toMatchObject({ level: "custom", planName: "Luna Bridal+", live: "standard", hasDraft: false });
+    expect(s).toMatchObject({ level: "custom", planName: "Luna Bridal Custom", live: "standard", hasDraft: false });
   });
 
   it("Draft → Ready → Publish: guests see the custom design only after Publish; tokens and RSVPs unchanged; versions kept", async () => {

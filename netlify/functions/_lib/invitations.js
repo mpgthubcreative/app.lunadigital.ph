@@ -28,6 +28,7 @@ import { roleLabel } from "../../../shared/wedding-roles.js";
 import { accessPolicy } from "../../../shared/subscription.js";
 import { attendingMarksFor } from "./wedding-roles.js";
 import { liveDesignFor, ownerInvitationStatus, previewDesign } from "./invitation-design.js";
+import { invitationContent } from "../../../shared/invitation-design.js";
 
 const TX_OPTIONS = { maxAttempts: 10 };
 const MAX_HISTORY = 200;
@@ -206,7 +207,8 @@ async function resolve(db, token) {
   if (!accessPolicy(b.data().subscription?.status).canRead) throw BAD_LINK();
   return { businessId, guestId, biz, business: b.data(), guest: g.data(), linkRef: link.ref };
 }
-const publicSetup = (s) => Object.fromEntries(["coupleNames", "weddingDate", "ceremonyTime", "ceremonyVenue", "ceremonyAddress", "ceremonyMap", "receptionTime", "receptionVenue", "receptionAddress", "receptionMap", "dressCode", "welcomeMessage", "rsvpDeadline", "story", "footerNote", "faq"].map((k) => [k, s[k] ?? null]));
+// What a guest sees of the Wedding Setup (shared/invitation-design.js).
+const publicSetup = (s) => invitationContent(s);
 
 export async function viewInvite({ db, token, now = new Date() }) {
   const r = await resolve(db, token);

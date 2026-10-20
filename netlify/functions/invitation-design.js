@@ -9,6 +9,8 @@
 //   { action: "uploadAsset", businessId, name, dataUrl } a designer image (PNG / JPG / WebP / SVG)
 //   { action: "deleteAsset", businessId, assetId }       refused while a design uses it
 //   { action: "preview", businessId, which }             "draft" | "live" with its images
+//   { action: "sample", businessId, which }              the whole invitation for a SAMPLE guest
+//                                                        (no real guest / token), draft or published
 // The browser sends intent; every write is checked against an active
 // operator record first (a business Owner gets 403). See ./_lib/invitation-design.js.
 
@@ -17,7 +19,7 @@ import { getAdmin } from "./_lib/firebase-admin.js";
 import { requireOperator } from "./_lib/operator.js";
 import { tenantDb } from "./_lib/tenant-db.js";
 import { isValidBusinessId } from "../../shared/tenancy.js";
-import { designWorkspace, saveDraft, setDraftState, publishDesign, useStandard, useCustom, restoreVersion, uploadAsset, deleteAsset, previewDesign, InvitationDesignError } from "./_lib/invitation-design.js";
+import { designWorkspace, saveDraft, setDraftState, publishDesign, useStandard, useCustom, restoreVersion, uploadAsset, deleteAsset, previewDesign, sampleInvitation, InvitationDesignError } from "./_lib/invitation-design.js";
 
 const STATUS = { "invalid-design": 400, "invalid-input": 400, "invalid-asset": 400, "not-found": 404, "not-available": 400, "not-entitled": 409, "asset-in-use": 409 };
 const ACTIONS = {
@@ -35,6 +37,14 @@ const ACTIONS = {
     run: async (c, b) => {
       const business = (await c.tenant.ref.get()).data();
       return previewDesign({ ...c, business, which: b.which === "draft" ? "draft" : "live" });
+    },
+  },
+  sample: {
+    fields: ["businessId", "which"],
+    run: async (c, b) => {
+      const snap = await c.tenant.ref.get();
+      if (!snap.exists || snap.data().workspaceTemplateId !== "bridal-expense") throw new InvitationDesignError("not-available", "Invitations are for wedding (Bridal) workspaces");
+      return sampleInvitation({ ...c, business: snap.data(), which: b.which === "live" ? "live" : "draft" });
     },
   },
 };

@@ -14,6 +14,7 @@
 import { withErrorHandling, requireMethod, parseJsonBody, RequestError } from "./_lib/http.js";
 import { getAdmin } from "./_lib/firebase-admin.js";
 import { requireOperator } from "./_lib/operator.js";
+import { requireSupportSession, SupportError } from "./_lib/support.js";
 import { tenantDb } from "./_lib/tenant-db.js";
 import { buildBackup, BackupError } from "./_lib/backup.js";
 import { isValidBusinessId } from "../../shared/tenancy.js";
@@ -35,17 +36,26 @@ export function createBackupHandler({ getAdmin: loadAdmin, now = () => new Date(
     const op = await requireOperator(event, { db, auth });
     if (bodyError) throw bodyError;
     const businessId = body && typeof body === "object" ? body.businessId : null;
-    if (!isValidBusinessId(businessId) || Object.keys(body).some((k) => k !== "businessId")) throw new RequestError("invalid-request", "Choose a business.", 400);
+    if (!isValidBusinessId(businessId) || Object.keys(body).some((k) => k !== "businessId" && k !== "supportSessionId")) throw new RequestError("invalid-request", "Choose a business.", 400);
     const tenant = tenantDb(db, businessId);
     const snap = await tenant.ref.get();
     if (!snap.exists) throw new RequestError("not-found", "Business not found.", 404);
+    // Every record of a customer = support access (2026-10-20): only inside
+    // the operator's own open, reasoned support session for this business.
+    let session;
+    try {
+      session = await requireSupportSession({ db, sessionId: body.supportSessionId, businessId, operator: { uid: op.uid }, now: now() });
+    } catch (err) {
+      if (err instanceof SupportError) throw new RequestError(err.code, `${err.message} The Master Backup is part of support access.`, 403);
+      throw err;
+    }
     const b = snap.data();
     const business = { id: businessId, name: b.name || "", timezone: b.timezone || "Asia/Manila", subscription: b.subscription || null };
     const at = now();
     try {
       const out = await buildBackup({ db, tenant, business, entitlements: b.entitlements, FieldPath: admin.firestore.FieldPath, actor: { uid: op.uid, name: op.name || "", email: op.email || "" }, now: at });
       const FieldValue = admin.firestore.FieldValue;
-      const record = { type: "backup.downloaded", summary: "Master Backup downloaded (Luna Super Admin)", businessId, actor: op.email || op.uid, operator: { uid: op.uid, email: op.email || null }, rows: out.rows, at: FieldValue.serverTimestamp() };
+      const record = { type: "backup.downloaded", summary: `Master Backup downloaded during support: ${session.data.reason}`, businessId, actor: op.email || op.uid, operator: { uid: op.uid, email: op.email || null }, sessionId: body.supportSessionId, reason: session.data.reason, rows: out.rows, at: FieldValue.serverTimestamp() };
       const batch = db.batch();
       batch.set(tenant.collection("auditLog").doc(), record);
       batch.set(db.collection("platformAudit").doc(), record);

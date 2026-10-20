@@ -103,8 +103,8 @@ export function mount(container, session, { api = defaultApi, toast = defaultToa
     const custom = inv.level === "custom";
     const stateLine = !custom
       ? inv.preservedCustom
-        ? "Your customized design is saved and comes back with Luna Bridal+."
-        : "Want an invitation designed just for your wedding? The Customized Invitation comes with Luna Bridal+. Ask Luna to upgrade: your guests, links and RSVPs stay exactly as they are."
+        ? "Your customized design is saved and comes back with Luna Bridal Custom."
+        : "Want an invitation designed just for your wedding? The Customized Invitation comes with Luna Bridal Custom. Ask Luna to upgrade: your guests, links and RSVPs stay exactly as they are."
       : inv.live === "custom"
         ? `Live${inv.publishedVersion ? ` (version ${inv.publishedVersion})` : ""}. All guest links show it.${inv.hasDraft && inv.draftState === "ready" ? " A new version is ready with Luna." : ""}`
         : inv.hasDraft
@@ -112,7 +112,7 @@ export function mount(container, session, { api = defaultApi, toast = defaultToa
           : "Luna is preparing your design. Your current Standard invitation remains live.";
     const faq = Array.isArray(s.faq) ? s.faq : [];
     return html`<fieldset class="wl-fieldset" data-role="invitation-level"><legend>Invitation</legend>
-      <p><strong data-role="invitation-name">${custom ? "Customized Invitation" : "Standard Invitation"}</strong> <span class="stat-hint">${custom ? "Luna Bridal+" : "Included with Luna Bridal"}</span>${custom ? html` <span class="wl-chip" data-role="invitation-state" data-tone="${inv.live === "custom" ? "success" : "warning"}">${inv.live === "custom" ? "Live" : inv.draftState === "ready" ? "Ready" : "Draft"}</span>` : ""}</p>
+      <p><strong data-role="invitation-name">${custom ? "Customized Invitation" : "Standard Invitation"}</strong> <span class="stat-hint">${custom ? "Luna Bridal Custom" : "Included with Luna Bridal"}</span>${custom ? html` <span class="wl-chip" data-role="invitation-state" data-tone="${inv.live === "custom" ? "success" : "warning"}">${inv.live === "custom" ? "Live" : inv.draftState === "ready" ? "Ready" : "Draft"}</span>` : ""}</p>
       <p class="stat-hint" data-role="invitation-line">${stateLine}</p>
       <div class="ws-link-actions"><button type="button" class="btn btn-compact" data-act="preview">Preview${custom && inv.live !== "custom" ? " (live: Standard)" : ""}</button>${custom && inv.hasDraft ? html`<button type="button" class="btn btn-compact" data-act="preview-draft">Preview draft design</button>` : ""}</div>
       ${custom ? html`<details class="wl-fold" data-role="plus-content"><summary>More for your customized invitation</summary>

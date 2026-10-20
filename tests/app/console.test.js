@@ -193,18 +193,59 @@ describe("console views", () => {
     expect(call).toHaveBeenCalledWith("removeMember", { businessId: "abc-test-trading", uid: "u2" });
   });
 
-  it("detail: the Master Backup lives here (Luna Super Admin), downloaded for this business", async () => {
-    const call = vi.fn(async () => DETAIL);
-    const download = vi.fn(async () => ({ blob: new Blob(["x"]), fileName: "ABC-Test-Trading-Master-Backup-2026-10-18.xlsx" }));
-    const save = vi.fn();
-    const ctx = ctxWith(call, { download, save });
+  it("customer data is support access: no records or Master Backup on the business page; Open workspace as support asks for a reason", async () => {
+    const call = vi.fn(async (action) => (action === "supportStart" ? { sessionId: "sup000000000000000000000001", mode: "read-only" } : { ...DETAIL, support: null }));
+    const ctx = ctxWith(call);
     businessDetailView(el, ctx, "abc-test-trading");
     await flush();
-    el.querySelector('[data-act="backup"]').click();
+    expect(el.querySelector('[data-act="backup"]')).toBeNull();
+    expect(el.querySelector('[data-role="support"]').textContent).toMatch(/Managing this business doesn't show its records/);
+    el.querySelector('[data-act="support-start"]').click();
     await flush();
-    expect(download).toHaveBeenCalledWith("backup", { businessId: "abc-test-trading" });
-    expect(save).toHaveBeenCalledWith("ABC-Test-Trading-Master-Backup-2026-10-18.xlsx", expect.any(Blob));
-    expect(ctx.toast).toHaveBeenCalledWith(expect.stringMatching(/Master Backup downloaded/), "success");
+    const f = lastForm();
+    expect(f.querySelector("label").textContent).toMatch(/Support reason/);
+    f.elements.reason.value = "Owner reports a wrong balance (ticket 12)";
+    submit(f);
+    await flush();
+    expect(call).toHaveBeenCalledWith("supportStart", { businessId: "abc-test-trading", reason: "Owner reports a wrong balance (ticket 12)" });
+    expect(ctx.navigate).toHaveBeenCalledWith("/businesses?b=abc-test-trading&support=1");
+  });
+
+  it("support view: read-only banner, areas read one at a time, Master Backup inside the session, Exit ends it", async () => {
+    const support = { sessionId: "sup000000000000000000000001", mode: "read-only", reason: "Owner reports a wrong balance", expiresAt: "2026-10-20T10:30:00Z" };
+    const call = vi.fn(async (action) => (action === "business" ? { ...DETAIL, support } : action === "supportAreas" ? { areas: [{ id: "orders", label: "Orders" }, { id: "customers", label: "Customers" }] } : action === "supportRead" ? { area: "orders", rows: [{ id: "o1", orderNumber: "BA-1", total: 1000 }], more: false } : { ended: true }));
+    const download = vi.fn(async () => ({ blob: new Blob(["x"]), fileName: "ABC-Master-Backup.xlsx" }));
+    const save = vi.fn();
+    const ctx = ctxWith(call, { download, save, search: "?b=abc-test-trading&support=1" });
+    businessesView(el, ctx);
+    await flush();
+    expect(el.querySelector('[data-role="support-banner"]').textContent).toMatch(/read-only.*Owner reports a wrong balance/);
+    expect(call).not.toHaveBeenCalledWith("supportRead", expect.anything());
+    el.querySelector('[data-act="support-area"][data-id="orders"]').click();
+    await flush();
+    expect(call).toHaveBeenCalledWith("supportRead", { sessionId: support.sessionId, businessId: "abc-test-trading", area: "orders" });
+    expect(el.querySelector('[data-role="support-rows"]').textContent).toMatch(/BA-1/);
+    el.querySelector('[data-act="support-backup"]').click();
+    await flush();
+    expect(download).toHaveBeenCalledWith("backup", { businessId: "abc-test-trading", supportSessionId: support.sessionId });
+    expect(save).toHaveBeenCalled();
+    el.querySelector('[data-act="support-exit"]').click();
+    await flush();
+    expect(call).toHaveBeenCalledWith("supportEnd", { sessionId: support.sessionId });
+    expect(ctx.navigate).toHaveBeenCalledWith("/businesses?b=abc-test-trading");
+  });
+
+  it("a Bridal business: the Invitation card (couple, Custom, status, last updated) with Preview / Edit / Publish / View published; nothing else of the wedding", async () => {
+    const invitation = { coupleNames: "Carlo & Yanie", weddingDate: "2027-02-14", type: "custom", productName: "Luna Bridal Custom", status: "published", live: "custom", publishedVersion: 2, unpublishedChanges: true, lastUpdated: "2026-10-20T03:00:00Z" };
+    const wed = { ...DETAIL, business: { ...DETAIL.business, id: "wed-1", name: "Carlo & Yanie", workspaceTemplateId: "bridal-expense" }, invitation, support: null };
+    businessDetailView(el, ctxWith(vi.fn(async () => wed)), "wed-1");
+    await flush();
+    const card = el.querySelector('[data-role="invitation"]');
+    expect(card.textContent.replace(/\s+/g, " ")).toMatch(/Carlo & Yanie.*Custom.*Luna Bridal Custom.*Custom design v2.*Draft changes not published yet/);
+    expect(card.querySelector(".badge").textContent).toBe("Published");
+    expect([...card.querySelectorAll('[data-role="inv-actions"] [data-act], [data-role="inv-actions"] a')].map((x) => x.textContent.trim())).toEqual(["Preview draft", "Edit design", "Publish", "View published invitation"]);
+    expect(card.textContent).toMatch(/sample guest/);
+    expect(el.textContent).not.toMatch(/RSVP|guest list/i);
   });
 
   it("products: one per workspace (Bridal: Standard + Custom), legacy hidden; what it's for, terms, included + add-ons, active count; Edit saves term and add-on prices", async () => {

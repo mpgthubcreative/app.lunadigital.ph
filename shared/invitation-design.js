@@ -22,7 +22,15 @@ export const INVITATION_LEVELS = Object.freeze({ standard: { label: "Standard In
 // Plan → invitation level (a plan property; new plans add a line here).
 export const INVITATION_LEVEL_BY_PLAN = Object.freeze({ "bridal-plus": "custom" });
 export const invitationLevelOf = (planId) => INVITATION_LEVEL_BY_PLAN[planId] ?? "standard";
-export const PLAN_MARKETING_NAMES = Object.freeze({ "bridal-basic": "Luna Bridal", "bridal-plus": "Luna Bridal+" });
+export const PLAN_MARKETING_NAMES = Object.freeze({ "bridal-basic": "Luna Bridal", "bridal-plus": "Luna Bridal Custom" });
+
+// The wedding details a guest's invitation shows: the ONLY Wedding Setup
+// fields that leave the couple's workspace, for a guest link and for Luna
+// Super Admin's invitation work (2026-10-20 privacy model).
+export const INVITATION_CONTENT_FIELDS = Object.freeze(["coupleNames", "weddingDate", "ceremonyTime", "ceremonyVenue", "ceremonyAddress", "ceremonyMap", "receptionTime", "receptionVenue", "receptionAddress", "receptionMap", "dressCode", "welcomeMessage", "rsvpDeadline", "story", "footerNote", "faq"]);
+export const invitationContent = (setup) => Object.fromEntries(INVITATION_CONTENT_FIELDS.map((k) => [k, setup?.[k] ?? null]));
+// The guest a Super Admin preview shows: never a real guest or link.
+export const SAMPLE_GUEST = Object.freeze({ name: "Sample Guest", seats: 2, rsvp: "awaiting", confirmed: 0, roles: [] });
 
 export const SECTION_IDS = Object.freeze(["hero", "welcome", "story", "ceremony", "reception", "map", "dressCode", "entourage", "gallery", "faq", "rsvp", "footer"]);
 export const SECTION_LABELS = Object.freeze({ hero: "Hero (names, date, photo)", welcome: "Welcome message", story: "Our story", ceremony: "Ceremony", reception: "Reception", map: "Map links", dressCode: "Dress code", entourage: "Entourage (from Roles)", gallery: "Gallery", faq: "FAQ", rsvp: "RSVP", footer: "Footer" });

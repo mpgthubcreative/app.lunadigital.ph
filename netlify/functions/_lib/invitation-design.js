@@ -13,7 +13,9 @@
 // Publishing changes appearance only: guests, tokens, slugs, RSVPs untouched.
 
 import { randomBytes } from "node:crypto";
-import { validateDesignConfig, resolveDesign, assetIdsOf, invitationLevelOf, invitationStatus, TEMPLATES, SECTION_IDS, DesignError } from "../../../shared/invitation-design.js";
+import { validateDesignConfig, resolveDesign, assetIdsOf, invitationLevelOf, invitationStatus, invitationContent, SAMPLE_GUEST, PLAN_MARKETING_NAMES, TEMPLATES, SECTION_IDS, DesignError } from "../../../shared/invitation-design.js";
+import { rsvpOpen } from "../../../shared/wedding.js";
+import { businessDate } from "../../../shared/metrics.js";
 import { rolesPlan } from "../../../shared/wedding-roles.js";
 
 const TX_OPTIONS = { maxAttempts: 10 };
@@ -87,6 +89,54 @@ export async function previewDesign({ tenant, business, which = "live" }) {
   const resolved = resolveDesign(config);
   return { design: { config: resolved, assets: await assetsByIds(tenant, assetIdsOf(config)) }, ...(await componentData(tenant, resolved)) };
 }
+// Luna Super Admin's preview (2026-10-20): the whole invitation exactly as
+// a guest sees it (the draft or the published design, or the Standard
+// invitation), for a SAMPLE guest. No real guest, token or link is read;
+// the wedding details are only the invitation fields. Repeatable, writes
+// nothing.
+export async function sampleInvitation({ tenant, business, which = "draft", now = new Date() }) {
+  const [setupSnap, heroSnap, preview] = await Promise.all([tenant.doc("weddingSetup", "current").get(), tenant.doc("weddingSetup", "hero").get(), previewDesign({ tenant, business, which })]);
+  const setup = setupSnap.exists ? setupSnap.data() : {};
+  return {
+    invitation: {
+      wedding: invitationContent(setup),
+      hero: heroSnap.exists ? heroSnap.data().dataUrl : null,
+      guest: { ...SAMPLE_GUEST },
+      rsvpOpen: rsvpOpen(setup, businessDate(business.timezone || "Asia/Manila", now)),
+      sample: true,
+      ...preview,
+    },
+    which,
+  };
+}
+
+const tsIso = (v) => (v?.toDate ? v.toDate().toISOString() : v instanceof Date ? v.toISOString() : v?._seconds ? new Date(v._seconds * 1000).toISOString() : typeof v === "string" ? v : null);
+// The Invitation card on Super Admin's business page: only what invitation
+// work needs (no guests, RSVPs, money, tasks or notes).
+export async function invitationSummary({ tenant, business }) {
+  const doc = await readDesign(tenant);
+  const setup = await tenant.doc("weddingSetup", "current").get();
+  const s = setup.exists ? setup.data() : {};
+  const st = invitationStatus({ planId: planOf(business), design: doc });
+  const draftAt = tsIso(doc?.draft?.updatedAt);
+  const publishedAt = tsIso(doc?.published?.publishedAt);
+  const custom = st.level === "custom";
+  // Published = what guests see now; a custom draft saved after it isn't live until Publish.
+  const status = custom ? (st.live === "custom" ? "published" : doc?.draft?.state === "ready" ? "ready" : "draft") : "published";
+  return {
+    coupleNames: s.coupleNames ?? null,
+    weddingDate: s.weddingDate ?? null,
+    type: custom ? "custom" : "standard",
+    productName: PLAN_MARKETING_NAMES[planOf(business)] ?? null,
+    status,
+    draftState: doc?.draft?.state ?? null,
+    live: st.live,
+    publishedVersion: st.publishedVersion,
+    unpublishedChanges: Boolean(custom && doc?.published?.config && doc?.draft?.published === false),
+    lastUpdated: [draftAt, publishedAt].filter(Boolean).sort().at(-1) ?? null,
+  };
+}
+
 export async function ownerInvitationStatus({ tenant, business }) {
   return invitationStatus({ planId: planOf(business), design: await readDesign(tenant) });
 }
@@ -107,7 +157,8 @@ export async function designWorkspace({ tenant }) {
     live: doc?.live ?? "standard",
     history: (doc?.history ?? []).map((h) => ({ version: h.version, publishedAt: h.publishedAt, publishedBy: h.publishedBy })),
     assets,
-    content: { setup: setup.exists ? setup.data() : {}, hero: hero.exists ? hero.data().dataUrl : null },
+    // Only the invitation fields of the Wedding Setup (privacy: nothing else).
+    content: { setup: invitationContent(setup.exists ? setup.data() : {}), hero: hero.exists ? hero.data().dataUrl : null },
     templates: Object.fromEntries(Object.entries(TEMPLATES).map(([id, t]) => [id, { label: t.label }])),
     sections: SECTION_IDS,
   };
@@ -126,7 +177,8 @@ export async function saveDraft({ db, tenant, FieldValue, config, actor }) {
   return db.runTransaction(async (tx) => {
     const snap = await tx.get(designRef(tenant));
     const d = snap.exists ? snap.data() : {};
-    write(tx, designRef(tenant), snap, { draft: { config: clean, state: "draft", version: d.draft?.version ?? null, updatedAt: FieldValue.serverTimestamp(), updatedBy: who(actor) }, live: d.live ?? "standard", published: d.published ?? null, history: d.history ?? [], nextVersion: d.nextVersion ?? 1 });
+    // published: false = this draft has changes guests don't see yet.
+    write(tx, designRef(tenant), snap, { draft: { config: clean, state: "draft", version: d.draft?.version ?? null, published: false, updatedAt: FieldValue.serverTimestamp(), updatedBy: who(actor) }, live: d.live ?? "standard", published: d.published ?? null, history: d.history ?? [], nextVersion: d.nextVersion ?? 1 });
     return { saved: true, state: "draft" };
   }, TX_OPTIONS);
 }
@@ -146,15 +198,16 @@ export async function setDraftState({ db, tenant, FieldValue, state, actor }) {
 // Publish: the draft becomes the live custom design (Luna Bridal+ only).
 export async function publishDesign({ db, tenant, FieldValue, actor, now = new Date() }) {
   const business = await requireWedding(tenant);
-  if (invitationLevelOf(planOf(business)) !== "custom") throw new InvitationDesignError("not-entitled", "Publishing a customized invitation needs Luna Bridal+");
+  if (invitationLevelOf(planOf(business)) !== "custom") throw new InvitationDesignError("not-entitled", "Publishing a customized invitation needs Luna Bridal Custom");
   return db.runTransaction(async (tx) => {
     const snap = await tx.get(designRef(tenant));
     const d = snap.exists ? snap.data() : {};
     if (!d.draft?.config) throw new InvitationDesignError("not-found", "Save a draft first");
     const version = d.nextVersion ?? 1;
     const entry = { version, config: d.draft.config, publishedAt: now, publishedBy: who(actor) };
-    write(tx, designRef(tenant), snap, { published: entry, live: "custom", draft: { ...d.draft, state: "draft", version }, history: [entry, ...(d.history ?? [])].slice(0, HISTORY), nextVersion: version + 1 });
+    write(tx, designRef(tenant), snap, { published: entry, live: "custom", draft: { ...d.draft, state: "draft", version, published: true }, history: [entry, ...(d.history ?? [])].slice(0, HISTORY), nextVersion: version + 1 });
     tx.set(tenant.collection("auditLog").doc(), { type: "invitation.published", version, actor: who(actor), at: FieldValue.serverTimestamp() });
+    tx.set(db.collection("platformAudit").doc(), { type: "invitation.published", summary: `Invitation design v${version} published`, businessId: tenant.businessId, version, actor: who(actor)?.name ?? null, at: FieldValue.serverTimestamp() });
     return { published: true, version, live: "custom" };
   }, TX_OPTIONS);
 }
@@ -172,7 +225,7 @@ export async function useStandard({ db, tenant, FieldValue, actor }) {
 // Put the custom design back live (after useStandard), if published.
 export async function useCustom({ db, tenant, actor }) {
   const business = await requireWedding(tenant);
-  if (invitationLevelOf(planOf(business)) !== "custom") throw new InvitationDesignError("not-entitled", "A customized invitation needs Luna Bridal+");
+  if (invitationLevelOf(planOf(business)) !== "custom") throw new InvitationDesignError("not-entitled", "A customized invitation needs Luna Bridal Custom");
   return db.runTransaction(async (tx) => {
     const snap = await tx.get(designRef(tenant));
     if (!snap.exists || !snap.data().published?.config) throw new InvitationDesignError("not-found", "Nothing published yet");
@@ -187,7 +240,7 @@ export async function restoreVersion({ db, tenant, FieldValue, version, actor })
     const snap = await tx.get(designRef(tenant));
     const h = (snap.exists ? snap.data().history ?? [] : []).find((x) => x.version === version);
     if (!h) throw new InvitationDesignError("not-found", "That version isn't in the history");
-    tx.update(designRef(tenant), { draft: { config: h.config, state: "draft", version, updatedAt: FieldValue.serverTimestamp(), updatedBy: who(actor) } });
+    tx.update(designRef(tenant), { draft: { config: h.config, state: "draft", version, published: false, updatedAt: FieldValue.serverTimestamp(), updatedBy: who(actor) } });
     return { restored: version };
   }, TX_OPTIONS);
 }

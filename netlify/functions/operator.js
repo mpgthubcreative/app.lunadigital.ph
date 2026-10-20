@@ -37,6 +37,8 @@ import { removeMember } from "./_lib/provisioning.js";
 import { unlinkStaffLogin } from "./_lib/members.js";
 import { deleteBusiness, restoreBusiness } from "./_lib/lifecycle.js";
 import { savePlan } from "./_lib/plans-admin.js";
+import { startSupport, supportRead, endSupport, openSupportSession, supportAreas, SupportError } from "./_lib/support.js";
+import { invitationSummary } from "./_lib/invitation-design.js";
 import { lunaOverview, platformOverview, listSubscriptionPayments, paymentDetail, listSubscriptions, listPlatformExpenses, createPlatformExpense, updatePlatformExpense, removePlatformExpense, copyRecurringExpenses, listCostRates, addCostRate, usageCost, economics } from "./_lib/platform.js";
 
 const STATUS = {
@@ -58,6 +60,8 @@ const STATUS = {
   "confirm-mismatch": 400,
   "legacy-plan": 409,
   "bill-locked": 409,
+  "no-session": 403,
+  "session-ended": 403,
 };
 const obj = (v) => (v && typeof v === "object" && !Array.isArray(v) ? v : {});
 
@@ -98,11 +102,17 @@ const ACTIONS = {
   },
   listBusinesses: { fields: ["filters", "after"], run: async ({ db, admin }, b) => listBusinesses({ db, FieldPath: admin.firestore.FieldPath, filters: b.filters && typeof b.filters === "object" && !Array.isArray(b.filters) ? b.filters : {}, after: b.after ?? null }) },
   // The business page, with its bills (breakdown, discounts / credits).
+  // + a Bridal wedding's Invitation summary (invitation work only: no
+  // guests, RSVPs, money or tasks), and the operator's open support session.
   business: {
     fields: ["businessId"],
-    run: async ({ db }, b) => {
-      const d = await businessDetail({ db, businessId: b.businessId });
-      return { ...d, bills: await businessBills({ db, businessId: bid(b.businessId) }) };
+    run: async ({ db, op }, b) => {
+      const businessId = bid(b.businessId);
+      const d = await businessDetail({ db, businessId });
+      const tenant = tenantDb(db, businessId);
+      const raw = (await tenant.ref.get()).data();
+      const invitation = raw?.workspaceTemplateId === "bridal-expense" ? await invitationSummary({ tenant, business: raw }) : null;
+      return { ...d, bills: await businessBills({ db, businessId }), invitation, support: await openSupportSession({ db, businessId, operator: { uid: op.uid } }) };
     },
   },
   audit: { fields: ["after"], run: async ({ db }, b) => listAudit({ db, after: b.after ?? null }) },
@@ -235,6 +245,19 @@ const ACTIONS = {
     },
   },
   deleteBusiness: { fields: ["businessId", "confirmName", "reason"], run: async ({ db, admin, op }, b) => deleteBusiness({ db, FieldValue: admin.firestore.FieldValue, businessId: bid(b.businessId), confirmName: b.confirmName, reason: b.reason ?? null, operator: actorOf(op) }) },
+  // Support access (2026-10-20): the customer's records only through an
+  // explicit, reasoned, read-only, 30-minute, audited session.
+  supportStart: { fields: ["businessId", "reason"], run: async ({ db, admin, op }, b) => startSupport({ db, FieldValue: admin.firestore.FieldValue, businessId: bid(b.businessId), reason: b.reason, operator: { uid: op.uid, email: op.email || null } }) },
+  supportRead: { fields: ["sessionId", "businessId", "area"], run: async ({ db, admin, op }, b) => supportRead({ db, FieldValue: admin.firestore.FieldValue, sessionId: b.sessionId, businessId: bid(b.businessId), area: b.area, operator: { uid: op.uid, email: op.email || null } }) },
+  supportEnd: { fields: ["sessionId"], run: async ({ db, admin, op }, b) => endSupport({ db, FieldValue: admin.firestore.FieldValue, sessionId: b.sessionId, operator: { uid: op.uid, email: op.email || null } }) },
+  supportAreas: {
+    fields: ["businessId"],
+    run: async ({ db }, b) => {
+      const snap = await db.collection("businesses").doc(bid(b.businessId)).get();
+      if (!snap.exists) throw new OperatorError("not-found", "Business not found");
+      return { areas: supportAreas(snap.data()) };
+    },
+  },
   restoreBusiness: { fields: ["businessId"], run: async ({ db, admin, op }, b) => restoreBusiness({ db, FieldValue: admin.firestore.FieldValue, businessId: bid(b.businessId), operator: actorOf(op) }) },
   savePlan: { fields: ["planId", "changes"], run: async ({ db, admin, op }, b) => savePlan({ db, FieldValue: admin.firestore.FieldValue, planId: b.planId, changes: obj(b.changes), operator: actorOf(op) }) },
 
@@ -281,7 +304,7 @@ export function createOperatorHandler({ getAdmin: loadAdmin }) {
     try {
       return respond(200, { success: true, ...(await action.run({ db, auth, admin, bucket, op }, body)) });
     } catch (err) {
-      if (err instanceof ProvisioningError || err instanceof OperatorError || err instanceof BillingError) throw new RequestError(err.code, err.message, STATUS[err.code] || 400);
+      if (err instanceof ProvisioningError || err instanceof OperatorError || err instanceof BillingError || err instanceof SupportError) throw new RequestError(err.code, err.message, STATUS[err.code] || 400);
       throw err;
     }
   });

@@ -1,4 +1,4 @@
-// Luna Console: one wedding's invitation design (Luna Bridal+).
+// Luna Console: one wedding's invitation design (Luna Bridal Custom).
 // Super Admin turns the designer's approved mockup into a design config for
 // THIS businessId: template, colours, fonts, layout, hero, section order /
 // visibility / colours, designer images, a few wording lines. Draft → Ready →
@@ -9,7 +9,7 @@ import { html, render } from "../lib/html.js";
 import { pageHeader, card } from "../components/ui.js";
 import { confirmDialog } from "../components/feedback.js";
 import { api } from "../lib/api.js";
-import { TEMPLATES, TEMPLATE_IDS, FONTS, DESIGN_ENUMS, SECTION_IDS, SECTION_LABELS, ASSET_SLOT_LABELS, resolveDesign } from "@shared/invitation-design.js";
+import { TEMPLATES, TEMPLATE_IDS, FONTS, DESIGN_ENUMS, SECTION_IDS, SECTION_LABELS, ASSET_SLOT_LABELS, SAMPLE_GUEST, resolveDesign } from "@shared/invitation-design.js";
 import { openInvitePreview } from "../modules/wedding/invite-preview.js";
 
 const call = (action, body) => api("invitation-design", { method: "POST", body: { action, ...body } });
@@ -37,7 +37,7 @@ export async function invitationDesignView(el, ctx, businessId) {
     render(
       el,
       html`${pageHeader({ title: `Invitation design · ${w.business.name}`, subtitle: `${w.business.id} · plan ${w.business.planId ?? "—"}`, actions: html`<a class="btn" href="${ctx.base}/businesses?b=${businessId}" data-link>Back to business</a>` })}
-        ${st.level !== "custom" ? html`<div class="banner" role="status" data-role="not-entitled">This wedding is on Luna Bridal (Standard invitation). You can prepare a draft; publishing needs Luna Bridal+ (change the plan on the business page: data, guests and links stay).</div>` : ""}
+        ${st.level !== "custom" ? html`<div class="banner" role="status" data-role="not-entitled">This wedding is on Luna Bridal (Standard invitation). You can prepare a draft; publishing needs Luna Bridal Custom (change the product on the business page: data, guests and links stay).</div>` : ""}
         <p data-role="design-status"><strong>Guests see: ${st.live === "custom" ? `Custom design v${st.publishedVersion}` : "Standard invitation"}</strong> · Draft: ${w.draft.state === "ready" ? "Ready" : "Draft"}${w.draft.updatedAt ? ` · saved ${when(w.draft.updatedAt)}` : " · not saved yet (starts from Standard)"}</p>
         <form data-role="design-form" class="section grid grid-2">
           ${card({
@@ -146,7 +146,8 @@ export async function invitationDesignView(el, ctx, businessId) {
       const cfg = resolveDesign(readForm());
       const assets = Object.fromEntries(w.assets.map((x) => [x.id, x.dataUrl]));
       const s = w.content.setup || {};
-      const invitation = { wedding: s, hero: w.content.hero, guest: { name: "Sample guest", seats: 2, rsvp: "awaiting", confirmed: 0 }, rsvpOpen: true, design: { config: cfg, assets }, gallery: [], entourage: [] };
+      // The sample guest (never a real guest or link); the wedding = invitation fields only.
+      const invitation = { wedding: s, hero: w.content.hero, guest: { ...SAMPLE_GUEST }, rsvpOpen: true, sample: true, design: { config: cfg, assets }, gallery: [], entourage: [] };
       try {
         const extra = await call("preview", { businessId, which: "draft" });
         invitation.gallery = extra.gallery || [];

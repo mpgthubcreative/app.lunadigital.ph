@@ -64,11 +64,11 @@ describe("Console → Invitation design", () => {
     expect(Object.keys(save.config).sort()).toEqual(["assets", "gallery", "hero", "layout", "sections", "templateId", "texts", "theme"]);
   });
 
-  it("Luna Bridal: a note that publishing needs Luna Bridal+, and Publish is disabled", async () => {
+  it("Luna Bridal: a note that publishing needs Luna Bridal Custom, and Publish is disabled", async () => {
     mockApi(WORKSPACE("bridal-basic"));
     await invitationDesignView(el, ctx, "biz-wed");
     await flush();
-    expect(el.querySelector('[data-role="not-entitled"]').textContent).toMatch(/publishing needs Luna Bridal\+/);
+    expect(el.querySelector('[data-role="not-entitled"]').textContent).toMatch(/publishing needs Luna Bridal Custom/);
     expect(el.querySelector('[data-act="publish"]').disabled).toBe(true);
   });
 });

@@ -52,9 +52,13 @@ export function request({ uid, token, businessId, method = "GET" } = {}) {
 
 // The Master Backup is Luna Super Admin only (2026-10-18): a request from an
 // active Luna operator naming the business.
-export function asOperator(world, businessId, { uid = "opLunaBackup1" } = {}) {
+// The Master Backup is support access (2026-10-20): the operator downloads
+// it inside their own open support session for that business.
+export function asOperator(world, businessId, { uid = "opLunaBackup1", support = true } = {}) {
   world.db.seed(`operators/${uid}`, { email: "ops.backup@luna.test", name: "Luna Ops", role: "superadmin", status: "active" });
-  return { ...request({ uid, method: "POST" }), body: JSON.stringify({ businessId }) };
+  const sessionId = `sup${Buffer.from(`${uid}:${businessId}`).toString("hex").padEnd(24, "0").slice(0, 24)}`;
+  if (support) world.db.seed(`supportSessions/${sessionId}`, { businessId, operator: { uid, email: "ops.backup@luna.test" }, reason: "test: support backup", mode: "read-only", startedAtMs: Date.now(), expiresAt: new Date(Date.now() + 30 * 60_000), endedAt: null, endedBy: null });
+  return { ...request({ uid, method: "POST" }), body: JSON.stringify(support ? { businessId, supportSessionId: sessionId } : { businessId }) };
 }
 
 // A Bridal product includes 1 planning user (2026-10-20); a test wedding
