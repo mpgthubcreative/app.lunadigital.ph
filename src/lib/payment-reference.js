@@ -50,8 +50,15 @@ async function getReader() {
   return reader;
 }
 
-// The reference read from an image file, or null (never throws).
-export async function detectReference(file, { timeoutMs = 25000, recognize = null } = {}) {
+// Starts loading the reader (~7 MB the first time, then cached) when someone
+// is about to pick a screenshot, so the read itself is quick.
+export function warmReader() {
+  getReader().catch(() => {});
+}
+
+// The reference read from an image file, or null (never throws). The first
+// read on a slow connection can take a while: up to a minute.
+export async function detectReference(file, { timeoutMs = 60000, recognize = null } = {}) {
   if (!file || !/^image\/(jpeg|png|webp)$/.test(file.type || "")) return null;
   try {
     const run = recognize ? recognize(file) : getReader().then((w) => w.recognize(file)).then((r) => r.data.text);
@@ -65,11 +72,13 @@ export async function detectReference(file, { timeoutMs = 25000, recognize = nul
 // Wires a form: when a screenshot is picked, read it and fill the
 // Reference field if it's still empty (the person can edit it). Call from
 // formDialog's onFormChange (runs on every change; binds once).
-export function bindReferenceDetection(form, { file = "proof", reference = "reference", detect = detectReference } = {}) {
+export function bindReferenceDetection(form, { file = "proof", reference = "reference", detect = detectReference, warm = warmReader } = {}) {
   const fileEl = form.elements[file];
   const refEl = form.elements[reference];
   if (!fileEl || !refEl || fileEl.dataset.readsReference) return;
   fileEl.dataset.readsReference = "1";
+  // Tapping the screenshot field: start loading the reader while they choose.
+  fileEl.addEventListener("click", () => warm(), { once: true });
   const hint = refEl.closest(".field")?.querySelector(".stat-hint");
   const say = (t) => {
     if (hint) hint.textContent = t;
