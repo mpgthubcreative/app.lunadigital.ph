@@ -389,6 +389,18 @@ describe("bills: setup fee, discounts / credits, Bridal upgrade, frozen history"
     expect([...world.db.docs.values()].some((v) => v.type === "billing.upgrade-billed" && v.businessId === "wed-u" && v.amount === 150000)).toBe(true);
   });
 
+  it("the agreed price set after the product change: the unpaid upgrade bill follows it (₱3,990 − ₱1,490 = ₱2,500)", async () => {
+    await owned("wed-late", "bridal-basic", "bridal-expense");
+    await recordOperatorPayment({ db: world.db, FieldValue: FV(), businessId: "wed-late", input: { paymentDate: "2026-10-19" }, operator: "ops@luna.test", now: OCT19 });
+    expect(ok(await op({ action: "changePlan", businessId: "wed-late", planId: "bridal-plus", reason: "custom" })).upgradeDue).toBe(150000);
+    ok(await op({ action: "setAccess", businessId: "wed-late", changes: { priceOverride: 399000 }, reason: "design quote" }));
+    const up = nextBill("wed-late").find((i) => i.kind === "upgrade");
+    expect([up.amountDue, up.lines[0].amount]).toEqual([250000, 250000]);
+    expect(biz("wed-late").subscription.upgradeDue.amount).toBe(250000);
+    ok(await op({ action: "addAdjustment", businessId: "wed-late", adjustment: { type: "discount", description: "Loyalty", amount: 50000 } }));
+    expect(biz("wed-late").subscription.upgradeDue.amount).toBe(200000);
+  });
+
   it("an unpaid wedding changing product: its open bill is re-priced (no upgrade bill)", async () => {
     await owned("wed-n", "bridal-basic", "bridal-expense");
     ok(await op({ action: "addAdjustment", businessId: "wed-n", adjustment: { type: "discount", description: "Promo", amount: 10000 } }));

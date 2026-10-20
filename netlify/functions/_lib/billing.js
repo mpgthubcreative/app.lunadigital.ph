@@ -586,6 +586,7 @@ export async function addBillAdjustment({ db, FieldValue, businessId, invoiceId:
     const entry = { id: `adj${createHash("sha256").update(`${ref.id}:${(inv.adjustments || []).length}:${a.type}:${description}:${a.amount}:${Date.now()}`).digest("hex").slice(0, 12)}`, type: a.type, description, amount: a.amount, addedBy: operator };
     const adjustments = [...(inv.adjustments || []), entry];
     const amountDue = writeAmount(tx, { db, FieldValue, ref, inv, lines, adjustments });
+    if (inv.kind === "upgrade") tx.update(db.collection("businesses").doc(businessId), { "subscription.upgradeDue.amount": amountDue });
     const record = { type: "billing.adjustment-added", summary: `${ADJUSTMENT_TYPES[a.type].label} on the ${inv.period} bill: ${description} −${peso(a.amount)} (now ${peso(amountDue)})`, businessId, invoiceId: ref.id, amount: a.amount, actor: operator, after: entry, at: FieldValue.serverTimestamp() };
     tx.set(audit(db), record);
     tx.set(tenantDb(db, businessId).collection("auditLog").doc(), record);
@@ -605,6 +606,7 @@ export async function removeBillAdjustment({ db, FieldValue, businessId, invoice
     if (!gone) throw new BillingError("not-found", "That discount / deduction isn't on this bill");
     const adjustments = inv.adjustments.filter((x) => x.id !== adjustmentId);
     const amountDue = writeAmount(tx, { db, FieldValue, ref, inv, lines: inv.lines ?? [], adjustments });
+    if (inv.kind === "upgrade") tx.update(db.collection("businesses").doc(businessId), { "subscription.upgradeDue.amount": amountDue });
     const record = { type: "billing.adjustment-removed", summary: `Removed from the ${inv.period} bill: ${gone.description} −${peso(gone.amount)} (now ${peso(amountDue)})`, businessId, invoiceId: ref.id, amount: gone.amount, actor: operator, before: gone, at: FieldValue.serverTimestamp() };
     tx.set(audit(db), record);
     tx.set(tenantDb(db, businessId).collection("auditLog").doc(), record);
@@ -620,7 +622,8 @@ export async function repriceOpenBill({ db, FieldValue, businessId, operator }) 
   const b = await bRef.get();
   if (!b.exists) return null;
   const sub = b.data().subscription || {};
-  if (!sub.billingType || sub.upgradeDue) return null;
+  if (!sub.billingType) return null;
+  if (sub.upgradeDue?.invoiceId) return repriceUpgradeBill({ db, FieldValue, businessId, operator });
   const created = b.data().createdAt?.toDate ? businessDate(BILLING_TIMEZONE, b.data().createdAt.toDate()) : null;
   const t = subscriptionTerms(sub, { createdDay: created });
   if (!t.dueDate) return null;
@@ -635,6 +638,31 @@ export async function repriceOpenBill({ db, FieldValue, businessId, operator }) 
     if (JSON.stringify(bill.lines) === JSON.stringify(inv.lines) && bill.dueDate === inv.dueDate) return { unchanged: true };
     const amountDue = writeAmount(tx, { db, FieldValue, ref, inv, lines: bill.lines, adjustments: inv.adjustments || [], extra: { dueDate: bill.dueDate, coverFrom: bill.coverFrom, coverTo: bill.coverTo, months: bill.months, planId: fresh.data().subscription?.planId ?? inv.planId, planName: fresh.data().entitlements?.planName ?? inv.planName, ...(bill.prepaid ? { prepaid: true } : {}) } });
     tx.set(audit(db), { type: "billing.bill-repriced", summary: `${inv.period} bill re-priced: ${peso(inv.amountDue)} → ${peso(amountDue)}`, businessId, invoiceId: ref.id, amount: amountDue, actor: operator, before: { lines: inv.lines ?? null, amountDue: inv.amountDue }, after: { lines: bill.lines, amountDue }, at: FieldValue.serverTimestamp() });
+    return { invoiceId: ref.id, amountDue };
+  }, TX);
+}
+
+// An unpaid upgrade bill follows the agreed price set after the product
+// change: agreed price − what's been paid toward this access (discounts stay).
+async function repriceUpgradeBill({ db, FieldValue, businessId, operator }) {
+  const bRef = db.collection("businesses").doc(businessId);
+  return db.runTransaction(async (tx) => {
+    const b = await tx.get(bRef);
+    const sub = b.data()?.subscription || {};
+    if (!sub.upgradeDue?.invoiceId) return null;
+    const ref = invoices(db).doc(sub.upgradeDue.invoiceId);
+    const snap = await tx.get(ref);
+    if (!snap.exists || !isEditable(snap.data())) return null;
+    const inv = snap.data();
+    const paid = int(sub.accessPaid);
+    const price = Number.isSafeInteger(sub.priceOverride) ? sub.priceOverride : int(sub.amount);
+    const due = Math.max(0, price - paid);
+    if (due === sumLines(inv.lines)) return { unchanged: true };
+    const planName = b.data().entitlements?.planName ?? sub.planId;
+    const lines = [{ kind: "upgrade", label: `Upgrade to ${planName} (${peso(price)} − ${peso(paid)} already paid)`, amount: due }];
+    const amountDue = writeAmount(tx, { db, FieldValue, ref, inv, lines, adjustments: inv.adjustments || [] });
+    tx.update(bRef, { "subscription.upgradeDue.amount": amountDue });
+    tx.set(audit(db), { type: "billing.bill-repriced", summary: `Upgrade bill re-priced: ${peso(inv.amountDue)} → ${peso(amountDue)} (agreed ${peso(price)})`, businessId, invoiceId: ref.id, amount: amountDue, actor: operator, before: { lines: inv.lines, amountDue: inv.amountDue }, after: { lines, amountDue }, at: FieldValue.serverTimestamp() });
     return { invoiceId: ref.id, amountDue };
   }, TX);
 }
