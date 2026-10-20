@@ -4198,3 +4198,6 @@ tr.is-saving {
 .tpl-swatch[data-template="romantic"] { background: linear-gradient(135deg, #f8eef0 55%, #b56576 55%); }
 .tpl-swatch[data-template="editorial"] { background: linear-gradient(135deg, #f4f1ec 55%, #9c6b3c 55%); }
 @media (max-width: 719px) { .tpl-options { grid-template-columns: 1fr; } }
+/* Reviews & Feedback: long text wraps inside the row (no sideways scroll) */
+.sa-rows td.fb-text { white-space: normal; min-width: 180px; max-width: 280px; }
+.sa-rows td.fb-text .cell-sub-line { display: block; }

@@ -83,16 +83,15 @@ export function feedbackView(el, ctx) {
           </form>
           ${d.rows.length
             ? html`<div class="table-wrap"><table class="table table-compact rows sa-rows" data-role="feedback">
-                <thead><tr><th class="m-only"></th><th>Customer</th><th>Rating</th><th class="col-secondary">Most useful</th><th class="col-secondary">Could improve</th><th>Recommend</th><th>Testimonial</th><th>Submitted</th><th>Status</th><th></th></tr></thead>
+                <thead><tr><th class="m-only"></th><th>Customer</th><th>Rating</th><th>Feedback</th><th>Recommend</th><th>Testimonial</th><th>Submitted</th><th>Status</th><th></th></tr></thead>
                 <tbody>${d.rows.map(
                   (r) => html`<tr data-feedback="${r.id}">
                     <td class="m-only"><div class="m-row"><div class="m-main"><span class="m-title">${r.businessName}</span><span class="m-sub">${stars(r.rating)} · ${r.recommendLabel ?? ""} · ${when(r.submittedAt)}</span>${r.testimonial ? html`<span class="m-sub">“${clip(r.testimonial, 70)}”</span>` : ""}</div><div class="m-end">${statusChip(r.status)}${permissionChip(r)}</div></div></td>
                     <td><span class="cell-strong">${r.businessName}</span><span class="cell-sub">${r.productName ?? r.planId ?? ""}</span></td>
                     <td data-role="rating" title="${r.rating}/5">${stars(r.rating)}</td>
-                    <td class="col-secondary">${clip(r.useful)}</td>
-                    <td class="col-secondary">${clip(r.improve)}</td>
+                    <td class="fb-text" data-role="fb-text"><span class="cell-sub-line"><b>Useful:</b> ${clip(r.useful, 70)}</span><span class="cell-sub-line"><b>Improve:</b> ${clip(r.improve, 70)}</span></td>
                     <td>${r.recommendLabel ?? "—"}</td>
-                    <td>${clip(r.testimonial, 70)} ${permissionChip(r)}</td>
+                    <td class="fb-text">${clip(r.testimonial, 70)}<span class="cell-sub-line">${permissionChip(r)}</span></td>
                     <td>${when(r.submittedAt)}</td>
                     <td data-role="status">${statusChip(r.status)}</td>
                     <td class="row-actions" data-m="more">${feedbackMenu(r)}</td>
