@@ -1134,7 +1134,65 @@ c6e6ffd was NOT the final baseline: the owner's final spec for Reports and the H
   - member removal and its audit; owner protected; Owner can't call it;
   - delete (typed name, all access refused incl. the guest link, audited, Deleted filter) and restore;
   - layouts at 390 and 1280 with no page overflow.
-  - The one open item: the 12-month Usage history table under the business page's Advanced section scrolls inside its own box on a phone.
+  - The one open item: the 12-month Usage history table under the business page's Advanced section scrolls inside its own box on a phone. (Fixed in 1cb7cc5, next entry.)
+- **Superseded in part:** the "two plans per workspace" catalog and the founding prices (next entry).
+
+### 2026-10-20 · Final pricing model + Distributor Customers back (f04b7da, 06ae6de, 1cb7cc5)
+
+- **Products** (`shared/plans.seed.js`; staging re-seeded with `seed:plans --overwrite`, approved; no plan had been edited in Super Admin):
+
+  | Product | Terms | Included | Add-ons |
+  |---|---|---|---|
+  | Luna Household | 1 month ₱149 · 3 months ₱349 (paid trials) · **12 months ₱1,190 (Best Value, default)** | 1 paid family/admin user, 500 MB; kasambahay logins free | +1 family/admin user ₱199 / 12 months; +500 MB ₱199 / 12 months |
+  | Distributor | **₱499 / month** + ₱999 one-time setup · 3-month prepaid starter ₱1,290 | 2 users, 500 MB | +2 users ₱149 / month; +1 GB ₱99 / month |
+  | Luna Bridal | 12 months ₱1,490 only | 1 planner, 500 MB, standard website invitation | (Super Admin limit overrides) |
+  | Luna Bridal Custom | 12 months, starting at ₱2,990 | 1 planner, 500 MB, customized invitation + designer work | (overrides; agreed price per design) |
+
+  - Luna Bridal Custom keeps plan id `bridal-plus`: the customized invitation (INVITATION_LEVEL_BY_PLAN) is tied to it, so no wedding needs migrating.
+  - Distributor+ and Luna Household+ are legacy (hidden, still valid), like Starter / Growth / Pro. Baby keeps its two plans.
+  - Taglines (what each product is for) are stored on the product.
+- **Product / term / add-ons are separate** (`shared/plan-billing.js`):
+  - A business stores `termMonths`, a `prepaidTerm` (Distributor's next bill covering 3 months), an `addOns` snapshot (prices frozen) and an optional `priceOverride`.
+  - No `household-3-month`-style plan ids.
+  - Add-on users and storage go on top of the included (or overridden) limits in every entitlement snapshot (`buildEntitlementsSnapshot`).
+- **Billing:**
+  - A prepaid term is one bill covering its months. Distributor is then monthly again, and nothing is billed for months already paid.
+  - Household renews for the chosen term ("Access until …", "Renewal due …", due soon a week before for 1 or 3 months, 30 days for 12).
+  - Bridal is 12-month access with no renewal.
+  - Add-ons are billed for the months a bill covers. Recurring income = Distributor's monthly price + its monthly add-ons only.
+  - Founding prices are removed.
+- **Super Admin:**
+  - **Create Business:** Product → Term (one term: hidden) → name → owner; Business ID, timezone and agreed price under Advanced.
+  - **⋯ Change access:** term, paid through, add-on quantities, price; audited `entitlements.access-changed`.
+  - **⋯ Change product:** only where there's a choice (Luna Bridal ↔ Custom keeps the wedding, start and access end; or off a legacy plan).
+  - **Dates:** Distributor "Due Nov 20, 2026", Household "Access until … / Renewal due …", Bridal "Access ends …", always with the year.
+  - **Products page:** product, price, terms, included + add-ons, active count; Edit = term prices, add-on prices, setup fee, included users and storage, tagline.
+- **Customers (Distributor, back):**
+  - In the menu again (phone: under More).
+  - Rows show name · contact · delivery address; **Add order** first; ⋯ View / Edit.
+  - Form: Name *, Contact, Delivery address (only Name required; no email). Older records keep any company / email / notes.
+  - Details: contact, delivery address, Add order, total orders, last order, order history, activity.
+  - **Add order** opens the order form linked to the customer, with name, contact and delivery address filled in. Linking a saved customer inside the order form also fills an empty delivery address.
+  - Orders still take no customer, a typed customer, or a saved one.
+  - **History:** an order keeps the customer snapshot it was made with; editing the customer never rewrites past orders (verified live).
+  - **Download Excel:** a Customers sheet (Customer, Contact, Delivery Address, Total Orders; no ids).
+- **Data compatibility:**
+  - Existing businesses keep their stored price and limits until their product or access is changed. veah-bridal (Luna Bridal Custom, 6 users from the old catalog) and rwp-d419 (legacy Household+, 3 users) are unchanged.
+  - A recompute or product change on an older Bridal business gives it 1 planning user. Nobody is removed, but adding members is blocked until Super Admin adds capacity.
+- **Tests:**
+  - **Unit:** 1718 pass (105 files). Wedding test fixtures with a team get room through a Super Admin user override.
+  - **Emulator:** 41 files / 2970 pass locally.
+  - **CI:** passed on f04b7da, 06ae6de and 1cb7cc5.
+- **Live on staging:** 65/65 (temporary `pp-*-tmp` businesses, a temporary operator and test people, all removed afterwards). Covered:
+  - the catalog, terms, add-ons and limits;
+  - create with a term (Bridal 3 months refused);
+  - Distributor ₱1,290 / 3 months → ₱499 monthly;
+  - Distributor add-ons raise limits and the bill;
+  - Household ₱149 trial → Access until / Renewal due;
+  - a second family user refused, then Change access (12 months + 1 user) lets them in, audited;
+  - Bridal → Custom keeps dates, agreed ₱3,990;
+  - Customers: saved without email; order linked with the saved details; editing the customer leaves the order alone; walk-in still works; the Customers sheet;
+  - Products / Create Business / business page / Change access / Subscriptions / Customers / Add order / customer details at 390 and 1280, no sideways scroll (the Advanced tables now fit a phone).
 
 ## Plan (decisions made from the brief)
 
