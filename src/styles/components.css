@@ -4078,5 +4078,8 @@ tr.is-saving {
 @media (max-width: 719px) {
   .sa-rows td[data-m="info"] { display: block; flex: 1 1 100%; padding-left: 0 !important; }
   .sa-rows td[data-m="info"] .cell-sub-line, .sa-rows td[data-m="info"] .cell-sub { font-size: var(--text-xs); }
-  .sa-advanced .table-compact td:first-child { white-space: normal; }
+  .sa-advanced .table-compact { width: 100%; table-layout: fixed; font-size: var(--text-xs); }
+  .sa-advanced .table-compact th,
+  .sa-advanced .table-compact td { white-space: normal; overflow-wrap: anywhere; padding: var(--space-1) !important; }
+  .sa-advanced .table-compact .select-compact { width: 100%; min-width: 0; }
 }
