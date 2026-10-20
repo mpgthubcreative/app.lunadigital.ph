@@ -56,7 +56,7 @@ export function subscriptionsView(el, ctx) {
                 <thead><tr><th class="m-only"></th><th>Name / plan</th><th>Billing</th><th>Date</th><th>Status</th><th></th></tr></thead>
                 <tbody>${rows.map(
                   (r) => html`<tr data-business="${r.id}">
-                    ${mobileCell({ title: r.name, sub: `${r.planName ?? ctx.planName(r.planId)} · ${whenText(r)}`, end: stateChip(r) })}
+                    ${mobileCell({ title: r.name, sub: [r.planName ?? ctx.planName(r.planId), r.billingType === "annual" ? billingText(r) : null, whenText(r)].filter(Boolean).join(" · "), end: stateChip(r) })}
                     <td><a class="cell-strong" href="${ctx.base}/businesses?b=${r.id}" data-link>${r.name}</a><span class="cell-sub">${r.planName ?? ctx.planName(r.planId)}</span></td>
                     <td>${billingText(r)}<span class="cell-sub">${peso(r.amount)}</span></td>
                     <td data-role="when">${whenText(r)}${r.attention?.kind === "overdue" ? html`<span class="cell-sub tone-danger">${r.attention.label}</span>` : ""}</td>

@@ -4073,3 +4073,10 @@ tr.is-saving {
 @media (min-width: 720px) {
   .cust-rows td.row-actions { display: table-cell; width: 1%; white-space: nowrap; text-align: right; }
 }
+/* Super Admin phones: a product's terms and add-ons show under its summary;
+   Advanced tables wrap their first column instead of widening the card. */
+@media (max-width: 719px) {
+  .sa-rows td[data-m="info"] { display: block; flex: 1 1 100%; padding-left: 0 !important; }
+  .sa-rows td[data-m="info"] .cell-sub-line, .sa-rows td[data-m="info"] .cell-sub { font-size: var(--text-xs); }
+  .sa-advanced .table-compact td:first-child { white-space: normal; }
+}

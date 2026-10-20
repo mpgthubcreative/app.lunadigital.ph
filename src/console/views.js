@@ -491,8 +491,8 @@ export async function plansView(el, ctx) {
               return html`<tr data-plan="${p.id}">
                 ${mobileCell({ title: p.name, sub: `${priceLabel(p)} · ${limitsText(p)}`, end: formatNumber(counts[p.id] ?? 0), endSub: "active" })}
                 <td class="col-wrap"><span class="cell-strong">${p.name}</span><span class="cell-sub">${priceLabel(p)}</span>${p.tagline ? html`<span class="cell-sub" data-role="tagline">${p.tagline}</span>` : ""}</td>
-                <td class="col-wrap" data-role="terms">${b.terms.map((t) => html`<span class="cell-sub-line">${termLabel(p, t.months)}</span>`)}${b.type === "term" ? html`<span class="cell-sub">No automatic renewal</span>` : ""}</td>
-                <td class="col-wrap" data-role="included">${limitsText(p)}${b.addOns.length ? html`${b.addOns.map((a) => html`<span class="cell-sub">+ ${addOnLabel(a)}</span>`)}` : ""}</td>
+                <td class="col-wrap" data-role="terms" data-m="info">${b.terms.map((t) => html`<span class="cell-sub-line">${termLabel(p, t.months)}</span>`)}${b.type === "term" ? html`<span class="cell-sub">No automatic renewal</span>` : ""}</td>
+                <td class="col-wrap" data-role="included" data-m="info">${limitsText(p)}${b.addOns.length ? html`${b.addOns.map((a) => html`<span class="cell-sub">+ ${addOnLabel(a)}</span>`)}` : ""}</td>
                 <td class="num" data-col="subscribers">${formatNumber(counts[p.id] ?? 0)}</td>
                 <td class="row-actions" data-m="more"><button type="button" class="btn btn-compact" data-act="edit" data-id="${p.id}">Edit</button></td>
               </tr>`;
