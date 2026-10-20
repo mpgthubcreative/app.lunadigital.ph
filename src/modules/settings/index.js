@@ -118,7 +118,7 @@ function packageCards(session, fresh = null) {
 
 function dataCard(session) {
   const owner = session.member.isAccountOwner === true;
-  const plan = resetPlanFor(session.workspace?.templateId);
+  const plan = resetPlanFor(session.workspace?.templateId ?? session.entitlements?.workspaceTemplateId);
   const canExport = showExportPage(session);
   if (!canExport && !(owner && plan)) return "";
   return card({

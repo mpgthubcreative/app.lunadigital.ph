@@ -142,6 +142,7 @@ describe("Settings → Data", () => {
   it("Download Excel; Data Management → Reset Workspace Data for the account owner only (what it removes and keeps; type RESET)", async () => {
     const s = sessionFixture();
     s.member.permissions = { ...s.member.permissions, "data.export": true };
+    delete s.workspace; // the app's session has no workspace field: it comes from the entitlements
     mountSettings(container, s);
     const data = container.querySelector('[data-role="data"]');
     expect(data.textContent).toMatch(/Download Excel/);
