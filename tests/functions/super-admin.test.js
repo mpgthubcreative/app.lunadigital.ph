@@ -1,5 +1,6 @@
 // Super Admin consolidation (2026-10-19) and the final pricing model
-// (2026-10-20: one product per workspace, terms, add-ons): the usage meter
+// (2026-10-20: one product per workspace, terms, add-ons; 2026-10-21:
+// Household / Distributor 6 or 12 months, Distributor ₱250 setup): the usage meter
 // (Excel downloads and bytes), users / storage limits, paid
 // seats (a kasambahay login and wedding guests never use one), billing by
 // workspace (monthly / annual / 12-month access, no fake MRR), the short
@@ -54,19 +55,25 @@ async function owned(businessId, planId, workspaceTemplateId, { clock = OCT19, t
 }
 
 describe("products: one per workspace, terms, add-ons, users and storage limits", () => {
-  it("the sold catalog: Luna Household, Distributor, Luna Bridal, Luna Bridal Custom; the + plans and Starter / Growth / Pro are legacy", () => {
+  it("the sold catalog: Luna Household, Luna Distributor, Luna Bridal, Luna Bridal Custom; the + plans and Starter / Growth / Pro are legacy", () => {
     const sold = Object.values(PLAN_SEED).filter(isCatalogPlan);
     const by = (w) => sold.filter((p) => planWorkspace(p) === w).map((p) => [p.name, priceLabel(p), p.limits.users, p.limits.storageBytes]);
-    expect(by("distributor")).toEqual([["Distributor", "₱499 / month + ₱999 setup", 2, 500 * MB]]);
-    expect(by("household-payroll")).toEqual([["Luna Household", "₱1,190 / 12 months", 1, 500 * MB]]);
+    expect(by("distributor")).toEqual([["Luna Distributor", "₱2,390 / 12 months + ₱250 setup", 2, 500 * MB]]);
+    expect(by("household-payroll")).toEqual([["Luna Household", "₱2,390 / 12 months", 1, 500 * MB]]);
     expect(by("bridal-expense")).toEqual([["Luna Bridal", "₱1,490 / 12 months", 1, 500 * MB], ["Luna Bridal Custom", "Starting at ₱2,990 / 12 months", 1, 500 * MB]]);
     expect(["distributor-plus", "household-plus", "starter", "growth", "pro"].map((id) => PLAN_SEED[id].legacy)).toEqual([true, true, true, true, true]);
     // Terms are data on the product, not separate plans.
     const h = PLAN_SEED["household-basic"];
-    expect(planBilling(h).terms.map((t) => termLabel(h, t.months))).toEqual(["1 month · ₱149 · Paid trial", "3 months · ₱349 · Paid trial", "12 months · ₱1,190 · Best Value"]);
-    expect(planBilling(h).defaultTermMonths).toBe(12);
+    // 6 or 12 months (no monthly option); a 30-day free trial first.
+    expect(planBilling(h).terms.map((t) => termLabel(h, t.months))).toEqual(["6 months · ₱1,299", "12 months · ₱2,390 · Best Value"]);
+    expect(planBilling(h)).toMatchObject({ defaultTermMonths: 12, setupFee: 0, trialDays: 30 });
     const d = PLAN_SEED["distributor-basic"];
-    expect(planBilling(d).terms.map((t) => termLabel(d, t.months))).toEqual(["1 month · ₱499 / month", "3 months · ₱1,290 · Prepaid starter"]);
+    expect(planBilling(d).terms.map((t) => termLabel(d, t.months))).toEqual(["6 months · ₱1,299", "12 months · ₱2,390 · Best Value"]);
+    expect(planBilling(d)).toMatchObject({ type: "annual", defaultTermMonths: 12, setupFee: 25000, trialDays: 30 });
+    expect(planBilling(PLAN_SEED["bridal-basic"])).toMatchObject({ price: 149000, trialDays: 30 });
+    expect(planBilling(PLAN_SEED["bridal-plus"]).trialDays).toBe(0);
+    // ₱999 is gone from the sold catalog (only the legacy monthly Distributor+ keeps it).
+    expect(sold.filter((p) => planBilling(p).setupFee === 99900)).toEqual([]);
     expect(planBilling(PLAN_SEED["bridal-basic"]).terms.map((t) => t.months)).toEqual([12]);
     expect(planBilling(PLAN_SEED["bridal-plus"])).toMatchObject({ autoRenew: false, priceIsMinimum: true, terms: [{ months: 12, price: 299000 }] });
     // Add-ons: Household per year, Distributor per month; Bridal: Super Admin overrides.
@@ -81,6 +88,7 @@ describe("products: one per workspace, terms, add-ons, users and storage limits"
     expect(rows.find((r) => r.limitKey === "ordersPerMonth")).toMatchObject({ unlimited: true, atOrOver: false, percent: null });
     // Recurring income only for monthly products (never a prepaid or 12-month price).
     expect(PLAN_SEED["household-basic"].pricing.monthly).toBe(0);
+    expect(PLAN_SEED["distributor-basic"].pricing.monthly).toBe(0);
     expect(PLAN_SEED["bridal-basic"].pricing.monthly).toBe(0);
   });
 });
@@ -135,18 +143,18 @@ describe("seats: a kasambahay login and wedding guests never use a paid seat", (
 });
 
 describe("billing by workspace", () => {
-  it("Distributor: monthly from the start date; Record payment covers a month; overdue shows its days", async () => {
-    await owned("dist-1", "distributor-basic", "distributor", { clock: new Date("2026-09-12T04:00:00Z") });
-    expect(biz("dist-1").subscription).toMatchObject({ billingType: "monthly", amount: 49900, setupFee: 99900, startDate: "2026-09-12", monthlyAmount: 49900 });
+  it("legacy Distributor+ (monthly): from the start date; Record payment covers a month; overdue shows its days", async () => {
+    await owned("dist-1", "distributor-plus", "distributor", { clock: new Date("2026-09-12T04:00:00Z") });
+    expect(biz("dist-1").subscription).toMatchObject({ billingType: "monthly", amount: 89900, setupFee: 99900, startDate: "2026-09-12", monthlyAmount: 89900 });
     let t = subscriptionTerms(biz("dist-1").subscription);
     expect(attentionOf(t, { today: "2026-10-19" })).toMatchObject({ kind: "overdue", date: "2026-09-12", days: 37, label: "37 days overdue", what: "Due" });
-    // The first bill carries the one-time setup fee: ₱499 + ₱999 = ₱1,498.
-    expect(billFor(biz("dist-1"), "2026-09")).toMatchObject({ dueDate: "2026-09-12", amountDue: 149800, lines: [{ kind: "base", label: "Distributor · Monthly access", amount: 49900 }, { kind: "setup", label: "One-time setup fee", amount: 99900 }] });
+    // The first bill carries its (legacy) one-time setup fee: ₱899 + ₱999 = ₱1,898.
+    expect(billFor(biz("dist-1"), "2026-09")).toMatchObject({ dueDate: "2026-09-12", amountDue: 189800, lines: [{ kind: "base", label: "Distributor+ · Monthly access", amount: 89900 }, { kind: "setup", label: "One-time setup fee", amount: 99900 }] });
     const paid = await recordOperatorPayment({ db: world.db, FieldValue: FV(), businessId: "dist-1", input: { paymentDate: "2026-10-18", reference: "Cash" }, operator: "ops@luna.test", now: OCT19 });
     expect(paid).toMatchObject({ status: "paid", paidThrough: "2026-10-11" });
     // Billed once: tracked, never on a later bill.
     expect(biz("dist-1").subscription.setupFeeBilled).toBe(true);
-    expect(billFor(biz("dist-1"), "2026-10")).toMatchObject({ dueDate: "2026-10-12", amountDue: 49900, coverFrom: "2026-10-12", coverTo: "2026-11-11" });
+    expect(billFor(biz("dist-1"), "2026-10")).toMatchObject({ dueDate: "2026-10-12", amountDue: 89900, coverFrom: "2026-10-12", coverTo: "2026-11-11" });
     expect(billFor(biz("dist-1"), "2026-10").lines.map((l) => l.kind)).toEqual(["base"]);
     t = subscriptionTerms(biz("dist-1").subscription);
     expect(t.dueDate).toBe("2026-10-12");
@@ -156,36 +164,37 @@ describe("billing by workspace", () => {
     expect([t.paidThrough, t.dueDate]).toEqual(["2026-11-11", "2026-11-12"]);
     expect(attentionOf(t, { today: "2026-10-19" })).toBeNull();
     expect(attentionOf(t, { today: "2026-11-06" })).toMatchObject({ kind: "due", label: "Due soon" });
-    expect(world.db.docs.get("platformMetrics/2026-10").revenueByBillingType).toMatchObject({ monthly: 149800 + 49900 });
+    expect(world.db.docs.get("platformMetrics/2026-10").revenueByBillingType).toMatchObject({ monthly: 189800 + 89900 });
   });
 
-  it("Distributor 3-month prepaid starter: one ₱1,290 bill covering 3 months (no bills in between), then ₱499 monthly; not recurring income until monthly", async () => {
-    await owned("dist-pre", "distributor-basic", "distributor", { termMonths: 3 });
-    expect(biz("dist-pre").subscription).toMatchObject({ billingType: "monthly", amount: 49900, prepaidTerm: { months: 3, price: 129000 }, startDate: "2026-10-19", monthlyAmount: 49900 });
-    // 3-month access ₱1,290 + one-time setup fee ₱999 = ₱2,289.
-    expect(billFor(biz("dist-pre"), "2026-10")).toMatchObject({ dueDate: "2026-10-19", amountDue: 228900, months: 3, prepaid: true, coverTo: "2027-01-18" });
+  it("Luna Distributor 6 months: ₱1,299 + ₱250 setup on the first paid bill only; the renewal is ₱1,299; prepaid, so never recurring income", async () => {
+    await owned("dist-pre", "distributor-basic", "distributor", { termMonths: 6 });
+    expect(biz("dist-pre").subscription).toMatchObject({ billingType: "annual", amount: 129900, termMonths: 6, setupFee: 25000, setupFeeBilled: false, startDate: "2026-10-19", monthlyAmount: 0 });
+    expect(billFor(biz("dist-pre"), "2026-10")).toMatchObject({ dueDate: "2026-10-19", amountDue: 154900, months: 6, coverTo: "2027-04-18", lines: [{ kind: "base", label: "Luna Distributor · 6-month access", amount: 129900 }, { kind: "setup", label: "One-time setup fee", amount: 25000 }] });
     expect(billFor(biz("dist-pre"), "2026-11")).toBeNull();
-    expect(billFor(biz("dist-pre"), "2026-12")).toBeNull();
     const paid = await recordOperatorPayment({ db: world.db, FieldValue: FV(), businessId: "dist-pre", input: { paymentDate: "2026-10-19" }, operator: "ops@luna.test", now: OCT19 });
-    expect(paid).toMatchObject({ status: "paid", paidThrough: "2027-01-18" });
-    expect(biz("dist-pre").subscription.prepaidTerm).toBeNull();
+    expect(paid).toMatchObject({ status: "paid", paidThrough: "2027-04-18" });
+    expect(biz("dist-pre").subscription.setupFeeBilled).toBe(true);
     const t = subscriptionTerms(biz("dist-pre").subscription);
-    expect([t.dueDate, t.amount, t.prepaidNext]).toEqual(["2027-01-19", 49900, false]);
-    expect(billFor(biz("dist-pre"), "2026-12")).toBeNull();
-    expect(billFor(biz("dist-pre"), "2027-01")).toMatchObject({ dueDate: "2027-01-19", amountDue: 49900, months: 1 });
+    expect([t.dueDate, t.amount, t.renewal]).toEqual(["2027-04-19", 129900, true]);
+    expect(billFor(biz("dist-pre"), "2027-04")).toMatchObject({ dueDate: "2027-04-19", amountDue: 129900, months: 6, lines: [{ kind: "base", amount: 129900 }] });
+    expect(world.db.docs.get("platformMetrics/2026-10").revenueByBillingType).toMatchObject({ annual: 154900 });
+    // No monthly option any more.
+    await expect(createBusiness({ ...world, name: "M", planId: "distributor-basic", workspaceTemplateId: "distributor", businessId: "dist-m", termMonths: 1 })).rejects.toMatchObject({ code: "invalid-input" });
   });
 
-  it("Household paid trial: 1 month for ₱149 → 'Access until', then 'Renewal due' a week before", async () => {
-    await owned("home-trial", "household-basic", "household-payroll", { termMonths: 1 });
-    expect(biz("home-trial").subscription).toMatchObject({ billingType: "annual", amount: 14900, termMonths: 1, monthlyAmount: 0 });
+  it("Household 6 months: ₱1,299 → 'Access until', then 'Renewal due' a week before; no setup fee", async () => {
+    await owned("home-trial", "household-basic", "household-payroll", { termMonths: 6 });
+    expect(biz("home-trial").subscription).toMatchObject({ billingType: "annual", amount: 129900, termMonths: 6, setupFee: 0, monthlyAmount: 0 });
+    expect(billFor(biz("home-trial"), "2026-10").lines.map((l) => l.kind)).toEqual(["base"]);
     await recordOperatorPayment({ db: world.db, FieldValue: FV(), businessId: "home-trial", input: { paymentDate: "2026-10-19" }, operator: "ops@luna.test", now: OCT19 });
     const t = subscriptionTerms(biz("home-trial").subscription);
-    expect(t).toMatchObject({ paidThrough: "2026-11-18", accessUntil: "2026-11-18", dueDate: "2026-11-19", renewal: true });
-    expect(attentionOf(t, { today: "2026-11-01" })).toBeNull();
-    expect(attentionOf(t, { today: "2026-11-14" })).toMatchObject({ kind: "due", what: "Renewal due", date: "2026-11-19" });
-    expect(world.db.docs.get("platformMetrics/2026-10").revenueByBillingType).toMatchObject({ annual: 14900 });
-    // A term the product doesn't sell is refused.
-    await expect(createBusiness({ ...world, name: "X", planId: "household-basic", workspaceTemplateId: "household-payroll", businessId: "home-x", termMonths: 6 })).rejects.toMatchObject({ code: "invalid-input" });
+    expect(t).toMatchObject({ paidThrough: "2027-04-18", accessUntil: "2027-04-18", dueDate: "2027-04-19", renewal: true });
+    expect(attentionOf(t, { today: "2027-04-01" })).toBeNull();
+    expect(attentionOf(t, { today: "2027-04-14" })).toMatchObject({ kind: "due", what: "Renewal due", date: "2027-04-19" });
+    expect(world.db.docs.get("platformMetrics/2026-10").revenueByBillingType).toMatchObject({ annual: 129900 });
+    // A term the product doesn't sell is refused (no 1- or 3-month option).
+    for (const termMonths of [1, 3]) await expect(createBusiness({ ...world, name: "X", planId: "household-basic", workspaceTemplateId: "household-payroll", businessId: `home-x${termMonths}`, termMonths })).rejects.toMatchObject({ code: "invalid-input" });
     await expect(createBusiness({ ...world, name: "Y", planId: "bridal-basic", workspaceTemplateId: "bridal-expense", businessId: "wed-y", termMonths: 3 })).rejects.toMatchObject({ code: "invalid-input" });
   });
 
@@ -236,15 +245,16 @@ describe("Overview + Action Center", () => {
     expect(JSON.stringify(o)).not.toMatch(/GrossProfit|platformCosts|margin/i);
     // Distributor+ ₱899 is recurring; the household and wedding payments aren't monthly income.
     expect(o.recurringIncome).toBe(89900 + 199000 + 99000); // + biz-a growth (₱1,990) and biz-b starter (₱990), legacy monthly
-    expect(o.annualIncomeThisMonth).toBe(119000 + 149000);
+    expect(o.annualIncomeThisMonth).toBe(239000 + 149000);
     const abc = o.needsAttention.find((r) => r.id === "dist-2");
     expect(abc).toMatchObject({ name: "ABC Frozen Foods", planName: "Distributor+", billingType: "monthly", attention: { kind: "overdue", date: "2026-10-12", days: 7, label: "7 days overdue" } });
     expect(o.needsAttention.map((r) => r.id)).not.toContain("home-3");
     expect(o.needsAttention.map((r) => r.id)).not.toContain("wed-3");
     const ws = Object.fromEntries(o.incomeByWorkspace.map((w) => [w.workspaceTemplateId, w]));
-    expect(ws["household-payroll"]).toMatchObject({ billingType: "annual", collected: 119000, recurring: null });
+    expect(ws["household-payroll"]).toMatchObject({ billingType: "annual", collected: 239000, recurring: null });
     expect(ws["bridal-expense"]).toMatchObject({ billingType: "term", collected: 149000, recurring: null });
-    expect(ws.distributor).toMatchObject({ billingType: "monthly" });
+    // Luna Distributor is prepaid (6 / 12 months) now; legacy monthly plans still count as recurring.
+    expect(ws.distributor).toMatchObject({ billingType: "annual" });
   });
 
   it("subscription actions: clear labels; Send notification reaches the owners; suspend / reactivate / cancel keep the data", async () => {
@@ -272,17 +282,17 @@ describe("Overview + Action Center", () => {
   });
 
   it("Change access (Household): term, paid through, add-ons (+1 family user, +500 MB) and an agreed price; the product stays; audited", async () => {
-    await owned("home-acc", "household-basic", "household-payroll", { termMonths: 3 });
+    await owned("home-acc", "household-basic", "household-payroll", { termMonths: 6 });
     expect(biz("home-acc").entitlements.limits).toMatchObject({ users: 1, storageBytes: 500 * MB });
     const r = ok(await op({ action: "setAccess", businessId: "home-acc", changes: { termMonths: 12, paidThrough: "2026-12-31", addOns: { user: 1, storage: 2 } }, reason: "family plan" }));
     expect(r.limits).toMatchObject({ users: 2, storageBytes: 1500 * MB });
     const sub = biz("home-acc").subscription;
-    expect(sub).toMatchObject({ planId: "household-basic", termMonths: 12, amount: 119000, paidThrough: "2026-12-31" });
+    expect(sub).toMatchObject({ planId: "household-basic", termMonths: 12, amount: 239000, paidThrough: "2026-12-31" });
     expect(sub.addOns.map((a) => [a.id, a.qty, a.price])).toEqual([["user", 1, 19900], ["storage", 2, 19900]]);
     // The next bill: the 12-month price + the add-ons for 12 months.
     const t = subscriptionTerms(sub);
-    expect([t.dueDate, t.amount]).toEqual(["2027-01-01", 119000 + 19900 + 2 * 19900]);
-    expect(billFor(biz("home-acc"), "2027-01")).toMatchObject({ amountDue: 178700, months: 12, coverTo: "2027-12-31" });
+    expect([t.dueDate, t.amount]).toEqual(["2027-01-01", 239000 + 19900 + 2 * 19900]);
+    expect(billFor(biz("home-acc"), "2027-01")).toMatchObject({ amountDue: 298700, months: 12, coverTo: "2027-12-31" });
     // The extra seat really is a seat: a second family member fits now.
     const spouse = await ensureAuthUser({ auth: world.auth, email: "spouse@acc.test", name: "Spouse" });
     await addMember({ ...world, businessId: "home-acc", uid: spouse.uid, email: spouse.email, name: "Spouse", roleTemplate: "manager" });
@@ -296,21 +306,22 @@ describe("Overview + Action Center", () => {
     const audits = [...world.db.docs.entries()].filter(([k, v]) => k.startsWith("platformAudit/") && v.type === "entitlements.access-changed").map(([, v]) => v.summary);
     expect(audits[0]).toMatch(/term 12 months; paid through 2026-12-31; add-ons 1 × Additional family\/admin user, 2 × Additional 500 MB storage/);
     // Refused: a term not sold, an add-on not offered, a legacy plan.
-    expect((await op({ action: "setAccess", businessId: "home-acc", changes: { termMonths: 6 }, reason: "test" })).status).toBe(400);
+    expect((await op({ action: "setAccess", businessId: "home-acc", changes: { termMonths: 3 }, reason: "test" })).status).toBe(400);
     expect((await op({ action: "setAccess", businessId: "home-acc", changes: { addOns: { users: 2 } }, reason: "test" })).status).toBe(400);
     expect((await op({ action: "setAccess", businessId: "biz-a", changes: { termMonths: 1 }, reason: "test" })).body.error).toBe("legacy-plan");
   });
 
-  it("Change access (Distributor): +2 users / +1 GB per month raise the limits and the monthly bill (recurring income)", async () => {
+  it("Change access (Distributor): +2 users / +1 GB per month raise the limits; billed for the whole prepaid term (never recurring income)", async () => {
     await owned("dist-acc", "distributor-basic", "distributor");
     ok(await op({ action: "setAccess", businessId: "dist-acc", changes: { addOns: { users: 1, storage: 1 } }, reason: "growing" }));
     expect(biz("dist-acc").entitlements.limits).toMatchObject({ users: 4, storageBytes: (500 + 1024) * MB });
-    expect(biz("dist-acc").subscription.monthlyAmount).toBe(49900 + 14900 + 9900);
-    expect(billFor(biz("dist-acc"), "2026-11", { setup: false })).toMatchObject({ amountDue: 74700, months: 1 });
-    expect(billFor(biz("dist-acc"), "2026-11", { setup: false }).lines.map((l) => [l.label, l.amount])).toEqual([["Distributor · Monthly access", 49900], ["1 × +2 users", 14900], ["1 × +1 GB storage", 9900]]);
-    // Next bill as a 3-month prepaid term (add-ons for 3 months too).
-    ok(await op({ action: "setAccess", businessId: "dist-acc", changes: { termMonths: 3 }, reason: "prepay" }));
-    expect(subscriptionTerms(biz("dist-acc").subscription)).toMatchObject({ prepaidNext: true, termMonths: 3, amount: 129000 + 3 * (14900 + 9900) });
+    expect(biz("dist-acc").subscription.monthlyAmount).toBe(0);
+    const bill = billFor(biz("dist-acc"), "2026-10", { setup: false });
+    expect(bill).toMatchObject({ amountDue: 239000 + 12 * (14900 + 9900), months: 12 });
+    expect(bill.lines.map((l) => [l.kind, l.amount])).toEqual([["base", 239000], ["addon", 12 * 14900], ["addon", 12 * 9900]]);
+    // The next term as 6 months (add-ons for 6 months too).
+    ok(await op({ action: "setAccess", businessId: "dist-acc", changes: { termMonths: 6 }, reason: "shorter" }));
+    expect(subscriptionTerms(biz("dist-acc").subscription)).toMatchObject({ termMonths: 6, amount: 129900 + 6 * (14900 + 9900) });
   });
 });
 
@@ -322,24 +333,24 @@ describe("bills: setup fee, discounts / credits, Bridal upgrade, frozen history"
     const paid = await recordOperatorPayment({ db: world.db, FieldValue: FV(), businessId: "dist-w", input: { paymentDate: "2026-10-19" }, operator: "ops@luna.test", now: OCT19 });
     expect(paid.status).toBe("paid");
     const [inv] = nextBill("dist-w");
-    expect(inv.lines.map((l) => [l.kind, l.amount])).toEqual([["base", 49900], ["setup", 99900]]);
-    expect(inv.adjustments).toEqual([{ id: "setup-waived", type: "setup_waived", description: "Setup fee waived", amount: 99900 }]);
-    expect([inv.amountDue, inv.amountPaid]).toEqual([49900, 49900]);
+    expect(inv.lines.map((l) => [l.kind, l.amount])).toEqual([["base", 239000], ["setup", 25000]]);
+    expect(inv.adjustments).toEqual([{ id: "setup-waived", type: "setup_waived", description: "Setup fee waived", amount: 25000 }]);
+    expect([inv.amountDue, inv.amountPaid]).toEqual([239000, 239000]);
     expect([...world.db.docs.values()].some((v) => v.type === "billing.setup-fee-waived" && v.businessId === "dist-w")).toBe(true);
   });
 
-  it("+ Add discount / deduction: negative lines (Founding −₱300, Referral −₱100 → ₱1,098); removable before payment; never below ₱0; locked once paid", async () => {
+  it("+ Add discount / deduction: negative lines (Founding −₱300, Referral −₱100 → ₱2,240); removable before payment; never below ₱0; locked once paid", async () => {
     await owned("dist-d", "distributor-basic", "distributor");
     const a = ok(await op({ action: "addAdjustment", businessId: "dist-d", adjustment: { type: "discount", description: "Founding discount", amount: 30000 } }));
     const b = ok(await op({ action: "addAdjustment", businessId: "dist-d", adjustment: { type: "credit", description: "Referral credit", amount: 10000 } }));
-    expect([a.amountDue, b.amountDue]).toEqual([119800, 109800]);
+    expect([a.amountDue, b.amountDue]).toEqual([234000, 224000]);
     const [inv] = nextBill("dist-d");
-    expect(inv.lines.map((l) => l.amount)).toEqual([49900, 99900]);
+    expect(inv.lines.map((l) => l.amount)).toEqual([239000, 25000]);
     expect(inv.adjustments.map((x) => [x.type, x.description, x.amount])).toEqual([["discount", "Founding discount", 30000], ["credit", "Referral credit", 10000]]);
     // The product's price is untouched.
-    expect(biz("dist-d").subscription.amount).toBe(49900);
+    expect(biz("dist-d").subscription.amount).toBe(239000);
     ok(await op({ action: "removeAdjustment", businessId: "dist-d", invoiceId: inv.id, adjustmentId: inv.adjustments[1].id }));
-    expect(nextBill("dist-d")[0].amountDue).toBe(119800);
+    expect(nextBill("dist-d")[0].amountDue).toBe(234000);
     const big = ok(await op({ action: "addAdjustment", businessId: "dist-d", adjustment: { type: "credit", description: "Loyalty credit", amount: 500000 } }));
     expect(big.amountDue).toBe(0);
     const paid = ok(await op({ action: "recordPayment", businessId: "dist-d", payment: { paymentDate: "2026-10-19" } }));
@@ -358,10 +369,12 @@ describe("bills: setup fee, discounts / credits, Bridal upgrade, frozen history"
     await owned("dist-h", "distributor-basic", "distributor");
     await recordOperatorPayment({ db: world.db, FieldValue: FV(), businessId: "dist-h", input: { paymentDate: "2026-10-19" }, operator: "ops@luna.test", now: OCT19 });
     const before = structuredClone(nextBill("dist-h")[0]);
-    ok(await op({ action: "savePlan", planId: "distributor-basic", changes: { termPrices: { 1: 59900 }, setupFee: 150000 } }));
+    ok(await op({ action: "savePlan", planId: "distributor-basic", changes: { termPrices: { 12: 259000 }, setupFee: 50000 } }));
     const after = nextBill("dist-h")[0];
     expect([after.lines, after.amountDue, after.amountPaid]).toEqual([before.lines, before.amountDue, before.amountPaid]);
-    expect(billFor(biz("dist-h"), "2026-11").amountDue).toBe(49900);
+    expect(before.lines.map((l) => l.amount)).toEqual([239000, 25000]);
+    // The renewal keeps this business's price; the setup fee was billed once.
+    expect(billFor(biz("dist-h"), "2027-10").amountDue).toBe(239000);
   });
 
   it("Luna Bridal → Custom on paid access: only the difference (₱2,990 − ₱1,490 = ₱1,500), discount allowed, access end kept; a downgrade bills nothing", async () => {
@@ -429,7 +442,7 @@ describe("bills: setup fee, discounts / credits, Bridal upgrade, frozen history"
   it("Create Business (Advanced): add-ons from the start raise the limits and the first bill; a custom setup fee", async () => {
     ok(await op({ action: "createBusiness", business: { workspaceTemplateId: "distributor", planId: "distributor-basic", name: "Big Start", ownerName: "B", ownerEmail: "b@big.test", businessId: "big-start", addOns: { users: 1 }, setupFee: 50000 } }));
     expect(biz("big-start").entitlements.limits.users).toBe(4);
-    expect(billFor(biz("big-start"), "2026-10").lines.map((l) => [l.kind, l.amount])).toEqual([["base", 49900], ["addon", 14900], ["setup", 50000]]);
+    expect(billFor(biz("big-start"), "2026-10").lines.map((l) => [l.kind, l.amount])).toEqual([["base", 239000], ["addon", 12 * 14900], ["setup", 50000]]);
   });
 });
 
@@ -471,9 +484,9 @@ describe("members and businesses", () => {
 
   it("Create Business: workspace + plan + name; the ID is made from the name", async () => {
     expect(businessIdFromName("Carlo & Yanie’s Wedding")).toBe("carlo-yanies-wedding");
-    const r = ok(await op({ action: "createBusiness", business: { workspaceTemplateId: "household-payroll", planId: "household-basic", termMonths: 3, name: "Prado Home", ownerName: "Mon Prado", ownerEmail: "mon@prado.test", businessId: businessIdFromName("Prado Home") } }));
+    const r = ok(await op({ action: "createBusiness", business: { workspaceTemplateId: "household-payroll", planId: "household-basic", termMonths: 6, name: "Prado Home", ownerName: "Mon Prado", ownerEmail: "mon@prado.test", businessId: businessIdFromName("Prado Home") } }));
     expect(r.businessId).toBe("prado-home");
-    expect(biz("prado-home").subscription).toMatchObject({ billingType: "annual", amount: 34900, termMonths: 3 });
+    expect(biz("prado-home").subscription).toMatchObject({ billingType: "annual", amount: 129900, termMonths: 6 });
     // Bridal Custom with the quoted price; the default term (12 months).
     ok(await op({ action: "createBusiness", business: { workspaceTemplateId: "bridal-expense", planId: "bridal-plus", priceOverride: 399000, name: "Carlo & Yanie", ownerName: "Carlo", ownerEmail: "carlo@wed.test", businessId: "carlo-yanie" } }));
     expect(biz("carlo-yanie").subscription).toMatchObject({ billingType: "term", amount: 299000, priceOverride: 399000, termMonths: 12 });
@@ -486,18 +499,18 @@ describe("products are edited in Super Admin", () => {
   it("term prices, add-on prices, setup fee and included limits change for NEW businesses; existing ones keep theirs; audited; validated", async () => {
     await world.db.collection("plans").doc("distributor-basic").set(structuredClone(PLAN_SEED["distributor-basic"]));
     await owned("dist-5", "distributor-basic", "distributor");
-    const r = ok(await op({ action: "savePlan", planId: "distributor-basic", changes: { termPrices: { 1: 54900, 3: 139000 }, addOnPrices: { users: 15900 }, setupFee: 0, users: 3, storageMb: 750, tagline: "Orders, stock and money in one place." } }));
-    expect(r.plan.pricing).toMatchObject({ price: 54900, monthly: 54900, setupFee: 0, billingType: "monthly" });
-    expect(r.plan.pricing.terms.map((t) => [t.months, t.price])).toEqual([[1, 54900], [3, 139000]]);
+    const r = ok(await op({ action: "savePlan", planId: "distributor-basic", changes: { termPrices: { 6: 139900, 12: 259000 }, addOnPrices: { users: 15900 }, setupFee: 0, users: 3, storageMb: 750, tagline: "Orders, stock and money in one place." } }));
+    expect(r.plan.pricing).toMatchObject({ price: 259000, monthly: 0, setupFee: 0, billingType: "annual" });
+    expect(r.plan.pricing.terms.map((t) => [t.months, t.price])).toEqual([[6, 139900], [12, 259000]]);
     expect(r.plan.pricing.addOns.find((a) => a.id === "users").price).toBe(15900);
     expect(r.plan.limits).toMatchObject({ users: 3, storageBytes: 750 * MB, ordersPerMonth: UNLIMITED });
     expect(r.plan.tagline).toBe("Orders, stock and money in one place.");
-    expect(biz("dist-5").subscription.amount).toBe(49900);
+    expect(biz("dist-5").subscription.amount).toBe(239000);
     expect(biz("dist-5").entitlements.limits.users).toBe(2);
     await owned("dist-6", "distributor-basic", "distributor");
-    expect(biz("dist-6").subscription.amount).toBe(54900);
+    expect(biz("dist-6").subscription.amount).toBe(259000);
     expect(biz("dist-6").entitlements.limits.users).toBe(3);
     expect([...world.db.docs.values()].some((v) => v.type === "plan.changed" && v.planId === "distributor-basic")).toBe(true);
-    for (const bad of [{ termPrices: { 1: 0 } }, { termPrices: { 6: 10000 } }, { addOnPrices: { nope: 100 } }, { users: 0 }, { billingType: "weekly" }, { secret: 1 }]) expect((await op({ action: "savePlan", planId: "distributor-basic", changes: bad })).status, JSON.stringify(bad)).toBe(400);
+    for (const bad of [{ termPrices: { 6: 0 } }, { termPrices: { 1: 10000 } }, { addOnPrices: { nope: 100 } }, { users: 0 }, { billingType: "weekly" }, { secret: 1 }]) expect((await op({ action: "savePlan", planId: "distributor-basic", changes: bad })).status, JSON.stringify(bad)).toBe(400);
   });
 });

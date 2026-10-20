@@ -26,19 +26,21 @@
 import { respond, withErrorHandling, requireMethod, parseJsonBody, RequestError } from "./_lib/http.js";
 import { getAdmin } from "./_lib/firebase-admin.js";
 import { requireOperator, overview, listBusinesses, businessDetail, listAudit, listPlans, planSubscribers, creatableWorkspaces, usageOverview } from "./_lib/operator.js";
-import { provisionBusiness, assignPlan, setAccess, updateOverrides, setLimitOverride, setSubscriptionStatus, addMember, setMemberStatus, updateBusinessGeneral, setTenantTerminology, ensureAuthUser, passwordSetupLink, ProvisioningError } from "./_lib/provisioning.js";
+import { provisionBusiness, assignPlan, setAccess, chooseConversion, restartTrial, updateOverrides, setLimitOverride, setSubscriptionStatus, addMember, setMemberStatus, updateBusinessGeneral, setTenantTerminology, ensureAuthUser, passwordSetupLink, ProvisioningError } from "./_lib/provisioning.js";
 import { tenantDb } from "./_lib/tenant-db.js";
 import { OperatorError, validateCreateBusinessInput, validateSubscriptionStatus, validateReason, overrideChange } from "../../shared/operators.js";
 import { ROLE_TEMPLATES } from "../../shared/permissions.js";
 import { isValidBusinessId } from "../../shared/tenancy.js";
 import { BillingError } from "../../shared/billing.js";
-import { confirmPayment, rejectPayment, readPaymentProof, getBillingSettings, setBillingSettings, recordOperatorPayment, setBillingDate, sendBillingReminder, addBillAdjustment, removeBillAdjustment, repriceOpenBill, createUpgradeBill, businessBills } from "./_lib/billing.js";
+import { confirmPayment, rejectPayment, readPaymentProof, getBillingSettings, setBillingSettings, recordOperatorPayment, setBillingDate, sendBillingReminder, addBillAdjustment, removeBillAdjustment, repriceOpenBill, createUpgradeBill, businessBills, conversionBill, assertNoPendingPayment } from "./_lib/billing.js";
 import { removeMember } from "./_lib/provisioning.js";
 import { unlinkStaffLogin } from "./_lib/members.js";
 import { deleteBusiness, restoreBusiness } from "./_lib/lifecycle.js";
 import { savePlan } from "./_lib/plans-admin.js";
 import { startSupport, supportRead, endSupport, openSupportSession, supportAreas, SupportError } from "./_lib/support.js";
 import { invitationSummary } from "./_lib/invitation-design.js";
+import { listFeedback, setFeedbackStatus } from "./_lib/feedback.js";
+import { FeedbackError } from "../../shared/feedback.js";
 import { lunaOverview, platformOverview, listSubscriptionPayments, paymentDetail, listSubscriptions, listPlatformExpenses, createPlatformExpense, updatePlatformExpense, removePlatformExpense, copyRecurringExpenses, listCostRates, addCostRate, usageCost, economics } from "./_lib/platform.js";
 
 const STATUS = {
@@ -61,6 +63,10 @@ const STATUS = {
   "legacy-plan": 409,
   "bill-locked": 409,
   "no-session": 403,
+  "not-in-trial": 409,
+  "payment-pending": 409,
+  "no-permission": 409,
+  "already-submitted": 409,
   "session-ended": 403,
 };
 const obj = (v) => (v && typeof v === "object" && !Array.isArray(v) ? v : {});
@@ -245,6 +251,24 @@ const ACTIONS = {
     },
   },
   deleteBusiness: { fields: ["businessId", "confirmName", "reason"], run: async ({ db, admin, op }, b) => deleteBusiness({ db, FieldValue: admin.firestore.FieldValue, businessId: bid(b.businessId), confirmName: b.confirmName, reason: b.reason ?? null, operator: actorOf(op) }) },
+  // Free trials (2026-10-21): choose the plan for a customer (Continue with
+  // Luna on their behalf), or restart a trial (status "reset", new dates).
+  convertTrial: {
+    fields: ["businessId", "planId", "termMonths", "reason"],
+    run: async ({ db, admin, op }, b) => {
+      const businessId = bid(b.businessId);
+      const reason = validateReason(b.reason);
+      await assertNoPendingPayment({ db, businessId });
+      const r = await chooseConversion({ db, admin, businessId, planId: b.planId ?? null, termMonths: b.termMonths, actor: actorOf(op), reason });
+      const invoice = await conversionBill({ db, FieldValue: admin.firestore.FieldValue, businessId, operator: actorOf(op) });
+      return { planId: r.planId, startDate: (await db.collection("businesses").doc(businessId).get()).data().subscription.conversion.startDate, invoice };
+    },
+  },
+  restartTrial: { fields: ["businessId", "days", "reason"], run: async ({ db, admin, op }, b) => restartTrial({ db, admin, businessId: bid(b.businessId), days: b.days ?? 30, actor: actorOf(op), reason: validateReason(b.reason) }).then(() => ({ restarted: true })) },
+  // Reviews & Feedback (2026-10-21): private trial feedback; a status is
+  // Super Admin's review only (Featured needs the marketing permission).
+  feedbackList: { fields: ["filters"], run: async ({ db }, b) => listFeedback({ db, filters: obj(b.filters) }) },
+  setFeedbackStatus: { fields: ["feedbackId", "status"], run: async ({ db, admin, op }, b) => setFeedbackStatus({ db, FieldValue: admin.firestore.FieldValue, feedbackId: b.feedbackId, status: b.status, operator: actorOf(op) }) },
   // Support access (2026-10-20): the customer's records only through an
   // explicit, reasoned, read-only, 30-minute, audited session.
   supportStart: { fields: ["businessId", "reason"], run: async ({ db, admin, op }, b) => startSupport({ db, FieldValue: admin.firestore.FieldValue, businessId: bid(b.businessId), reason: b.reason, operator: { uid: op.uid, email: op.email || null } }) },
@@ -304,7 +328,7 @@ export function createOperatorHandler({ getAdmin: loadAdmin }) {
     try {
       return respond(200, { success: true, ...(await action.run({ db, auth, admin, bucket, op }, body)) });
     } catch (err) {
-      if (err instanceof ProvisioningError || err instanceof OperatorError || err instanceof BillingError || err instanceof SupportError) throw new RequestError(err.code, err.message, STATUS[err.code] || 400);
+      if (err instanceof ProvisioningError || err instanceof OperatorError || err instanceof BillingError || err instanceof SupportError || err instanceof FeedbackError) throw new RequestError(err.code, err.message, STATUS[err.code] || 400);
       throw err;
     }
   });

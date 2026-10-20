@@ -13,15 +13,36 @@
 //                   (Household): four mobileTabs + More.
 //   Sign out lives in the account menu (desktop) and the More sheet.
 
+import { TRIAL_ENDED_MESSAGE } from "@shared/trial.js";
 import { resolveNavigation, accessPolicy, ENVIRONMENT_LABELS, normalizeEnvironment, canUseNotifications, terminologyLabels, getWorkspaceTemplate, snapshotWorkspaceTemplateId } from "@shared/index.js";
 import { html, render } from "../lib/html.js";
 import { icon, lunaMark } from "../components/icons.js";
 import { initials } from "../lib/format.js";
 import { mountBell } from "./notification-bell.js";
 import { showExportPage, canSeeWeddingSetup, canSeeWeddingProgram, canSeeCrewMeals } from "./routes.js";
+import { openFeedback, isOwner } from "./feedback.js";
 
 // One bell per rendered shell (a business switch renders a new shell).
 let bell = null;
+
+// The free trial (2026-10-21): the days left (those who see billing), then
+// the trial-ended message for everyone. Day 27+: a quiet feedback reminder.
+function trialBanner(session) {
+  const t = session.subscription?.trial;
+  if (!t || !t.open) return "";
+  const billing = session.member.permissions?.["billing.view"] === true;
+  if (t.ended || session.subscription?.access?.trialEnded) {
+    return html`<div class="banner banner-danger" role="alert" data-role="trial-ended">${TRIAL_ENDED_MESSAGE}${billing ? html` <a href="/subscription" data-link class="banner-link">Choose a plan</a>` : ""}</div>`;
+  }
+  if (!billing || t.conversion) return "";
+  const left = t.daysLeft + 1;
+  return html`<div class="banner banner-info" role="note" data-role="trial">Free trial · ${left === 1 ? "last day" : `${left} days left`} <a href="/subscription" data-link class="banner-link">Continue with Luna</a></div>`;
+}
+function feedbackReminder(session) {
+  const fb = session.subscription?.feedback;
+  if (!fb || fb.prompt !== "reminder" || fb.submitted || !isOwner(session)) return "";
+  return html`<div class="banner banner-info" role="note" data-role="feedback-reminder">How is Luna working for you? <button type="button" class="banner-link btn-link" id="feedbackBtn">Share feedback</button></div>`;
+}
 
 const SUBSCRIPTION_MESSAGES = {
   past_due: "Your subscription payment is overdue. Please settle it to avoid interruption.",
@@ -193,6 +214,8 @@ export function renderShell(root, session, handlers = {}) {
             ${policy.banner && SUBSCRIPTION_MESSAGES[session.subscription.status]
               ? html`<div class="banner banner-${policy.banner}" role="alert">${SUBSCRIPTION_MESSAGES[session.subscription.status]}</div>`
               : ""}
+            ${trialBanner(session)}
+            ${feedbackReminder(session)}
           </div>
 
           <main class="content" id="content" tabindex="-1"></main>
@@ -255,6 +278,9 @@ export function renderShell(root, session, handlers = {}) {
   };
   document.addEventListener("keydown", onKey);
 
+  root.querySelector("#feedbackBtn")?.addEventListener("click", async () => {
+    if (await openFeedback()) root.querySelector('[data-role="feedback-reminder"]')?.remove();
+  });
   root.querySelector("#logoutBtn").addEventListener("click", signOut);
   root.querySelector("#logoutBtnMobile").addEventListener("click", signOut);
   if (notifications) bell = mountBell(root.querySelector("#bellSlot"), session, handlers.bell || {});

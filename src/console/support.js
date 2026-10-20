@@ -18,7 +18,7 @@ import { confirmDialog } from "../components/feedback.js";
 import { api, apiDownload } from "../lib/api.js";
 import { saveBlob } from "../lib/export.js";
 import { formatDayId } from "../lib/format.js";
-import { openInvitePreview } from "../modules/wedding/invite-preview.js";
+import { openInvitePreview } from "../modules/wedding/invitation/preview.js";
 
 const STATUS = { draft: ["Draft", "warning"], ready: ["Ready", "info"], published: ["Published", "success"] };
 const at = (iso) => (iso ? new Date(iso).toLocaleString("en-PH", { dateStyle: "medium", timeStyle: "short" }) : "—");
@@ -36,8 +36,10 @@ export function invitationCard(inv, b, ctx) {
       <dl class="dl dl-compact">
         <dt>Wedding</dt><dd data-role="inv-couple">${inv.coupleNames || b.name}${inv.weddingDate ? html`<span class="cell-sub">${formatDayId(inv.weddingDate)}</span>` : ""}</dd>
         <dt>Invitation</dt><dd data-role="inv-type">${custom ? "Custom" : "Standard"}${inv.productName ? html`<span class="cell-sub">${inv.productName}</span>` : ""}</dd>
+        <dt>Template</dt><dd data-role="inv-template">${inv.templateLabel ?? "Luna Standard"}${inv.draftTemplateId && inv.draftTemplateId !== inv.templateId ? html`<span class="cell-sub">Draft: ${inv.draftTemplateId}</span>` : ""}</dd>
         <dt>Guests see</dt><dd data-role="inv-live">${inv.live === "custom" ? `Custom design v${inv.publishedVersion}` : "Standard invitation"}${inv.unpublishedChanges ? html`<span class="cell-sub tone-warning">Draft changes not published yet</span>` : ""}</dd>
         <dt>Last updated</dt><dd>${at(inv.lastUpdated)}</dd>
+        ${inv.trialPreviewOnly ? html`<dt>Free trial</dt><dd data-role="inv-trial">Preview only: guest links open once Luna Bridal is paid</dd>` : ""}
       </dl>
       <div class="page-actions" data-role="inv-actions">
         <button type="button" class="btn btn-compact" data-act="inv-preview" data-which="draft">Preview draft</button>

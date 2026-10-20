@@ -6,8 +6,10 @@
 //                          (Luna Super Admin edits; server-only)
 //   C. Guest party         businesses/{bid}/guests/{id} + its secure token
 //
-// Plans: Luna Bridal (bridal-basic) = Standard invitation; Luna Bridal+
-// (bridal-plus) = Customized invitation. The level comes from the PLAN, never
+// Plans: Luna Bridal (bridal-basic) = Standard invitation (the Owner picks
+// one of the Standard templates; weddingSetup/current.templateId); Luna
+// Bridal Custom (bridal-plus) = Customized invitation (Super Admin's design
+// over any template). The level comes from the PLAN, never
 // from a tenant id. Upgrading / downgrading only changes the plan: content,
 // guests, tokens, slugs and design data are all kept.
 //
@@ -32,7 +34,6 @@ export const invitationContent = (setup) => Object.fromEntries(INVITATION_CONTEN
 // The guest a Super Admin preview shows: never a real guest or link.
 export const SAMPLE_GUEST = Object.freeze({ name: "Sample Guest", seats: 2, rsvp: "awaiting", confirmed: 0, roles: [] });
 
-export const SECTION_IDS = Object.freeze(["hero", "welcome", "story", "ceremony", "reception", "map", "dressCode", "entourage", "gallery", "faq", "rsvp", "footer"]);
 export const SECTION_LABELS = Object.freeze({ hero: "Hero (names, date, photo)", welcome: "Welcome message", story: "Our story", ceremony: "Ceremony", reception: "Reception", map: "Map links", dressCode: "Dress code", entourage: "Entourage (from Roles)", gallery: "Gallery", faq: "FAQ", rsvp: "RSVP", footer: "Footer" });
 export const FONTS = Object.freeze(["Cormorant Garamond", "Playfair Display", "EB Garamond", "Libre Baskerville", "Great Vibes", "Dancing Script", "Parisienne", "Montserrat", "Lato", "Josefin Sans", "Poppins", "Inter"]);
 const ENUMS = Object.freeze({
@@ -52,44 +53,11 @@ const ASSET_SLOTS = ["pageBackground", "cardBackground", "heroOverlay", "ornamen
 export const ASSET_SLOT_LABELS = Object.freeze({ pageBackground: "Page background", cardBackground: "Card background", heroOverlay: "Hero frame / overlay", ornamentTop: "Top ornament", ornamentBottom: "Bottom ornament", divider: "Section divider" });
 const TEXT_LIMITS = { scriptLine: 60, rsvpTitle: 30, footerLine: 120 };
 
-const STANDARD_ORDER = ["hero", "welcome", "ceremony", "reception", "dressCode", "rsvp"];
-const ALL_HIDDEN = Object.fromEntries(SECTION_IDS.map((id) => [id, false]));
-// Built-in templates: complete defaults. "standard" IS today's invitation.
-export const TEMPLATES = Object.freeze({
-  standard: {
-    label: "Standard (Luna)",
-    theme: { background: "#f6f1ea", card: "#fffdf9", text: "#3b3430", muted: "#7b6f66", accent: "#8a6d4b", accentText: "#fffdf9", border: "#e8dccb", headingFont: "Cormorant Garamond", bodyFont: "Inter", scriptFont: "Cormorant Garamond" },
-    layout: { cardWidth: "normal", spacing: "normal", align: "center", corners: "square", buttonStyle: "pill", frame: "card", namesCase: "upper" },
-    hero: { style: "photo-below-names" },
-    sections: { order: [...STANDARD_ORDER, "story", "map", "entourage", "gallery", "faq", "footer"], visible: { ...ALL_HIDDEN, hero: true, welcome: true, ceremony: true, reception: true, dressCode: true, rsvp: true } },
-    gallery: { style: "grid" },
-  },
-  classic: {
-    label: "Classic serif",
-    theme: { background: "#efe9df", card: "#ffffff", text: "#2d2a26", muted: "#6f675f", accent: "#7a5c3e", accentText: "#ffffff", border: "#ddd0bd", headingFont: "Playfair Display", bodyFont: "Lato", scriptFont: "Great Vibes" },
-    layout: { cardWidth: "normal", spacing: "airy", align: "center", corners: "soft", buttonStyle: "solid", frame: "card", namesCase: "normal" },
-    hero: { style: "framed" },
-    sections: { order: ["hero", "welcome", "story", "ceremony", "reception", "map", "dressCode", "entourage", "gallery", "faq", "rsvp", "footer"], visible: { ...ALL_HIDDEN, hero: true, welcome: true, story: true, ceremony: true, reception: true, map: true, dressCode: true, rsvp: true, footer: true } },
-    gallery: { style: "grid" },
-  },
-  modern: {
-    label: "Modern minimal",
-    theme: { background: "#ffffff", card: "#ffffff", text: "#1d1d1f", muted: "#6e6e73", accent: "#1d1d1f", accentText: "#ffffff", border: "#e5e5ea", headingFont: "Josefin Sans", bodyFont: "Inter", scriptFont: "Josefin Sans" },
-    layout: { cardWidth: "wide", spacing: "airy", align: "left", corners: "square", buttonStyle: "square", frame: "full", namesCase: "upper" },
-    hero: { style: "full-bleed" },
-    sections: { order: ["hero", "welcome", "ceremony", "reception", "map", "dressCode", "gallery", "faq", "rsvp", "footer", "story", "entourage"], visible: { ...ALL_HIDDEN, hero: true, welcome: true, ceremony: true, reception: true, map: true, dressCode: true, gallery: true, rsvp: true, footer: true } },
-    gallery: { style: "carousel" },
-  },
-  garden: {
-    label: "Garden",
-    theme: { background: "#eef3ec", card: "#fbfdf9", text: "#2f3b2f", muted: "#66756a", accent: "#4f6f52", accentText: "#ffffff", border: "#d5e0d2", headingFont: "Cormorant Garamond", bodyFont: "Lato", scriptFont: "Parisienne" },
-    layout: { cardWidth: "normal", spacing: "normal", align: "center", corners: "round", buttonStyle: "pill", frame: "card", namesCase: "normal" },
-    hero: { style: "photo-above-names" },
-    sections: { order: ["hero", "welcome", "story", "ceremony", "reception", "map", "dressCode", "entourage", "gallery", "faq", "rsvp", "footer"], visible: { ...ALL_HIDDEN, hero: true, welcome: true, story: true, ceremony: true, reception: true, dressCode: true, entourage: true, gallery: true, rsvp: true, footer: true } },
-    gallery: { style: "grid" },
-  },
-});
-export const TEMPLATE_IDS = Object.freeze(Object.keys(TEMPLATES));
+// The templates live in src/modules/wedding/invitation/templates/{id}/
+// (registry.js): one list for the guest page, Wedding Setup, Super Admin
+// and this validation. Nothing about a template is copied into a wedding.
+export { TEMPLATES, TEMPLATE_IDS, STANDARD_TEMPLATE_IDS, DEFAULT_TEMPLATE_ID, SECTION_IDS, getTemplate, isStandardTemplate } from "../src/modules/wedding/invitation/registry.js";
+import { TEMPLATES, TEMPLATE_IDS, SECTION_IDS } from "../src/modules/wedding/invitation/registry.js";
 
 export class DesignError extends Error {
   constructor(message) {

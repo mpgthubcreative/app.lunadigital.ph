@@ -38,6 +38,7 @@
 //                      never stored)
 //   Confirmed guests = sum of confirmed attendees (people, not records)
 
+import { isStandardTemplate } from "../src/modules/wedding/invitation/registry.js";
 import { isDayId, addDays } from "./metrics.js";
 import { isCentavos } from "./quantity.js";
 import { isValidRecordId, budgetSummary } from "./baby.js";
@@ -427,7 +428,10 @@ export function seatingPlan(guests, seatingDoc) {
 // story / footerNote / faq: content for the sections a customized
 // (Luna Bridal+) invitation can show; the Standard invitation ignores them.
 export const SETUP_TEXT = { coupleNames: 80, ceremonyVenue: 100, ceremonyAddress: 160, receptionVenue: 100, receptionAddress: 160, dressCode: 80, welcomeMessage: 600, story: 1500, footerNote: 200 };
-export const SETUP_FIELDS = [...Object.keys(SETUP_TEXT), "weddingDate", "ceremonyTime", "receptionTime", "ceremonyMap", "receptionMap", "rsvpDeadline", "rsvpEnabled", "closeAfterDeadline", "showTable", "weddingSlug", "faq"];
+// templateId: the Owner's Standard invitation template (2026-10-21; the
+// templates are in src/modules/wedding/invitation/templates/). Null = Luna
+// Standard. A Custom design (Super Admin) has its own template.
+export const SETUP_FIELDS = [...Object.keys(SETUP_TEXT), "weddingDate", "ceremonyTime", "receptionTime", "ceremonyMap", "receptionMap", "rsvpDeadline", "rsvpEnabled", "closeAfterDeadline", "showTable", "weddingSlug", "faq", "templateId"];
 export const MAX_FAQ = 8;
 
 // The friendly part of a guest's link: /w/{weddingSlug}/invite/{token}.
@@ -490,6 +494,11 @@ export function validateWeddingSetup(input) {
     const v = input.weddingSlug === null || input.weddingSlug === "" ? null : typeof input.weddingSlug === "string" ? input.weddingSlug.trim().toLowerCase() : input.weddingSlug;
     if (v !== null && !isWeddingSlug(v)) throw new WeddingError("invalid-input", `The wedding link can use lowercase letters, numbers and hyphens (${WEDDING_SLUG_MIN}–${WEDDING_SLUG_MAX} characters), e.g. carlo-and-yanie-wedding`);
     out.weddingSlug = v;
+  }
+  if (Object.hasOwn(input, "templateId")) {
+    const v = input.templateId === null || input.templateId === "" ? null : input.templateId;
+    if (v !== null && !isStandardTemplate(v)) throw new WeddingError("invalid-input", "Choose one of the invitation templates");
+    out.templateId = v;
   }
   for (const k of ["rsvpEnabled", "closeAfterDeadline", "showTable"]) {
     if (!Object.hasOwn(input, k)) continue;

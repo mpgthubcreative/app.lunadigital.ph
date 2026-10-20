@@ -26,6 +26,7 @@ export const WEDDING_STATUS = {
   "not-available": 403,
   removed: 409,
   "setup-incomplete": 409,
+  "trial-preview": 409,
   "slug-taken": 409,
   "role-taken": 409,
   "member-linked": 409,

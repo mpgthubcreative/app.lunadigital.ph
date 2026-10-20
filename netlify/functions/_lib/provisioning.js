@@ -13,6 +13,7 @@
 // businesses/{bid}/auditLog and platformAudit.
 
 import { newSubscriptionTerms, recurringAmount, addOnSnapshot, addOnCapacity, planBilling, isDayString, shiftDay, monthsText, isUnlimited, usesSeat, BILLING_TYPE_IDS } from "../../../shared/plan-billing.js";
+import { trialState, trialOpen, newTrial, TRIAL_DAYS } from "../../../shared/trial.js";
 import { businessDate as seatDay } from "../../../shared/metrics.js";
 import { planWorkspace, PLAN_SEED } from "../../../shared/plans.seed.js";
 import { computeEntitlements, validatePlan, validateEntitlementsSnapshot, isValidPlanId, EntitlementError } from "../../../shared/entitlements.js";
@@ -152,6 +153,8 @@ export async function createBusiness({
   addOns = {},
   setupFee = null,
   waiveSetupFee = false,
+  // Start with the product's 30-day free trial (no bill until a plan is chosen).
+  trial = false,
   clock = new Date(),
 }) {
   const businessName = cleanName(name, "Business name");
@@ -166,7 +169,7 @@ export async function createBusiness({
   const template = requireTemplate(workspaceTemplateId);
   const plan = await loadPlan(db, planId);
   requirePlanFits(plan, template.id);
-  const terms = billingTerms(() => newSubscriptionTerms(plan, seatDay(timezone, clock), { termMonths, priceOverride, addOns, setupFee, waiveSetupFee }));
+  const terms = billingTerms(() => newSubscriptionTerms(plan, seatDay(timezone, clock), { termMonths, priceOverride, addOns, setupFee, waiveSetupFee, trial }));
   const ref = businessId ? db.collection("businesses").doc(businessId) : db.collection("businesses").doc();
   const now = admin.firestore.FieldValue.serverTimestamp();
 
@@ -435,6 +438,62 @@ export async function setAccess({ db, admin, businessId, changes, actor, reason,
       const out = {};
       for (const k of ["termMonths", "amount", "prepaidTerm", "paidThrough", "nextRenewal", "dueDate", "addOns", "priceOverride", "monthlyAmount"]) if (next[k] !== undefined && JSON.stringify(next[k]) !== JSON.stringify(sub[k])) out[`subscription.${k}`] = next[k];
       return out;
+    },
+  });
+}
+
+// "Continue with Luna" (2026-10-21): an unconverted free trial chooses its
+// product (same workspace: Luna Bridal or Luna Bridal Custom) and term.
+// The paid terms start the day after the trial ends (or today once it has
+// ended); the first bill (with the one-time setup fee) is then made for
+// paying. The trial converts when that bill is paid. Same business, same
+// data. A customer can choose again (a different term) until they pay.
+export async function chooseConversion({ db, admin, businessId, planId = null, termMonths, actor, reason = "Chose a plan to continue with Luna", now = new Date() }) {
+  return changeEntitlements({
+    db,
+    admin,
+    businessId,
+    actor,
+    reason,
+    action: "conversion-chosen",
+    summary: () => `Continue with Luna: ${planId ?? "same product"}, ${monthsText(termMonths)}`,
+    mutate: (state) => (planId ? { ...state, planId } : state),
+    subscriptionPatch: (business, plan) => {
+      const sub = business.subscription || {};
+      if (!trialOpen(sub)) throw new ProvisioningError("not-in-trial", "This workspace isn't on a free trial");
+      const b = planBilling(plan);
+      if (!BILLING_TYPE_IDS.includes(plan.pricing?.billingType) || plan.legacy) throw new ProvisioningError("invalid-input", "Choose one of Luna's products");
+      if (!b.terms.some((t) => t.months === termMonths)) throw new ProvisioningError("invalid-input", `${plan.name} is sold for ${b.terms.map((t) => monthsText(t.months)).join(", ")}`);
+      const today = seatDay(business.timezone || "Asia/Manila", now);
+      const t = trialState(sub, today);
+      const start = t && !t.ended ? shiftDay(t.endsAt, 1) : today;
+      const samePlan = plan.id === sub.planId;
+      const kept = Object.fromEntries((Array.isArray(sub.addOns) ? sub.addOns : []).filter((a) => b.addOns.some((x) => x.id === a.id)).map((a) => [a.id, a.qty]));
+      const fresh = billingTerms(() => newSubscriptionTerms(plan, start, { termMonths, addOns: kept, setupFee: samePlan ? sub.setupFee ?? null : null, waiveSetupFee: samePlan && sub.setupFeeWaived === true }));
+      const next = { ...fresh, setupFeeBilled: sub.setupFeeBilled === true, paidThrough: null, dueDate: null, nextRenewal: null, conversion: { chosenAt: today, planId: plan.id, termMonths, startDate: start } };
+      return Object.fromEntries(Object.entries(next).map(([k, v]) => [`subscription.${k}`, v]));
+    },
+  });
+}
+
+// Super Admin: restart a free trial (status "reset", fresh dates). The data
+// stays; nothing is billed until a plan is chosen.
+export async function restartTrial({ db, admin, businessId, days = TRIAL_DAYS, actor, reason, now = new Date() }) {
+  if (!Number.isSafeInteger(days) || days < 1 || days > 90) throw new ProvisioningError("invalid-input", "Trial length: 1 to 90 days");
+  return changeEntitlements({
+    db,
+    admin,
+    businessId,
+    actor,
+    reason,
+    action: "trial-restarted",
+    summary: () => `Free trial restarted for ${days} days`,
+    mutate: (state) => state,
+    subscriptionPatch: (business) => {
+      const sub = business.subscription || {};
+      if (sub.trialStatus === "converted" || (sub.paidThrough && !trialOpen(sub))) throw new ProvisioningError("invalid-input", "This workspace is already paid");
+      const fresh = newTrial(seatDay(business.timezone || "Asia/Manila", now), days, "reset");
+      return { "subscription.trialStatus": fresh.trialStatus, "subscription.trialStartedAt": fresh.trialStartedAt, "subscription.trialEndsAt": fresh.trialEndsAt, "subscription.conversion": null };
     },
   });
 }
@@ -995,7 +1054,7 @@ export async function provisionBusiness({ db, admin, auth, request, actor = "cli
 
   // 2. The business (create() never overwrites; "exists" here = our own retry).
   try {
-    await createBusiness({ db, admin, name: req.name, planId: req.planId, workspaceTemplateId: req.workspaceTemplateId, timezone: req.timezone, businessId: req.businessId, isDemo, createdBy: actor, termMonths: req.termMonths ?? null, priceOverride: req.priceOverride ?? null, addOns: req.addOns ?? {}, setupFee: req.setupFee ?? null, waiveSetupFee: req.waiveSetupFee === true });
+    await createBusiness({ db, admin, name: req.name, planId: req.planId, workspaceTemplateId: req.workspaceTemplateId, timezone: req.timezone, businessId: req.businessId, isDemo, createdBy: actor, termMonths: req.termMonths ?? null, priceOverride: req.priceOverride ?? null, addOns: req.addOns ?? {}, setupFee: req.setupFee ?? null, waiveSetupFee: req.waiveSetupFee === true, trial: req.trial === true });
   } catch (err) {
     if (!(err instanceof ProvisioningError && err.code === "business-exists")) throw err;
     const existing = (await bRef.get()).data();

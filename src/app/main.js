@@ -28,6 +28,11 @@ import { render } from "../lib/html.js";
 import { card, emptyState } from "../components/ui.js";
 import { isStaffPortalSession } from "../staff/is-staff.js";
 import { installMenuBehavior } from "../components/menus.js";
+import { scheduleFeedbackPrompt } from "./feedback.js";
+
+// Pages a member can still open once a free trial has ended.
+const TRIAL_ENDED_PATHS = new Set(["/subscription", "/settings", "/export"]);
+let stopFeedback = () => {};
 
 const root = document.getElementById("app");
 const REVALIDATE_MS = 5 * 60 * 1000;
@@ -56,6 +61,8 @@ let mountGeneration = 0;
 
 function stopRouter() {
   mountGeneration += 1;
+  stopFeedback();
+  stopFeedback = () => {};
   if (typeof currentCleanup === "function") {
     try {
       currentCleanup();
@@ -141,6 +148,12 @@ function mountApp(session) {
     document.addEventListener("visibilitychange", onVisibility);
     return;
   }
+  // A free trial that has ended (2026-10-21): the owner lands on Continue
+  // with Luna; Settings (→ Data) and Download Excel stay open. Everyday
+  // edits are refused by the server until a plan is paid.
+  if (session.subscription?.access?.trialEnded && session.member.permissions?.["billing.view"] === true && !TRIAL_ENDED_PATHS.has(window.location.pathname)) {
+    window.history.replaceState({}, "", "/subscription");
+  }
   const shell = renderShell(root, session, {
     onSignOut: () => handleSignOut(),
     onSwitchBusiness: (businessId) => switchWorkspace(businessId),
@@ -196,6 +209,7 @@ function mountApp(session) {
     },
   });
   router.start();
+  stopFeedback = scheduleFeedbackPrompt(session);
 
   stopRevalidation();
   revalidateTimer = setInterval(revalidate, REVALIDATE_MS);

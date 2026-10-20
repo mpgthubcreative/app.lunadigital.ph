@@ -10,7 +10,7 @@ describe("plan seed", () => {
     expect(Object.keys(PLAN_SEED)).toEqual(["distributor-basic", "distributor-plus", "starter", "growth", "pro", "household-basic", "household-plus", "baby-basic", "baby-plus", "bridal-basic", "bridal-plus"]);
     expect(plans.filter((p) => p.recommended).map((p) => p.id)).toEqual(["distributor-basic", "growth", "household-basic", "baby-plus", "bridal-basic"]);
     expect(plans.filter((p) => p.legacy).map((p) => p.id)).toEqual(["distributor-plus", "starter", "growth", "pro", "household-plus"]);
-    expect(plans.filter((p) => p.workspaceTemplateId === "distributor" && !p.legacy).map((p) => [p.id, p.pricing.monthly, p.pricing.setupFee])).toEqual([["distributor-basic", 49900, 99900]]);
+    expect(plans.filter((p) => p.workspaceTemplateId === "distributor" && !p.legacy).map((p) => [p.id, p.pricing.billingType, p.pricing.setupFee, p.pricing.trialDays, p.pricing.terms.map((t) => [t.months, t.price])])).toEqual([["distributor-basic", "annual", 25000, 30, [[6, 129900], [12, 239000]]]]);
   });
 
   it("defines every limit as a non-negative integer", () => {

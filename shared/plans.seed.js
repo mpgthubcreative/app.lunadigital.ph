@@ -1,12 +1,16 @@
-// Plan configuration (final pricing model, 2026-10-20).
+// Plan configuration (final pricing model, 2026-10-21).
 //
-// ONE public product per workspace, plus Bridal's Custom service:
-//   Luna Household       ₱1,190 / 12 months (paid trials: 1 month ₱149,
-//                        3 months ₱349); 1 paid family/admin user, 500 MB
-//   Distributor          ₱499 / month + ₱999 one-time setup (3-month
-//                        prepaid starter ₱1,290); 2 users, 500 MB
-//   Luna Bridal          ₱1,490 / 12 months; 1 planner, 500 MB, standard
-//                        website invitation
+// ONE public product per workspace, plus Bridal's Custom service. Every
+// product but Custom starts with a 30-day FREE TRIAL (pricing.trialDays;
+// a trial is a state, never a bill: shared/trial.js).
+//   Luna Household       6 months ₱1,299 · 12 months ₱2,390 (Best Value);
+//                        no monthly option, no setup fee; 1 paid
+//                        family/admin user, 500 MB
+//   Luna Distributor     6 months ₱1,299 · 12 months ₱2,390 (Best Value)
+//                        + ₱250 one-time setup (first paid bill only); no
+//                        monthly option; 2 users, 500 MB
+//   Luna Bridal          ₱1,490 one-time for 12 months; 1 planner, 500 MB,
+//                        standard website invitation
 //   Luna Bridal Custom   starting at ₱2,990 / 12 months; customized website
 //                        invitation + designer work (plan id bridal-plus,
 //                        kept: the invitation level is tied to it)
@@ -69,7 +73,7 @@ function personalPlan({ id, name, workspace, monthly = 0, sortOrder, users, stor
 
 // Distributor: monthly + ₱999 setup; users and storage only, no order limit.
 const DISTRIBUTOR_MODULES = ["orders", "payments", "inventory", "customers", "reports", "imports", "expenses"];
-function distributorPlan({ id, name, sortOrder, price, users, storage, plus = false, legacy = false, terms = null, addOns = [], tagline = null }) {
+function distributorPlan({ id, name, sortOrder, price, users, storage, plus = false, legacy = false, terms = null, addOns = [], tagline = null, billing = null }) {
   return {
     id,
     name,
@@ -78,7 +82,9 @@ function distributorPlan({ id, name, sortOrder, price, users, storage, plus = fa
     workspaceTemplateId: "distributor",
     recommended: !legacy,
     sortOrder,
-    pricing: { currency: CURRENCY, setupFee: 99900, setupFeeIsMinimum: false, monthly: price, monthlyIsMinimum: false, billingType: "monthly", price, termMonths: 1, autoRenew: true, terms: terms ?? [{ months: 1, price, kind: "main" }], addOns },
+    pricing: billing
+      ? { currency: CURRENCY, setupFeeIsMinimum: false, monthly: 0, monthlyIsMinimum: false, addOns, ...billing }
+      : { currency: CURRENCY, setupFee: 99900, setupFeeIsMinimum: false, monthly: price, monthlyIsMinimum: false, billingType: "monthly", price, termMonths: 1, autoRenew: true, terms: terms ?? [{ months: 1, price, kind: "main" }], addOns },
     limits: { users, ordersPerMonth: NO_LIMIT, storageBytes: storage, importsPerMonth: 0 },
     modules: { ...ALL_SELLABLE_OFF, ...Object.fromEntries(DISTRIBUTOR_MODULES.map((m) => [m, true])) },
     features: { reportsLevel: plus ? "advanced" : "basic", inAppNotifications: true, pushNotifications: plus, googleSheets: false, advancedPermissions: false, workflowCustomization: false, support: plus ? "priority" : "standard" },
@@ -89,13 +95,22 @@ export const PLAN_SEED = Object.freeze({
   // ---- Distributor (sold) ----
   "distributor-basic": distributorPlan({
     id: "distributor-basic",
-    name: "Distributor",
+    name: "Luna Distributor",
     tagline: "See your orders, customers, stock, payments, costs and profit in one place.",
     sortOrder: 1,
-    price: 49900,
+    price: 239000,
     users: 2,
     storage: 500 * MB,
-    terms: [{ months: 1, price: 49900, kind: "main" }, { months: 3, price: 129000, kind: "trial", label: "Prepaid starter" }],
+    // Prepaid access (6 or 12 months), renewing; ₱250 setup on the first paid bill.
+    billing: {
+      billingType: "annual",
+      price: 239000,
+      termMonths: 12,
+      autoRenew: true,
+      setupFee: 25000,
+      trialDays: 30,
+      terms: [{ months: 6, price: 129900, kind: "main" }, { months: 12, price: 239000, kind: "main", label: "Best Value" }],
+    },
     addOns: [{ id: "users", label: "+2 users", users: 2, price: 14900, perMonths: 1 }, { id: "storage", label: "+1 GB storage", storageMb: 1024, price: 9900, perMonths: 1 }],
   }),
   // LEGACY (2026-10-19 catalog): capacity is an add-on now.
@@ -290,10 +305,11 @@ export const PLAN_SEED = Object.freeze({
     modules: HOUSEHOLD_MODULES,
     billing: {
       billingType: "annual",
-      price: 119000,
+      price: 239000,
       termMonths: 12,
       autoRenew: true,
-      terms: [{ months: 1, price: 14900, kind: "trial" }, { months: 3, price: 34900, kind: "trial" }, { months: 12, price: 119000, kind: "main", label: "Best Value" }],
+      trialDays: 30,
+      terms: [{ months: 6, price: 129900, kind: "main" }, { months: 12, price: 239000, kind: "main", label: "Best Value" }],
       addOns: [{ id: "user", label: "Additional family/admin user", users: 1, price: 19900, perMonths: 12 }, { id: "storage", label: "Additional 500 MB storage", storageMb: 500, price: 19900, perMonths: 12 }],
     },
   }),
@@ -313,7 +329,7 @@ export const PLAN_SEED = Object.freeze({
     users: 1,
     storage: 500 * MB,
     modules: BRIDAL_MODULES,
-    billing: { billingType: "term", price: 149000, termMonths: 12, autoRenew: false, terms: [{ months: 12, price: 149000, kind: "main" }] },
+    billing: { billingType: "term", price: 149000, termMonths: 12, autoRenew: false, trialDays: 30, terms: [{ months: 12, price: 149000, kind: "main" }] },
   }),
   // Luna Bridal Custom: the customized invitation website + designer work
   // (a service, not a bigger limit). "Starting at": the price follows the

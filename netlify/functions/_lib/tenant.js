@@ -19,6 +19,8 @@ import { RequestError } from "./http.js";
 import { authenticate } from "./auth.js";
 import { tenantDb } from "./tenant-db.js";
 import { accessPolicy } from "../../../shared/subscription.js";
+import { trialState, feedbackPrompt, TRIAL_ENDED_MESSAGE } from "../../../shared/trial.js";
+import { businessDate } from "../../../shared/metrics.js";
 import { isModuleEnabled, isModuleLaunched, getModule } from "../../../shared/modules.js";
 import { ROLE_TEMPLATES, isPermissionKey, moduleForPermission } from "../../../shared/permissions.js";
 import { validateEntitlementsSnapshot } from "../../../shared/entitlements.js";
@@ -63,7 +65,13 @@ async function evaluateCandidate(db, uid, businessId) {
   }
 
   const subscription = business.subscription || {};
-  const policy = accessPolicy(subscription.status);
+  // A free trial that ended without a paid plan (shared/trial.js): reads,
+  // the continuation page, choosing a plan, paying and Settings → Data
+  // stay open; everyday editing is refused (requireTenant: trial-ended).
+  const trial = trialState(subscription, businessDate(business.timezone || "UTC"));
+  const base = accessPolicy(subscription.status);
+  const policy = trial?.ended && base.canWrite ? { ...base, canWrite: false, banner: "trial-ended", trialEnded: true } : base;
+  const feedbackSubmitted = Boolean(business.feedbackState?.submittedAt);
   if (!policy.canRead) {
     return { ok: false, error: new RequestError("subscription-inactive", "This business account is not active. Please contact Luna support.", 403) };
   }
@@ -122,6 +130,8 @@ async function evaluateCandidate(db, uid, businessId) {
         status: subscription.status,
         renewalAt: subscription.renewalAt || null,
         graceUntil: subscription.graceUntil || null,
+        trial,
+        feedback: trial ? { submitted: feedbackSubmitted, prompt: feedbackPrompt(trial, { submitted: feedbackSubmitted }), laterAt: business.feedbackState?.laterAt ?? null } : null,
       },
       policy,
       entitlements: business.entitlements,
@@ -181,6 +191,9 @@ export async function requireTenant(event, { db, auth, permission = null, module
   }
   if (permission && context.permissions[permission] !== true) {
     throw NOT_AVAILABLE(`missing-permission:${permission}`);
+  }
+  if (write && context.policy.trialEnded) {
+    throw new RequestError("trial-ended", TRIAL_ENDED_MESSAGE, 403);
   }
   if (write && !context.policy.canWrite) {
     throw new RequestError("read-only", "This account is read-only. Changes are disabled.", 403);

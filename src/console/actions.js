@@ -36,6 +36,7 @@ export function dateText(day) {
 //   Bridal       Access ends Oct 19, 2027
 export function whenText(r) {
   if (r.attention) return `${r.attention.what} ${dateText(r.attention.date)}`;
+  if (r.trial?.open && !r.trial.conversion) return `Trial ends ${dateText(r.trial.endsAt)}`;
   if (r.billingType === "term") return r.accessUntil ? `Access ends ${dateText(r.accessUntil)}` : "—";
   if (r.billingType === "annual") return r.accessUntil ? `Access until ${dateText(r.accessUntil)}` : r.dueDate ? `Payment due ${dateText(r.dueDate)}` : "—";
   return r.dueDate ? `Due ${dateText(r.dueDate)}` : "—";
@@ -50,10 +51,12 @@ const STATE = {
   expiring: ["Expiring soon", "warning"],
   expired: ["Expired", "danger"],
   extended: ["Extended", "info"],
+  trial: ["Free trial", "info"],
+  trial_ended: ["Trial ended", "danger"],
 };
 // The one status chip: what needs attention wins (7 days overdue, Due soon…).
 export function stateChip(r) {
-  if (r.attention && ["overdue", "due"].includes(r.attention.kind) && !["suspended", "cancelled", "deleted"].includes(r.status)) return badge(r.attention.label, r.attention.tone);
+  if (r.attention && ["overdue", "due", "trial"].includes(r.attention.kind) && !["suspended", "cancelled", "deleted"].includes(r.status)) return badge(r.attention.label, r.attention.tone);
   const [label, tone] = STATE[r.state || r.status] ?? [SUBSCRIPTION_LABELS[r.status] ?? r.status ?? "—", "neutral"];
   return badge(label, tone);
 }
@@ -84,9 +87,13 @@ export function billingCell(r, sub) {
 export function subscriptionMenu(r, { detail = false, ctx = null } = {}) {
   if (r.status === "deleted") return rowMenu(r.id, [{ act: "s-view", label: "Open" }, { act: "s-restore", label: "Restore business" }], { label: `Actions for ${r.name}` });
   const cur = ctx ? planOf(ctx, r.planId) : null;
+  // A free trial (2026-10-21): nothing to record until a plan is chosen.
+  const trial = r.trial?.open === true;
+  const awaiting = trial && !r.trial.conversion;
   const items = [
     ...(detail ? [] : [{ act: "s-view", label: "Open" }]),
-    { act: "s-pay", label: "Record payment" },
+    ...(awaiting ? [] : [{ act: "s-pay", label: "Record payment" }]),
+    ...(trial ? [{ act: "s-convert", label: r.trial.conversion ? "Change chosen plan" : "Choose plan for customer" }, { act: "s-trial", label: "Restart free trial" }] : []),
     { act: "s-remind", label: "Send notification" },
     ...(!ctx || sold(cur) ? [{ act: "s-access", label: "Change access" }] : []),
     { act: "s-adjust", label: "Add discount / deduction" },
@@ -194,6 +201,29 @@ export async function runSubscriptionAction(ctx, act, r) {
         return ctx.call("recordPayment", { businessId: r.id, payment: { amount, paymentDate: x.paymentDate, ...(x.reference.trim() ? { reference: x.reference.trim() } : {}) } });
       });
       return v ? done(v.paidThrough ? `Paid. Covered through ${formatDayId(v.paidThrough)}.` : "Payment recorded.") : false;
+    }
+    if (act === "s-convert") {
+      const products = ctx.plans.filter((p) => planWorkspace(p) === r.workspaceTemplateId && isCatalogPlan(p) && sold(p));
+      const choices = products.flatMap((p) => planBilling(p).terms.filter((t) => t.kind !== "trial").map((t) => ({ value: `${p.id}|${t.months}`, label: `${p.name} · ${termLabel(p, t.months)}${planBilling(p).setupFee ? ` + ${peso(planBilling(p).setupFee)} setup` : ""}` })));
+      const v = await ask(`Choose plan · ${r.name}`, "Makes the first paid bill (from the day after the trial, or today if it has ended). The trial converts when it's paid.", [
+        { name: "choice", label: "Plan", type: "select", options: choices, value: choices.find((c) => c.value.startsWith(`${r.planId}|12`))?.value ?? choices[0]?.value },
+        { name: "reason", label: "Reason", required: true, hint: "e.g. Customer asked on Messenger" },
+      ], "Choose plan", (x) => {
+        const [planId, months] = x.choice.split("|");
+        return ctx.call("convertTrial", { businessId: r.id, planId, termMonths: Number(months), reason: x.reason });
+      });
+      return v ? done(`Plan chosen. Paid access starts ${formatDayId(v.startDate)}.`) : false;
+    }
+    if (act === "s-trial") {
+      const v = await ask(`Restart free trial · ${r.name}`, "Fresh trial dates from today. Their information stays; nothing is billed until a plan is chosen.", [
+        { name: "days", label: "Days", value: "30", inputmode: "numeric", required: true },
+        { name: "reason", label: "Reason", required: true },
+      ], "Restart trial", (x) => {
+        const days = Number(x.days);
+        if (!Number.isSafeInteger(days) || days < 1 || days > 90) throw new Error("Days: 1 to 90");
+        return ctx.call("restartTrial", { businessId: r.id, days, reason: x.reason });
+      });
+      return v ? done("Free trial restarted.") : false;
     }
     if (act === "s-remind") {
       const v = await ask(`Send notification · ${r.name}`, "The owners see it in Luna's notifications.", [{ name: "message", label: "Message (optional)", type: "textarea", hint: `Leave empty to send: ${whenText(r)}, the amount and how to pay.` }], "Send", (x) => ctx.call("sendReminder", { businessId: r.id, ...(x.message.trim() ? { message: x.message.trim() } : {}) }));

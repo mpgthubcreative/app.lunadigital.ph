@@ -21,6 +21,7 @@ import { watchUser, signIn, signOutUser, currentIdToken, friendlyAuthError } fro
 import { renderLogin, renderBoot } from "../app/screens.js";
 import { overviewView, businessesView, plansView, auditView } from "./views.js";
 import { subscriptionsView, paymentsView, usageCostView } from "./money.js";
+import { feedbackView } from "./feedback.js";
 
 const BASE = "/console";
 const SECTIONS = [
@@ -30,6 +31,7 @@ const SECTIONS = [
   { path: "/payments", label: "Payments", icon: "payments", view: paymentsView },
   { path: "/plans", label: "Products", icon: "plans", view: plansView },
   { path: "/usage", label: "Usage", icon: "budget", view: usageCostView },
+  { path: "/feedback", label: "Reviews & Feedback", icon: "heart", view: feedbackView },
   { path: "/audit", label: "Audit", icon: "reports", view: auditView },
 ];
 

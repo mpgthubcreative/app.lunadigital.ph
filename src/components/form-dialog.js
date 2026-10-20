@@ -1,4 +1,4 @@
-// Modal form. fields: [{ name, label, type: "text"|"select"|"textarea"|"file",
+// Modal form. fields: [{ name, label, type: "text"|"select"|"textarea"|"file"|"checkbox",
 // value?, options?: [{ value, label }], hint?, required?, disabled?, inputmode?,
 // placeholder?, suggestions?: [text] (typing suggestions, any text allowed),
 // more? (Phase 18.6: goes in a closed "More details (optional)" section,
@@ -6,6 +6,8 @@
 // just a smart default: default: true) }]. moreLabel names the section.
 // onSubmit(values) may throw; its message is shown in the dialog and the
 // dialog stays open. Resolves with onSubmit's result, or null if cancelled.
+// A checkbox gives true / false (value: true = ticked); a textarea takes
+// maxlength (default 300) and rows (default 2).
 // All text is escaped by html``.
 
 import { html, render } from "../lib/html.js";
@@ -23,7 +25,10 @@ function fieldMarkup(f, id) {
     return html`<input class="input" type="file" id="${common.id}" name="${common.name}" accept="${f.accept || ""}" />`;
   }
   if (f.type === "textarea") {
-    return html`<textarea class="input" id="${common.id}" name="${common.name}" rows="2" maxlength="300" ${f.placeholder ? html`placeholder="${f.placeholder}"` : ""}>${f.value ?? ""}</textarea>`;
+    return html`<textarea class="input" id="${common.id}" name="${common.name}" rows="${f.rows ?? 2}" maxlength="${f.maxlength ?? 300}" ${f.placeholder ? html`placeholder="${f.placeholder}"` : ""}>${f.value ?? ""}</textarea>`;
+  }
+  if (f.type === "checkbox") {
+    return html`<input type="checkbox" id="${common.id}" name="${common.name}" ${f.value === true ? "checked" : ""} />`;
   }
   if (f.type === "date") {
     return html`<input class="input" type="date" id="${common.id}" name="${common.name}" value="${f.value ?? ""}" ${f.max ? html`max="${f.max}"` : ""} ${f.disabled ? "disabled" : ""} />`;
@@ -46,7 +51,10 @@ export function formDialog({ title, intro = "", fields, submitLabel = "Save", ca
     const uid = ++counter;
     const backdrop = document.createElement("div");
     backdrop.className = "modal-backdrop";
-    const fieldBlock = (f) => html`<div class="field">
+    const fieldBlock = (f) =>
+      f.type === "checkbox"
+        ? html`<div class="field field-check"><label class="check" for="fd-${uid}-${f.name}">${fieldMarkup(f, `fd-${uid}-${f.name}`)}<span>${f.label}</span></label>${f.hint ? html`<div class="stat-hint">${f.hint}</div>` : ""}</div>`
+        : html`<div class="field">
                 <label for="fd-${uid}-${f.name}">${f.label}${f.required ? " *" : ""}</label>
                 ${fieldMarkup(f, `fd-${uid}-${f.name}`)}
                 ${f.hint ? html`<div class="stat-hint">${f.hint}</div>` : ""}
@@ -102,7 +110,7 @@ export function formDialog({ title, intro = "", fields, submitLabel = "Save", ca
       if (!armed || busy) return;
       busy = true;
       // File fields give the chosen File (or null); everything else its text.
-      const values = Object.fromEntries(fields.map((f) => [f.name, f.type === "file" ? form.elements[f.name].files?.[0] ?? null : form.elements[f.name].value]));
+      const values = Object.fromEntries(fields.map((f) => [f.name, f.type === "file" ? form.elements[f.name].files?.[0] ?? null : f.type === "checkbox" ? form.elements[f.name].checked : form.elements[f.name].value]));
       errorEl.hidden = true;
       submitBtn.disabled = true;
       try {

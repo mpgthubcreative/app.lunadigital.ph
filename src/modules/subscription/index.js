@@ -2,6 +2,12 @@
 // "What plan do I have, how much do I owe, how do I pay, and has Luna
 // confirmed it?" Reads and submits through /api/subscription (own business
 // only). Sending a payment only puts it For Verification: Luna confirms it.
+//
+// Continue with Luna (2026-10-21): during or after the free trial the page
+// opens with the plans for this workspace (6 / 12 months; Bridal: Luna
+// Bridal or Luna Bridal Custom). The Owner chooses one; its first bill (with
+// Distributor's one-time setup fee) appears under Bills to pay. Paying it
+// continues the same workspace with all its information.
 
 import { html, render } from "../../lib/html.js";
 import { pageHeader, card, emptyState, badge, skeleton } from "../../components/ui.js";
@@ -13,6 +19,7 @@ import { prepareProof } from "../../lib/image.js";
 import { bindReferenceDetection, detectReference } from "../../lib/payment-reference.js";
 import { SUBSCRIPTION_LABELS, businessDate } from "@shared/index.js";
 import { INVOICE_STATUSES, PAYMENT_STATUSES, PROOF_MAX_BYTES, BILLING_TIMEZONE } from "@shared/billing.js";
+import { TRIAL_DAYS, TRIAL_ENDED_MESSAGE } from "@shared/trial.js";
 
 const STATUS_TONE = { active: "success", past_due: "warning", suspended: "danger", cancelled: "neutral" };
 const monthName = (period) => new Date(`${period}-01T00:00:00Z`).toLocaleDateString("en-PH", { month: "long", year: "numeric", timeZone: "UTC" });
@@ -55,10 +62,48 @@ export async function prepareSubscriptionProof(file) {
   return prepareProof(file);
 }
 
+// "6 Months — ₱1,299 + ₱250 setup", "12 Months — ₱2,390 — BEST VALUE",
+// "Luna Bridal — ₱1,490", "Luna Bridal Custom — starts ₱2,990".
+const whole = (c) => `₱${(c / 100).toLocaleString("en-PH", { maximumFractionDigits: 2 })}`;
+export function optionLabel(o, t) {
+  const price = `${o.priceIsMinimum ? "starts " : ""}${whole(t.price)}`;
+  const head = o.terms.length === 1 ? o.name : `${t.months} Months`;
+  return `${head} — ${price}${o.setupFee > 0 ? ` + ${whole(o.setupFee)} setup` : ""}`;
+}
+
 export function mount(container, session, { api = defaultApi, toast = defaultToast, now = () => new Date(), detect = detectReference } = {}) {
-  const state = { loading: true, error: null, s: null };
+  const state = { loading: true, error: null, s: null, choosing: false };
   let alive = true;
   const money = (c) => formatCentavos(c ?? 0, session.business.currency || "PHP");
+  const owner = session.member.isAccountOwner === true || session.member.roleTemplate === "owner";
+
+  // Continue with Luna: the plans; the chosen one is marked.
+  function continueSection(s) {
+    const t = s.trial;
+    const chosen = t.conversion;
+    const length = Math.round((Date.parse(`${t.endsAt}T00:00:00Z`) - Date.parse(`${t.startedAt}T00:00:00Z`)) / 86400000) + 1 || TRIAL_DAYS;
+    return html`<section class="section" data-role="continue">
+      ${t.ended
+        ? html`<div class="banner banner-danger" role="alert" data-role="trial-ended">${TRIAL_ENDED_MESSAGE}</div>`
+        : html`<p class="stat-note" data-role="trial-status">Free trial · day ${Math.min(t.day, length)} of ${length} · ends ${formatDayId(t.endsAt)}</p>`}
+      ${card({
+        body: html`<div class="plan-options" data-role="plan-options">
+            ${s.options.flatMap((o) =>
+              o.terms.map((term) => {
+                const picked = chosen && chosen.planId === o.planId && chosen.termMonths === term.months;
+                return html`<button type="button" class="plan-option ${picked ? "is-picked" : ""}" data-act="choose" data-plan="${o.planId}" data-months="${term.months}" ${owner && !state.choosing ? "" : "disabled"} aria-pressed="${picked ? "true" : "false"}">
+                  <span class="plan-option-name">${optionLabel(o, term)}${term.bestValue ? html` <span class="badge badge-success" data-role="best-value">BEST VALUE</span>` : ""}</span>
+                  ${o.tagline && o.terms.length === 1 ? html`<span class="plan-option-sub">${o.tagline}</span>` : ""}
+                  ${o.priceIsMinimum ? html`<span class="plan-option-sub">Your custom design is quoted by Luna.</span>` : ""}
+                  ${picked ? html`<span class="plan-option-sub" data-role="chosen">Chosen · pay the bill below to continue</span>` : ""}
+                </button>`;
+              })
+            )}
+          </div>
+          ${owner ? html`<p class="stat-note">${chosen ? "Paid access starts " + formatDayId(chosen.startDate) + ". You can change your choice until you pay." : "Choose a plan. Your workspace and everything in it stay the same."}</p>` : html`<p class="stat-note" data-role="owner-only">Ask the workspace owner to choose a plan.</p>`}`,
+      })}
+    </section>`;
+  }
 
   async function load() {
     state.loading = true;
@@ -101,23 +146,26 @@ export function mount(container, session, { api = defaultApi, toast = defaultToa
     render(
       container,
       html`
-        ${pageHeader({ title: "Subscription", subtitle: "Your Luna plan, what you owe and your payments to Luna." })}
+        ${s?.trial?.open
+          ? pageHeader({ title: "Continue with Luna", subtitle: "Choose a plan to keep using your workspace. Nothing you've added is lost." })
+          : pageHeader({ title: "Subscription", subtitle: "Your Luna plan, what you owe and your payments to Luna." })}
         ${state.error
           ? card({ body: emptyState({ title: "Couldn't load", body: state.error }) })
           : state.loading || !s
             ? card({ body: skeleton(4) })
             : html`
-              <section class="card hero-card" data-role="plan">
+              ${s.trial?.open ? continueSection(s) : ""}
+              ${s.trial?.open && !s.trial.conversion ? "" : html`<section class="card hero-card" data-role="plan">
                 <div class="kpis" data-cols="3">
                   <div class="kpi"><div class="kpi-label">Plan</div><div class="kpi-value">${s.plan.name}</div><div class="kpi-hint" data-role="price">${priceLine(s, money)}</div></div>
                   <div class="kpi"><div class="kpi-label">Status</div><div class="kpi-value">${badge(SUBSCRIPTION_LABELS[s.status] ?? s.status, STATUS_TONE[s.status] ?? "neutral")}</div><div class="kpi-hint">${s.paidThrough ? `Paid through ${formatDayId(s.paidThrough)}` : "Not paid yet"}</div></div>
                   <div class="kpi" data-role="amount-due"><div class="kpi-label">Amount due</div><div class="kpi-value">${money(totalDue)}</div><div class="kpi-hint" data-role="next">${nextLine(s)}</div></div>
                 </div>
-              </section>
-              <section class="section" data-role="bills">
+              </section>`}
+              ${s.trial?.open && !s.trial.conversion ? "" : html`<section class="section" data-role="bills">
                 <h2 class="section-title">Bills</h2>
                 ${card({ body: open.length ? html`<div class="bill-list">${open.map(billRow)}</div>` : emptyState({ iconName: "check", title: "You're all paid up", body: s.paidThrough ? `Paid through ${formatDayId(s.paidThrough)}.` : "Nothing to pay right now." }) })}
-              </section>
+              </section>`}
               <section class="section" data-role="how-to-pay">
                 <h2 class="section-title">How to pay</h2>
                 ${card({
@@ -178,7 +226,26 @@ export function mount(container, session, { api = defaultApi, toast = defaultToa
     });
   }
 
+  async function choose(planId, termMonths) {
+    if (state.choosing) return;
+    state.choosing = true;
+    draw();
+    try {
+      await api("subscription", { method: "POST", body: { action: "choose", planId, termMonths } });
+      toast("Plan chosen. Pay the bill below to continue with Luna.", "success");
+      state.choosing = false;
+      await load();
+      container.querySelector('[data-role="bills"]')?.scrollIntoView?.({ behavior: "smooth", block: "start" });
+    } catch (err) {
+      state.choosing = false;
+      draw();
+      toast(err.message || "Couldn't choose that plan", "danger");
+    }
+  }
+
   const onClick = async (e) => {
+    const pick = e.target.closest('[data-act="choose"]');
+    if (pick && container.contains(pick)) return choose(pick.dataset.plan, Number(pick.dataset.months));
     const el = e.target.closest('[data-act="pay"]');
     if (!el || !container.contains(el) || !state.s) return;
     const inv = state.s.openInvoices.find((i) => (el.dataset.id ? i.id === el.dataset.id : i.period === el.dataset.period));

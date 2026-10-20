@@ -21,7 +21,7 @@ import { tenantDb } from "./_lib/tenant-db.js";
 import { isValidBusinessId } from "../../shared/tenancy.js";
 import { designWorkspace, saveDraft, setDraftState, publishDesign, useStandard, useCustom, restoreVersion, uploadAsset, deleteAsset, previewDesign, sampleInvitation, InvitationDesignError } from "./_lib/invitation-design.js";
 
-const STATUS = { "invalid-design": 400, "invalid-input": 400, "invalid-asset": 400, "not-found": 404, "not-available": 400, "not-entitled": 409, "asset-in-use": 409 };
+const STATUS = { "invalid-design": 400, "invalid-input": 400, "invalid-asset": 400, "not-found": 404, "not-available": 400, "not-entitled": 409, "asset-in-use": 409, "trial-preview": 409 };
 const ACTIONS = {
   get: { fields: ["businessId"], run: (c) => designWorkspace(c) },
   saveDraft: { fields: ["businessId", "config"], run: (c, b) => saveDraft({ ...c, config: b.config }) },

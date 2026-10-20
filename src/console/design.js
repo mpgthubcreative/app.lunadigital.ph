@@ -10,7 +10,7 @@ import { pageHeader, card } from "../components/ui.js";
 import { confirmDialog } from "../components/feedback.js";
 import { api } from "../lib/api.js";
 import { TEMPLATES, TEMPLATE_IDS, FONTS, DESIGN_ENUMS, SECTION_IDS, SECTION_LABELS, ASSET_SLOT_LABELS, SAMPLE_GUEST, resolveDesign } from "@shared/invitation-design.js";
-import { openInvitePreview } from "../modules/wedding/invite-preview.js";
+import { openInvitePreview } from "../modules/wedding/invitation/preview.js";
 
 const call = (action, body) => api("invitation-design", { method: "POST", body: { action, ...body } });
 const COLOR_LABELS = { background: "Page", card: "Card", text: "Text", muted: "Quiet text", accent: "Accent", accentText: "Text on accent", border: "Lines" };

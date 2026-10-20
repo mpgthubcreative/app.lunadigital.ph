@@ -54,7 +54,7 @@ describe("GET /api/session — tenant resolution", () => {
     expect(Object.keys(res.body.permissions).sort()).toEqual([...PERMISSION_KEYS].sort());
     expect(res.body.plan).toEqual({ id: "growth", name: "Growth" });
     expect(res.body.entitlements.limits.users).toBe(5);
-    expect(res.body.subscription.access).toEqual({ canRead: true, canWrite: true, exportOnly: false });
+    expect(res.body.subscription.access).toEqual({ canRead: true, canWrite: true, exportOnly: false, trialEnded: false });
   });
 
   it("gives staff only staff permissions", async () => {

@@ -85,7 +85,7 @@ export function validTimezone(tz) {
 
 // "Create business" input. businessId is the slug; the workspace must be
 // a live template; the owner's email resolves or creates their account.
-const CREATE_FIELDS = ["name", "businessId", "workspaceTemplateId", "planId", "ownerEmail", "ownerName", "timezone", "termMonths", "priceOverride", "addOns", "setupFee", "waiveSetupFee"];
+const CREATE_FIELDS = ["name", "businessId", "workspaceTemplateId", "planId", "ownerEmail", "ownerName", "timezone", "termMonths", "priceOverride", "addOns", "setupFee", "waiveSetupFee", "trial"];
 export function validateCreateBusinessInput(input) {
   if (!input || typeof input !== "object" || Array.isArray(input)) throw new OperatorError("invalid-input", "Invalid business");
   for (const k of Object.keys(input)) if (!CREATE_FIELDS.includes(k)) throw new OperatorError("invalid-input", `Field ${k} can't be set here`);
@@ -104,7 +104,10 @@ export function validateCreateBusinessInput(input) {
     addOns: input.addOns ?? {},
     setupFee: input.setupFee ?? null,
     waiveSetupFee: input.waiveSetupFee === true,
+    // Start with the 30-day free trial (products that have one).
+    trial: input.trial === true,
   };
+  if (input.trial !== undefined && typeof input.trial !== "boolean") throw new OperatorError("invalid-input", "Free trial: yes or no");
   if (!out.addOns || typeof out.addOns !== "object" || Array.isArray(out.addOns)) throw new OperatorError("invalid-input", "Add-ons: invalid");
   if (out.setupFee !== null && (!Number.isSafeInteger(out.setupFee) || out.setupFee < 0)) throw new OperatorError("invalid-input", "Setup fee: ₱0 or more");
   if (input.waiveSetupFee !== undefined && typeof input.waiveSetupFee !== "boolean") throw new OperatorError("invalid-input", "Waive setup fee: yes or no");

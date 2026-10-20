@@ -13,6 +13,9 @@
 // download (counted by the server) didn't show until the page was
 // reloaded. Settings now asks the server for the CURRENT usage every time
 // it opens and redraws the meters.
+// 2026-10-21: Data → Download Excel, and Data Management → Reset Workspace
+// Data (the account owner; type RESET; the server checks and records it).
+// What it removes and keeps is listed here (shared/reset.js).
 
 import { isModuleLaunched, accessPolicy, MODULES, FEATURE_DEFINITIONS, LIMIT_KEYS, LIMIT_METER, LIMIT_DEFINITIONS, METERS, MONTHLY_METER_IDS, isEnforced, meterApplies, isHiddenMeter, isHiddenLimit, isNoLimit } from "@shared/index.js";
 import { html, render } from "../../lib/html.js";
@@ -20,6 +23,10 @@ import { pageHeader, card, meter, badge } from "../../components/ui.js";
 import { canArrange, mountArrangeNav } from "./arrange-nav.js";
 import { formatBytes, formatNumber } from "../../lib/format.js";
 import { api } from "../../lib/api.js";
+import { formDialog } from "../../components/form-dialog.js";
+import { toast } from "../../components/feedback.js";
+import { resetPlanFor, RESET_KEEPS, RESET_CONFIRM_WORD } from "@shared/reset.js";
+import { showExportPage } from "../../app/routes.js";
 
 const STATUS_TONE = { active: "success", past_due: "warning", suspended: "danger", cancelled: "danger" };
 const STATUS_LABEL = { active: "Active", past_due: "Past due", suspended: "Suspended", cancelled: "Cancelled" };
@@ -109,6 +116,45 @@ function packageCards(session, fresh = null) {
   `;
 }
 
+function dataCard(session) {
+  const owner = session.member.isAccountOwner === true;
+  const plan = resetPlanFor(session.workspace?.templateId);
+  const canExport = showExportPage(session);
+  if (!canExport && !(owner && plan)) return "";
+  return card({
+    title: "Data",
+    body: html`<div data-role="data">
+      ${canExport ? html`<p class="stat-note">Download all your records as one Excel workbook.</p><a class="btn btn-compact" href="/export" data-link>Download Excel</a>` : ""}
+      ${owner && plan
+        ? html`<div class="data-management" data-role="reset">
+            <h3 class="section-title">Data Management</h3>
+            <p class="cell-strong">Reset Workspace Data</p>
+            <p class="stat-note">Start again in this same workspace: everyday records are permanently deleted. Download Excel first if you want a copy.</p>
+            <details class="form-more"><summary>What a reset removes and keeps</summary>
+              <p class="stat-hint">Removes</p><ul class="plain-list" data-role="reset-removes">${plan.summary.map((x) => html`<li>${x}</li>`)}</ul>
+              <p class="stat-hint">Keeps</p><ul class="plain-list" data-role="reset-keeps">${[...RESET_KEEPS, ...(plan.keeps || [])].map((x) => html`<li>${x}</li>`)}</ul>
+            </details>
+            <button type="button" class="btn btn-danger btn-compact" data-act="reset-data">Reset workspace data…</button>
+          </div>`
+        : ""}
+    </div>`,
+  });
+}
+
+async function resetDialog(session) {
+  return formDialog({
+    title: "Reset workspace data?",
+    intro: `This permanently deletes ${session.business.name}'s everyday records and files. Your workspace, members, settings and subscription stay. This can't be undone.`,
+    fields: [{ name: "confirm", label: `Type ${RESET_CONFIRM_WORD} to confirm`, required: true, placeholder: RESET_CONFIRM_WORD }],
+    submitLabel: "Reset workspace data",
+    armMs: 600,
+    onSubmit: async (v) => {
+      if (v.confirm.trim() !== RESET_CONFIRM_WORD) throw new Error(`Type ${RESET_CONFIRM_WORD} (in capital letters) to confirm`);
+      return api("reset-data", { method: "POST", body: { action: "reset", confirm: v.confirm.trim() } });
+    },
+  });
+}
+
 export function mount(container, session) {
   const status = session.subscription.status;
   const policy = accessPolicy(status);
@@ -131,6 +177,7 @@ export function mount(container, session) {
             ${seesPackage ? html`<p class="stat-hint">To change your package, contact Luna.</p>` : ""}
           `,
         })}
+        ${dataCard(session)}
         <div data-role="package" class="grid-span">${seesPackage ? packageCards(session) : ""}</div>
       </div>
     `
@@ -152,6 +199,17 @@ export function mount(container, session) {
       });
 
   container.onclick = async (e) => {
+    if (e.target.closest("[data-act]")?.dataset.act === "reset-data") {
+      try {
+        const r = await resetDialog(session);
+        if (!r) return;
+        toast(`Workspace data reset: ${r.records} records removed.`, "success");
+        window.dispatchEvent(new CustomEvent("luna:session-changed"));
+      } catch (err) {
+        toast(err.message || "Couldn't reset the data", "danger");
+      }
+      return;
+    }
     if (e.target.closest("[data-act]")?.dataset.act !== "history") return;
     const box = container.querySelector('[data-role="history"]');
     render(box, html`<p class="stat-hint">Loading…</p>`);

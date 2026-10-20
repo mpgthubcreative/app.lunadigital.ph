@@ -28,6 +28,8 @@
 // day paid for), with the start date for a subscription not paid yet.
 // Money: integer centavos (PHP). Days: business-local YYYY-MM-DD.
 
+import { newTrial, trialOpen } from "./trial.js";
+
 export const BILLING_TYPES = Object.freeze({
   monthly: { label: "Monthly subscription", per: "month", recurring: true },
   annual: { label: "Prepaid access", per: "12 months", recurring: false },
@@ -74,6 +76,8 @@ export function planBilling(plan) {
     defaultTermMonths: (terms.find((t) => t.kind === "main" && t.months === termMonths) ?? terms.find((t) => t.kind === "main") ?? terms.at(-1))?.months ?? termMonths,
     addOns,
     autoRenew: type === "term" ? p.autoRenew === true : p.autoRenew !== false,
+    // A free trial before the first paid bill (0: none, e.g. Bridal Custom).
+    trialDays: Number.isSafeInteger(p.trialDays) && p.trialDays > 0 ? p.trialDays : 0,
   };
 }
 
@@ -88,7 +92,7 @@ export function termLabel(plan, months) {
   const b = planBilling(plan);
   const t = b.terms.find((x) => x.months === months);
   if (!t) return monthsText(months);
-  const tag = t.label ?? (t.kind === "trial" ? (b.type === "monthly" ? "Prepaid starter" : "Paid trial") : b.terms.length > 1 && b.type !== "monthly" ? "Best Value" : null);
+  const tag = t.label ?? (t.kind === "trial" ? (b.type === "monthly" ? "Prepaid starter" : "Paid trial") : null);
   const price = b.type === "monthly" && t.months === 1 ? `${pesos(t.price)} / month` : pesos(t.price);
   return [monthsText(t.months), `${b.priceIsMinimum && t.kind === "main" ? "from " : ""}${price}`, tag].filter(Boolean).join(" · ");
 }
@@ -161,7 +165,9 @@ export function addOnAmount(addOns, months) {
 //   setupFee       the one-time setup fee for this business (default: the
 //                  product's); waiveSetupFee: it still shows on the first
 //                  bill, with a "Setup fee waived" line taking it off.
-export function newSubscriptionTerms(plan, startDate, { termMonths = null, priceOverride = null, addOns = {}, setupFee = null, waiveSetupFee = false } = {}) {
+//   trial          start with the product's free trial (nothing billed until
+//                  a plan is chosen on "Continue with Luna"; shared/trial.js).
+export function newSubscriptionTerms(plan, startDate, { termMonths = null, priceOverride = null, addOns = {}, setupFee = null, waiveSetupFee = false, trial = false } = {}) {
   // A legacy plan without a billing type (Starter / Growth / Pro) keeps the
   // old calendar-month billing (due the 7th): only its monthly price.
   if (!BILLING_TYPE_IDS.includes(plan?.pricing?.billingType)) return { monthlyAmount: int(plan?.pricing?.monthly) };
@@ -181,13 +187,15 @@ export function newSubscriptionTerms(plan, startDate, { termMonths = null, price
     prepaidTerm: monthly && term.months > 1 ? { months: term.months, price: term.price } : null,
     priceOverride,
     addOns: extras,
-    setupFee: b.type === "monthly" ? (setupFee ?? b.setupFee) : 0,
+    // The one-time setup fee (Luna Distributor ₱250), on the first PAID bill.
+    setupFee: setupFee ?? b.setupFee,
     setupFeeBilled: false,
-    setupFeeWaived: b.type === "monthly" && waiveSetupFee === true,
+    setupFeeWaived: (setupFee ?? b.setupFee) > 0 && waiveSetupFee === true,
     autoRenew: b.autoRenew,
     startDate,
     // Term (Bridal): access for the term from the start, no renewal.
     accessUntil: b.type === "term" ? shiftDay(addMonths(startDate, term.months), -1) : null,
+    ...(trial && b.trialDays ? { ...newTrial(startDate, b.trialDays), conversion: null } : {}),
   };
   return { ...sub, monthlyAmount: recurringAmount(sub) };
 }
@@ -244,7 +252,9 @@ export function billLines(sub, { prepaid = false, setup = false, planName = null
   return lines;
 }
 // Does the next bill of this subscription carry the one-time setup fee?
-export const owesSetupFee = (sub) => sub?.billingType === "monthly" && int(sub.setupFee) > 0 && sub.setupFeeBilled !== true;
+export const owesSetupFee = (sub) => BILLING_TYPE_IDS.includes(sub?.billingType) && int(sub.setupFee) > 0 && sub.setupFeeBilled !== true;
+// A free trial that hasn't chosen a plan yet: nothing is due or billed.
+export const awaitingConversion = (sub) => trialOpen(sub) && !sub.conversion;
 
 // The terms of a stored subscription. Older businesses without billing
 // fields read as monthly from their creation day (read-only: nothing is
@@ -271,7 +281,8 @@ export function subscriptionTerms(sub = {}, { createdDay = null } = {}) {
     // monthly: next due date. annual: first payment, then the renewal date.
     // term: the one purchase (null once paid: no renewal), or an open
     // upgrade bill (Luna Bridal → Custom: only the difference).
-    dueDate: sub.upgradeDue?.dueDate ?? (type === "term" && paidThrough ? null : nextDue),
+    dueDate: awaitingConversion(sub) ? null : sub.upgradeDue?.dueDate ?? (type === "term" && paidThrough ? null : nextDue),
+    awaitingConversion: awaitingConversion(sub),
     upgradeDue: sub.upgradeDue?.amount ? { amount: sub.upgradeDue.amount, invoiceId: sub.upgradeDue.invoiceId ?? null } : null,
     renewal: type === "annual" && Boolean(paidThrough),
     // annual: access until the last day paid; term: access ends.
@@ -284,8 +295,16 @@ export function subscriptionTerms(sub = {}, { createdDay = null } = {}) {
 // "Soon": a week for monthly bills and short trials, 30 days for a year.
 export const SOON = Object.freeze({ monthly: 7, annual: 30, term: 30 });
 const soonFor = (t) => (t.billingType === "annual" && t.termMonths < 12 ? 7 : SOON[t.billingType]);
-export function attentionOf(terms, { status = "active", today } = {}) {
+// `trial` (shared/trial.js trialState): an unconverted free trial shows its
+// end ("Trial ends soon" a week before, then "Trial ended") instead of bills.
+export const TRIAL_SOON_DAYS = 7;
+export function attentionOf(terms, { status = "active", today, trial = null } = {}) {
   if (!terms || !today || ["cancelled", "deleted"].includes(status)) return null;
+  if (trial?.open && !trial.conversion) {
+    if (trial.ended) return { kind: "trial_ended", date: trial.endsAt, days: -trial.daysLeft, label: "Trial ended", what: "Trial ended", tone: "danger" };
+    if (trial.daysLeft <= TRIAL_SOON_DAYS) return { kind: "trial", date: trial.endsAt, days: trial.daysLeft, label: trial.daysLeft === 0 ? "Trial ends today" : "Trial ends soon", what: "Trial ends", tone: "warning" };
+    return null;
+  }
   const t = terms.billingType;
   const due = terms.dueDate;
   if (due) {
@@ -303,8 +322,9 @@ export function attentionOf(terms, { status = "active", today } = {}) {
 }
 
 // The status word for a subscription row: Bridal never uses Past Due.
-export function accessState(terms, { status = "active", today } = {}) {
+export function accessState(terms, { status = "active", today, trial = null } = {}) {
   if (["suspended", "cancelled", "deleted"].includes(status)) return status;
+  if (trial?.open && !trial.conversion) return trial.ended ? "trial_ended" : "trial";
   if (terms?.billingType === "term" && terms.accessUntil && today) {
     const left = daysUntil(today, terms.accessUntil);
     if (left < 0) return "expired";

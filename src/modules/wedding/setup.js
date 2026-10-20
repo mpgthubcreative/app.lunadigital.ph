@@ -7,13 +7,23 @@
 // it (choosing a cover photo used to redraw the form from the last SAVED
 // values, so Save then stored blanks). Save shows Saving… / Saved ✓ (from
 // the values the server read back) / a clear error.
+//
+// 2026-10-21: Luna Bridal chooses its Standard template here (Luna Standard,
+// Classic, Modern, Romantic, Editorial: src/modules/wedding/invitation/
+// templates/); Preview shows it. During the free trial the couple
+// previews; guest links open once Luna Bridal is paid.
 
 import { html, render } from "../../lib/html.js";
 import { pageHeader, skeleton } from "../../components/ui.js";
 import { toast as defaultToast } from "../../components/feedback.js";
 import { api as defaultApi } from "../../lib/api.js";
 import { isWeddingSlug, suggestWeddingSlug, rsvpOpen } from "@shared/index.js";
-import { openInvitePreview, copyText } from "./invite-preview.js";
+import { openInvitePreview, copyText } from "./invitation/preview.js";
+import { TEMPLATES, STANDARD_TEMPLATE_IDS, DEFAULT_TEMPLATE_ID, resolveDesign } from "@shared/invitation-design.js";
+
+export const TRIAL_PREVIEW_MESSAGE = "Preview your invitation during your free trial. Publish it when you continue with Luna Bridal.";
+// The chosen Standard template as a design (Luna Standard: the original page).
+export const standardPreviewDesign = (templateId) => (STANDARD_TEMPLATE_IDS.includes(templateId) && templateId !== DEFAULT_TEMPLATE_ID ? { config: resolveDesign({ templateId }), assets: {}, standard: true } : null);
 
 const TEXT = [
   ["coupleNames", "Couple names", "e.g. Camille & Carlo"],
@@ -77,6 +87,7 @@ export function readSetupForm(form) {
     setup.faq = faq;
   }
   if (setup.weddingSlug) setup.weddingSlug = cleanSlugInput(setup.weddingSlug).replace(/^-+|-+$/g, "") || null;
+  if (f.templateId) setup.templateId = f.templateId.value || null;
   setup.rsvpEnabled = f.rsvpEnabled.checked;
   setup.closeAfterDeadline = f.closeAfterDeadline.checked;
   return setup;
@@ -111,9 +122,18 @@ export function mount(container, session, { api = defaultApi, toast = defaultToa
           ? `${inv.draftState === "ready" ? "Ready for publishing" : "Draft"} · Your current Standard invitation remains live.`
           : "Luna is preparing your design. Your current Standard invitation remains live.";
     const faq = Array.isArray(s.faq) ? s.faq : [];
+    const trial = session.subscription?.trial?.open === true;
+    const chosen = STANDARD_TEMPLATE_IDS.includes(s.templateId) ? s.templateId : DEFAULT_TEMPLATE_ID;
+    const picker = custom
+      ? ""
+      : html`<div class="field" data-role="template-choice"><span class="field-label">Template</span>
+          <div class="tpl-options">${STANDARD_TEMPLATE_IDS.map((id) => html`<label class="tpl-option"><input type="radio" name="templateId" value="${id}" ${id === chosen ? "checked" : ""} ${canEdit ? "" : "disabled"}><span class="tpl-swatch" data-template="${id}" aria-hidden="true"></span><span class="tpl-text"><strong>${TEMPLATES[id].label}</strong><span class="stat-hint">${TEMPLATES[id].description}</span></span></label>`)}</div>
+          <p class="stat-hint">Save, then Preview to see it with your details. You can change it any time; links already sent keep working.</p></div>`;
     return html`<fieldset class="wl-fieldset" data-role="invitation-level"><legend>Invitation</legend>
+      ${trial ? html`<div class="banner banner-info" role="note" data-role="trial-preview">${TRIAL_PREVIEW_MESSAGE}</div>` : ""}
       <p><strong data-role="invitation-name">${custom ? "Customized Invitation" : "Standard Invitation"}</strong> <span class="stat-hint">${custom ? "Luna Bridal Custom" : "Included with Luna Bridal"}</span>${custom ? html` <span class="wl-chip" data-role="invitation-state" data-tone="${inv.live === "custom" ? "success" : "warning"}">${inv.live === "custom" ? "Live" : inv.draftState === "ready" ? "Ready" : "Draft"}</span>` : ""}</p>
       <p class="stat-hint" data-role="invitation-line">${stateLine}</p>
+      ${picker}
       <div class="ws-link-actions"><button type="button" class="btn btn-compact" data-act="preview">Preview${custom && inv.live !== "custom" ? " (live: Standard)" : ""}</button>${custom && inv.hasDraft ? html`<button type="button" class="btn btn-compact" data-act="preview-draft">Preview draft design</button>` : ""}</div>
       ${custom ? html`<details class="wl-fold" data-role="plus-content"><summary>More for your customized invitation</summary>
         <div class="field"><label for="ws-story">Our story</label><textarea class="input" id="ws-story" name="story" rows="4" maxlength="1500" ${canEdit ? "" : "disabled"}>${s.story ?? ""}</textarea></div>
@@ -331,7 +351,7 @@ export function mount(container, session, { api = defaultApi, toast = defaultToa
           toast(err.message || "Couldn't load the design", "danger");
         }
       }
-      const invitation = { wedding: w, hero: state.hero, guest: { name: "Your guest's name", seats: 2, rsvp: "awaiting", confirmed: 0 }, rsvpOpen: rsvpOpen(w, new Date().toISOString().slice(0, 10)), design: look.design || null, gallery: look.gallery || state.gallery.map((g) => g.dataUrl), entourage: look.entourage || [] };
+      const invitation = { wedding: w, hero: state.hero, guest: { name: "Your guest's name", seats: 2, rsvp: "awaiting", confirmed: 0 }, rsvpOpen: rsvpOpen(w, new Date().toISOString().slice(0, 10)), design: look.design || (state.invitation?.level === "custom" ? null : standardPreviewDesign(w.templateId)), gallery: look.gallery || state.gallery.map((g) => g.dataUrl), entourage: look.entourage || [] };
       const fetchImpl = async () => ({ ok: true, status: 200, json: async () => ({ success: true, invitation }) });
       await preview({ token: "P".repeat(32), fetchImpl, note: act === "preview-draft" ? "Draft design (not live yet), with a sample guest" : "Preview: what your guests see (with a sample guest)" });
       return;

@@ -7,7 +7,10 @@
 import { createHash, randomBytes } from "node:crypto";
 import { BillingError, BILLING_SCHEMA_VERSION, BILLING_TIMEZONE, BILLABLE_STATUSES, invoiceId, periodOfDay, periodEnd, dayAfter, dueDateOf, nextPeriod, validatePaymentSubmission, checkProof, validateRejectReason, validateBillingSettings, PAYMENT_STATUSES } from "../../../shared/billing.js";
 import { businessDate } from "../../../shared/metrics.js";
-import { subscriptionTerms, coverEnd, billFigures, billLines, owesSetupFee, sumLines, amountAfter, isDayString, BILLING_TYPES, ADJUSTMENT_TYPES, ADJUSTMENT_TYPE_IDS } from "../../../shared/plan-billing.js";
+import { subscriptionTerms, coverEnd, billFigures, billLines, owesSetupFee, awaitingConversion, sumLines, amountAfter, isDayString, BILLING_TYPES, ADJUSTMENT_TYPES, ADJUSTMENT_TYPE_IDS } from "../../../shared/plan-billing.js";
+import { trialState, trialOpen } from "../../../shared/trial.js";
+import { planBilling, termLabel } from "../../../shared/plan-billing.js";
+import { planWorkspace, isCatalogPlan } from "../../../shared/plans.seed.js";
 import { tenantDb } from "./tenant-db.js";
 import { prepareNotifications } from "./notifications.js";
 
@@ -39,6 +42,8 @@ const PROOF_PREFIX = (businessId) => `platformBilling/${businessId}/`;
 // setup fee on a Distributor's first bill; `lines` is that breakdown.
 export function billFor(business, period, { setup = null } = {}) {
   const sub = business.subscription || {};
+  // A free trial is a state, never a bill: nothing until a plan is chosen.
+  if (awaitingConversion(sub)) return null;
   const created = business.createdAt?.toDate ? businessDate(BILLING_TIMEZONE, business.createdAt.toDate()) : null;
   const t = subscriptionTerms({ ...sub, upgradeDue: null }, { createdDay: created });
   const planName = business.entitlements?.planName ?? null;
@@ -209,11 +214,16 @@ export async function tenantSubscription({ db, FieldValue, businessId, now = new
   const sub = business.subscription || {};
   const created = business.createdAt?.toDate ? businessDate(BILLING_TIMEZONE, business.createdAt.toDate()) : null;
   const terms = subscriptionTerms(sub, { createdDay: created });
+  const trial = trialState(sub, businessDate(business.timezone || BILLING_TIMEZONE, now));
   return {
     plan: { id: sub.planId, name: business.entitlements?.planName ?? sub.planId },
     // How this plan is billed: monthly, annual access or 12-month access.
     billing: { type: terms.billingType, amount: terms.amount, termMonths: terms.termMonths, dueDate: terms.dueDate, renewal: terms.renewal, accessUntil: terms.accessUntil, autoRenew: terms.autoRenew, addOns: terms.addOns.map((a) => ({ label: a.label, qty: a.qty })) },
     status: sub.status,
+    // The free trial (shared/trial.js), if any, and what "Continue with
+    // Luna" offers (this workspace's products, today's prices).
+    trial,
+    options: trial?.open ? await continueOptions(db, business) : [],
     monthlyAmount: sub.monthlyAmount ?? null,
     paidThrough: sub.paidThrough ?? null,
     nextRenewal: sub.nextRenewal ?? null,
@@ -222,6 +232,30 @@ export async function tenantSubscription({ db, FieldValue, businessId, now = new
     payments: hist.docs.map((d) => paymentView(d.data(), d.id)),
     instructions: settings,
   };
+}
+
+// "Continue with Luna": this workspace's products and terms, with the
+// one-time setup fee when it's still owed (Distributor's first paid bill).
+async function continueOptions(db, business) {
+  const snap = await db.collection("plans").get();
+  const sub = business.subscription || {};
+  return snap.docs
+    .map((d) => ({ id: d.id, ...d.data() }))
+    .filter((p) => planWorkspace(p) === business.workspaceTemplateId && isCatalogPlan(p) && p.pricing?.billingType && p.status !== "inactive")
+    .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0))
+    .map((p) => {
+      const pb = planBilling(p);
+      const fee = p.id === sub.planId && Number.isSafeInteger(sub.setupFee) ? sub.setupFee : pb.setupFee;
+      return {
+        planId: p.id,
+        name: p.name,
+        tagline: p.tagline ?? null,
+        current: p.id === sub.planId,
+        priceIsMinimum: pb.priceIsMinimum === true,
+        setupFee: sub.setupFeeBilled === true || (p.id === sub.planId && sub.setupFeeWaived === true) ? 0 : fee,
+        terms: pb.terms.filter((t) => t.kind !== "trial").map((t) => ({ months: t.months, price: t.price, label: termLabel(p, t.months), bestValue: /Best Value/.test(t.label ?? "") })),
+      };
+    });
 }
 
 // ---------- Submit (tenant Owner) ----------
@@ -353,6 +387,11 @@ export async function confirmPayment({ db, FieldValue, paymentId, operator, now 
       if (sub.dueDate) subChanges["subscription.dueDate"] = null;
       // A paid prepaid term (Distributor 3-month starter) is used up: monthly from here.
       if (i.prepaid && sub.prepaidTerm) subChanges["subscription.prepaidTerm"] = null;
+      // The first paid bill converts a free trial (same workspace and data).
+      if (trialOpen(sub)) {
+        subChanges["subscription.trialStatus"] = "converted";
+        subChanges["subscription.convertedAt"] = stamp;
+      }
       // A paid upgrade bill (Luna Bridal → Custom) closes; access dates stay.
       if (i.kind === "upgrade" && sub.upgradeDue?.invoiceId === invRef.id) subChanges["subscription.upgradeDue"] = null;
       // A paid bill brings a past-due subscription back; a suspension stays
@@ -640,6 +679,31 @@ export async function repriceOpenBill({ db, FieldValue, businessId, operator }) 
     tx.set(audit(db), { type: "billing.bill-repriced", summary: `${inv.period} bill re-priced: ${peso(inv.amountDue)} → ${peso(amountDue)}`, businessId, invoiceId: ref.id, amount: amountDue, actor: operator, before: { lines: inv.lines ?? null, amountDue: inv.amountDue }, after: { lines: bill.lines, amountDue }, at: FieldValue.serverTimestamp() });
     return { invoiceId: ref.id, amountDue };
   }, TX);
+}
+
+// "Continue with Luna": the first paid bill for the chosen plan and term.
+// While a trial is unconverted nothing else is ever billed, so an unpaid
+// bill from an earlier choice (another month: the start moved because the
+// trial ended meanwhile) is removed; the chosen month's bill is re-priced
+// or made. A payment waiting for verification blocks a new choice
+// (assertNoPendingPayment, before anything changes).
+export async function assertNoPendingPayment({ db, businessId }) {
+  const pending = await invoices(db).where("businessId", "==", businessId).where("status", "==", "for_verification").get();
+  if (!pending.empty) throw new BillingError("payment-pending", "A payment is waiting for verification. Luna will confirm it shortly.");
+}
+
+export async function conversionBill({ db, FieldValue, businessId, operator }) {
+  const b = (await db.collection("businesses").doc(businessId).get()).data();
+  const conv = b.subscription?.conversion;
+  if (!conv?.startDate) throw new BillingError("no-invoice", "Choose a plan first");
+  const period = periodOfDay(conv.startDate);
+  const open = await invoices(db).where("businessId", "==", businessId).where("status", "==", "due").get();
+  for (const d of open.docs) {
+    if (d.data().period !== period && d.data().kind !== "upgrade" && isEditable(d.data())) await d.ref.delete();
+  }
+  await repriceOpenBill({ db, FieldValue, businessId, operator });
+  const inv = await ensureInvoice({ db, FieldValue, businessId, period });
+  return invoiceView(inv, invoiceId(businessId, period));
 }
 
 // An unpaid upgrade bill follows the agreed price set after the product

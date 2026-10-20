@@ -36,4 +36,6 @@ export * from "./operators.js";
 export * from "./tenant-config.js";
 export * from "./metering.js";
 export * from "./plan-billing.js";
+export * from "./trial.js";
+export * from "./feedback.js";
 export * from "./navigation-prefs.js";

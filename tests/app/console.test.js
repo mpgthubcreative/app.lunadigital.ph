@@ -39,22 +39,24 @@ const DETAIL = {
 };
 
 describe("console views", () => {
-  it("Overview: three numbers, Needs Attention (real dates, ⋯ actions), Income by Workspace; no cost, profit or subscription mixes", async () => {
+  it("Overview: active, free trials, 6 / 12-month income (+ older monthly), Needs Attention (real dates, trials ending, ⋯ actions), Income by Workspace; no cost, profit or subscription mixes", async () => {
     const overview = {
       period: "2026-10",
       today: "2026-10-19",
       activeAccess: 14,
+      trials: { active: 5, endingSoon: 2, ended: 1 },
       recurringIncome: 1200000,
       annualIncomeThisMonth: 1297000,
       collectedThisMonth: 2485000,
       awaiting: { count: 2, amount: 89800 },
       needsAttention: [
         { id: "abc", name: "ABC Frozen Foods", workspaceTemplateId: "distributor", planId: "distributor-plus", planName: "Distributor+", status: "active", state: "active", billingType: "monthly", amount: 89900, dueDate: "2026-10-12", attention: { kind: "overdue", date: "2026-10-12", days: 7, label: "7 days overdue", what: "Due", tone: "danger" } },
-        { id: "hk", name: "Hayst Kopi", workspaceTemplateId: "distributor", planId: "distributor-basic", planName: "Distributor", status: "active", state: "active", billingType: "monthly", amount: 49900, dueDate: "2026-10-25", attention: { kind: "due", date: "2026-10-25", days: 6, label: "Due soon", what: "Due", tone: "warning" } },
+        { id: "hk", name: "Hayst Kopi", workspaceTemplateId: "distributor", planId: "distributor-basic", planName: "Luna Distributor", status: "active", state: "active", billingType: "annual", amount: 239000, dueDate: "2026-10-25", attention: { kind: "due", date: "2026-10-25", days: 6, label: "Due soon", what: "Payment due", tone: "warning" } },
+        { id: "sh", name: "Santos Home", workspaceTemplateId: "household-payroll", planId: "household-basic", planName: "Luna Household", status: "active", state: "trial", billingType: "annual", amount: 239000, trial: { status: "trial_active", open: true, endsAt: "2026-10-22", daysLeft: 3, conversion: null }, attention: { kind: "trial", date: "2026-10-22", days: 3, label: "Trial ends soon", what: "Trial ends", tone: "warning" } },
         { id: "cy", name: "Carlo & Yanie", workspaceTemplateId: "bridal-expense", planId: "bridal-plus", planName: "Luna Bridal+", status: "active", state: "expiring", billingType: "term", amount: 399000, accessUntil: "2026-11-02", paidThrough: "2026-11-02", attention: { kind: "expiring", date: "2026-11-02", days: 14, label: "Expiring soon", what: "Access ends", tone: "warning" } },
       ],
       incomeByWorkspace: [
-        { workspaceTemplateId: "distributor", billingType: "monthly", collected: 900000, recurring: 1200000, active: 20 },
+        { workspaceTemplateId: "distributor", billingType: "annual", collected: 900000, recurring: null, active: 20 },
         { workspaceTemplateId: "household-payroll", billingType: "annual", collected: 400000, recurring: null, active: 4 },
         { workspaceTemplateId: "bridal-expense", billingType: "term", collected: 897000, recurring: null, active: 3 },
       ],
@@ -65,13 +67,14 @@ describe("console views", () => {
     await flush();
     expect(call).toHaveBeenCalledWith("overview");
     const kpis = [...el.querySelectorAll('[data-role="kpis"] .kpi')].map((k) => `${k.querySelector(".kpi-label").textContent}: ${k.querySelector(".kpi-value").textContent}`);
-    expect(kpis).toEqual(["Active subscriptions: 14", "Recurring income: ₱12,000", "Annual / 12-month income: ₱12,970"]);
+    expect(kpis).toEqual(["Active subscriptions: 14", "Free trials: 5", "6 / 12-month income: ₱12,970", "Recurring income: ₱12,000"]);
+    expect(el.querySelector('[data-role="kpis"]').textContent).toMatch(/2 ending this week · 1 ended/);
     const rows = [...el.querySelectorAll('[data-role="attention-rows"] tbody tr')];
-    expect(rows.map((r) => [...r.querySelector('[data-role="when"]').childNodes].map((n) => n.textContent.trim()).filter(Boolean).join(" | "))).toEqual(["Due Oct 12, 2026 | 7 days overdue", "Due Oct 25, 2026", "Access ends Nov 2, 2026"]);
-    expect(rows.map((r) => r.querySelector("td:nth-child(4) .badge").textContent)).toEqual(["7 days overdue", "Due soon", "Expiring soon"]);
+    expect(rows.map((r) => [...r.querySelector('[data-role="when"]').childNodes].map((n) => n.textContent.trim()).filter(Boolean).join(" | "))).toEqual(["Due Oct 12, 2026 | 7 days overdue", "Payment due Oct 25, 2026", "Trial ends Oct 22, 2026", "Access ends Nov 2, 2026"]);
+    expect(rows.map((r) => r.querySelector("td:nth-child(4) .badge").textContent)).toEqual(["7 days overdue", "Due soon", "Trial ends soon", "Expiring soon"]);
     const income = [...el.querySelectorAll('[data-role="income"] li')].map((li) => li.textContent.replace(/\s+/g, " ").trim());
-    expect(income[0]).toMatch(/^Distributor ?Recurring · 20 active ₱12,000 ?\/ month$/);
-    expect(income[1]).toMatch(/^Household ?Annual renewals collected this month · 4 active ₱4,000$/);
+    expect(income[0]).toMatch(/^Distributor ?6 \/ 12-month access collected this month · 20 active ₱9,000$/);
+    expect(income[1]).toMatch(/^Household ?6 \/ 12-month access collected this month · 4 active ₱4,000$/);
     expect(income[2]).toMatch(/^Bridal ?12-month access collected this month · 3 active ₱8,970$/);
     expect(el.textContent).not.toMatch(/profit|margin|operating cost|Subscription mix|Total businesses/i);
     // ⋯ → Send notification on a row.
@@ -110,16 +113,19 @@ describe("console views", () => {
     const call = vi.fn(async () => ({ businessId: "prado-home", created: true }));
     const p = createBusinessDialog(ctxWith(call));
     const f = lastForm();
-    expect([...f.querySelectorAll(".field label")].slice(0, 5).map((l) => l.textContent.replace(" *", ""))).toEqual(["Product", "Term", "Business / workspace name", "Owner name", "Owner email"]);
+    expect([...f.querySelectorAll(".field label")].slice(0, 6).map((l) => l.textContent.replace(" *", ""))).toEqual(["Product", "Term", "Start", "Business / workspace name", "Owner name", "Owner email"]);
     // Sold products only: no Distributor+ / Household+ / Starter / Growth / Pro.
-    expect([...f.elements.planId.options].map((o) => o.textContent)).toEqual(["Distributor", "Luna Household", "Baby Basic", "Baby Plus", "Luna Bridal", "Luna Bridal Custom"]);
-    expect([...f.elements.termMonths.options].map((o) => o.textContent)).toEqual(["1 month · ₱499 / month", "3 months · ₱1,290 · Prepaid starter"]);
+    expect([...f.elements.planId.options].map((o) => o.textContent)).toEqual(["Luna Distributor", "Luna Household", "Baby Basic", "Baby Plus", "Luna Bridal", "Luna Bridal Custom"]);
+    expect([...f.elements.termMonths.options].map((o) => o.textContent)).toEqual(["6 months · ₱1,299", "12 months · ₱2,390 · Best Value"]);
+    // The 30-day free trial is the default start.
+    expect(f.elements.start.value).toBe("trial");
+    expect(f.elements.start.closest(".field").hidden).toBe(false);
     f.elements.planId.value = "household-basic";
     f.elements.planId.dispatchEvent(new Event("change", { bubbles: true }));
-    expect([...f.elements.termMonths.options].map((o) => o.textContent)).toEqual(["1 month · ₱149 · Paid trial", "3 months · ₱349 · Paid trial", "12 months · ₱1,190 · Best Value"]);
+    expect([...f.elements.termMonths.options].map((o) => o.textContent)).toEqual(["6 months · ₱1,299", "12 months · ₱2,390 · Best Value"]);
     expect(f.elements.termMonths.value).toBe("12");
-    expect(f.elements.planId.closest(".field").querySelector(".stat-hint").textContent).toBe("₱1,190 / 12 months · 1 user · 500 MB");
-    f.elements.termMonths.value = "3";
+    expect(f.elements.planId.closest(".field").querySelector(".stat-hint").textContent).toBe("₱2,390 / 12 months · 1 user · 500 MB");
+    f.elements.termMonths.value = "6";
     for (const [k, v] of Object.entries({ name: "Prado Home", ownerEmail: "mon@prado.test", ownerName: "Mon Prado" })) f.elements[k].value = v;
     f.elements.name.dispatchEvent(new Event("change", { bubbles: true }));
     expect(f.elements.businessId.value).toBe("prado-home");
@@ -127,23 +133,25 @@ describe("console views", () => {
     await p;
     const [action, body] = call.mock.calls[0];
     expect(action).toBe("createBusiness");
-    expect(body.business).toEqual({ name: "Prado Home", businessId: "prado-home", workspaceTemplateId: "household-payroll", planId: "household-basic", termMonths: 3, ownerName: "Mon Prado", ownerEmail: "mon@prado.test", timezone: "Asia/Manila" });
+    expect(body.business).toEqual({ name: "Prado Home", businessId: "prado-home", workspaceTemplateId: "household-payroll", planId: "household-basic", termMonths: 6, trial: true, ownerName: "Mon Prado", ownerEmail: "mon@prado.test", timezone: "Asia/Manila" });
     // Bridal: one term (nothing to choose); Custom with the quoted price under Advanced.
     const p2 = createBusinessDialog(ctxWith(call));
     const g = lastForm();
     g.elements.planId.value = "bridal-plus";
     g.elements.planId.dispatchEvent(new Event("change", { bubbles: true }));
     expect(g.elements.termMonths.closest(".field").hidden).toBe(true);
+    expect(g.elements.start.closest(".field").hidden).toBe(true); // Custom: no free trial
     expect(g.elements.planId.closest(".field").querySelector(".stat-hint").textContent).toBe("Starting at ₱2,990 / 12 months · 1 user · 500 MB · no automatic renewal");
     for (const [k, v] of Object.entries({ name: "Carlo & Yanie", ownerEmail: "c@y.test", ownerName: "Carlo", price: "3,990" })) g.elements[k].value = v;
     g.elements.name.dispatchEvent(new Event("change", { bubbles: true }));
     submit(g);
     await p2;
     expect(call.mock.calls[1][1].business).toMatchObject({ planId: "bridal-plus", workspaceTemplateId: "bridal-expense", termMonths: 12, priceOverride: 399000, businessId: "carlo-yanie" });
+    expect(call.mock.calls[1][1].business).not.toHaveProperty("trial");
   });
 
   it("Change access: term, paid through, add-ons and price, sent as changes only; the product menu only where there's a choice", async () => {
-    const r = { id: "home", name: "Prado Home", workspaceTemplateId: "household-payroll", planId: "household-basic", status: "active", billingType: "annual", termMonths: 3, amount: 34900, paidThrough: "2026-12-31", addOns: [], priceOverride: null };
+    const r = { id: "home", name: "Prado Home", workspaceTemplateId: "household-payroll", planId: "household-basic", status: "active", billingType: "annual", termMonths: 6, amount: 129900, paidThrough: "2026-12-31", addOns: [], priceOverride: null };
     const call = vi.fn(async () => ({ warnings: [], limits: { users: 2 } }));
     const ctx = ctxWith(call);
     const menu = (row) => { const d = document.createElement("div"); render(d, subscriptionMenu(row, { ctx })); return [...d.querySelectorAll("[data-act]")].map((b) => b.dataset.act); };
@@ -153,7 +161,7 @@ describe("console views", () => {
     expect(menu({ ...r, id: "w", workspaceTemplateId: "bridal-expense", planId: "bridal-basic", billingType: "term" })).toContain("s-plan"); // Standard ↔ Custom
     const p = runSubscriptionAction(ctx, "s-access", r);
     const f = lastForm();
-    expect([...f.elements.termMonths.options].map((o) => o.value)).toEqual(["1", "3", "12"]);
+    expect([...f.elements.termMonths.options].map((o) => o.value)).toEqual(["6", "12"]);
     f.elements.termMonths.value = "12";
     f.elements["addon-user"].value = "1";
     f.elements.reason.value = "Family plan";
@@ -259,16 +267,17 @@ describe("console views", () => {
     expect(group("bridal-expense")).toEqual(["bridal-basic", "bridal-plus"]);
     expect(el.querySelector('[data-plan="distributor-basic"] [data-col="subscribers"]').textContent).toBe("8");
     const row = (id) => el.querySelector(`[data-plan="${id}"]`).textContent.replace(/\s+/g, " ");
-    expect(row("household-basic")).toMatch(/₱1,190 \/ 12 months.*kasambahay.*1 month · ₱149 · Paid trial.*12 months · ₱1,190 · Best Value.*Additional family\/admin user · ₱199 \/ 12 months/);
+    expect(row("household-basic")).toMatch(/₱2,390 \/ 12 months.*kasambahay.*6 months · ₱1,299.*12 months · ₱2,390 · Best Value.*Additional family\/admin user · ₱199 \/ 12 months/);
+    expect(row("distributor-basic")).toMatch(/Luna Distributor.*₱2,390 \/ 12 months \+ ₱250 setup/);
     expect(row("bridal-plus")).toMatch(/Luna Bridal Custom.*Starting at ₱2,990 \/ 12 months.*customized invitation.*No automatic renewal/);
     el.querySelector('[data-plan="distributor-basic"] [data-act="edit"]').click();
     const f = lastForm();
-    f.elements["term-1"].value = "549";
+    f.elements["term-6"].value = "1399";
     f.elements["addon-users"].value = "159";
     f.elements.users.value = "3";
     submit(f);
     await flush();
-    expect(call).toHaveBeenCalledWith("savePlan", { planId: "distributor-basic", changes: { name: "Distributor", tagline: PLAN_SEED["distributor-basic"].tagline, termPrices: { 1: 54900, 3: 129000 }, addOnPrices: { users: 15900, storage: 9900 }, setupFee: 99900, users: 3, storageMb: 500, priceIsMinimum: false } });
+    expect(call).toHaveBeenCalledWith("savePlan", { planId: "distributor-basic", changes: { name: "Luna Distributor", tagline: PLAN_SEED["distributor-basic"].tagline, termPrices: { 6: 139900, 12: 239000 }, addOnPrices: { users: 15900, storage: 9900 }, setupFee: 25000, users: 3, storageMb: 500, priceIsMinimum: false } });
   });
 });
 

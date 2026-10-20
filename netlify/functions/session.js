@@ -59,7 +59,11 @@ export function createSessionHandler({ getAdmin: loadAdmin }) {
           canRead: context.policy.canRead,
           canWrite: context.policy.canWrite,
           exportOnly: context.policy.exportOnly,
+          trialEnded: context.policy.trialEnded === true,
         },
+        // The free trial (null when none) and the Day 21 / Day 27 feedback prompt.
+        trial: context.subscription.trial,
+        feedback: context.subscription.feedback,
       },
       entitlements: {
         workspaceTemplateId: context.workspace.templateId,

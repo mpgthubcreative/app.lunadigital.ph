@@ -800,7 +800,7 @@ describe("Bridal More: Wedding Setup and Download Excel", () => {
     expect(btn.disabled).toBe(true);
     expect(btn.textContent).toBe("Saving…");
     expect(container.querySelector('[data-role="save-state"]').textContent).toBe("Saving…");
-    expect(api).toHaveBeenLastCalledWith("wedding-setup", { method: "POST", body: { action: "save", setup: FULL } });
+    expect(api).toHaveBeenLastCalledWith("wedding-setup", { method: "POST", body: { action: "save", setup: { ...FULL, templateId: "standard" } } });
     release();
     await flush();
     expect(container.querySelector('[data-role="save-state"]').dataset.state).toBe("saved");
@@ -824,7 +824,7 @@ describe("Bridal More: Wedding Setup and Download Excel", () => {
     expect(same.elements.weddingDate.value).toBe("2027-12-12");
     submit(same);
     await flush();
-    expect(api).toHaveBeenLastCalledWith("wedding-setup", { method: "POST", body: { action: "save", setup: FULL } });
+    expect(api).toHaveBeenLastCalledWith("wedding-setup", { method: "POST", body: { action: "save", setup: { ...FULL, templateId: "standard" } } });
   });
 
   it("Wedding Setup: a failed save says so (role=alert), keeps the typed values and lets the Owner retry; a bad map link isn't sent", async () => {

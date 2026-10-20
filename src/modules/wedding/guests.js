@@ -30,7 +30,7 @@ import { formatDayId } from "../../lib/format.js";
 import { RSVP_STATUSES, GUEST_SIDES, GUEST_CATEGORIES, GUEST_CATEGORY_IDS, rsvpSummary, seatingPlan, MAX_TABLE_CAPACITY, setupMissing } from "@shared/index.js";
 import { activityLines, detailsDialog } from "../baby/common.js";
 import * as defaultData from "./data.js";
-import { openInvitePreview, copyText, canShare } from "./invite-preview.js";
+import { openInvitePreview, copyText, canShare } from "./invitation/preview.js";
 import { WEDDING_ROLES, WEDDING_ROLE_IDS, rolesPlan, roleLabel, roleKey, categoryForRole, peopleOf, peopleWithoutRole, parsePersonKey, personKey, membersOf, attendingNames } from "@shared/wedding-roles.js";
 
 const SIDE_OPTIONS = Object.entries(GUEST_SIDES).map(([value, s]) => ({ value, label: s.label }));

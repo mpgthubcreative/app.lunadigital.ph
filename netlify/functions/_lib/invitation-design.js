@@ -13,12 +13,14 @@
 // Publishing changes appearance only: guests, tokens, slugs, RSVPs untouched.
 
 import { randomBytes } from "node:crypto";
-import { validateDesignConfig, resolveDesign, assetIdsOf, invitationLevelOf, invitationStatus, invitationContent, SAMPLE_GUEST, PLAN_MARKETING_NAMES, TEMPLATES, SECTION_IDS, DesignError } from "../../../shared/invitation-design.js";
+import { validateDesignConfig, resolveDesign, assetIdsOf, invitationLevelOf, invitationStatus, invitationContent, SAMPLE_GUEST, PLAN_MARKETING_NAMES, TEMPLATES, SECTION_IDS, DEFAULT_TEMPLATE_ID, isStandardTemplate, DesignError } from "../../../shared/invitation-design.js";
+import { trialOpen } from "../../../shared/trial.js";
 import { rsvpOpen } from "../../../shared/wedding.js";
 import { businessDate } from "../../../shared/metrics.js";
 import { rolesPlan } from "../../../shared/wedding-roles.js";
 
 const TX_OPTIONS = { maxAttempts: 10 };
+export const TRIAL_PREVIEW_MESSAGE = "Preview your invitation during your free trial. Publish it when you continue with Luna Bridal.";
 const MAX_ASSETS = 24;
 const ASSET_MAX_CHARS = 700_000; // a data URL (~500 KB image)
 const HISTORY = 10;
@@ -73,11 +75,26 @@ async function componentData(tenant, resolved) {
   }
   return extra;
 }
-// What a guest link shows: { design: { config, assets }, ...component data } or null (Standard).
-export async function liveDesignFor({ tenant, business }) {
-  if (invitationLevelOf(planOf(business)) !== "custom") return null;
+// A Standard invitation in the template the Owner chose (Wedding Setup).
+// Luna Standard (the default) is the original page: null.
+export async function standardDesignFor({ tenant, setup }) {
+  const id = setup?.templateId;
+  if (!isStandardTemplate(id) || id === DEFAULT_TEMPLATE_ID) return null;
+  const resolved = resolveDesign({ templateId: id });
+  return { design: { config: resolved, assets: {}, standard: true }, ...(await componentData(tenant, resolved)) };
+}
+const setupOf = async (tenant) => {
+  const s = await tenant.doc("weddingSetup", "current").get();
+  return s.exists ? s.data() : {};
+};
+
+// What a guest link shows: { design: { config, assets }, ...component data }
+// or null (Luna Standard): the live Custom design, else the chosen Standard template.
+export async function liveDesignFor({ tenant, business, setup = null }) {
+  const standard = async () => standardDesignFor({ tenant, setup: setup ?? (await setupOf(tenant)) });
+  if (invitationLevelOf(planOf(business)) !== "custom") return standard();
   const doc = await readDesign(tenant);
-  if (!doc || doc.live !== "custom" || !doc.published?.config) return null;
+  if (!doc || doc.live !== "custom" || !doc.published?.config) return standard();
   const resolved = resolveDesign(doc.published.config);
   return { design: { config: resolved, assets: await assetsByIds(tenant, assetIdsOf(doc.published.config)), version: doc.published.version }, ...(await componentData(tenant, resolved)) };
 }
@@ -85,7 +102,7 @@ export async function liveDesignFor({ tenant, business }) {
 export async function previewDesign({ tenant, business, which = "live" }) {
   const doc = await readDesign(tenant);
   const config = which === "draft" ? doc?.draft?.config : doc?.live === "custom" && invitationLevelOf(planOf(business)) === "custom" ? doc?.published?.config : null;
-  if (!config) return { design: null };
+  if (!config) return which === "draft" ? { design: null } : ((await standardDesignFor({ tenant, setup: await setupOf(tenant) })) ?? { design: null });
   const resolved = resolveDesign(config);
   return { design: { config: resolved, assets: await assetsByIds(tenant, assetIdsOf(config)) }, ...(await componentData(tenant, resolved)) };
 }
@@ -134,7 +151,17 @@ export async function invitationSummary({ tenant, business }) {
     publishedVersion: st.publishedVersion,
     unpublishedChanges: Boolean(custom && doc?.published?.config && doc?.draft?.published === false),
     lastUpdated: [draftAt, publishedAt].filter(Boolean).sort().at(-1) ?? null,
+    // The selected template: the live Custom design's, else the Owner's Standard choice.
+    templateId: selectedTemplate({ custom, live: st.live, doc, setup: s }),
+    templateLabel: TEMPLATES[selectedTemplate({ custom, live: st.live, doc, setup: s })]?.label ?? null,
+    draftTemplateId: custom && doc?.draft?.config?.templateId ? doc.draft.config.templateId : null,
+    // A free trial: preview only (guest links open once Luna Bridal is paid).
+    trialPreviewOnly: trialOpen(business?.subscription),
   };
+}
+function selectedTemplate({ custom, live, doc, setup }) {
+  if (custom && live === "custom" && TEMPLATES[doc?.published?.config?.templateId]) return doc.published.config.templateId;
+  return isStandardTemplate(setup?.templateId) ? setup.templateId : DEFAULT_TEMPLATE_ID;
 }
 
 export async function ownerInvitationStatus({ tenant, business }) {
@@ -159,7 +186,7 @@ export async function designWorkspace({ tenant }) {
     assets,
     // Only the invitation fields of the Wedding Setup (privacy: nothing else).
     content: { setup: invitationContent(setup.exists ? setup.data() : {}), hero: hero.exists ? hero.data().dataUrl : null },
-    templates: Object.fromEntries(Object.entries(TEMPLATES).map(([id, t]) => [id, { label: t.label }])),
+    templates: Object.fromEntries(Object.entries(TEMPLATES).map(([id, t]) => [id, { label: t.label, tier: t.tier, description: t.description }])),
     sections: SECTION_IDS,
   };
 }
@@ -199,6 +226,7 @@ export async function setDraftState({ db, tenant, FieldValue, state, actor }) {
 export async function publishDesign({ db, tenant, FieldValue, actor, now = new Date() }) {
   const business = await requireWedding(tenant);
   if (invitationLevelOf(planOf(business)) !== "custom") throw new InvitationDesignError("not-entitled", "Publishing a customized invitation needs Luna Bridal Custom");
+  if (trialOpen(business.subscription)) throw new InvitationDesignError("trial-preview", TRIAL_PREVIEW_MESSAGE);
   return db.runTransaction(async (tx) => {
     const snap = await tx.get(designRef(tenant));
     const d = snap.exists ? snap.data() : {};

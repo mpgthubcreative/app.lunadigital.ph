@@ -48,8 +48,9 @@ export async function overviewView(el, ctx) {
           ${kpiStrip(
             [
               { id: "active", label: "Active subscriptions", value: formatNumber(o.activeAccess), hint: "Paying or with access now" },
-              { id: "recurring", label: "Recurring income", value: `${peso(o.recurringIncome)}`, hint: "Distributor, per month" },
-              { id: "annual", label: "Annual / 12-month income", value: peso(o.annualIncomeThisMonth), hint: "Collected this month" },
+              { id: "trials", label: "Free trials", value: formatNumber(o.trials?.active ?? 0), hint: `${formatNumber(o.trials?.endingSoon ?? 0)} ending this week · ${formatNumber(o.trials?.ended ?? 0)} ended` },
+              { id: "annual", label: "6 / 12-month income", value: peso(o.annualIncomeThisMonth), hint: "Collected this month" },
+              ...(o.recurringIncome ? [{ id: "recurring", label: "Recurring income", value: `${peso(o.recurringIncome)}`, hint: "Older monthly plans, per month" }] : []),
             ],
             { role: "kpis" }
           )}
@@ -69,13 +70,13 @@ export async function overviewView(el, ctx) {
                     <td class="row-actions" data-m="more">${subscriptionMenu(r, { ctx })}</td>
                   </tr>`
                 )}</tbody></table></div>`
-            : html`<p class="all-clear" data-role="all-clear">✓ Nobody is due, overdue or expiring.</p>`}
+            : html`<p class="all-clear" data-role="all-clear">✓ Nobody is due, overdue, expiring or ending a trial.</p>`}
         </section>
         <section class="card section" data-role="income">
           <div class="card-header"><h2 class="card-title">Income by workspace</h2></div>
           <div class="card-body"><ul class="sa-income">${o.incomeByWorkspace.map(
             (w) => html`<li data-workspace="${w.workspaceTemplateId}">
-              <span class="sa-income-name">${ctx.workspaceName(w.workspaceTemplateId)}<small>${w.billingType === "monthly" ? `Recurring · ${formatNumber(w.active)} active` : w.billingType === "annual" ? `Annual renewals collected this month · ${formatNumber(w.active)} active` : `12-month access collected this month · ${formatNumber(w.active)} active`}</small></span>
+              <span class="sa-income-name">${ctx.workspaceName(w.workspaceTemplateId)}<small>${w.billingType === "monthly" ? `Recurring · ${formatNumber(w.active)} active` : w.billingType === "annual" ? `6 / 12-month access collected this month · ${formatNumber(w.active)} active` : `12-month access collected this month · ${formatNumber(w.active)} active`}</small></span>
               <strong class="sa-income-value">${w.billingType === "monthly" ? html`${peso(w.recurring)}<small>/ month</small>` : peso(w.collected)}</strong>
             </li>`
           )}</ul></div>
@@ -206,6 +207,9 @@ export function createBusinessDialog(ctx) {
     fields: [
       { name: "planId", label: "Product", type: "select", options: products.map((p) => ({ value: p.id, label: p.name })), value: first?.id, hint: first ? `${priceLabel(first)} · ${limitsText(first)}` : "" },
       { name: "termMonths", label: "Term", type: "select", options: first ? termOptions(first) : [], value: first ? String(planBilling(first).defaultTermMonths) : "" },
+      // Products with a free trial start with it (nothing billed until the
+      // customer chooses a plan on "Continue with Luna").
+      { name: "start", label: "Start", type: "select", options: [{ value: "trial", label: "30-day free trial" }, { value: "paid", label: "Paid from today" }], value: "trial" },
       { name: "name", label: "Business / workspace name", required: true },
       { name: "ownerName", label: "Owner name", required: true },
       { name: "ownerEmail", label: "Owner email", required: true, inputmode: "email" },
@@ -230,6 +234,9 @@ export function createBusinessDialog(ctx) {
       }
       // One term (Bridal, Baby): nothing to choose.
       els.termMonths.closest(".field").hidden = opts.length < 2;
+      const trialDays = planBilling(plan).trialDays;
+      els.start.closest(".field").hidden = !trialDays;
+      if (trialDays) els.start.options[0].textContent = `${trialDays}-day free trial`;
       // Advanced: this product's add-ons and setup fee (none: hidden).
       const b = planBilling(plan);
       const packOf = (kind) => b.addOns.find((a) => (kind === "users" ? a.users > 0 : a.storageMb > 0));
@@ -272,7 +279,7 @@ export function createBusinessDialog(ctx) {
       const fee = String(v.setupFee || "").replace(/[₱,\s]/g, "");
       const setupFee = b.setupFee && fee !== "" ? Math.round(Number(fee) * 100) : null;
       if (setupFee !== null && (!Number.isSafeInteger(setupFee) || setupFee < 0)) throw new Error("Setup fee: ₱0 or more");
-      const r = await ctx.call("createBusiness", { business: { name: v.name, businessId, workspaceTemplateId: planWorkspace(plan), planId: plan.id, termMonths: Number(v.termMonths) || b.defaultTermMonths, ...(priceOverride ? { priceOverride } : {}), ...(Object.keys(addOns).length ? { addOns } : {}), ...(setupFee !== null && setupFee !== b.setupFee ? { setupFee } : {}), ...(b.setupFee && v.waiveSetupFee === "yes" ? { waiveSetupFee: true } : {}), ownerName: v.ownerName, ownerEmail: v.ownerEmail, timezone: v.timezone || "Asia/Manila" } });
+      const r = await ctx.call("createBusiness", { business: { name: v.name, businessId, workspaceTemplateId: planWorkspace(plan), planId: plan.id, termMonths: Number(v.termMonths) || b.defaultTermMonths, ...(priceOverride ? { priceOverride } : {}), ...(Object.keys(addOns).length ? { addOns } : {}), ...(setupFee !== null && setupFee !== b.setupFee ? { setupFee } : {}), ...(b.setupFee && v.waiveSetupFee === "yes" ? { waiveSetupFee: true } : {}), ...(b.trialDays && v.start !== "paid" ? { trial: true } : {}), ownerName: v.ownerName, ownerEmail: v.ownerEmail, timezone: v.timezone || "Asia/Manila" } });
       ctx.toast(r.created ? "Business created." : "Already created: nothing was duplicated.", "success");
       return r;
     },
@@ -583,7 +590,7 @@ export async function plansView(el, ctx) {
       fields: [
         { name: "name", label: "Product name", value: p.name, required: true },
         ...b.terms.map((x) => ({ name: `term-${x.months}`, label: `${monthsText(x.months)}${b.type === "monthly" && x.months === 1 ? " (monthly price)" : ""} · ₱`, value: pesos(x.price), inputmode: "decimal", required: true, hint: x.kind === "trial" ? (b.type === "monthly" ? "Prepaid starter" : "Paid trial") : "Main offer" })),
-        ...(b.type === "monthly" ? [{ name: "setupFee", label: "One-time setup fee (₱)", value: pesos(b.setupFee) || "0", inputmode: "decimal" }] : []),
+        ...(b.type === "monthly" || b.setupFee > 0 ? [{ name: "setupFee", label: "One-time setup fee (₱)", value: pesos(b.setupFee) || "0", inputmode: "decimal" }] : []),
         { name: "users", label: "Included users", value: String(p.limits.users), inputmode: "numeric", required: true },
         { name: "storageMb", label: "Included storage (MB)", value: String(Math.round(p.limits.storageBytes / MB)), inputmode: "numeric", required: true },
         ...b.addOns.map((a) => ({ name: `addon-${a.id}`, label: `${a.label} · ₱ per ${a.perMonths === 1 ? "month" : monthsText(a.perMonths)}`, value: pesos(a.price), inputmode: "decimal", required: true })),
@@ -604,7 +611,7 @@ export async function plansView(el, ctx) {
             tagline: v.tagline,
             termPrices: Object.fromEntries(b.terms.map((x) => [String(x.months), cents(v[`term-${x.months}`], monthsText(x.months))])),
             ...(b.addOns.length ? { addOnPrices: Object.fromEntries(b.addOns.map((a) => [a.id, cents(v[`addon-${a.id}`], a.label)])) } : {}),
-            ...(b.type === "monthly" ? { setupFee: cents(v.setupFee || "0", "Setup fee", { allowZero: true }) } : {}),
+            ...(b.type === "monthly" || b.setupFee > 0 ? { setupFee: cents(v.setupFee || "0", "Setup fee", { allowZero: true }) } : {}),
             users: whole(v.users, "Users"),
             storageMb: whole(v.storageMb, "Storage"),
             priceIsMinimum: v.priceIsMinimum === "yes",

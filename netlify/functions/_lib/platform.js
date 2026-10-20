@@ -11,6 +11,7 @@ import { tenantDb } from "./tenant-db.js";
 import { readStorageCurrent } from "./metering.js";
 import { billingRun, currentPeriod } from "./billing.js";
 import { subscriptionTerms, attentionOf, accessState, BILLING_TYPES } from "../../../shared/plan-billing.js";
+import { trialState } from "../../../shared/trial.js";
 import { businessDate } from "../../../shared/metrics.js";
 import { BILLING_TIMEZONE } from "../../../shared/billing.js";
 
@@ -253,14 +254,20 @@ export async function platformOverview({ db, FieldValue, AggregateField, now = n
 // monthly number.
 
 const OVERVIEW_LIMIT = 500;
-const WORKSPACE_BILLING = { distributor: "monthly", "household-payroll": "annual", "bridal-expense": "term", "baby-expense": "monthly" };
-const ATTENTION_ORDER = { overdue: 0, expired: 1, due: 2, expiring: 3 };
+// How each workspace is sold now (2026-10-21: Luna Distributor is 6 / 12
+// months prepaid). Recurring income = businesses still on a MONTHLY plan in a
+// workspace that was sold monthly (legacy Distributor / Baby plans); a
+// Household / Bridal business on old monthly terms never counts.
+const WORKSPACE_BILLING = { distributor: "annual", "household-payroll": "annual", "bridal-expense": "term", "baby-expense": "monthly" };
+const MONTHLY_WORKSPACES = new Set(["distributor", "baby-expense"]);
+const ATTENTION_ORDER = { overdue: 0, expired: 1, trial_ended: 2, due: 3, trial: 4, expiring: 5 };
 const createdDayOf = (b) => (b.createdAt?.toDate ? businessDate(BILLING_TIMEZONE, b.createdAt.toDate()) : null);
 
 // One business's billing state as the console shows it.
 export function billingRow(id, b, planNames = {}, today) {
   const sub = b.subscription || {};
   const terms = subscriptionTerms(sub, { createdDay: createdDayOf(b) });
+  const trial = today ? trialState(sub, today) : null;
   return {
     id,
     name: b.name ?? id,
@@ -268,7 +275,9 @@ export function billingRow(id, b, planNames = {}, today) {
     planId: sub.planId ?? null,
     planName: planNames[sub.planId] ?? b.entitlements?.planName ?? sub.planId ?? null,
     status: sub.status ?? null,
-    state: accessState(terms, { status: sub.status, today }),
+    state: accessState(terms, { status: sub.status, today, trial }),
+    // The free trial (null when none): Free trial / Trial ends … / Trial ended.
+    trial: trial ? { status: trial.status, startedAt: trial.startedAt, endsAt: trial.endsAt, daysLeft: trial.daysLeft, day: trial.day, open: trial.open, conversion: trial.conversion } : null,
     billingType: terms.billingType,
     amount: terms.amount,
     // The term the next bill covers, Super Admin's price, the add-ons.
@@ -282,7 +291,7 @@ export function billingRow(id, b, planNames = {}, today) {
     accessUntil: terms.accessUntil,
     paidThrough: terms.paidThrough,
     extended: terms.extended,
-    attention: attentionOf(terms, { status: sub.status, today }),
+    attention: attentionOf(terms, { status: sub.status, today, trial }),
     purgeAfter: b.deletion?.purgeAfter ?? null,
   };
 }
@@ -301,16 +310,19 @@ export async function lunaOverview({ db, FieldValue, now = new Date() }) {
   const rows = snap.docs.map((d) => billingRow(d.id, d.data(), planNames, today)).filter((r) => r.status !== "deleted");
   const m = metric.exists ? metric.data() : {};
   const c = current.exists ? current.data() : {};
-  const live = rows.filter((r) => BILLABLE_STATUSES.includes(r.status) && r.state !== "expired");
+  // Paying access; free trials are counted on their own (never income).
+  const live = rows.filter((r) => BILLABLE_STATUSES.includes(r.status) && !["expired", "trial", "trial_ended"].includes(r.state));
+  const trials = rows.filter((r) => ["trial", "trial_ended"].includes(r.state) && r.status !== "cancelled");
   const byType = m.revenueByBillingType || {};
   const workspaces = WORKSPACE_TEMPLATE_IDS.filter((w) => rows.some((r) => r.workspaceTemplateId === w));
   return {
     period,
     today,
     activeAccess: live.length,
+    trials: { active: trials.filter((r) => r.state === "trial").length, endingSoon: trials.filter((r) => r.attention?.kind === "trial").length, ended: trials.filter((r) => r.state === "trial_ended").length },
     // Only workspaces sold monthly: a Household / Bridal business still on its
     // old monthly terms (before billing types) isn't recurring income.
-    recurringIncome: live.filter((r) => r.billingType === "monthly" && (WORKSPACE_BILLING[r.workspaceTemplateId] ?? "monthly") === "monthly").reduce((t, r) => t + (Number.isSafeInteger(r.amount) ? r.amount : 0), 0),
+    recurringIncome: live.filter((r) => r.billingType === "monthly" && MONTHLY_WORKSPACES.has(r.workspaceTemplateId)).reduce((t, r) => t + (Number.isSafeInteger(r.amount) ? r.amount : 0), 0),
     annualIncomeThisMonth: int(byType.annual) + int(byType.term),
     collectedThisMonth: int(m.verifiedRevenue),
     awaiting: { count: Math.max(0, int(c.awaitingCount)), amount: Math.max(0, int(c.awaitingAmount)) },

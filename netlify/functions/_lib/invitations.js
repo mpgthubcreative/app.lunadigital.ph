@@ -27,7 +27,8 @@ import { guestTotalsWrite } from "./wedding.js";
 import { roleLabel } from "../../../shared/wedding-roles.js";
 import { accessPolicy } from "../../../shared/subscription.js";
 import { attendingMarksFor } from "./wedding-roles.js";
-import { liveDesignFor, ownerInvitationStatus, previewDesign } from "./invitation-design.js";
+import { liveDesignFor, ownerInvitationStatus, previewDesign, TRIAL_PREVIEW_MESSAGE } from "./invitation-design.js";
+import { trialOpen } from "../../../shared/trial.js";
 import { invitationContent } from "../../../shared/invitation-design.js";
 
 const TX_OPTIONS = { maxAttempts: 10 };
@@ -57,6 +58,13 @@ const setupRef = (tenant) => tenant.doc("weddingSetup", "current");
 const heroRef = (tenant) => tenant.doc("weddingSetup", "hero");
 const totalsRef = (tenant) => tenant.doc("guestTotals", TOTALS_DOC_ID);
 const BAD_LINK = () => new WeddingError("invalid-link", "This invitation link isn't valid. Please ask the couple for a new one.");
+// A free trial (2026-10-21): the couple previews; guest links are made and
+// opened once Luna Bridal is paid (the trial converts). Same links after.
+const NOT_PUBLISHED = () => new WeddingError("not-published", "This invitation isn't published yet. Please check back soon.");
+async function requirePaid(tenant) {
+  const b = await tenant.ref.get();
+  if (b.exists && trialOpen(b.data().subscription)) throw new WeddingError("trial-preview", TRIAL_PREVIEW_MESSAGE);
+}
 
 // ---- Wedding Setup (Owner side, guests.manage) ----
 export async function readSetup({ tenant, business }) {
@@ -173,6 +181,7 @@ export async function issueInvite({ db, tenant, guestId, actor, now = new Date()
   const gRef = tenant.doc("guests", guestId);
   const iRef = tenant.doc("guestInvites", guestId);
   if (!(await gRef.get()).exists) throw new WeddingError("not-found", "Guest not found");
+  await requirePaid(tenant);
   await requireSetup(tenant);
   const token = newToken();
   const hash = hashInviteToken(token);
@@ -189,6 +198,7 @@ export async function issueInvite({ db, tenant, guestId, actor, now = new Date()
 }
 // The current link (made on first use), under the wedding's current slug.
 export async function inviteLink({ db, tenant, guestId, actor, now }) {
+  await requirePaid(tenant);
   const i = await tenant.doc("guestInvites", guestId).get();
   if (i.exists && i.data().token) return { token: i.data().token, path: invitePath(await slugOf({ db, tenant, now }), i.data().token), created: false };
   return issueInvite({ db, tenant, guestId, actor, now });
@@ -205,6 +215,7 @@ async function resolve(db, token) {
   if (!b.exists || !g.exists || b.data().entitlements?.workspaceTemplateId !== "bridal-expense") throw BAD_LINK();
   // A deleted business (Super Admin, recoverable) or an unknown status: the link stops working at once.
   if (!accessPolicy(b.data().subscription?.status).canRead) throw BAD_LINK();
+  if (trialOpen(b.data().subscription)) throw NOT_PUBLISHED();
   return { businessId, guestId, biz, business: b.data(), guest: g.data(), linkRef: link.ref };
 }
 // What a guest sees of the Wedding Setup (shared/invitation-design.js).
@@ -226,7 +237,7 @@ export async function viewInvite({ db, token, now = new Date() }) {
     path: invitePath(setup.weddingSlug, token),
     // The published Luna Bridal+ design (or null = the Standard invitation),
     // with the images / gallery / entourage its sections need.
-    ...((await liveDesignFor({ tenant: tenantDb(db, r.businessId), business: r.business })) ?? { design: null }),
+    ...((await liveDesignFor({ tenant: tenantDb(db, r.businessId), business: r.business, setup })) ?? { design: null }),
   };
 }
 
