@@ -6,12 +6,12 @@
 //   Inventory  the active products as the Inventory screen shows them
 //   Operating Expenses  the Costs page's expenses in the range
 //   COGS       each active product's current unit cost (inventory.costs)
-// Customers is hidden in Business for now (Owner pilot, 2026-10-19): no
-// sheet; customer details stay on each order.
+//   Customers  the active saved customers: name, contact, delivery address
+//              and Luna's own order count (back 2026-10-20; no ids)
 // Each sheet only with its module and view permission (COGS also needs
 // inventory.costs). No averages, stock value or profit: unit costs only.
 
-import { ordersQuery, paymentsQuery, productsQuery, expensesQuery } from "../../../../shared/list-queries.js";
+import { ordersQuery, paymentsQuery, productsQuery, expensesQuery, customersQuery } from "../../../../shared/list-queries.js";
 import { expenseCategoryLabel } from "../../../../shared/expenses.js";
 import { costUnitsToCentavos } from "../../../../shared/quantity.js";
 import { ORDER_SOURCES, FULFILLMENT_STATUSES } from "../../../../shared/orders.js";
@@ -62,6 +62,12 @@ const INVENTORY_COLUMNS = [
   { header: "Stock Left", format: "quantity", width: 11, value: (p) => p.available },
   { header: "Selling Price", format: "money", width: 14, value: (p) => p.sellingPrice },
 ];
+const CUSTOMER_COLUMNS = [
+  { header: "Customer", format: "text", width: 28, value: (c) => c.name },
+  { header: "Contact", format: "text", width: 20, value: (c) => c.phone || "" },
+  { header: "Delivery Address", format: "text", width: 40, value: (c) => c.address || "" },
+  { header: "Total Orders", format: "integer", width: 12, total: true, value: (c) => c.stats?.orderCount ?? 0 },
+];
 const EXPENSE_COLUMNS = [
   { header: "Date", format: "date", width: 14, value: (e) => e.date },
   { header: "Expense", format: "text", width: 32, value: (e) => e.payee || expenseCategoryLabel(e.category) },
@@ -92,6 +98,7 @@ export async function businessSheets(x) {
     sheets.push({ name: "Users", columns: USER_COLUMNS, rows });
   }
   if (x.can("inventory", "inventory.view")) sheets.push({ name: "Inventory", columns: INVENTORY_COLUMNS, rows: await x.readRows("products", productsQuery({ status: "active" })) });
+  if (x.can("customers", "customers.view")) sheets.push({ name: "Customers", columns: CUSTOMER_COLUMNS, rows: await x.readRows("customers", customersQuery({ status: "active" })) });
   if (x.can("expenses", "expenses.view")) {
     const rows = await x.readRows("expenses", expensesQuery({ status: "active", ...dated }));
     rows.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : byText(a.payee, b.payee)));

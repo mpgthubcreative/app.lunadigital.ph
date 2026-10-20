@@ -6,11 +6,11 @@ import { MODULE_IDS } from "../../shared/modules.js";
 describe("plan seed", () => {
   const plans = Object.values(PLAN_SEED);
 
-  it("two sold plans per workspace (Plus recommended); Starter / Growth / Pro are legacy", () => {
+  it("one product per workspace (Bridal: Standard + Custom); the main product recommended; the + plans and Starter / Growth / Pro are legacy", () => {
     expect(Object.keys(PLAN_SEED)).toEqual(["distributor-basic", "distributor-plus", "starter", "growth", "pro", "household-basic", "household-plus", "baby-basic", "baby-plus", "bridal-basic", "bridal-plus"]);
-    expect(plans.filter((p) => p.recommended).map((p) => p.id)).toEqual(["distributor-plus", "growth", "household-plus", "baby-plus", "bridal-plus"]);
-    expect(plans.filter((p) => p.legacy).map((p) => p.id)).toEqual(["starter", "growth", "pro"]);
-    expect(plans.filter((p) => p.workspaceTemplateId === "distributor" && !p.legacy).map((p) => [p.id, p.pricing.monthly, p.pricing.setupFee])).toEqual([["distributor-basic", 49900, 99900], ["distributor-plus", 89900, 99900]]);
+    expect(plans.filter((p) => p.recommended).map((p) => p.id)).toEqual(["distributor-basic", "growth", "household-basic", "baby-plus", "bridal-basic"]);
+    expect(plans.filter((p) => p.legacy).map((p) => p.id)).toEqual(["distributor-plus", "starter", "growth", "pro", "household-plus"]);
+    expect(plans.filter((p) => p.workspaceTemplateId === "distributor" && !p.legacy).map((p) => [p.id, p.pricing.monthly, p.pricing.setupFee])).toEqual([["distributor-basic", 49900, 99900]]);
   });
 
   it("defines every limit as a non-negative integer", () => {

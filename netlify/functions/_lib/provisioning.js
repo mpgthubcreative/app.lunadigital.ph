@@ -12,7 +12,7 @@
 // validates, recomputes the snapshot and writes an audit record to
 // businesses/{bid}/auditLog and platformAudit.
 
-import { newSubscriptionTerms, amountFor, usesSeat } from "../../../shared/plan-billing.js";
+import { newSubscriptionTerms, recurringAmount, addOnSnapshot, addOnCapacity, planBilling, isDayString, shiftDay, monthsText, isUnlimited, usesSeat, BILLING_TYPE_IDS } from "../../../shared/plan-billing.js";
 import { businessDate as seatDay } from "../../../shared/metrics.js";
 import { planWorkspace, PLAN_SEED } from "../../../shared/plans.seed.js";
 import { computeEntitlements, validatePlan, validateEntitlementsSnapshot, isValidPlanId, EntitlementError } from "../../../shared/entitlements.js";
@@ -90,12 +90,29 @@ export async function loadPlan(db, planId) {
 }
 
 // computeEntitlements, with validation errors mapped to ProvisioningError.
-export function buildEntitlementsSnapshot(plan, overrides, workspaceTemplateId) {
+// `addOns` (the subscription's add-on snapshot): their extra users and
+// storage go on top of the plan's (or the override's) limit.
+export function buildEntitlementsSnapshot(plan, overrides, workspaceTemplateId, addOns = []) {
+  let e;
   try {
-    return computeEntitlements(plan, overrides, workspaceTemplateId);
+    e = computeEntitlements(plan, overrides, workspaceTemplateId);
   } catch (err) {
     if (err instanceof EntitlementError) throw new ProvisioningError("invalid-input", err.message);
     throw err;
+  }
+  const extra = addOnCapacity(addOns);
+  if (extra.users && !isUnlimited(e.limits.users)) e.limits.users += extra.users;
+  if (extra.storageBytes) e.limits.storageBytes += extra.storageBytes;
+  return e;
+}
+
+// plan-billing errors (a term or add-on the product doesn't sell) as input errors.
+function billingTerms(fn) {
+  try {
+    return fn();
+  } catch (err) {
+    if (err instanceof ProvisioningError) throw err;
+    throw new ProvisioningError("invalid-input", err.message);
   }
 }
 
@@ -128,8 +145,10 @@ export async function createBusiness({
   businessId = null,
   isDemo = false,
   createdBy = "cli",
-  // The plan's founding price for its founding months (Super Admin choice).
-  founding = false,
+  // The access term (one of the product's terms; default: its main offer)
+  // and Super Admin's agreed price for it (null: the product's price).
+  termMonths = null,
+  priceOverride = null,
   clock = new Date(),
 }) {
   const businessName = cleanName(name, "Business name");
@@ -144,6 +163,7 @@ export async function createBusiness({
   const template = requireTemplate(workspaceTemplateId);
   const plan = await loadPlan(db, planId);
   requirePlanFits(plan, template.id);
+  const terms = billingTerms(() => newSubscriptionTerms(plan, seatDay(timezone, clock), { termMonths, priceOverride }));
   const ref = businessId ? db.collection("businesses").doc(businessId) : db.collection("businesses").doc();
   const now = admin.firestore.FieldValue.serverTimestamp();
 
@@ -161,10 +181,11 @@ export async function createBusiness({
       adminRevision: 0,
       isDemo: Boolean(isDemo),
       workspaceTemplateId: template.id,
-      // The plan's price and billing terms when assigned (shared/plan-billing.js):
-      // invoices never re-read today's price for an older subscription, and
-      // monthlyAmount is recurring income only (0 for annual / 12-month access).
-      subscription: { planId: plan.id, status: subscriptionStatus, renewalAt: null, graceUntil: null, paidThrough: null, nextRenewal: null, ...newSubscriptionTerms(plan, seatDay(timezone, clock), { founding }) },
+      // The product's price, term and add-ons when assigned
+      // (shared/plan-billing.js): invoices never re-read today's price for an
+      // older subscription, and monthlyAmount is recurring income only (0 for
+      // prepaid / 12-month access).
+      subscription: { planId: plan.id, status: subscriptionStatus, renewalAt: null, graceUntil: null, paidThrough: null, nextRenewal: null, ...terms },
       moduleOverrides: {},
       limitOverrides: {},
       featureOverrides: {},
@@ -247,7 +268,10 @@ async function prepareLimitChangeAlerts(tx, { tenant, usage, before, after }) {
 // template / snapshot. mutate({ planId, overrides, templateId }) returns
 // the next state. A business without a workspace template (pre-8.5) can
 // only be given one (assignWorkspaceTemplate); nothing else recomputes it.
-async function changeEntitlements({ db, admin, businessId, actor, reason, action, mutate, expectedRevision = null, summary = null }) {
+// subscriptionPatch(business, plan) (optional) returns the subscription.*
+// fields to write with it (Change access); otherwise a product change
+// writes the new product's terms (planTermsUpdate).
+async function changeEntitlements({ db, admin, businessId, actor, reason, action, mutate, expectedRevision = null, summary = null, subscriptionPatch = null }) {
   const why = typeof reason === "string" ? reason.trim() : "";
   if (why.length < 3) throw new ProvisioningError("invalid-input", "A reason is required for every plan or entitlement change.");
   const who = typeof actor === "string" && actor.trim() ? actor.trim() : "cli";
@@ -269,9 +293,11 @@ async function changeEntitlements({ db, admin, businessId, actor, reason, action
     const plan = planFromSnap(await tx.get(db.collection("plans").doc(next.planId)), next.planId);
     const planChanged = next.planId !== current.planId;
     if (planChanged) requirePlanFits(plan, template.id);
+    const subPatch = subscriptionPatch ? subscriptionPatch(business, plan) : planChanged || business.subscription?.monthlyAmount === undefined ? planTermsUpdate(business, plan) : {};
+    const addOns = Object.hasOwn(subPatch, "subscription.addOns") ? subPatch["subscription.addOns"] : business.subscription?.addOns ?? [];
     // Validates the plan, the overrides and the template ceiling; throws on
-    // anything unknown or not allowed.
-    const entitlements = buildEntitlementsSnapshot(plan, next.overrides, template.id);
+    // anything unknown or not allowed. Add-on capacity goes on top.
+    const entitlements = buildEntitlementsSnapshot(plan, next.overrides, template.id, addOns);
     const overrides = { modules: { ...next.overrides.modules }, limits: { ...next.overrides.limits }, features: { ...next.overrides.features } };
     // Paid seats: active members except a kasambahay's own login.
     const activeMembers = (await tx.get(tenant.collection("members").where("status", "==", "active"))).docs.filter((d) => usesSeat(d.data())).length;
@@ -284,7 +310,7 @@ async function changeEntitlements({ db, admin, businessId, actor, reason, action
     const now = FieldValue.serverTimestamp();
     tx.update(tenant.ref, {
       "subscription.planId": plan.id,
-      ...(planChanged || business.subscription?.monthlyAmount === undefined ? planTermsUpdate(business, plan) : {}),
+      ...subPatch,
       workspaceTemplateId: template.id,
       moduleOverrides: overrides.modules,
       limitOverrides: overrides.limits,
@@ -326,16 +352,84 @@ async function changeEntitlements({ db, admin, businessId, actor, reason, action
   });
 }
 
-// A new plan's price snapshot (shared/plan-billing.js). While the billing
-// type stays the same, the start date, what's paid and the access end carry
-// over; a different billing type starts its terms today.
+// A new product's terms (shared/plan-billing.js). While the billing type
+// stays the same (Luna Bridal ↔ Luna Bridal Custom, a legacy "+" plan →
+// its product), the start date, the term, what's paid and the access end
+// carry over, and add-ons the new product also sells are kept; a different
+// billing type starts its terms today. A price override never carries
+// over to another product.
 function planTermsUpdate(business, plan) {
   const sub = business.subscription || {};
-  const fresh = newSubscriptionTerms(plan, seatDay(business.timezone || "Asia/Manila", new Date()));
-  if (!fresh.billingType) return { "subscription.monthlyAmount": fresh.monthlyAmount };
-  const sameType = (sub.billingType ?? "monthly") === fresh.billingType && typeof sub.startDate === "string";
-  const next = sameType ? { ...fresh, startDate: sub.startDate, accessUntil: sub.accessUntil ?? fresh.accessUntil, founding: sub.founding ?? null, monthlyAmount: fresh.billingType === "monthly" ? amountFor({ ...fresh, founding: sub.founding ?? null }, seatDay(business.timezone || "Asia/Manila", new Date())) : 0 } : { ...fresh, paidThrough: null, dueDate: null };
+  const today = seatDay(business.timezone || "Asia/Manila", new Date());
+  if (!BILLING_TYPE_IDS.includes(plan?.pricing?.billingType)) return { "subscription.monthlyAmount": newSubscriptionTerms(plan, today).monthlyAmount };
+  const b = planBilling(plan);
+  const sameType = (sub.billingType ?? "monthly") === b.type && typeof sub.startDate === "string";
+  const kept = Object.fromEntries((Array.isArray(sub.addOns) ? sub.addOns : []).filter((a) => b.addOns.some((x) => x.id === a.id)).map((a) => [a.id, a.qty]));
+  const termMonths = sameType && b.type !== "monthly" && b.terms.some((t) => t.months === sub.termMonths) ? sub.termMonths : null;
+  const fresh = newSubscriptionTerms(plan, sameType ? sub.startDate : today, { termMonths, addOns: kept });
+  const next = sameType ? { ...fresh, accessUntil: sub.accessUntil ?? fresh.accessUntil, prepaidTerm: b.type === "monthly" ? sub.prepaidTerm ?? null : null } : { ...fresh, paidThrough: null, dueDate: null, nextRenewal: null };
   return Object.fromEntries(Object.entries(next).map(([k, v]) => [`subscription.${k}`, v]));
+}
+
+// Super Admin → Change access (Household, Distributor; Bridal add-on
+// capacity and price): the product stays, its term / paid-through date /
+// add-ons / price override change. changes: { termMonths?, paidThrough?,
+// addOns?: { [addOnId]: qty }, priceOverride?: centavos | null }.
+const ACCESS_FIELDS = ["termMonths", "paidThrough", "addOns", "priceOverride"];
+export async function setAccess({ db, admin, businessId, changes, actor, reason, expectedRevision = null }) {
+  if (!changes || typeof changes !== "object" || Array.isArray(changes) || !Object.keys(changes).length) throw new ProvisioningError("invalid-input", "Nothing to change");
+  for (const k of Object.keys(changes)) if (!ACCESS_FIELDS.includes(k)) throw new ProvisioningError("invalid-input", `${k} can't be changed here`);
+  const said = [];
+  return changeEntitlements({
+    db,
+    admin,
+    businessId,
+    actor,
+    reason,
+    expectedRevision,
+    action: "access-changed",
+    summary: () => `Access changed: ${said.join("; ")}`,
+    mutate: (state) => state,
+    subscriptionPatch: (business, plan) => {
+      said.length = 0; // a retried transaction describes the change once
+      const sub = business.subscription || {};
+      const b = planBilling(plan);
+      if (!BILLING_TYPE_IDS.includes(plan.pricing?.billingType) || !BILLING_TYPE_IDS.includes(sub.billingType)) throw new ProvisioningError("legacy-plan", `${plan.name} is an older plan: change the product first.`);
+      const next = { ...sub };
+      if ("termMonths" in changes) {
+        const t = b.terms.find((x) => x.months === changes.termMonths);
+        if (!t) throw new ProvisioningError("invalid-input", `${plan.name} is sold for ${b.terms.map((x) => monthsText(x.months)).join(", ")}`);
+        if (b.type === "monthly") next.prepaidTerm = t.months > 1 ? { months: t.months, price: t.price } : null;
+        else {
+          next.termMonths = t.months;
+          next.amount = t.price;
+        }
+        said.push(`term ${monthsText(t.months)}`);
+      }
+      if ("paidThrough" in changes) {
+        if (b.type === "term") throw new ProvisioningError("invalid-input", "12-month access: change the access end instead");
+        if (changes.paidThrough !== null && !isDayString(changes.paidThrough)) throw new ProvisioningError("invalid-input", "Paid through: choose a date");
+        next.paidThrough = changes.paidThrough;
+        next.nextRenewal = changes.paidThrough ? shiftDay(changes.paidThrough, 1) : null;
+        next.dueDate = null;
+        said.push(`paid through ${changes.paidThrough ?? "—"}`);
+      }
+      if ("addOns" in changes) {
+        next.addOns = billingTerms(() => addOnSnapshot(plan, changes.addOns));
+        said.push(`add-ons ${next.addOns.map((a) => `${a.qty} × ${a.label}`).join(", ") || "none"}`);
+      }
+      if ("priceOverride" in changes) {
+        const v = changes.priceOverride;
+        if (v !== null && (!Number.isSafeInteger(v) || v <= 0 || v > 100_000_000)) throw new ProvisioningError("invalid-input", "Price: an amount more than ₱0, or empty for the product's price");
+        next.priceOverride = v;
+        said.push(`price ${v === null ? "product price" : `₱${(v / 100).toLocaleString("en-PH")}`}`);
+      }
+      next.monthlyAmount = recurringAmount(next);
+      const out = {};
+      for (const k of ["termMonths", "amount", "prepaidTerm", "paidThrough", "nextRenewal", "dueDate", "addOns", "priceOverride", "monthlyAmount"]) if (next[k] !== undefined && JSON.stringify(next[k]) !== JSON.stringify(sub[k])) out[`subscription.${k}`] = next[k];
+      return out;
+    },
+  });
 }
 
 const adminRevisionOf = (business) => (Number.isSafeInteger(business.adminRevision) ? business.adminRevision : 0);
@@ -449,7 +543,7 @@ export async function describeEntitlements({ db, businessId }) {
   let recomputed = null;
   let recomputeError = null;
   try {
-    recomputed = buildEntitlementsSnapshot(await loadPlan(db, planId), overridesOf(business), requireTemplate(templateId).id);
+    recomputed = buildEntitlementsSnapshot(await loadPlan(db, planId), overridesOf(business), requireTemplate(templateId).id, business.subscription?.addOns ?? []);
   } catch (err) {
     recomputeError = err.message;
   }
@@ -885,7 +979,7 @@ export async function provisionBusiness({ db, admin, auth, request, actor = "cli
 
   // 2. The business (create() never overwrites; "exists" here = our own retry).
   try {
-    await createBusiness({ db, admin, name: req.name, planId: req.planId, workspaceTemplateId: req.workspaceTemplateId, timezone: req.timezone, businessId: req.businessId, isDemo, createdBy: actor, founding: req.founding === true });
+    await createBusiness({ db, admin, name: req.name, planId: req.planId, workspaceTemplateId: req.workspaceTemplateId, timezone: req.timezone, businessId: req.businessId, isDemo, createdBy: actor, termMonths: req.termMonths ?? null, priceOverride: req.priceOverride ?? null });
   } catch (err) {
     if (!(err instanceof ProvisioningError && err.code === "business-exists")) throw err;
     const existing = (await bRef.get()).data();

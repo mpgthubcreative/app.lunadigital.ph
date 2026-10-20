@@ -16,7 +16,7 @@ import { createProvidersHandler } from "../../netlify/functions/providers.js";
 import { createWeddingAttentionHandler } from "../../netlify/functions/wedding-attention.js";
 import { createNotificationsHandler } from "../../netlify/functions/notifications.js";
 import { createBusiness, addMember, ensureAuthUser, setLimitOverride } from "../../netlify/functions/_lib/provisioning.js";
-import { buildWorld, request } from "../helpers/tenants.js";
+import { buildWorld, request, roomForTeam } from "../helpers/tenants.js";
 import { notificationId } from "../../shared/notifications.js";
 import { weddingSummary, rsvpSummary, supplierBalance, SUGGESTED_WEDDING_CATEGORIES } from "../../shared/wedding.js";
 import { readXlsx } from "../../shared/xlsx.js";
@@ -31,8 +31,8 @@ let u;
 
 beforeEach(async () => {
   world = await buildWorld();
-  await createBusiness({ ...world, name: "Reyes-Prado Wedding", planId: "bridal-plus", workspaceTemplateId: "bridal-expense", businessId: W });
-  await createBusiness({ ...world, name: "Cruz Wedding", planId: "bridal-basic", workspaceTemplateId: "bridal-expense", businessId: W2 });
+  await createBusiness({ ...world, name: "Reyes-Prado Wedding", planId: "bridal-plus", workspaceTemplateId: "bridal-expense", businessId: W }); await roomForTeam(world, W);
+  await createBusiness({ ...world, name: "Cruz Wedding", planId: "bridal-basic", workspaceTemplateId: "bridal-expense", businessId: W2 }); await roomForTeam(world, W2);
   await createBusiness({ ...world, name: "Baby", planId: "baby-plus", workspaceTemplateId: "baby-expense", businessId: "biz-baby" });
   await createBusiness({ ...world, name: "Home", planId: "household-plus", workspaceTemplateId: "household-payroll", businessId: "biz-home" });
   u = {};

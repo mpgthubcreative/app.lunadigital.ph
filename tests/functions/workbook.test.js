@@ -8,6 +8,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { unzipSync, strFromU8 } from "fflate";
 import { createWorkbookHandler } from "../../netlify/functions/workbook.js";
+import { createCustomersHandler } from "../../netlify/functions/customers.js";
 import { createBackupHandler } from "../../netlify/functions/backup.js";
 import { createBudgetHandler } from "../../netlify/functions/budget.js";
 import { createScheduleHandler } from "../../netlify/functions/schedule.js";
@@ -32,7 +33,7 @@ import { recordPayment } from "../../netlify/functions/_lib/payments.js";
 import { createProduct, recordMovement } from "../../netlify/functions/_lib/inventory.js";
 import { tenantDb } from "../../netlify/functions/_lib/tenant-db.js";
 import { FieldValue } from "../helpers/fake-firebase.js";
-import { buildWorld, request, asOperator } from "../helpers/tenants.js";
+import { buildWorld, request, asOperator, roomForTeam } from "../helpers/tenants.js";
 import { readXlsx } from "../../shared/xlsx.js";
 import { QTY_SCALE } from "../../shared/quantity.js";
 import { excelSerial } from "../../shared/exports.js";
@@ -53,6 +54,7 @@ beforeEach(async () => {
 });
 const deps = () => ({ getAdmin: async () => world, now: () => clock });
 const HANDLERS = {
+  customers: createCustomersHandler,
   budget: createBudgetHandler,
   schedule: createScheduleHandler,
   expenses: createExpensesHandler,
@@ -238,8 +240,8 @@ describe("Luna Household workbook", () => {
 
 describe("Luna Bridal workbook", () => {
   async function wedding() {
-    await createBusiness({ ...world, name: "Reyes-Prado Wedding", planId: "bridal-plus", workspaceTemplateId: "bridal-expense", businessId: W });
-    await createBusiness({ ...world, name: "Cruz Wedding", planId: "bridal-basic", workspaceTemplateId: "bridal-expense", businessId: W2 });
+    await createBusiness({ ...world, name: "Reyes-Prado Wedding", planId: "bridal-plus", workspaceTemplateId: "bridal-expense", businessId: W }); await roomForTeam(world, W);
+    await createBusiness({ ...world, name: "Cruz Wedding", planId: "bridal-basic", workspaceTemplateId: "bridal-expense", businessId: W2 }); await roomForTeam(world, W2);
     await member("camille", W, "owner", "wed");
     await member("helper", W, "staff", "wed");
     await member("other", W2, "owner", "wed");
@@ -328,12 +330,17 @@ describe("Luna Business workbook", () => {
     return { kopi, choco, orderId: o.orderId, orderNumber: o.orderNumber, business, common };
   }
 
-  it("Orders (items as text), Payments, Users (no UID), Inventory, Operating Expenses, COGS; no Customers; this business only", async () => {
+  it("Orders (items as text), Payments, Users (no UID), Inventory, Customers, Operating Expenses, COGS; this business only", async () => {
     const ids = await shop();
+    const juan = (await api("customers", world.uids.ownera, "biz-a", { action: "create", customer: { name: "Juan Dela Cruz", phone: "0917 123 4567", address: "123 Sample St., Quezon City" } })).body.customerId;
+    expect(juan).toBeTruthy();
     const wb = await workbook(world.uids.ownera, "biz-a", { range: "month" });
     expect(wb.status).toBe(200);
     expect(wb.fileName).toMatch(/^Luna-Business-[A-Za-z0-9-]+-Oct-2026\.xlsx$/);
-    expect(sheetNames(wb.bytes)).toEqual(["Orders", "Payments", "Users", "Inventory", "Operating Expenses", "COGS"]);
+    expect(sheetNames(wb.bytes)).toEqual(["Orders", "Payments", "Users", "Inventory", "Customers", "Operating Expenses", "COGS"]);
+    // Customers: name, contact, delivery address, order count; no ids.
+    expect(rowsOf(wb.bytes, "Customers")[0]).toEqual(["Customer", "Contact", "Delivery Address", "Total Orders"]);
+    expect(dataOf(wb.bytes, "Customers").find((r) => r[0] === "Juan Dela Cruz")).toEqual(["Juan Dela Cruz", "0917 123 4567", "123 Sample St., Quezon City", "0"]);
     expect(rowsOf(wb.bytes, "Orders")[0]).toEqual(["Order No.", "Date", "Customer", "Source", "Items", "Total", "Paid", "Balance", "Status", "Created By"]);
     const [order] = dataOf(wb.bytes, "Orders");
     expect(order).toEqual([ids.orderNumber, serial("2026-10-18"), "Marian Santos", "Viber", "Hayst Kopi × 2; Hayst Choco × 1", "230", "100", "130", "Pending · Partially paid", "Carlo Reyes"]);
@@ -350,9 +357,9 @@ describe("Luna Business workbook", () => {
     expectCleanSheet(wb.bytes, "Inventory", { money: ["E"] });
     expectCleanSheet(wb.bytes, "Operating Expenses", { money: ["C"], dates: ["A"] });
     expectCleanSheet(wb.bytes, "COGS", { money: ["B"] });
-    expect(sheetNames(wb.bytes)).not.toContain("Customers");
+    expectCleanSheet(wb.bytes, "Customers", {});
     const uids = Object.values(world.uids);
-    expectReadable(wb.bytes, ["biz-a", ids.kopi, ids.choco, ids.orderId, "HAYST-KOPI", "Average", "avgCost", "Stock value", "inventoryValue", "Profit", ...uids]);
+    expectReadable(wb.bytes, ["biz-a", juan, ids.kopi, ids.choco, ids.orderId, "HAYST-KOPI", "Average", "avgCost", "Stock value", "inventoryValue", "Profit", ...uids]);
     // Another business sees none of it; staff can't download.
     const b = await workbook(world.uids.ownerb, "biz-b", { range: "all" });
     expect(allText(b.bytes)).not.toContain("Marian Santos");

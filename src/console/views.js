@@ -12,12 +12,12 @@ import { html, render } from "../lib/html.js";
 import { pageHeader, card, emptyState, badge, kpiStrip, mobileCell, rowMenu } from "../components/ui.js";
 import { formDialog } from "../components/form-dialog.js";
 import { confirmDialog } from "../components/feedback.js";
-import { planWorkspace, isCatalogPlan, priceLabel, planBilling, businessIdFromName, BILLING_TYPES, SUBSCRIPTION_LABELS, OVERRIDE_CHOICES, ROLE_TEMPLATES, METERS, MONTHLY_METER_IDS, overrideImpact, NO_LIMIT_FROM } from "@shared/index.js";
+import { planWorkspace, isCatalogPlan, priceLabel, planBilling, termLabel, addOnLabel, monthsText, businessIdFromName, BILLING_TYPES, SUBSCRIPTION_LABELS, OVERRIDE_CHOICES, ROLE_TEMPLATES, METERS, MONTHLY_METER_IDS, overrideImpact, NO_LIMIT_FROM } from "@shared/index.js";
 import { formatBytes, formatNumber } from "../lib/format.js";
 import { invitationDesignView } from "./design.js";
 import { apiDownload } from "../lib/api.js";
 import { saveBlob } from "../lib/export.js";
-import { peso, dateText, whenText, stateChip, subscriptionMenu, toggleMenus, runSubscriptionAction, billingTypeLabel } from "./actions.js";
+import { peso, dateText, whenText, stateChip, subscriptionMenu, toggleMenus, runSubscriptionAction, termText } from "./actions.js";
 
 const when = (iso) => (iso ? new Date(iso).toLocaleString("en-PH", { dateStyle: "medium", timeStyle: "short" }) : "—");
 const loading = (title) => html`${pageHeader({ title })}${card({ body: emptyState({ title: "Loading…" }) })}`;
@@ -67,7 +67,7 @@ export async function overviewView(el, ctx) {
                     <td><span class="cell-strong">${r.name}</span><span class="cell-sub">${r.planName ?? ctx.planName(r.planId)}</span></td>
                     <td data-role="when">${whenText(r)}${r.attention.kind === "overdue" ? html`<span class="cell-sub tone-danger">${r.attention.label}</span>` : ""}</td>
                     <td>${stateChip(r)}</td>
-                    <td class="row-actions" data-m="more">${subscriptionMenu(r)}</td>
+                    <td class="row-actions" data-m="more">${subscriptionMenu(r, { ctx })}</td>
                   </tr>`
                 )}</tbody></table></div>`
             : html`<p class="all-clear" data-role="all-clear">✓ Nobody is due, overdue or expiring.</p>`}
@@ -145,7 +145,7 @@ export function businessesView(el, ctx) {
                         <td>${ctx.workspaceName(b.workspaceTemplateId)}</td>
                         <td>${b.planName ?? ctx.planName(b.planId)}</td>
                         <td>${stateChip(b)}</td>
-                        <td class="row-actions" data-m="more">${subscriptionMenu(b)}</td>
+                        <td class="row-actions" data-m="more">${subscriptionMenu(b, { ctx })}</td>
                       </tr>`
                     )}</tbody></table></div>
                   ${pagers(state)}`}
@@ -190,43 +190,44 @@ export function businessesView(el, ctx) {
 }
 
 // ---------- Create business ----------
-// Workspace first; the plan list, billing type, price and limits follow
-// it. The business ID is made from the name (editable under Advanced).
+// Product first (it decides the workspace), then the access term, then the
+// name and the owner. Price, billing and included limits follow the product.
+// The business ID is made from the name; ID, timezone and an agreed price
+// are under Advanced.
 
 const limitsText = (p) => `${formatNumber(p.limits.users)} user${p.limits.users === 1 ? "" : "s"} · ${formatBytes(p.limits.storageBytes)}`;
+const termOptions = (p) => planBilling(p).terms.map((t) => ({ value: String(t.months), label: termLabel(p, t.months) }));
 export function createBusinessDialog(ctx) {
-  const ws = ctx.workspaces.filter((w) => plansFor(ctx, w.id).length);
-  const first = ws[0]?.id;
-  const firstPlans = plansFor(ctx, first);
-  const firstPlan = firstPlans.find((p) => p.recommended) ?? firstPlans[0];
+  const products = ctx.workspaces.flatMap((w) => plansFor(ctx, w.id));
+  const first = products[0];
   let idTouched = false;
   return formDialog({
     title: "Create business",
     fields: [
-      { name: "workspaceTemplateId", label: "Workspace", type: "select", options: ws.map((w) => ({ value: w.id, label: w.name })), value: first },
-      { name: "planId", label: "Plan", type: "select", options: firstPlans.map((p) => ({ value: p.id, label: p.name })), value: firstPlan?.id, hint: firstPlan ? `${priceLabel(firstPlan)} · ${limitsText(firstPlan)}` : "" },
+      { name: "planId", label: "Product", type: "select", options: products.map((p) => ({ value: p.id, label: p.name })), value: first?.id, hint: first ? `${priceLabel(first)} · ${limitsText(first)}` : "" },
+      { name: "termMonths", label: "Term", type: "select", options: first ? termOptions(first) : [], value: first ? String(planBilling(first).defaultTermMonths) : "" },
       { name: "name", label: "Business / workspace name", required: true },
       { name: "ownerName", label: "Owner name", required: true },
       { name: "ownerEmail", label: "Owner email", required: true, inputmode: "email" },
-      { name: "founding", label: "Price", type: "select", options: [{ value: "no", label: "Regular price" }, { value: "yes", label: "Founding price" }], value: "no", more: true, default: true },
       { name: "businessId", label: "Business ID", hint: "Made from the name. Permanent.", more: true, default: true },
       { name: "timezone", label: "Timezone", value: "Asia/Manila", more: true, default: true },
+      { name: "price", label: "Agreed price (₱, optional)", inputmode: "decimal", hint: "Only when it differs from the product's price (e.g. a Custom wedding's quote).", more: true },
     ],
     moreLabel: "Advanced",
     submitLabel: "Create business",
     onFormChange: (form) => {
       const els = form.elements;
-      const list = plansFor(ctx, els.workspaceTemplateId.value);
-      if (![...els.planId.options].every((o) => list.some((p) => p.id === o.value)) || els.planId.options.length !== list.length) {
-        render(els.planId, html`${list.map((p) => html`<option value="${p.id}" ${p.recommended ? "selected" : ""}>${p.name}</option>`)}`);
+      const plan = products.find((p) => p.id === els.planId.value) ?? first;
+      if (!plan) return;
+      const opts = termOptions(plan);
+      if (els.termMonths.dataset.plan !== plan.id) {
+        els.termMonths.dataset.plan = plan.id;
+        render(els.termMonths, html`${opts.map((o) => html`<option value="${o.value}" ${o.value === String(planBilling(plan).defaultTermMonths) ? "selected" : ""}>${o.label}</option>`)}`);
       }
-      const plan = list.find((p) => p.id === els.planId.value) ?? list[0];
+      // One term (Bridal, Baby): nothing to choose.
+      els.termMonths.closest(".field").hidden = opts.length < 2;
       const hint = els.planId.closest(".field")?.querySelector(".stat-hint");
-      if (hint && plan) hint.textContent = `${priceLabel(plan)} · ${limitsText(plan)}${planBilling(plan).type === "term" ? " · no automatic renewal" : ""}`;
-      const fp = plan ? planBilling(plan).founding : null;
-      const fSel = els.founding;
-      if (fSel) fSel.options[1].textContent = fp ? `Founding price (${fp.label ?? peso(fp.price)})` : "Founding price (none for this plan)";
-      if (fSel) fSel.options[1].disabled = !fp;
+      if (hint) hint.textContent = `${priceLabel(plan)} · ${limitsText(plan)}${planBilling(plan).type === "term" ? " · no automatic renewal" : ""}`;
       if (!idTouched && els.businessId) els.businessId.value = businessIdFromName(els.name.value);
       if (els.businessId && !els.businessId.dataset.watch) {
         els.businessId.dataset.watch = "1";
@@ -234,9 +235,14 @@ export function createBusinessDialog(ctx) {
       }
     },
     onSubmit: async (v) => {
+      const plan = products.find((p) => p.id === v.planId);
+      if (!plan) throw new Error("Choose a product");
       const businessId = (v.businessId || businessIdFromName(v.name)).trim().toLowerCase();
       if (!businessId) throw new Error("Enter a name (or a Business ID under Advanced)");
-      const r = await ctx.call("createBusiness", { business: { name: v.name, businessId, workspaceTemplateId: v.workspaceTemplateId, planId: v.planId, ownerName: v.ownerName, ownerEmail: v.ownerEmail, timezone: v.timezone || "Asia/Manila", founding: v.founding === "yes" } });
+      const s = String(v.price || "").replace(/[₱,\s]/g, "");
+      const priceOverride = s ? Math.round(Number(s) * 100) : null;
+      if (priceOverride !== null && (!Number.isSafeInteger(priceOverride) || priceOverride <= 0)) throw new Error("Agreed price: an amount more than ₱0");
+      const r = await ctx.call("createBusiness", { business: { name: v.name, businessId, workspaceTemplateId: planWorkspace(plan), planId: plan.id, termMonths: Number(v.termMonths) || planBilling(plan).defaultTermMonths, ...(priceOverride ? { priceOverride } : {}), ownerName: v.ownerName, ownerEmail: v.ownerEmail, timezone: v.timezone || "Asia/Manila" } });
       ctx.toast(r.created ? "Business created." : "Already created: nothing was duplicated.", "success");
       return r;
     },
@@ -267,15 +273,16 @@ export async function businessDetailView(el, ctx, businessId) {
     ], { label: `Actions for ${m.name || m.email}` });
   render(
     el,
-    html`${pageHeader({ title: b.name, subtitle: `${b.workspaceName ?? b.workspaceTemplateId} · ${b.planName ?? b.planId}`, actions: html`<span class="sa-head-status">${stateChip(r)}</span>${b.status === "deleted" ? "" : html`<button type="button" class="btn btn-primary" data-act="s-pay" data-id="${b.id}">Record payment</button>`}${subscriptionMenu(r, { detail: true })}` })}
+    html`${pageHeader({ title: b.name, subtitle: `${b.workspaceName ?? b.workspaceTemplateId} · ${b.planName ?? b.planId}`, actions: html`<span class="sa-head-status">${stateChip(r)}</span>${b.status === "deleted" ? "" : html`<button type="button" class="btn btn-primary" data-act="s-pay" data-id="${b.id}">Record payment</button>`}${subscriptionMenu(r, { detail: true, ctx })}` })}
       ${b.entitlementsValid ? "" : html`<div class="banner banner-danger" role="alert">Entitlements are invalid (${b.entitlementProblems.join("; ")}). The business is blocked until they're recomputed.</div>`}
       ${b.status === "deleted" ? html`<div class="banner banner-danger" role="alert">Deleted. Access is off. Recoverable until ${dateText(r.purgeAfter)} (⋯ → Restore business).</div>` : ""}
       <div class="section grid grid-2">
         <section class="card" data-role="subscription">
           <div class="card-header"><h2 class="card-title">Subscription</h2></div>
           <div class="card-body"><dl class="dl dl-compact">
-            <dt>Plan</dt><dd>${b.planName ?? b.planId}${plan ? html`<span class="cell-sub">${priceLabel(plan)}</span>` : ""}</dd>
-            <dt>Billing</dt><dd>${billingTypeLabel(r.billingType)}${r.amount ? html` · ${peso(r.amount)}` : ""}</dd>
+            <dt>Product</dt><dd>${b.planName ?? b.planId}${plan ? html`<span class="cell-sub">${priceLabel(plan)}${plan.legacy ? " · older plan" : ""}</span>` : ""}</dd>
+            <dt>Term</dt><dd data-role="term">${termText(r)}${r.amount ? html`<span class="cell-sub">${peso(r.amount)} per bill${r.priceOverride ? " · agreed price" : ""}</span>` : ""}</dd>
+            ${r.addOns?.length ? html`<dt>Add-ons</dt><dd data-role="addons">${r.addOns.map((a) => html`<span class="cell-sub-line">${a.qty} × ${a.label}</span>`)}</dd>` : ""}
             <dt>${r.billingType === "term" ? "Access" : "Next"}</dt><dd data-role="when">${whenText(r)}</dd>
             ${r.paidThrough ? html`<dt>Paid through</dt><dd>${dateText(r.paidThrough)}</dd>` : ""}
             <dt>Started</dt><dd>${dateText(r.startDate)}</dd>
@@ -453,17 +460,19 @@ export async function limitOverrideDialog(ctx, { businessId, row, clear = false,
   return ctx.call("setLimitOverride", { businessId, limitKey: row.limitKey, value: v.value, reason: v.reason, expectedRevision });
 }
 
-// ---------- Plans ----------
-// Two plans per workspace; prices, billing type, duration and limits are
-// edited here (applied to new businesses and plan changes).
+// ---------- Products (plans) ----------
+// One product per workspace (Bridal: Standard and Custom). Each shows what
+// it's for, its terms, what's included and its add-ons. Prices, term
+// prices, add-on prices and included limits are edited here (applied to new
+// businesses and product / access changes).
 
 export async function plansView(el, ctx) {
-  render(el, loading("Plans"));
+  render(el, loading("Products"));
   let data;
   try {
     data = await ctx.call("plans");
   } catch (err) {
-    render(el, failed("Plans", err));
+    render(el, failed("Products", err));
     return;
   }
   const plans = data.plans.filter(isCatalogPlan);
@@ -471,27 +480,26 @@ export async function plansView(el, ctx) {
   const groups = ctx.workspaces.map((w) => ({ w, plans: plans.filter((p) => planWorkspace(p) === w.id) })).filter((g) => g.plans.length);
   render(
     el,
-    html`${pageHeader({ title: "Plans" })}
+    html`${pageHeader({ title: "Products" })}
       ${groups.map(
         (g) => html`<section class="section card" data-workspace="${g.w.id}">
           <div class="card-header"><h2 class="card-title">${g.w.name}</h2><span class="stat-hint">${BILLING_TYPES[planBilling(g.plans[0]).type].label}</span></div>
           <div class="table-wrap"><table class="table table-compact rows sa-rows" data-role="plans">
-            <thead><tr><th class="m-only"></th><th>Plan</th><th>Price</th><th>Users</th><th>Storage</th><th class="num">Subscribers</th><th></th></tr></thead>
+            <thead><tr><th class="m-only"></th><th>Product</th><th>Terms</th><th>Included</th><th class="num">Active</th><th></th></tr></thead>
             <tbody>${g.plans.map((p) => {
               const b = planBilling(p);
               return html`<tr data-plan="${p.id}">
                 ${mobileCell({ title: p.name, sub: `${priceLabel(p)} · ${limitsText(p)}`, end: formatNumber(counts[p.id] ?? 0), endSub: "active" })}
-                <td><span class="cell-strong">${p.name}</span>${b.founding ? html`<span class="cell-sub">Founding: ${b.founding.label ?? peso(b.founding.price)}</span>` : ""}</td>
-                <td>${priceLabel(p)}${b.type === "term" ? html`<span class="cell-sub">No automatic renewal</span>` : ""}</td>
-                <td>${formatNumber(p.limits.users)}</td>
-                <td>${formatBytes(p.limits.storageBytes)}</td>
+                <td class="col-wrap"><span class="cell-strong">${p.name}</span><span class="cell-sub">${priceLabel(p)}</span>${p.tagline ? html`<span class="cell-sub" data-role="tagline">${p.tagline}</span>` : ""}</td>
+                <td class="col-wrap" data-role="terms">${b.terms.map((t) => html`<span class="cell-sub-line">${termLabel(p, t.months)}</span>`)}${b.type === "term" ? html`<span class="cell-sub">No automatic renewal</span>` : ""}</td>
+                <td class="col-wrap" data-role="included">${limitsText(p)}${b.addOns.length ? html`${b.addOns.map((a) => html`<span class="cell-sub">+ ${addOnLabel(a)}</span>`)}` : ""}</td>
                 <td class="num" data-col="subscribers">${formatNumber(counts[p.id] ?? 0)}</td>
                 <td class="row-actions" data-m="more"><button type="button" class="btn btn-compact" data-act="edit" data-id="${p.id}">Edit</button></td>
               </tr>`;
             })}</tbody></table></div>
         </section>`
       )}
-      <p class="stat-note">A change applies to new businesses and plan changes. Existing businesses keep their price and limits until their plan is changed.</p>`
+      <p class="stat-note">A change applies to new businesses and to product or access changes. Existing businesses keep their price, term and limits until then.</p>`
   );
   el.onclick = async (e) => {
     const t = e.target.closest('[data-act="edit"]');
@@ -499,38 +507,47 @@ export async function plansView(el, ctx) {
     const p = plans.find((x) => x.id === t.dataset.id);
     const b = planBilling(p);
     const pesos = (c) => (c ? String(c / 100) : "");
-    const cents = (v, label, { optional = false } = {}) => {
-      const s = String(v ?? "").replace(/[₱,\s]/g, "");
-      if (optional && !s) return null;
-      const n = Math.round(Number(s) * 100);
-      if (!Number.isSafeInteger(n) || n < 0) throw new Error(`${label}: enter an amount in pesos`);
+    const cents = (v, label, { allowZero = false } = {}) => {
+      const n = Math.round(Number(String(v ?? "").replace(/[₱,\s]/g, "")) * 100);
+      if (!Number.isSafeInteger(n) || n < (allowZero ? 0 : 1)) throw new Error(`${label}: enter an amount in pesos`);
       return n;
     };
     const r = await formDialog({
       title: `Edit ${p.name}`,
       fields: [
-        { name: "name", label: "Plan name", value: p.name, required: true },
-        { name: "billingType", label: "Billing", type: "select", options: Object.entries(BILLING_TYPES).map(([value, x]) => ({ value, label: x.label })), value: b.type },
-        { name: "price", label: `Price (₱ per ${BILLING_TYPES[b.type].per})`, value: pesos(b.price), inputmode: "decimal", required: true },
-        { name: "setupFee", label: "Setup fee (₱)", value: pesos(b.setupFee) || "0", inputmode: "decimal" },
-        { name: "termMonths", label: "Access duration (months, annual / 12-month only)", value: String(b.termMonths), inputmode: "numeric" },
-        { name: "users", label: "Users", value: String(p.limits.users), inputmode: "numeric", required: true },
-        { name: "storageMb", label: "Storage (MB)", value: String(Math.round(p.limits.storageBytes / MB)), inputmode: "numeric", required: true },
-        { name: "foundingPrice", label: "Founding price (₱, optional)", value: pesos(b.founding?.price), inputmode: "decimal", more: true },
+        { name: "name", label: "Product name", value: p.name, required: true },
+        ...b.terms.map((x) => ({ name: `term-${x.months}`, label: `${monthsText(x.months)}${b.type === "monthly" && x.months === 1 ? " (monthly price)" : ""} · ₱`, value: pesos(x.price), inputmode: "decimal", required: true, hint: x.kind === "trial" ? (b.type === "monthly" ? "Prepaid starter" : "Paid trial") : "Main offer" })),
+        ...(b.type === "monthly" ? [{ name: "setupFee", label: "One-time setup fee (₱)", value: pesos(b.setupFee) || "0", inputmode: "decimal" }] : []),
+        { name: "users", label: "Included users", value: String(p.limits.users), inputmode: "numeric", required: true },
+        { name: "storageMb", label: "Included storage (MB)", value: String(Math.round(p.limits.storageBytes / MB)), inputmode: "numeric", required: true },
+        ...b.addOns.map((a) => ({ name: `addon-${a.id}`, label: `${a.label} · ₱ per ${a.perMonths === 1 ? "month" : monthsText(a.perMonths)}`, value: pesos(a.price), inputmode: "decimal", required: true })),
+        { name: "tagline", label: "What it's for (one line)", type: "textarea", value: p.tagline ?? "", more: true },
         { name: "priceIsMinimum", label: "Price shown as", type: "select", options: [{ value: "no", label: "Exact price" }, { value: "yes", label: "Starting at" }], value: b.priceIsMinimum ? "yes" : "no", more: true, default: true },
       ],
-      moreLabel: "Founding price and display",
+      moreLabel: "Description and display",
       onSubmit: (v) => {
         const whole = (x, label) => {
           const n = Number(String(x).replace(/,/g, "").trim());
           if (!Number.isSafeInteger(n) || n < 1) throw new Error(`${label}: a whole number`);
           return n;
         };
-        return ctx.call("savePlan", { planId: p.id, changes: { name: v.name, billingType: v.billingType, price: cents(v.price, "Price"), setupFee: cents(v.setupFee || "0", "Setup fee"), ...(v.billingType === "monthly" ? {} : { termMonths: whole(v.termMonths, "Access duration") }), users: whole(v.users, "Users"), storageMb: whole(v.storageMb, "Storage"), foundingPrice: cents(v.foundingPrice, "Founding price", { optional: true }), priceIsMinimum: v.priceIsMinimum === "yes" } });
+        return ctx.call("savePlan", {
+          planId: p.id,
+          changes: {
+            name: v.name,
+            tagline: v.tagline,
+            termPrices: Object.fromEntries(b.terms.map((x) => [String(x.months), cents(v[`term-${x.months}`], monthsText(x.months))])),
+            ...(b.addOns.length ? { addOnPrices: Object.fromEntries(b.addOns.map((a) => [a.id, cents(v[`addon-${a.id}`], a.label)])) } : {}),
+            ...(b.type === "monthly" ? { setupFee: cents(v.setupFee || "0", "Setup fee", { allowZero: true }) } : {}),
+            users: whole(v.users, "Users"),
+            storageMb: whole(v.storageMb, "Storage"),
+            priceIsMinimum: v.priceIsMinimum === "yes",
+          },
+        });
       },
     });
     if (r) {
-      ctx.toast("Plan saved.", "success");
+      ctx.toast("Product saved.", "success");
       const fresh = await ctx.call("plans");
       ctx.plans.splice(0, ctx.plans.length, ...fresh.plans);
       plansView(el, ctx);

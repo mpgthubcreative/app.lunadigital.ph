@@ -4064,3 +4064,12 @@ tr.is-saving {
   .sa-filters .input { grid-column: 1 / -1; }
   .page-header .page-actions { width: 100%; }
 }
+.cell-sub-line { display: block; }
+
+/* ---------- Customers (Business, 2026-10-20): name · contact · delivery address, Add order ---------- */
+.cust-rows td.cust-address { white-space: normal; min-width: 12rem; max-width: 24rem; }
+.cust-actions > * { vertical-align: middle; }
+.cust-actions .menu-wrap { display: inline-block; margin-left: var(--space-1); }
+@media (min-width: 720px) {
+  .cust-rows td.row-actions { display: table-cell; width: 1%; white-space: nowrap; text-align: right; }
+}

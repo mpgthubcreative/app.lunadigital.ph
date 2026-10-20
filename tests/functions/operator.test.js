@@ -257,7 +257,7 @@ describe("read models", () => {
     expect(d.business).toMatchObject({ id: "biz-a", workspaceTemplateId: "distributor", entitlementsValid: true });
     expect(d.members.map((m) => m.email).sort()).toEqual(["disableda@t.test", "managera@t.test", "multi@t.test", "ownera@t.test", "staffa@t.test"]);
     expect((await op({ action: "business", businessId: "nope-nope" })).status).toBe(404);
-    expect(ok(await op({ action: "plans" })).plans.map((p) => p.id)).toEqual(["distributor-basic", "distributor-plus", "household-basic", "household-plus", "baby-basic", "baby-plus", "bridal-basic", "bridal-plus", "starter", "growth", "pro"]);
+    expect(ok(await op({ action: "plans" })).plans.map((p) => p.id)).toEqual(["distributor-basic", "household-basic", "baby-basic", "baby-plus", "bridal-basic", "bridal-plus", "starter", "growth", "pro", "distributor-plus", "household-plus"]);
     expect(ok(await op({ action: "audit" })).rows.length).toBeGreaterThan(0);
   });
 });

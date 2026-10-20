@@ -16,7 +16,10 @@ const newKey = () => (globalThis.crypto && crypto.randomUUID ? crypto.randomUUID
 // Customer: a saved customer (linked by id; the server copies its name and
 // phone) or a walk-in name typed here. An already-linked order keeps its
 // link unless the user unlinks it.
-export function openOrderEditor({ session, deps, order = null }) {
+// prefill (a NEW order from Customers → Add order): { customerId, customer:
+// { name, phone }, deliveryAddress } so the saved details aren't retyped.
+// The order keeps its own copy: editing the customer later never changes it.
+export function openOrderEditor({ session, deps, order = null, prefill = null }) {
   const perms = session.member.permissions;
   const canDiscount = perms["orders.discount"] === true;
   const currency = session.business.currency || "PHP";
@@ -25,14 +28,14 @@ export function openOrderEditor({ session, deps, order = null }) {
   const correcting = order?.fulfillmentStatus === "fulfilled";
   const canLink = canUseModule({ entitlements: session.entitlements, permissions: perms }, "customers") && typeof deps.searchCustomers === "function";
   const state = {
-    customer: { name: order?.customer?.name ?? "", phone: order?.customer?.phone ?? "", notes: order?.customer?.notes ?? "" },
-    customerId: order?.customerId ?? null,
+    customer: { name: (order ?? prefill)?.customer?.name ?? "", phone: (order ?? prefill)?.customer?.phone ?? "", notes: order?.customer?.notes ?? "" },
+    customerId: (order ?? prefill)?.customerId ?? null,
     customerMatches: [],
     // A source dropdown; the "where" note is asked only for Other. A note on
     // an older order (from the earlier free-text box) is kept as it was.
     source: order?.source ?? "",
     sourceNote: order?.sourceNote ?? "",
-    deliveryAddress: order?.deliveryAddress ?? "",
+    deliveryAddress: (order ?? prefill)?.deliveryAddress ?? "",
     notes: order?.notes ?? "",
     reason: "",
     discountText: order ? (order.discount / 100).toFixed(2) : "0",
@@ -100,7 +103,7 @@ export function openOrderEditor({ session, deps, order = null }) {
           ${correcting ? html`<p class="form-notice" data-role="correcting">This order is fulfilled. Saving corrects stock, sales and COGS automatically and keeps the original in the activity log.</p>` : ""}
           <div class="stat-grid">
             <div class="field"><label for="oeName">Customer name *</label><input class="input" id="oeName" name="name" value="${state.customer.name}" autocomplete="off" ${state.customerId ? "readonly" : ""} /></div>
-            <div class="field"><label for="oePhone">Phone</label><input class="input" id="oePhone" name="phone" value="${state.customer.phone}" inputmode="tel" autocomplete="off" ${state.customerId ? "readonly" : ""} /></div>
+            <div class="field"><label for="oePhone">Contact</label><input class="input" id="oePhone" name="phone" value="${state.customer.phone}" inputmode="tel" autocomplete="off" ${state.customerId ? "readonly" : ""} /></div>
             <div class="field"><label for="oeSource">Where did the order come from? *</label><select class="input" id="oeSource" name="source"><option value="" ${state.source ? "" : "selected"}>Choose…</option>${sourceOptions}</select></div>
             <div class="field" data-role="source-other" ${state.source === "other" ? "" : "hidden"}><label for="oeSourceNote">Where? *</label><input class="input" id="oeSourceNote" name="sourceNote" value="${state.source === "other" ? state.sourceNote : ""}" maxlength="120" placeholder="e.g. Instagram, referral" autocomplete="off" /></div>
           </div>
@@ -264,6 +267,11 @@ export function openOrderEditor({ session, deps, order = null }) {
           state.customer.phone = c.phone || "";
           form.elements.name.value = state.customer.name;
           form.elements.phone.value = state.customer.phone;
+          // The saved delivery address, unless one was already typed for this order.
+          if (!state.deliveryAddress.trim() && c.address) {
+            state.deliveryAddress = c.address;
+            form.elements.deliveryAddress.value = c.address;
+          }
           state.customerMatches = [];
           paintLink();
         }

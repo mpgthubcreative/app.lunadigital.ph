@@ -6,7 +6,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { createWeddingProgramHandler } from "../../netlify/functions/wedding-program.js";
 import { createBackupHandler } from "../../netlify/functions/backup.js";
 import { createBusiness, addMember, ensureAuthUser } from "../../netlify/functions/_lib/provisioning.js";
-import { buildWorld, request, asOperator } from "../helpers/tenants.js";
+import { buildWorld, request, asOperator, roomForTeam } from "../helpers/tenants.js";
 import { parseDuration, formatDuration, validateProgramItem, SAMPLE_PROGRAM } from "../../shared/wedding-program.js";
 import { readXlsx } from "../../shared/xlsx.js";
 
@@ -18,8 +18,8 @@ let u;
 
 beforeEach(async () => {
   world = await buildWorld();
-  await createBusiness({ ...world, name: "Reyes-Prado Wedding", planId: "bridal-plus", workspaceTemplateId: "bridal-expense", businessId: W });
-  await createBusiness({ ...world, name: "Cruz Wedding", planId: "bridal-basic", workspaceTemplateId: "bridal-expense", businessId: W2 });
+  await createBusiness({ ...world, name: "Reyes-Prado Wedding", planId: "bridal-plus", workspaceTemplateId: "bridal-expense", businessId: W }); await roomForTeam(world, W);
+  await createBusiness({ ...world, name: "Cruz Wedding", planId: "bridal-basic", workspaceTemplateId: "bridal-expense", businessId: W2 }); await roomForTeam(world, W2);
   u = {};
   const add = async (key, businessId, role) => {
     const x = await ensureAuthUser({ auth: world.auth, email: `${key}@prog.test`, name: key });

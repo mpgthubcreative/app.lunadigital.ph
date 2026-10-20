@@ -60,7 +60,7 @@ describe("More → Download Excel (every workspace)", () => {
     expect(container.querySelectorAll("[data-download], [data-act=export]")).toHaveLength(0);
     expect([...container.querySelectorAll("button")].filter((b) => /Download/.test(b.textContent)).map((b) => b.textContent)).toEqual(["Download Excel"]);
     expect([...container.querySelectorAll('[data-seg="range"]')].map((b) => [b.textContent, b.getAttribute("aria-pressed")])).toEqual([["This month", "true"], ["Custom range", "false"], ["All records", "false"]]);
-    expect(container.querySelector('[data-role="contents"]').textContent).toMatch(/Orders, Payments, Users, Inventory, Operating Expenses and COGS/);
+    expect(container.querySelector('[data-role="contents"]').textContent).toMatch(/Orders, Payments, Users, Inventory, Customers, Operating Expenses and COGS/);
     container.querySelector('[data-act="download"]').click();
     await flush();
     expect(download).toHaveBeenCalledWith("workbook", { range: "month" });

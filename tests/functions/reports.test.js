@@ -17,7 +17,7 @@ import { createBusiness, addMember, ensureAuthUser } from "../../netlify/functio
 import { financialSummary } from "../../shared/finance.js";
 import { WALK_IN_KEY } from "../../shared/reports.js";
 import { FieldValue } from "../helpers/fake-firebase.js";
-import { buildWorld, request } from "../helpers/tenants.js";
+import { buildWorld, request, roomForTeam } from "../helpers/tenants.js";
 import { QTY_SCALE } from "../../shared/quantity.js";
 
 const Q = (n) => n * QTY_SCALE;
@@ -273,7 +273,7 @@ describe("range validation and isolation", () => {
   });
 
   it("a bridal workspace doesn't get Reports, even with reports.view or a forged snapshot", async () => {
-    await createBusiness({ ...world, name: "Wedding", planId: "bridal-plus", workspaceTemplateId: "bridal-expense", businessId: "biz-w" });
+    await createBusiness({ ...world, name: "Wedding", planId: "bridal-plus", workspaceTemplateId: "bridal-expense", businessId: "biz-w" }); await roomForTeam(world, "biz-w");
     const u = await ensureAuthUser({ auth: world.auth, email: "bride2@t.test", name: "Bride" });
     await addMember({ ...world, businessId: "biz-w", uid: u.uid, email: u.email, name: "Bride", roleTemplate: "owner", isAccountOwner: true });
     expect((await report(u.uid, "2026-10-08", "2026-10-08", "biz-w")).status).toBe(403);

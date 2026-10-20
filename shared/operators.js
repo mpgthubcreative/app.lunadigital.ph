@@ -85,7 +85,7 @@ export function validTimezone(tz) {
 
 // "Create business" input. businessId is the slug; the workspace must be
 // a live template; the owner's email resolves or creates their account.
-const CREATE_FIELDS = ["name", "businessId", "workspaceTemplateId", "planId", "ownerEmail", "ownerName", "timezone", "founding"];
+const CREATE_FIELDS = ["name", "businessId", "workspaceTemplateId", "planId", "ownerEmail", "ownerName", "timezone", "termMonths", "priceOverride"];
 export function validateCreateBusinessInput(input) {
   if (!input || typeof input !== "object" || Array.isArray(input)) throw new OperatorError("invalid-input", "Invalid business");
   for (const k of Object.keys(input)) if (!CREATE_FIELDS.includes(k)) throw new OperatorError("invalid-input", `Field ${k} can't be set here`);
@@ -97,9 +97,12 @@ export function validateCreateBusinessInput(input) {
     ownerEmail: typeof input.ownerEmail === "string" ? input.ownerEmail.trim().toLowerCase() : "",
     ownerName: text(input.ownerName, "Owner name", 120),
     timezone: input.timezone || "Asia/Manila",
-    founding: input.founding === true,
+    // The access term (checked against the product on the server) and an agreed price.
+    termMonths: input.termMonths ?? null,
+    priceOverride: input.priceOverride ?? null,
   };
-  if (input.founding !== undefined && typeof input.founding !== "boolean") throw new OperatorError("invalid-input", "Founding price: yes or no");
+  if (out.termMonths !== null && (!Number.isSafeInteger(out.termMonths) || out.termMonths < 1 || out.termMonths > 36)) throw new OperatorError("invalid-input", "Term: 1 to 36 months");
+  if (out.priceOverride !== null && (!Number.isSafeInteger(out.priceOverride) || out.priceOverride <= 0)) throw new OperatorError("invalid-input", "Price: an amount more than ₱0");
   // New ids are clean slugs (stricter than isValidBusinessId, which also
   // accepts older auto-generated ids).
   if (!isValidBusinessId(out.businessId) || !NEW_BUSINESS_ID.test(out.businessId)) throw new OperatorError("invalid-input", "Business ID: 3-40 lowercase letters, digits or dashes");

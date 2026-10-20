@@ -26,18 +26,22 @@ function readRaw(file) {
   });
 }
 // Screenshot (shrunk in the browser) or a PDF receipt (as is, max 3 MB).
-// How the plan is billed (2026-10-19): monthly, annual access, or 12-month
-// wedding access (no automatic renewal).
+// How the plan is billed (2026-10-20): monthly (a prepaid starter covers
+// its months), prepaid access for the chosen term, or 12-month wedding
+// access (no automatic renewal).
+const forMonths = (n) => (n === 12 ? "12 months" : n === 1 ? "1 month" : `${n} months`);
 function priceLine(s, money) {
   const b = s.billing;
   if (!b) return s.monthlyAmount ? `${money(s.monthlyAmount)} a month` : "";
   if (!b.amount) return "";
-  return b.type === "annual" ? `${money(b.amount)} a year` : b.type === "term" ? `${money(b.amount)} for 12 months` : `${money(b.amount)} a month`;
+  if (b.type === "monthly") return b.termMonths > 1 ? `${money(b.amount)} for ${forMonths(b.termMonths)}, then monthly` : `${money(b.amount)} a month`;
+  return `${money(b.amount)} for ${forMonths(b.termMonths || 12)}`;
 }
 function nextLine(s) {
   const b = s.billing;
-  if (b?.type === "term") return b.dueDate ? `Payment due ${formatDayId(b.dueDate)}` : b.accessUntil ? `Access until ${formatDayId(b.accessUntil)} · no automatic renewal` : "";
-  if (b?.dueDate) return `${b.type === "annual" ? (b.renewal ? "Renews" : "Payment due") : "Next due"} ${formatDayId(b.dueDate)}`;
+  if (b?.type === "term") return b.dueDate ? `Payment due ${formatDayId(b.dueDate)}` : b.accessUntil ? `Access ends ${formatDayId(b.accessUntil)} · no automatic renewal` : "";
+  if (b?.type === "annual" && b.accessUntil && b.dueDate) return `Access until ${formatDayId(b.accessUntil)} · renewal due ${formatDayId(b.dueDate)}`;
+  if (b?.dueDate) return `${b.type === "annual" ? "Payment due" : "Due"} ${formatDayId(b.dueDate)}`;
   return s.nextRenewal ? `Next renewal ${formatDayId(s.nextRenewal)}` : s.current ? `${monthName(s.current.period)} · due ${formatDayId(s.current.dueDate)}` : "";
 }
 

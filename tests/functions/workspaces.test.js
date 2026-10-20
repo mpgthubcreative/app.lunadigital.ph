@@ -13,7 +13,7 @@ import { createPaymentsHandler } from "../../netlify/functions/payments.js";
 import { createReportsHandler } from "../../netlify/functions/reports.js";
 import { createSessionHandler } from "../../netlify/functions/session.js";
 import { createBusiness, addMember, ensureAuthUser, assignWorkspaceTemplate, refreshEntitlements, updateOverrides, assignPlan, describeEntitlements } from "../../netlify/functions/_lib/provisioning.js";
-import { buildWorld, request } from "../helpers/tenants.js";
+import { buildWorld, request, roomForTeam } from "../helpers/tenants.js";
 
 let world;
 const uid = {};
@@ -23,7 +23,7 @@ const audits = (bid) => [...world.db.docs.entries()].filter(([p]) => p.startsWit
 
 beforeEach(async () => {
   world = await buildWorld();
-  await createBusiness({ ...world, name: "Reyes Wedding", planId: "bridal-plus", workspaceTemplateId: "bridal-expense", businessId: "biz-w" });
+  await createBusiness({ ...world, name: "Reyes Wedding", planId: "bridal-plus", workspaceTemplateId: "bridal-expense", businessId: "biz-w" }); await roomForTeam(world, "biz-w");
   for (const role of ["owner", "manager", "staff"]) {
     const u = await ensureAuthUser({ auth: world.auth, email: `${role}w@t.test`, name: `${role} W` });
     uid[role] = u.uid;
@@ -45,7 +45,7 @@ describe("a bridal workspace can't reach Distributor APIs", () => {
     const s = await session(uid.owner, "biz-w");
     expect(s.status).toBe(200);
     expect(s.body.workspace).toEqual({ templateId: "bridal-expense", templateVersion: 2, name: "Bridal / Wedding Management Tracker" });
-    expect(s.body.plan).toEqual({ id: "bridal-plus", name: "Luna Bridal+" });
+    expect(s.body.plan).toEqual({ id: "bridal-plus", name: "Luna Bridal Custom" });
     for (const m of ["orders", "payments", "inventory", "customers", "reports", "imports"]) expect(s.body.entitlements.modules[m], m).toBe(false);
     expect(s.body.entitlements.workspaceTemplateId).toBe("bridal-expense");
   });

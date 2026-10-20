@@ -7,7 +7,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import { BillingError, BILLING_SCHEMA_VERSION, BILLING_TIMEZONE, BILLABLE_STATUSES, invoiceId, periodOfDay, periodEnd, dayAfter, dueDateOf, nextPeriod, validatePaymentSubmission, checkProof, validateRejectReason, validateBillingSettings, PAYMENT_STATUSES } from "../../../shared/billing.js";
 import { businessDate } from "../../../shared/metrics.js";
-import { subscriptionTerms, coverEnd, amountFor, shiftDay, isDayString, BILLING_TYPES } from "../../../shared/plan-billing.js";
+import { subscriptionTerms, coverEnd, billFigures, isDayString, BILLING_TYPES } from "../../../shared/plan-billing.js";
 import { tenantDb } from "./tenant-db.js";
 import { prepareNotifications } from "./notifications.js";
 
@@ -27,26 +27,44 @@ const PROOF_PREFIX = (businessId) => `platformBilling/${businessId}/`;
 
 // The bill a subscription has for `period` (YYYY-MM), from its billing
 // terms (shared/plan-billing.js), or null:
-//   monthly  every month; due on the start day of the month (businesses
+//   monthly  every month, due on the start day of the month (businesses
 //            from before billing types: the 7th), never before the start
-//   annual   the month the first payment / the renewal is due
+//            and never for a month already paid. A prepaid term (the
+//            3-month starter) is ONE bill covering its months, then monthly.
+//   annual   the month the first payment / the renewal is due, covering
+//            the chosen term (1, 3 or 12 months)
 //   term     the month of the one purchase (no renewal)
-// The amount is the subscription's price SNAPSHOT (founding price while it lasts).
+// The amount is the subscription's price SNAPSHOT (or Super Admin's price
+// override) plus its add-ons for the months covered.
 export function billFor(business, period) {
   const sub = business.subscription || {};
   const created = business.createdAt?.toDate ? businessDate(BILLING_TIMEZONE, business.createdAt.toDate()) : null;
   const t = subscriptionTerms(sub, { createdDay: created });
   if (t.billingType === "monthly") {
     const anchored = isDayString(sub.startDate);
-    if (anchored && period < periodOfDay(sub.startDate)) return null;
-    const day = anchored ? Math.min(Number(sub.startDate.slice(8)), Number(periodEnd(period).slice(8))) : null;
-    const dueDate = anchored ? `${period}-${String(day).padStart(2, "0")}` : dueDateOf(period);
-    const amountDue = anchored ? amountFor(sub, dueDate) : Number.isSafeInteger(sub.monthlyAmount) ? sub.monthlyAmount : null;
-    return amountDue ? { billingType: "monthly", dueDate, amountDue, coverFrom: anchored ? dueDate : `${period}-01`, coverTo: anchored ? coverEnd("monthly", dueDate) : periodEnd(period) } : null;
+    if (!anchored) {
+      const amountDue = Number.isSafeInteger(sub.monthlyAmount) ? sub.monthlyAmount : null;
+      return amountDue ? { billingType: "monthly", dueDate: dueDateOf(period), amountDue, months: 1, coverFrom: `${period}-01`, coverTo: periodEnd(period) } : null;
+    }
+    if (period < periodOfDay(sub.startDate)) return null;
+    // The prepaid term: one bill on the next due date, covering its months.
+    if (t.prepaidNext && t.dueDate) {
+      const cover = coverEnd(t.dueDate, t.termMonths);
+      if (period === periodOfDay(t.dueDate)) {
+        const f = billFigures(sub, { prepaid: true });
+        return f.amount ? { billingType: "monthly", dueDate: t.dueDate, amountDue: f.amount, months: f.months, prepaid: true, coverFrom: t.dueDate, coverTo: cover } : null;
+      }
+      if (period > periodOfDay(t.dueDate) && period <= periodOfDay(cover)) return null;
+    }
+    const day = Math.min(Number(sub.startDate.slice(8)), Number(periodEnd(period).slice(8)));
+    const dueDate = `${period}-${String(day).padStart(2, "0")}`;
+    if (t.paidThrough && dueDate <= t.paidThrough) return null;
+    const f = billFigures(sub);
+    return f.amount ? { billingType: "monthly", dueDate, amountDue: f.amount, months: 1, coverFrom: dueDate, coverTo: coverEnd(dueDate, 1) } : null;
   }
   if (!t.dueDate || periodOfDay(t.dueDate) !== period) return null;
-  const amountDue = amountFor(sub, t.dueDate);
-  return amountDue ? { billingType: t.billingType, dueDate: t.dueDate, amountDue, coverFrom: t.dueDate, coverTo: t.billingType === "term" ? t.accessUntil ?? coverEnd("term", t.dueDate, t.termMonths) : coverEnd("annual", t.dueDate, t.termMonths) } : null;
+  const f = billFigures(sub);
+  return f.amount ? { billingType: t.billingType, dueDate: t.dueDate, amountDue: f.amount, months: f.months, coverFrom: t.dueDate, coverTo: t.billingType === "term" ? t.accessUntil ?? coverEnd(t.dueDate, f.months) : coverEnd(t.dueDate, f.months) } : null;
 }
 
 // Inside a transaction (after the caller's reads): creates the period's
@@ -71,6 +89,8 @@ function planInvoice(tx, { db, FieldValue, businessId, business, period, existin
     dueDate: bill.dueDate,
     coverFrom: bill.coverFrom,
     coverTo: bill.coverTo,
+    months: bill.months,
+    ...(bill.prepaid ? { prepaid: true } : {}),
     amountDue,
     amountPaid: 0,
     status: "due",
@@ -173,7 +193,7 @@ export async function tenantSubscription({ db, FieldValue, businessId, now = new
   return {
     plan: { id: sub.planId, name: business.entitlements?.planName ?? sub.planId },
     // How this plan is billed: monthly, annual access or 12-month access.
-    billing: { type: terms.billingType, amount: terms.amount, dueDate: terms.dueDate, renewal: terms.renewal, accessUntil: terms.accessUntil, autoRenew: terms.autoRenew },
+    billing: { type: terms.billingType, amount: terms.amount, termMonths: terms.termMonths, dueDate: terms.dueDate, renewal: terms.renewal, accessUntil: terms.accessUntil, autoRenew: terms.autoRenew, addOns: terms.addOns.map((a) => ({ label: a.label, qty: a.qty })) },
     status: sub.status,
     monthlyAmount: sub.monthlyAmount ?? null,
     paidThrough: sub.paidThrough ?? null,
@@ -310,6 +330,8 @@ export async function confirmPayment({ db, FieldValue, paymentId, operator, now 
       subChanges["subscription.nextRenewal"] = dayAfter(paidThrough);
       // An operator's changed due date is settled by the payment.
       if (sub.dueDate) subChanges["subscription.dueDate"] = null;
+      // A paid prepaid term (Distributor 3-month starter) is used up: monthly from here.
+      if (i.prepaid && sub.prepaidTerm) subChanges["subscription.prepaidTerm"] = null;
       // A paid bill brings a past-due subscription back; a suspension stays
       // the operator's own decision.
       if (sub.status === "past_due") subChanges["subscription.status"] = "active";

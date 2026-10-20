@@ -1,35 +1,42 @@
-// Customers (Phase 9, Distributor): one customer per compact row.
-//   Customer | Company | Phone | Orders | Total ordered | Balance | Last order | Status | View details
-// View details holds contact info, the customer's order history and the
-// activity log; Edit -> Save changes contact details; "⋯ More" holds
-// Deactivate / Reactivate and Delete (never-ordered customers only).
-// Order statistics come from the server; nothing here computes them.
+// Customers (Phase 9, Distributor; back in Business 2026-10-20). Its job:
+// save a recurring buyer once, so their next orders don't need retyping.
+// Not a CRM.
+//   Row      Customer | Contact | Delivery address | Orders | [Add order] ⋯
+//            (⋯ = View, Edit)
+//   Details  Contact, Delivery address, [Add order]; then total orders, last
+//            order and the order history.
+//   Form     Name * , Contact, Delivery address (nothing else asked; older
+//            records keep any company / email / notes they had).
+// Add order opens the order form with the customer linked and their name,
+// contact and delivery address filled in. The order keeps its own copy, so
+// editing the customer later never rewrites past orders. Order statistics
+// come from the server; nothing here computes them.
 
 import { html, render } from "../../lib/html.js";
-import { exportButton, bindExport, mayExport, exportHint } from "../../lib/export.js";
-import { pageHeader, emptyState, badge, filterBar, bindFilterBar, mobileCell, openButton, bindRowOpen, skeleton } from "../../components/ui.js";
+import { bindExport } from "../../lib/export.js";
+import { pageHeader, emptyState, badge, filterBar, bindFilterBar, mobileCell, rowMenu, bindRowOpen, skeleton } from "../../components/ui.js";
 import { formDialog } from "../../components/form-dialog.js";
 import { confirmDialog, toast as defaultToast } from "../../components/feedback.js";
 import { api as defaultApi } from "../../lib/api.js";
 import { formatCentavos } from "../../lib/format.js";
-import { CUSTOMER_STATUSES, PAYMENT_STATUSES, FULFILLMENT_STATUSES } from "@shared/index.js";
+import { CUSTOMER_STATUSES, PAYMENT_STATUSES, FULFILLMENT_STATUSES, canUseModule } from "@shared/index.js";
 import * as defaultData from "./data.js";
 import { when } from "../orders/view.js";
+import { openOrderEditor } from "../orders/editor.js";
+import { getProducts as defaultGetProducts } from "../orders/data.js";
+import { listActiveProducts as defaultListActiveProducts } from "../dashboard/checkout.js";
 
 const STATUS_TONE = { active: "success", inactive: "neutral" };
 
-export function customerRow(c, { currency = "PHP", timezone } = {}) {
+export function customerRow(c, { timezone } = {}) {
   const s = c.stats || {};
   return {
     id: c.id,
     name: c.name,
-    company: c.company || "—",
-    phone: c.phone || "—",
-    orders: String(s.orderCount ?? 0),
-    totalOrdered: formatCentavos(s.totalOrdered ?? 0, currency),
-    balance: formatCentavos(s.outstandingBalance ?? 0, currency),
-    hasBalance: (s.outstandingBalance ?? 0) > 0,
-    lastOrder: s.lastOrderAt ? `${s.lastOrderNumber ?? ""} · ${when(s.lastOrderAt, timezone)}` : "—",
+    contact: c.phone || "",
+    address: c.address || "",
+    orders: s.orderCount ?? 0,
+    lastOrder: s.lastOrderAt ? `${s.lastOrderNumber ?? ""} · ${when(s.lastOrderAt, timezone)}` : "",
     status: c.status,
   };
 }
@@ -41,19 +48,17 @@ export function customerActivity(c, { timezone } = {}) {
 }
 
 const FIELDS = (c = {}) => [
-  { name: "name", label: "Customer name *", value: c.name ?? "", required: true },
-  { name: "company", label: "Company / store", value: c.company ?? "" },
-  { name: "phone", label: "Phone", value: c.phone ?? "", inputmode: "tel" },
-  { name: "email", label: "Email", value: c.email ?? "", inputmode: "email" },
-  { name: "address", label: "Address", type: "textarea", value: c.address ?? "" },
-  { name: "notes", label: "Notes", type: "textarea", value: c.notes ?? "" },
+  { name: "name", label: "Name *", value: c.name ?? "", required: true },
+  { name: "phone", label: "Contact", value: c.phone ?? "", inputmode: "tel", placeholder: "e.g. 0917 123 4567" },
+  { name: "address", label: "Delivery address", type: "textarea", value: c.address ?? "" },
 ];
 
-const duplicateHint = (r) => (r && r.possibleDuplicate ? ` (same phone as ${r.possibleDuplicate.name}: check it isn't a duplicate)` : "");
+const duplicateHint = (r) => (r && r.possibleDuplicate ? ` (same contact number as ${r.possibleDuplicate.name}: check it isn't a duplicate)` : "");
 
 export function newCustomerDialog({ api }) {
   return formDialog({
     title: "New customer",
+    intro: "Saved once, filled in on their next orders.",
     fields: FIELDS(),
     submitLabel: "Save",
     onSubmit: (v) => api("customers", { method: "POST", body: { action: "create", customer: Object.fromEntries(Object.entries(v).filter(([, x]) => x !== "")) } }),
@@ -63,6 +68,7 @@ export function newCustomerDialog({ api }) {
 export function editCustomerDialog({ customer, api }) {
   return formDialog({
     title: `Edit ${customer.name}`,
+    intro: "Changes apply to new orders. Past orders keep the details they were made with.",
     fields: FIELDS(customer),
     submitLabel: "Save",
     onSubmit: async (v) => {
@@ -75,13 +81,22 @@ export function editCustomerDialog({ customer, api }) {
   });
 }
 
-export function mount(container, session, { data = defaultData, api = defaultApi, toast = defaultToast, exportDeps = {} } = {}) {
+// The order form for this customer: linked, with their saved details filled in.
+export function addOrderFor(customer, { session, deps }) {
+  return openOrderEditor({ session, deps, prefill: { customerId: customer.id, customer: { name: customer.name, phone: customer.phone || "" }, deliveryAddress: customer.address || "" } });
+}
+
+export function mount(container, session, { data = defaultData, api = defaultApi, toast = defaultToast, exportDeps = {}, orderDeps = null } = {}) {
   const perms = session.member.permissions;
   const canManage = perms["customers.manage"] === true;
   const canSeeOrders = perms["orders.view"] === true && session.entitlements?.modules?.orders === true;
+  const canOrder = perms["orders.create"] === true && canUseModule({ entitlements: session.entitlements, permissions: perms }, "orders");
   const businessId = session.business.id;
   const currency = session.business.currency || "PHP";
   const timezone = session.business.timezone;
+  const plural = session.config?.terminology?.customer?.plural ?? "Customers";
+  const singular = (session.config?.terminology?.customer?.singular ?? "customer").toLowerCase();
+  const editorDeps = orderDeps ?? { listActiveProducts: () => defaultListActiveProducts(businessId), getProducts: (ids) => defaultGetProducts(businessId, ids), searchCustomers: (term) => data.searchCustomers(businessId, term), api };
   const state = { status: "active", search: "", cursors: [], rows: [], hasMore: false, loading: true, error: null };
   let alive = true;
 
@@ -101,13 +116,16 @@ export function mount(container, session, { data = defaultData, api = defaultApi
     if (alive) draw();
   }
 
+  const menuFor = (r) => rowMenu(r.id, [{ act: "view", label: "View" }, ...(canManage ? [{ act: "edit", label: "Edit" }] : [])], { label: `More for ${r.name}` });
+  const addOrderBtn = (r) => (canOrder && r.status === "active" ? html`<button type="button" class="btn btn-compact btn-primary" data-act="add-order" data-id="${r.id}">Add order</button>` : "");
+
   function draw() {
     if (!alive) return;
-    const rows = state.rows.map((c) => customerRow(c, { currency, timezone }));
+    const rows = state.rows.map((c) => customerRow(c, { timezone }));
     render(
       container,
       html`
-        ${pageHeader({ title: session.config?.terminology?.customer?.plural ?? "Customers", subtitle: "Who buys from you: their orders, what they still owe, and their history.", actions: canManage ? html`<button type="button" class="btn btn-primary" data-act="new">+ New ${(session.config?.terminology?.customer?.singular ?? "customer").toLowerCase()}</button>` : "" })}
+        ${pageHeader({ title: plural, subtitle: "Save a buyer once; their next orders fill in by themselves.", actions: canManage ? html`<button type="button" class="btn btn-primary" data-act="new">+ New ${singular}</button>` : "" })}
         ${filterBar({
           fields: [
             { name: "search", label: "Search by name", type: "search", primary: true, value: state.search },
@@ -121,18 +139,17 @@ export function mount(container, session, { data = defaultData, api = defaultApi
             : state.loading
               ? skeleton(6)
               : !rows.length
-                ? emptyState({ iconName: "customers", title: state.search ? "No match" : "No customers yet", body: state.search ? "Try another name." : "Add the stores and buyers you sell to." })
-                : html`<div class="table-wrap"><table class="table table-compact rows" data-role="customers">
-                    <thead><tr><th class="m-only"></th><th>Customer</th><th class="col-secondary">Company</th><th class="col-secondary">Phone</th><th class="num">Orders</th><th class="num col-secondary">Total ordered</th><th class="num">Balance</th><th class="col-secondary">Last order</th><th>Status</th><th><span class="visually-hidden">Details</span></th></tr></thead>
+                ? emptyState({ iconName: "customers", title: state.search ? "No match" : `No ${plural.toLowerCase()} yet`, body: state.search ? "Try another name." : "Save the buyers who order again, so you don't retype their details." })
+                : html`<div class="table-wrap"><table class="table table-compact rows cust-rows" data-role="customers">
+                    <thead><tr><th class="m-only"></th><th>Customer</th><th>Contact</th><th>Delivery address</th><th class="num col-secondary">Orders</th><th><span class="visually-hidden">Actions</span></th></tr></thead>
                     <tbody>${rows.map(
                       (r) => html`<tr data-customer="${r.id}" data-open>
-                        ${mobileCell({ title: r.name, sub: [r.company, `${r.orders} orders`, r.lastOrder !== "—" ? `last ${r.lastOrder}` : ""].filter(Boolean).join(" · "), end: r.balance, endSub: r.hasBalance ? "owes" : "balance" })}
-                        <td class="cell-strong">${r.name}</td><td class="col-secondary">${r.company}</td><td class="col-secondary">${r.phone}</td>
-                        <td class="num">${r.orders}</td><td class="num col-secondary">${r.totalOrdered}</td>
-                        <td class="num" data-col="balance">${r.hasBalance ? html`<strong>${r.balance}</strong>` : r.balance}</td>
-                        <td class="col-secondary">${r.lastOrder}</td>
-                        <td>${badge(CUSTOMER_STATUSES[r.status]?.label ?? r.status, STATUS_TONE[r.status] || "neutral")}</td>
-                        <td class="row-actions" data-m="more">${openButton(r.id, `View details of ${r.name}`, { act: "view" })}</td>
+                        ${mobileCell({ title: r.name, sub: [r.contact, r.address].filter(Boolean).join(" · ") || (r.status === "inactive" ? "Inactive" : "") })}
+                        <td class="cell-strong">${r.name}${r.status === "inactive" ? html` ${badge("Inactive", "neutral")}` : ""}</td>
+                        <td data-col="contact">${r.contact || html`<span class="stat-hint">—</span>`}</td>
+                        <td class="cust-address" data-col="address">${r.address || html`<span class="stat-hint">—</span>`}</td>
+                        <td class="num col-secondary">${r.orders}</td>
+                        <td class="row-actions cust-actions" data-m="more">${addOrderBtn(r)}${menuFor(r)}</td>
                       </tr>`
                     )}</tbody></table></div>
                   <div class="pager">
@@ -150,6 +167,15 @@ export function mount(container, session, { data = defaultData, api = defaultApi
     return true;
   };
 
+  async function addOrder(c) {
+    const result = await addOrderFor(c, { session, deps: editorDeps });
+    if (result) {
+      toast(`Order ${result.orderNumber} created for ${c.name}`, "success");
+      load();
+    }
+    return result;
+  }
+
   async function openView(c) {
     const backdrop = document.createElement("div");
     backdrop.className = "modal-backdrop is-panel";
@@ -161,42 +187,40 @@ export function mount(container, session, { data = defaultData, api = defaultApi
       render(
         backdrop,
         html`<div class="modal modal-wide" role="dialog" aria-modal="true" aria-label="${c.name}" data-role="customer-view">
-          <div class="modal-header"><h2 class="card-title">${c.name}${c.company ? html` · <span class="stat-hint">${c.company}</span>` : ""}</h2></div>
+          <div class="modal-header"><h2 class="card-title">${c.name}</h2>${c.status === "inactive" ? badge("Inactive", STATUS_TONE.inactive) : ""}</div>
           <div class="modal-body">
-            <dl class="dl dl-compact">
-              <dt>Phone</dt><dd>${c.phone || "—"}</dd><dt>Email</dt><dd>${c.email || "—"}</dd>
-              <dt>Address</dt><dd>${c.address || "—"}</dd>${c.notes ? html`<dt>Notes</dt><dd>${c.notes}</dd>` : ""}
-              <dt>Status</dt><dd>${CUSTOMER_STATUSES[c.status]?.label ?? c.status}</dd>
+            <dl class="dl dl-compact" data-role="customer-contact">
+              <dt>Contact</dt><dd>${c.phone || "—"}</dd>
+              <dt>Delivery address</dt><dd>${c.address || "—"}</dd>
             </dl>
+            ${canOrder && c.status === "active" ? html`<div class="page-actions"><button type="button" class="btn btn-primary" data-act="add-order">Add order</button></div>` : ""}
             <dl class="dl dl-compact" data-role="customer-stats">
-              <dt>Orders</dt><dd>${s.orderCount ?? 0}</dd>
-              <dt>Total ordered</dt><dd>${formatCentavos(s.totalOrdered ?? 0, currency)}</dd>
-              <dt>Outstanding balance</dt><dd>${formatCentavos(s.outstandingBalance ?? 0, currency)}</dd>
+              <dt>Total orders</dt><dd>${s.orderCount ?? 0}</dd>
+              <dt>Last order</dt><dd>${s.lastOrderAt ? `${s.lastOrderNumber ?? ""} · ${when(s.lastOrderAt, timezone)}` : "—"}</dd>
             </dl>
             ${canSeeOrders
-              ? html`<h3 class="section-title">Orders</h3>
+              ? html`<h3 class="section-title">Order history</h3>
                   <div data-role="customer-orders">${view.ordersError
                     ? html`<p class="form-error">Couldn't load orders.</p>`
                     : view.orders === null
                       ? html`<p class="stat-hint">Loading…</p>`
                       : !view.orders.length
-                        ? html`<p class="stat-hint">No orders linked to this customer yet.</p>`
+                        ? html`<p class="stat-hint">No orders for this customer yet.</p>`
                         : html`<div class="table-wrap"><table class="table table-compact">
-                            <thead><tr><th>Order #</th><th>Date</th><th class="num">Total</th><th class="num">Balance</th><th>Payment</th><th>Fulfillment</th></tr></thead>
+                            <thead><tr><th>Order #</th><th>Date</th><th class="num">Total</th><th>Payment</th><th>Fulfillment</th></tr></thead>
                             <tbody>${view.orders.map(
                               (o) => html`<tr data-order="${o.id}"><td>${o.orderNumber}</td><td>${when(o.createdAt, timezone)}</td>
-                                <td class="num">${formatCentavos(o.total, currency)}</td><td class="num">${formatCentavos(o.balance ?? 0, currency)}</td>
+                                <td class="num">${formatCentavos(o.total, currency)}</td>
                                 <td>${PAYMENT_STATUSES[o.paymentStatus]?.label ?? o.paymentStatus}</td><td>${FULFILLMENT_STATUSES[o.fulfillmentStatus]?.label ?? o.fulfillmentStatus}</td></tr>`
                             )}</tbody></table></div>`}</div>`
               : ""}
-            <h3 class="section-title">Activity</h3>
-            <ul class="list activity" data-role="customer-activity">${customerActivity(c, { timezone }).map((line) => html`<li>${line}</li>`)}</ul>
+            <details class="help-details"><summary>Activity</summary><ul class="list activity" data-role="customer-activity">${customerActivity(c, { timezone }).map((line) => html`<li>${line}</li>`)}</ul></details>
           </div>
           <div class="modal-footer">
             ${canManage
               ? html`<div class="menu-wrap"><button type="button" class="btn" data-act="more">⋯ More</button><div class="menu" data-role="more-menu" hidden>
-                  <button type="button" class="menu-item" data-act="status">${c.status === "active" ? "Deactivate customer" : "Reactivate customer"}</button>
-                  ${(s.orderCount ?? 0) === 0 ? html`<button type="button" class="menu-item menu-danger" data-act="delete">Delete customer</button>` : ""}
+                  <button type="button" class="menu-item" data-act="status">${c.status === "active" ? `Deactivate ${singular}` : `Reactivate ${singular}`}</button>
+                  ${(s.orderCount ?? 0) === 0 ? html`<button type="button" class="menu-item menu-danger" data-act="delete">Delete ${singular}</button>` : ""}
                 </div></div>
                 <button type="button" class="btn" data-act="edit">Edit</button>`
               : ""}
@@ -224,12 +248,16 @@ export function mount(container, session, { data = defaultData, api = defaultApi
         return undefined;
       }
       try {
+        if (act === "add-order") {
+          close();
+          await addOrder(c);
+        }
         if (act === "edit" && done("Customer updated")(await editCustomerDialog({ customer: c, api }))) close();
         if (act === "status") {
           const next = c.status === "active" ? "inactive" : "active";
           const ok = await confirmDialog({
             title: next === "inactive" ? `Deactivate ${c.name}?` : `Reactivate ${c.name}?`,
-            body: next === "inactive" ? "They keep their orders and balance but can't be picked for new orders." : "They can be picked for new orders again.",
+            body: next === "inactive" ? "Their orders stay, but they can't be picked for new orders." : "They can be picked for new orders again.",
             confirmLabel: next === "inactive" ? "Deactivate" : "Reactivate",
           });
           if (ok && done(next === "inactive" ? "Customer deactivated" : "Customer reactivated")(await api("customers", { method: "POST", body: { action: "setStatus", customerId: c.id, status: next } }))) close();
@@ -245,14 +273,33 @@ export function mount(container, session, { data = defaultData, api = defaultApi
     });
   }
 
+  const closeMenus = (except = null) => container.querySelectorAll(".menu-wrap[data-menu] > .menu:not([hidden])").forEach((m) => m !== except && (m.hidden = true));
   const onClick = async (event) => {
     const el = event.target.closest("[data-act]");
-    if (!el || !container.contains(el)) return undefined;
+    if (!el || !container.contains(el)) {
+      closeMenus();
+      return undefined;
+    }
+    const row = () => state.rows.find((r) => r.id === el.dataset.id);
     switch (el.dataset.act) {
+      case "row-menu": {
+        const menu = el.parentElement.querySelector(".menu");
+        closeMenus(menu);
+        menu.hidden = !menu.hidden;
+        el.setAttribute("aria-expanded", String(!menu.hidden));
+        return undefined;
+      }
       case "new":
         return done("Customer added")(await newCustomerDialog({ api }));
+      case "add-order":
+        closeMenus();
+        return addOrder(row());
       case "view":
-        return openView(state.rows.find((r) => r.id === el.dataset.id));
+        closeMenus();
+        return openView(row());
+      case "edit":
+        closeMenus();
+        return done("Customer updated")(await editCustomerDialog({ customer: row(), api }));
       case "next":
         state.cursors.push(state.rows.at(-1));
         return load();

@@ -17,7 +17,7 @@ import { createHouseholdStaffHandler } from "../../netlify/functions/household-s
 import { createAttendanceHandler } from "../../netlify/functions/attendance.js";
 import { createAdvancesHandler } from "../../netlify/functions/advances.js";
 import { createBusiness, addMember, ensureAuthUser } from "../../netlify/functions/_lib/provisioning.js";
-import { buildWorld, request } from "../helpers/tenants.js";
+import { buildWorld, request, roomForTeam } from "../helpers/tenants.js";
 
 const NOW = new Date("2026-10-16T04:00:00Z");
 const W = "biz-wed";
@@ -28,7 +28,7 @@ let u;
 
 beforeEach(async () => {
   world = await buildWorld();
-  await createBusiness({ ...world, name: "Wedding", planId: "bridal-plus", workspaceTemplateId: "bridal-expense", businessId: W });
+  await createBusiness({ ...world, name: "Wedding", planId: "bridal-plus", workspaceTemplateId: "bridal-expense", businessId: W }); await roomForTeam(world, W);
   await createBusiness({ ...world, name: "Baby", planId: "baby-plus", workspaceTemplateId: "baby-expense", businessId: B });
   await createBusiness({ ...world, name: "Home", planId: "household-plus", workspaceTemplateId: "household-payroll", businessId: H });
   u = {};

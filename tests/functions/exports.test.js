@@ -18,7 +18,7 @@ import { validateExportFilters, canExport, exportFileName, ExportError, reportRo
 import { readXlsx } from "../../shared/xlsx.js";
 import { resolvePermissions } from "../../shared/permissions.js";
 import { FieldPath } from "../helpers/fake-firebase.js";
-import { buildWorld, request } from "../helpers/tenants.js";
+import { buildWorld, request, roomForTeam } from "../helpers/tenants.js";
 
 const NOW = new Date("2026-10-08T06:00:00Z"); // 14:00 in Manila
 let world;
@@ -156,7 +156,7 @@ describe("POST /api/exports — access", () => {
   it("a disabled module, a workspace without it, a missing view permission: refused", async () => {
     await updateOverrides({ ...world, businessId: "biz-a", set: { modules: { expenses: false } }, actor: "t", reason: "off" });
     expect((await call(world.uids.ownera, { dataset: "expenses" })).status).toBe(403);
-    await createBusiness({ ...world, name: "Wedding", planId: "bridal-plus", workspaceTemplateId: "bridal-expense", businessId: "biz-w" });
+    await createBusiness({ ...world, name: "Wedding", planId: "bridal-plus", workspaceTemplateId: "bridal-expense", businessId: "biz-w" }); await roomForTeam(world, "biz-w");
     const w = await member("ownerw", "owner", {}, "biz-w");
     for (const dataset of ["orders", "inventory", "customers", "payments", "reports"]) expect((await call(w, { dataset }, "biz-w")).status).toBe(403);
     const noView = await member("noview", "manager", { revoke: ["orders.view"] });

@@ -28,7 +28,7 @@ const SECTIONS = [
   { path: "/businesses", label: "Businesses", icon: "businesses", view: businessesView },
   { path: "/subscriptions", label: "Subscriptions", icon: "calendar", view: subscriptionsView },
   { path: "/payments", label: "Payments", icon: "payments", view: paymentsView },
-  { path: "/plans", label: "Plans", icon: "plans", view: plansView },
+  { path: "/plans", label: "Products", icon: "plans", view: plansView },
   { path: "/usage", label: "Usage", icon: "budget", view: usageCostView },
   { path: "/audit", label: "Audit", icon: "reports", view: auditView },
 ];

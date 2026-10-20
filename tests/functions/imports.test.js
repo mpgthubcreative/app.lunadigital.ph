@@ -13,7 +13,7 @@ import { tenantDb } from "../../netlify/functions/_lib/tenant-db.js";
 import { createBusiness, addMember, ensureAuthUser } from "../../netlify/functions/_lib/provisioning.js";
 import { autoMap, mapRows, convertRow, IMPORT_MAX_ROWS } from "../../shared/imports.js";
 import { FieldValue } from "../helpers/fake-firebase.js";
-import { buildWorld, request } from "../helpers/tenants.js";
+import { buildWorld, request, roomForTeam } from "../helpers/tenants.js";
 
 const actor = { uid: "u-carlo", name: "Carlo", email: "c@t.test" };
 const BIZ = { id: "biz-a", timezone: "Asia/Manila" };
@@ -208,7 +208,7 @@ describe("POST /api/imports (not launched)", () => {
   });
 
   it("a bridal workspace has no Imports, even with a forged snapshot", async () => {
-    await createBusiness({ ...world, name: "Wedding", planId: "bridal-plus", workspaceTemplateId: "bridal-expense", businessId: "biz-w" });
+    await createBusiness({ ...world, name: "Wedding", planId: "bridal-plus", workspaceTemplateId: "bridal-expense", businessId: "biz-w" }); await roomForTeam(world, "biz-w");
     const u = await ensureAuthUser({ auth: world.auth, email: "bride3@t.test", name: "Bride" });
     await addMember({ ...world, businessId: "biz-w", uid: u.uid, email: u.email, name: "Bride", roleTemplate: "owner", isAccountOwner: true });
     expect((await call(u.uid, pv(), "biz-w")).status).toBe(403);

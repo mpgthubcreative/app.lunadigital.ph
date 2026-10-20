@@ -2,7 +2,7 @@
 // exercise the same writes the operator scripts perform.
 
 import { fakeAdmin } from "./fake-firebase.js";
-import { seedPlans, createBusiness, ensureAuthUser, addMember } from "../../netlify/functions/_lib/provisioning.js";
+import { seedPlans, createBusiness, ensureAuthUser, addMember, setLimitOverride } from "../../netlify/functions/_lib/provisioning.js";
 
 export async function buildWorld() {
   const env = fakeAdmin();
@@ -55,4 +55,11 @@ export function request({ uid, token, businessId, method = "GET" } = {}) {
 export function asOperator(world, businessId, { uid = "opLunaBackup1" } = {}) {
   world.db.seed(`operators/${uid}`, { email: "ops.backup@luna.test", name: "Luna Ops", role: "superadmin", status: "active" });
   return { ...request({ uid, method: "POST" }), body: JSON.stringify({ businessId }) };
+}
+
+// A Bridal product includes 1 planning user (2026-10-20); a test wedding
+// with a whole team (owner, admin, staff) gets room the way Luna does it:
+// a Super Admin user-limit override.
+export async function roomForTeam(world, businessId, users = 10) {
+  await setLimitOverride({ ...world, businessId, limitKey: "users", value: users, actor: "test", reason: "test wedding team" });
 }

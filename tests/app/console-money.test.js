@@ -91,16 +91,19 @@ describe("Subscriptions", () => {
   it("compact rows: name / plan, billing + price, the date that matters, one status chip, ⋯", async () => {
     const rows = [
       { id: "abc", name: "ABC Trading", workspaceTemplateId: "distributor", planId: "distributor-plus", planName: "Distributor+", status: "active", state: "active", billingType: "monthly", amount: 89900, dueDate: "2026-10-12", attention: { kind: "overdue", date: "2026-10-12", days: 7, label: "7 days overdue", what: "Due", tone: "danger" } },
-      { id: "home", name: "Prado Home", workspaceTemplateId: "household-payroll", planId: "household-plus", planName: "Luna Household+", status: "active", state: "active", billingType: "annual", amount: 199000, dueDate: "2027-10-19", renewal: true, paidThrough: "2027-10-18", attention: null },
-      { id: "wed", name: "Carlo & Yanie", workspaceTemplateId: "bridal-expense", planId: "bridal-plus", planName: "Luna Bridal+", status: "active", state: "active", billingType: "term", amount: 399000, dueDate: null, accessUntil: "2027-10-18", paidThrough: "2027-10-18", attention: null },
+      { id: "home", name: "Prado Home", workspaceTemplateId: "household-payroll", planId: "household-basic", planName: "Luna Household", status: "active", state: "active", billingType: "annual", amount: 119000, termMonths: 12, dueDate: "2027-10-19", renewal: true, paidThrough: "2027-10-18", accessUntil: "2027-10-18", attention: null },
+      { id: "trial", name: "Cruz Home", workspaceTemplateId: "household-payroll", planId: "household-basic", planName: "Luna Household", status: "active", state: "active", billingType: "annual", amount: 14900, termMonths: 1, dueDate: "2026-10-25", renewal: true, paidThrough: "2026-10-24", accessUntil: "2026-10-24", attention: { kind: "due", date: "2026-10-25", days: 5, label: "Due soon", what: "Renewal due", tone: "warning" } },
+      { id: "wed", name: "Carlo & Yanie", workspaceTemplateId: "bridal-expense", planId: "bridal-plus", planName: "Luna Bridal Custom", status: "active", state: "active", billingType: "term", amount: 299000, termMonths: 12, dueDate: null, accessUntil: "2027-10-18", paidThrough: "2027-10-18", attention: null },
     ];
     const call = vi.fn(async () => ({ period: "2026-10", rows, next: null }));
     subscriptionsView(el, ctxWith(call));
     await flush();
     const text = (id) => el.querySelector(`[data-business="${id}"]`).textContent.replace(/\s+/g, " ");
-    expect(text("abc")).toMatch(/Monthly subscription ?₱899.*Due Oct 12.*7 days overdue/);
-    expect(text("home")).toMatch(/Annual access ?₱1,990.*Renewal due Oct 19, 2027.*Active/);
-    expect(text("wed")).toMatch(/12-month access ?₱3,990.*Access until Oct 18, 2027.*Active/);
+    // The date by product: Distributor "Due …", Household "Access until …" / "Renewal due …", Bridal "Access ends …".
+    expect(text("abc")).toMatch(/Monthly subscription ?₱899.*Due Oct 12, 2026.*7 days overdue/);
+    expect(text("home")).toMatch(/12-month access ?₱1,190.*Access until Oct 18, 2027.*Active/);
+    expect(text("trial")).toMatch(/1-month access ?₱149.*Renewal due Oct 25, 2026.*Due soon/);
+    expect(text("wed")).toMatch(/12-month access ?₱2,990.*Access ends Oct 18, 2027.*Active/);
     expect(text("wed")).not.toMatch(/Past due/);
     expect(el.querySelector('[data-business="abc"] [data-act="row-menu"]')).not.toBeNull();
   });

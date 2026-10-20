@@ -16,7 +16,7 @@ import { confirmDialog } from "../components/feedback.js";
 import { formatBytes, formatNumber, formatDayId } from "../lib/format.js";
 import { SUBSCRIPTION_LABELS, NO_LIMIT_FROM } from "@shared/index.js";
 import { PAYMENT_STATUSES, PLATFORM_EXPENSE_CATEGORIES, PLATFORM_EXPENSE_KINDS } from "@shared/billing.js";
-import { whenText, stateChip, subscriptionMenu, toggleMenus, runSubscriptionAction, billingTypeLabel } from "./actions.js";
+import { whenText, stateChip, subscriptionMenu, toggleMenus, runSubscriptionAction, billingText } from "./actions.js";
 
 const peso = (c) => (c === null || c === undefined ? "—" : `${c < 0 ? "−" : ""}₱${(Math.abs(c) / 100).toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`);
 const monthLabel = (p) => new Date(`${p}-01T00:00:00Z`).toLocaleDateString("en-PH", { month: "short", timeZone: "UTC" });
@@ -58,10 +58,10 @@ export function subscriptionsView(el, ctx) {
                   (r) => html`<tr data-business="${r.id}">
                     ${mobileCell({ title: r.name, sub: `${r.planName ?? ctx.planName(r.planId)} · ${whenText(r)}`, end: stateChip(r) })}
                     <td><a class="cell-strong" href="${ctx.base}/businesses?b=${r.id}" data-link>${r.name}</a><span class="cell-sub">${r.planName ?? ctx.planName(r.planId)}</span></td>
-                    <td>${billingTypeLabel(r.billingType)}<span class="cell-sub">${peso(r.amount)}</span></td>
+                    <td>${billingText(r)}<span class="cell-sub">${peso(r.amount)}</span></td>
                     <td data-role="when">${whenText(r)}${r.attention?.kind === "overdue" ? html`<span class="cell-sub tone-danger">${r.attention.label}</span>` : ""}</td>
                     <td>${stateChip(r)}</td>
-                    <td class="row-actions" data-m="more">${subscriptionMenu(r)}</td>
+                    <td class="row-actions" data-m="more">${subscriptionMenu(r, { ctx })}</td>
                   </tr>`
                 )}</tbody></table></div>
               <div class="pager"><button type="button" class="btn btn-compact" data-act="prev" ${state.cursors.length > 1 ? "" : "disabled"}>Previous</button><button type="button" class="btn btn-compact" data-act="next" ${state.page.next ? "" : "disabled"}>Next</button></div>`

@@ -9,7 +9,7 @@ import { createGuestsHandler } from "../../netlify/functions/guests.js";
 import { createWeddingSetupHandler } from "../../netlify/functions/wedding-setup.js";
 import { createInviteHandler } from "../../netlify/functions/invite.js";
 import { createBusiness, addMember, ensureAuthUser } from "../../netlify/functions/_lib/provisioning.js";
-import { buildWorld, request } from "../helpers/tenants.js";
+import { buildWorld, request, roomForTeam } from "../helpers/tenants.js";
 import { slugify, suggestWeddingSlug, isWeddingSlug, invitePath, validateWeddingSetup, rsvpSummary, rsvpByCategory, seatingPlan, TOTALS_DOC_ID, SEATING_DOC_ID } from "../../shared/wedding.js";
 import { guestRsvpLabel } from "../../netlify/functions/_lib/invitations.js";
 
@@ -21,8 +21,8 @@ let u;
 
 beforeEach(async () => {
   world = await buildWorld();
-  await createBusiness({ ...world, name: "Reyes-Prado Wedding", planId: "bridal-plus", workspaceTemplateId: "bridal-expense", businessId: W });
-  await createBusiness({ ...world, name: "Cruz Wedding", planId: "bridal-basic", workspaceTemplateId: "bridal-expense", businessId: W2 });
+  await createBusiness({ ...world, name: "Reyes-Prado Wedding", planId: "bridal-plus", workspaceTemplateId: "bridal-expense", businessId: W }); await roomForTeam(world, W);
+  await createBusiness({ ...world, name: "Cruz Wedding", planId: "bridal-basic", workspaceTemplateId: "bridal-expense", businessId: W2 }); await roomForTeam(world, W2);
   u = {};
   const add = async (key, businessId, role) => {
     const x = await ensureAuthUser({ auth: world.auth, email: `${key}@slug.test`, name: key });

@@ -271,6 +271,11 @@ export function billingRow(id, b, planNames = {}, today) {
     state: accessState(terms, { status: sub.status, today }),
     billingType: terms.billingType,
     amount: terms.amount,
+    // The term the next bill covers, Super Admin's price, the add-ons.
+    termMonths: terms.termMonths,
+    prepaidNext: terms.prepaidNext,
+    priceOverride: terms.priceOverride,
+    addOns: terms.addOns.map((a) => ({ id: a.id, label: a.label, qty: a.qty })),
     startDate: terms.startDate,
     dueDate: terms.dueDate,
     renewal: terms.renewal,

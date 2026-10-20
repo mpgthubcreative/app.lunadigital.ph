@@ -12,7 +12,7 @@ import { createBudgetHandler } from "../../netlify/functions/budget.js";
 import { createBusiness, addMember, ensureAuthUser } from "../../netlify/functions/_lib/provisioning.js";
 import { hashInviteToken } from "../../netlify/functions/_lib/invitations.js";
 import { deleteBusiness, restoreBusiness } from "../../netlify/functions/_lib/lifecycle.js";
-import { buildWorld, request, asOperator } from "../helpers/tenants.js";
+import { buildWorld, request, asOperator, roomForTeam } from "../helpers/tenants.js";
 import { rsvpSummary, rsvpOpen, validateWeddingSetup } from "../../shared/wedding.js";
 import { readXlsx } from "../../shared/xlsx.js";
 
@@ -25,8 +25,8 @@ let u;
 beforeEach(async () => {
   NOW = new Date("2026-10-16T04:00:00Z");
   world = await buildWorld();
-  await createBusiness({ ...world, name: "Reyes-Prado Wedding", planId: "bridal-plus", workspaceTemplateId: "bridal-expense", businessId: W });
-  await createBusiness({ ...world, name: "Cruz Wedding", planId: "bridal-basic", workspaceTemplateId: "bridal-expense", businessId: W2 });
+  await createBusiness({ ...world, name: "Reyes-Prado Wedding", planId: "bridal-plus", workspaceTemplateId: "bridal-expense", businessId: W }); await roomForTeam(world, W);
+  await createBusiness({ ...world, name: "Cruz Wedding", planId: "bridal-basic", workspaceTemplateId: "bridal-expense", businessId: W2 }); await roomForTeam(world, W2);
   u = {};
   const add = async (key, businessId, role) => {
     const x = await ensureAuthUser({ auth: world.auth, email: `${key}@inv.test`, name: key });

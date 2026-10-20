@@ -91,13 +91,12 @@ const TEMPLATES = [
     modules: [...CORE, "orders", "payments", "inventory", "customers", "expenses", "reports", "imports"],
     // Phase 18.5: navigation follows the daily story (Monitor → Work →
     // Analyze → Manage); phones show Dashboard + mobileTabs + More.
-    // Owner pilot (2026-10-19, Business simplification): Customers is kept
-    // (entitled; orders still take optional customer details and may link a
-    // saved customer) but has no page or menu entry; Operating Expenses + COGS
-    // are one "Costs" page. Phone: Dashboard · Orders · Inventory · Payments
-    // + More (Costs, Reports, Users, Download Excel, Settings).
-    navigation: ["dashboard", "orders", "payments", "inventory", "expenses", "reports", "imports", "users", "settings"],
-    navHidden: ["customers"],
+    // Owner pilot (2026-10-19, Business simplification): Operating Expenses +
+    // COGS are one "Costs" page. Customers is back (2026-10-20): save a
+    // recurring buyer once, so new orders aren't retyped (not a CRM). Phone:
+    // Dashboard · Orders · Inventory · Payments + More (Customers, Costs,
+    // Reports, Users, Download Excel, Settings).
+    navigation: ["dashboard", "orders", "payments", "inventory", "customers", "expenses", "reports", "imports", "users", "settings"],
     mobileTabs: ["orders", "inventory", "payments"],
     dashboard: {
       // Selected period first, then current operations (Phase 12.5). The

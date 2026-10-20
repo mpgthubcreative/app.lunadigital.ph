@@ -39,8 +39,8 @@ function visit(session, path) {
 describe("navigation", () => {
   it("Distributor: unchanged", () => {
     renderShell(document.getElementById("app"), sessionFixture());
-    // Customers is back (built in Phase 9); Reports / Imports return as each is built.
-    expect(navOf()).toEqual(["/ Dashboard", "/orders Orders", "/payments Payments", "/inventory Inventory", "/expenses Costs", "/reports Reports", "/export Download Excel", "/users Users", "/subscription Subscription", "/settings Settings"]);
+    // Customers is back (2026-10-20): save a recurring buyer once.
+    expect(navOf()).toEqual(["/ Dashboard", "/orders Orders", "/payments Payments", "/inventory Inventory", "/customers Customers", "/expenses Costs", "/reports Reports", "/export Download Excel", "/users Users", "/subscription Subscription", "/settings Settings"]);
   });
 
   it("Bridal: Money / Tasks / Guests; More = Wedding Setup, Music & Program, Download Excel, Users, Subscription, Settings (no Budget page: it's in Money)", () => {
@@ -66,10 +66,10 @@ describe("typing a Distributor URL in a bridal workspace", () => {
     });
   }
 
-  it("Customers is hidden in Business: a Business Owner typing /customers gets Page not available (the module never loads)", () => {
+  it("Customers is back in Business: a Business Owner opening /customers loads the module", () => {
     const r = visit(sessionFixture(), "/customers");
-    expect(r.loader).not.toHaveBeenCalled();
-    expect(r.text).toMatch(/Page not available/);
+    expect(r.loader).toHaveBeenCalled();
+    expect(r.text).not.toMatch(/Page not available/);
   });
 
   it("Excel import isn't launched: a Business Owner typing /imports gets Page not available (the module never loads)", () => {

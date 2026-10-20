@@ -14,6 +14,8 @@
 //   overview (the short Overview + Action Center), recordPayment,
 //   setBillingDate, sendReminder, removeMember, deleteBusiness (typed name,
 //   recoverable), restoreBusiness, savePlan
+// Final pricing model (2026-10-20): setAccess (term, paid through, add-ons,
+//   price override; the product stays)
 // Phase 18.6 (Luna's own money; operators only):
 //   money (Overview story), subscriptions, payments, payment, paymentProof,
 //   confirmPayment, rejectPayment, billingSettings, saveBillingSettings,
@@ -23,7 +25,7 @@
 import { respond, withErrorHandling, requireMethod, parseJsonBody, RequestError } from "./_lib/http.js";
 import { getAdmin } from "./_lib/firebase-admin.js";
 import { requireOperator, overview, listBusinesses, businessDetail, listAudit, listPlans, planSubscribers, creatableWorkspaces, usageOverview } from "./_lib/operator.js";
-import { provisionBusiness, assignPlan, updateOverrides, setLimitOverride, setSubscriptionStatus, addMember, setMemberStatus, updateBusinessGeneral, setTenantTerminology, ensureAuthUser, passwordSetupLink, ProvisioningError } from "./_lib/provisioning.js";
+import { provisionBusiness, assignPlan, setAccess, updateOverrides, setLimitOverride, setSubscriptionStatus, addMember, setMemberStatus, updateBusinessGeneral, setTenantTerminology, ensureAuthUser, passwordSetupLink, ProvisioningError } from "./_lib/provisioning.js";
 import { tenantDb } from "./_lib/tenant-db.js";
 import { OperatorError, validateCreateBusinessInput, validateSubscriptionStatus, validateReason, overrideChange } from "../../shared/operators.js";
 import { ROLE_TEMPLATES } from "../../shared/permissions.js";
@@ -53,6 +55,7 @@ const STATUS = {
   "no-invoice": 404,
   "already-paid": 409,
   "confirm-mismatch": 400,
+  "legacy-plan": 409,
 };
 const obj = (v) => (v && typeof v === "object" && !Array.isArray(v) ? v : {});
 
@@ -121,6 +124,15 @@ const ACTIONS = {
     run: async ({ db, admin, op }, b) => {
       const r = await assignPlan({ db, admin, businessId: bid(b.businessId), planId: b.planId, actor: actorOf(op), reason: validateReason(b.reason), expectedRevision: rev(b.expectedRevision) });
       return { planId: r.planId, warnings: r.warnings, adminRevision: r.adminRevision };
+    },
+  },
+  // Change access (2026-10-20): the product stays; term, paid-through date,
+  // add-ons and price override change (shared/plan-billing.js).
+  setAccess: {
+    fields: ["businessId", "changes", "reason", "expectedRevision"],
+    run: async ({ db, admin, op }, b) => {
+      const r = await setAccess({ db, admin, businessId: bid(b.businessId), changes: obj(b.changes), actor: actorOf(op), reason: validateReason(b.reason), expectedRevision: rev(b.expectedRevision) });
+      return { warnings: r.warnings, limits: r.entitlements.limits, adminRevision: r.adminRevision };
     },
   },
   // Default / Enabled / Disabled for ONE module the workspace allows.
