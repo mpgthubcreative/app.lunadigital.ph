@@ -1236,11 +1236,44 @@ c6e6ffd was NOT the final baseline: the owner's final spec for Reports and the H
   - Final polish 58/58; pricing + Customers 65/65; Super Admin 72/72.
   - Covered: Needs Attention dates fully visible on all 14 rows at 390 and 1280, badges never covering them; the bill breakdowns; adjustments; setup fee once and waived; the Bridal upgrade difference paid with a reference only; neither proof refused; over-capacity message; an order with no source from the UI; Unlink; product rows fit; a real screenshot read by the OCR under the live CSP (reference `1012345678901`, editable) at both widths.
 
-### Production migration baseline (2026-10-20, final)
+### Production migration baseline (2026-10-20), superseded on 2026-10-21
 
-- **Baseline = the commit that adds this entry.** Its code is identical to e6847fa (CI passing).
-- It supersedes every earlier baseline line (c6e6ffd, bae7550).
-- Feature work is frozen. The Singapore production migration (docs/PRODUCTION-MIGRATION.md) waits for the owner's explicit approval.
+- Was: the commit that added it (code = e6847fa). Superseded by the 2026-10-21 baseline below.
+
+### 2026-10-21 · Free trial, Continue with Luna, feedback, Reset Workspace Data, Bridal templates (f32ecd7, 4adc0c0, 6f7aec7)
+
+- **Pricing** (`shared/plans.seed.js`, seeded on staging with `--overwrite`):
+  - Luna Household: 6 months ₱1,299 · 12 months ₱2,390 (Best Value). No monthly option, no setup fee.
+  - Luna Distributor: 6 months ₱1,299 · 12 months ₱2,390 (Best Value) + ₱250 one-time setup on the first PAID bill only. It is now prepaid, so it is no longer recurring income.
+  - Luna Bridal: ₱1,490 for 12 months. Luna Bridal Custom: from ₱2,990.
+  - ₱999 remains only on the legacy Distributor+ plan and on bills already made. Existing businesses keep their own terms.
+- **Trial** (`shared/trial.js`):
+  - Fields on the subscription: `trialStatus` (trial_active / trial_ended / converted / reset), `trialStartedAt`, `trialEndsAt`.
+  - Ended is also derived from the date. Nothing is billed until a plan is chosen (`subscription.conversion`); there are no ₱0 bills.
+  - Ended (`_lib/tenant.js`): `canWrite` is false and writes get 403 `trial-ended`. Sign-in, reads, Continue with Luna, choosing, paying, Settings → Data and Download Excel still work.
+  - Paying the first bill marks the trial converted and the same workspace works again at once.
+- **Feedback:**
+  - Day 21 prompt (never over a dialog or while typing), Maybe later remembered, a quiet Day 27 banner.
+  - Stored in the top-level `feedback/{bid}` collection (server-only).
+  - Super Admin → Reviews & Feedback with statuses New / Reviewed / Approved / Featured. Featured needs the marketing permission.
+- **Reset Workspace Data:**
+  - Settings → Data → Data Management. Account owner only, type RESET, audited.
+  - `shared/reset.js` lists what each workspace removes and keeps.
+- **Bridal invitation:**
+  - Templates live in `src/modules/wedding/invitation/templates/{standard,classic,modern,romantic,editorial,garden}/template.js`, with `registry.js`, `renderer.js` and `preview.js` (see the README there).
+  - The Owner picks a Standard template (`weddingSetup/current.templateId`). During the trial it is preview only: guest links are refused (`trial-preview`) and don't open (`not-published`).
+  - The Super Admin Invitation card shows the selected template.
+- **Tests:**
+  - Unit: 1768 pass (112 files).
+  - Emulator: 41 files / 2970 pass (5 foreground batches).
+  - Build OK. CI passed on f32ecd7, 4adc0c0 and 6f7aec7.
+  - Live on staging (temporary `tr-*-tmp` businesses and operator, removed afterwards): 72/72 at 390 and 1280.
+
+### Production migration baseline (2026-10-21)
+
+- **Baseline = the commit that adds this entry.** Its code is identical to 6f7aec7 (CI passing).
+- It supersedes the 2026-10-20 baseline (code e6847fa) and every earlier one.
+- Production (Singapore Firebase, Netlify production, the domains) is set up only on the owner's go-ahead. Planned for 2026-10-21.
 
 ## Plan (decisions made from the brief)
 

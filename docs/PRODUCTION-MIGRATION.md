@@ -2,7 +2,7 @@
 
 Prepared 2026-10-19. **Status: PLAN ONLY. Nothing here has been created or deployed.** Execution needs the owner's explicit approval, step by step.
 
-- **Baseline:** the commit recorded under "Production migration baseline" in `docs/phase-18-6-progress.md` (the 2026-10-20 final staging polish; it supersedes the 2026-10-19 baselines). CI must pass on it.
+- **Baseline:** the commit recorded under "Production migration baseline" in `docs/phase-18-6-progress.md` (the 2026-10-21 trial / Continue with Luna / Reset / Bridal templates baseline; it supersedes the 2026-10-20 and 2026-10-19 baselines). CI must pass on it.
 - **Locked behaviour:** these are not to change during migration except for real defects:
   - Download Excel (the Business workbook includes Customers again);
   - Master Backup (Super Admin only);
