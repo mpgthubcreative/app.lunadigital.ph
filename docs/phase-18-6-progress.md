@@ -1194,6 +1194,54 @@ c6e6ffd was NOT the final baseline: the owner's final spec for Reports and the H
   - Customers: saved without email; order linked with the saved details; editing the customer leaves the order alone; walk-in still works; the Customers sheet;
   - Products / Create Business / business page / Change access / Subscriptions / Customers / Add order / customer details at 390 and 1280, no sideways scroll (the Advanced tables now fit a phone).
 
+### 2026-10-20 · Full consolidated final staging polish (63b327b, 4afa6ae, ce14351, 4a2b4c7, e6847fa)
+
+- **Itemised bills** (`shared/plan-billing.js` billLines / amountAfter; `_lib/billing.js`):
+  - Every new bill keeps frozen `lines` (access, add-ons for the months covered, the one-time setup fee, an upgrade) and `adjustments` (discount, credit / deduction, setup fee waived). Amount due = max(₱0, lines − adjustments).
+  - Bills from before this keep their single amount (shown as one line).
+- **Setup fee:**
+  - ₱999 on the Distributor's FIRST bill only: ₱499 + ₱999 = ₱1,498; 3-month ₱1,290 + ₱999 = ₱2,289.
+  - Tracked (`subscription.setupFeeBilled`), never billed twice (a product change keeps it; a business from before billing types never gets one).
+  - Waiving it shows the fee, then "Setup fee waived −₱999".
+  - Create Business → Advanced: setup fee amount and Waive, plus add-ons from the start.
+- **Discounts / credits** (Super Admin ⋯ "Add discount / deduction", or "+ Add discount / deduction" on a bill in the business page's Bills card):
+  - Fields: type, description (suggestions: Founding / Referral / Loyalty / Promo / Setup fee waived / Manual adjustment) and amount.
+  - Removable before payment; locked once any payment is recorded (`bill-locked`). The plan price is never changed.
+  - A ₱0 bill settles with a ₱0 record.
+  - Example: ₱499 + ₱999 − ₱300 − ₱100 = ₱1,098.
+- **Re-pricing:** after a product or access change, an unpaid next bill is re-priced (its discounts and setup line stay). A bill with money on it is never touched. A later price change never rewrites a bill (tested).
+- **Luna Bridal → Custom on paid access:**
+  - An upgrade bill (`{businessId}_{YYYY-MM}-upgrade`) for only the difference: agreed price − paid toward this access (`subscription.accessPaid`), e.g. ₱2,990 − ₱1,490 = ₱1,500. Discounts are allowed (−₱300 → ₱1,200).
+  - The access end, the wedding, its records and invitation links stay. "Upgrade due" shows in Needs Attention.
+  - The couple can pay that bill by id. Setting the agreed price after the change re-prices the unpaid upgrade bill.
+  - A downgrade bills nothing and refunds nothing.
+- **Bill breakdown** is shown on the Subscription page (each bill), the Super Admin business page (Bills card) and the payment review.
+- **Over capacity** (an older wedding moved to 1 included planner): "3 of 1 planning users are active. Existing members keep access; add capacity to invite more." Nobody is removed; only a new invitation is blocked. The business page shows the same note.
+- **Payment proof = a screenshot OR a reference number** (Subscription payments; GCash / Maya / bank order payments); neither is refused.
+  - A picked screenshot is read in the browser by Tesseract 7.0.0 (self-hosted under `/ocr/`, copied at build by `scripts/copy-ocr-assets.js`; engine ~3.9 MB + English model ~2.9 MB, loaded only when the screenshot field is tapped).
+  - The reference fills an empty Reference field for checking and correcting. Unreadable → "The screenshot alone is enough."
+  - CSP: `script-src 'self' 'wasm-unsafe-eval'; worker-src 'self'`.
+- **Orders:**
+  - The source is optional (blank → `null`, shown "Not set").
+  - New Order layout: Customer name · Contact → quiet "Saved customer: Yanie · Unlink" → Delivery address → Where did the order come from? (optional) → Add product → product rows (a small grid on phones) → Discount → Totals; notes tucked away.
+- **Phone layouts:**
+  - Customers card: name strongest, contact and address quiet, Add order + ⋯ beside them.
+  - Super Admin rows (Needs Attention, Subscriptions, Businesses): name, plan, then the date on its own line (never cut off), then the status.
+- **Audited:** setup fee billed / waived, adjustments added / removed (with amounts), bill re-pricing, upgrade billed, plus the existing access / product / status / payment audits.
+- **Tests:**
+  - **Unit:** 1733 pass (106 files).
+  - **Emulator:** 41 files / 2970 pass locally.
+  - **CI:** passed on 63b327b, 4afa6ae, ce14351, 4a2b4c7 and e6847fa.
+- **Live on staging (temporary `pf-*-tmp` / `pp-*-tmp` / `sa-*-tmp` businesses, temporary operators and test people, all removed afterwards):**
+  - Final polish 58/58; pricing + Customers 65/65; Super Admin 72/72.
+  - Covered: Needs Attention dates fully visible on all 14 rows at 390 and 1280, badges never covering them; the bill breakdowns; adjustments; setup fee once and waived; the Bridal upgrade difference paid with a reference only; neither proof refused; over-capacity message; an order with no source from the UI; Unlink; product rows fit; a real screenshot read by the OCR under the live CSP (reference `1012345678901`, editable) at both widths.
+
+### Production migration baseline (2026-10-20, final)
+
+- **Baseline = the commit that adds this entry.** Its code is identical to e6847fa (CI passing).
+- It supersedes every earlier baseline line (c6e6ffd, bae7550).
+- Feature work is frozen. The Singapore production migration (docs/PRODUCTION-MIGRATION.md) waits for the owner's explicit approval.
+
 ## Plan (decisions made from the brief)
 
 ### Stage 1: Distributor

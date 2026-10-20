@@ -2,8 +2,18 @@
 
 Prepared 2026-10-19. **Status: PLAN ONLY. Nothing here has been created or deployed.** Execution needs the owner's explicit approval, step by step.
 
-- **Baseline:** the commit recorded under "Production migration baseline" in `docs/phase-18-6-progress.md` (after the Business simplification, 2026-10-19). CI must pass on it.
-- **Locked behaviour:** Download Excel, Master Backup (Super Admin only), the hidden Excel import and the simplified Business (Costs, Reports, Customers hidden) are not to change during migration except for real defects.
+- **Baseline:** the commit recorded under "Production migration baseline" in `docs/phase-18-6-progress.md` (the 2026-10-20 final staging polish; it supersedes the 2026-10-19 baselines). CI must pass on it.
+- **Locked behaviour:** these are not to change during migration except for real defects:
+  - Download Excel (the Business workbook includes Customers again);
+  - Master Backup (Super Admin only);
+  - the hidden Excel import;
+  - the simplified Business (Costs, Reports, Customers with Add order);
+  - the final pricing model (one product per workspace with terms and add-ons, Luna Bridal Custom);
+  - itemised bills (setup fee once, discounts / credits, the Bridal upgrade difference);
+  - payment proof = screenshot OR reference.
+- **Production setup notes from the 2026-10-20 work:**
+  - Seed the plans (`seed:plans`) from the baseline: this is the new catalog.
+  - The payment-screenshot reader (Tesseract) ships with every build under `/ocr/` (copied by `npm run build`'s prebuild step). The site's CSP keeps `'wasm-unsafe-eval'` and `worker-src 'self'` for it; nothing third-party is loaded.
 - **Owner decisions (2026-10-19):**
   - production app domain `app.lunadigital.ph`; a new clean Singapore Firebase project;
   - the current US Firebase + Netlify stay permanently as staging;
