@@ -107,7 +107,8 @@ describe("Payment ▾", () => {
     form.elements.method.value = "gcash";
     form.dispatchEvent(new Event("submit", { cancelable: true }));
     await flush();
-    expect(form.querySelector('[data-role="error"]').textContent).toMatch(/need a reference/);
+    // GCash: the reference number OR a screenshot (one is enough).
+    expect(form.querySelector('[data-role="error"]').textContent).toMatch(/need the reference number or a screenshot/);
     form.elements.amount.value = "3000";
     form.elements.method.value = "cash";
     form.dispatchEvent(new Event("submit", { cancelable: true }));

@@ -58,7 +58,9 @@ describe("Customers page", () => {
     await flush();
     expect([...container.querySelectorAll("thead th")].map((th) => th.textContent.trim())).toEqual(["", "Customer", "Contact", "Delivery address", "Orders", "Actions"]);
     const row = container.querySelector(`[data-customer="${abc.id}"]`);
-    expect(row.querySelector("td.m-only").textContent.replace(/\s+/g, " ").trim()).toBe("ABC Store0917 123 4567 · 12 Rizal St, Cebu");
+    expect(row.querySelector("td.m-only").textContent.replace(/\s+/g, " ").trim()).toBe("ABC Store 0917 123 4567 12 Rizal St, Cebu");
+    // Name strongest; contact and address on their own quiet lines.
+    expect([...row.querySelectorAll("td.m-only .cust-name, td.m-only .cust-detail")].map((e) => e.className)).toEqual(["cust-name", "cust-detail", "cust-detail"]);
     expect(row.querySelector('[data-col="contact"]').textContent).toBe("0917 123 4567");
     expect(row.querySelector('[data-col="address"]').textContent).toBe("12 Rizal St, Cebu");
     // Not a CRM: no company, email, balances or statuses in the list.

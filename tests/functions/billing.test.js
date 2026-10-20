@@ -90,12 +90,23 @@ describe("tenant Subscription page", () => {
     expect(JSON.stringify(r.body)).not.toMatch(/margin|platformCost|verifiedRevenue/i);
   });
 
-  it("submit: proof required and checked (type, size, magic bytes), amount > 0, no future date; becomes For Verification, never Paid", async () => {
+  it("proof of payment: the screenshot OR the reference number (one is enough); neither is refused", async () => {
+    const none = await sub(world.uids.ownerh, "biz-home", { action: "submit", idempotencyKey: key(), payment: { period: "2026-10", paymentDate: "2026-10-15", amount: 10000 } });
+    expect([none.status, none.body.error]).toEqual([400, "proof-required"]);
+    const refOnly = await sub(world.uids.ownerh, "biz-home", { action: "submit", idempotencyKey: key(), payment: { period: "2026-10", paymentDate: "2026-10-15", amount: 10000, reference: "BT-REF-ONLY" } });
+    expect(refOnly.status).toBe(201);
+    expect(docAt(`subscriptionPayments/${refOnly.body.paymentId}`)).toMatchObject({ reference: "BT-REF-ONLY", proof: null });
+    const shotOnly = await sub(world.uids.ownerh, "biz-home", { action: "submit", idempotencyKey: key(), payment: { period: "2026-10", paymentDate: "2026-10-15", amount: 10000 }, proof });
+    expect(shotOnly.status).toBe(201);
+    expect(docAt(`subscriptionPayments/${shotOnly.body.paymentId}`)).toMatchObject({ reference: null });
+    expect(docAt(`subscriptionPayments/${shotOnly.body.paymentId}`).proof.path).toMatch(/^platformBilling\/biz-home\//);
+  });
+
+  it("submit: a proof file is checked (type, size, magic bytes), amount > 0, no future date; becomes For Verification, never Paid", async () => {
     expect((await submit(world.uids.ownerh, "biz-home", { amount: 29900 }, { proof: { contentType: "image/png", dataBase64: Buffer.from("not an image").toString("base64") } })).body.error).toBe("invalid-proof");
     expect((await submit(world.uids.ownerh, "biz-home", { amount: 29900 }, { proof: { contentType: "image/gif", dataBase64: PNG } })).body.error).toBe("invalid-proof");
     expect((await submit(world.uids.ownerh, "biz-home", { amount: 0 })).status).toBe(400);
     expect((await submit(world.uids.ownerh, "biz-home", { amount: 29900, paymentDate: "2026-10-20" })).status).toBe(400);
-    expect((await submit(world.uids.ownerh, "biz-home", { amount: 29900, reference: "" })).status).toBe(400);
     const ok = await submit(world.uids.ownerh, "biz-home", { amount: 29900 });
     expect(ok.status).toBe(201);
     const p = docAt(`subscriptionPayments/${ok.body.paymentId}`);

@@ -101,22 +101,30 @@ export function openOrderEditor({ session, deps, order = null, prefill = null })
         <div class="modal-header"><h2 class="card-title" id="oe-title">${order ? `Edit ${order.orderNumber}` : "New order"}</h2></div>
         <div class="modal-body">
           ${correcting ? html`<p class="form-notice" data-role="correcting">This order is fulfilled. Saving corrects stock, sales and COGS automatically and keeps the original in the activity log.</p>` : ""}
-          <div class="stat-grid">
-            <div class="field"><label for="oeName">Customer name *</label><input class="input" id="oeName" name="name" value="${state.customer.name}" autocomplete="off" ${state.customerId ? "readonly" : ""} /></div>
-            <div class="field"><label for="oePhone">Contact</label><input class="input" id="oePhone" name="phone" value="${state.customer.phone}" inputmode="tel" autocomplete="off" ${state.customerId ? "readonly" : ""} /></div>
-            <div class="field"><label for="oeSource">Where did the order come from? *</label><select class="input" id="oeSource" name="source"><option value="" ${state.source ? "" : "selected"}>Choose…</option>${sourceOptions}</select></div>
-            <div class="field" data-role="source-other" ${state.source === "other" ? "" : "hidden"}><label for="oeSourceNote">Where? *</label><input class="input" id="oeSourceNote" name="sourceNote" value="${state.source === "other" ? state.sourceNote : ""}" maxlength="120" placeholder="e.g. Instagram, referral" autocomplete="off" /></div>
-          </div>
-          <div data-role="customer-link"></div>
-          <div class="field"><label for="oeAddress">Delivery address</label><textarea class="input" id="oeAddress" name="deliveryAddress" rows="2" maxlength="300" placeholder="Leave blank for pick-up or walk-in">${state.deliveryAddress}</textarea></div>
-          <div class="field"><label for="oeProduct">Add product</label><select class="input" id="oeProduct" name="product" data-role="product-select" disabled><option value="">Loading products…</option></select></div>
-          <div class="table-wrap"><table class="table"><thead><tr><th>Product</th><th class="num">Available</th><th class="num">Price</th><th class="num">Quantity</th><th class="num">Subtotal</th><th></th></tr></thead><tbody data-role="lines"></tbody></table></div>
-          <div class="stat-grid">
-            ${canDiscount ? html`<div class="field"><label for="oeDiscount">Discount (${currency})</label><input class="input" id="oeDiscount" name="discount" value="${state.discountText}" inputmode="decimal" autocomplete="off" /></div>` : ""}
-            <div class="field"><label for="oeNotes">Order notes</label><textarea class="input" id="oeNotes" name="notes" rows="2" maxlength="500">${state.notes}</textarea></div>
-            ${correcting ? html`<div class="field"><label for="oeReason">Reason for the change</label><textarea class="input" id="oeReason" name="reason" rows="2" maxlength="300" placeholder="e.g. Encoded 10 by mistake, customer ordered 8"></textarea><div class="stat-hint">Needed when quantities, products or the discount change.</div></div>` : ""}
-          </div>
-          <dl class="dl" data-role="totals"></dl>
+          <section class="oe-section" data-role="oe-customer">
+            <div class="oe-pair">
+              <div class="field"><label for="oeName">Customer name *</label><input class="input" id="oeName" name="name" value="${state.customer.name}" autocomplete="off" ${state.customerId ? "readonly" : ""} /></div>
+              <div class="field"><label for="oePhone">Contact</label><input class="input" id="oePhone" name="phone" value="${state.customer.phone}" inputmode="tel" autocomplete="off" ${state.customerId ? "readonly" : ""} /></div>
+            </div>
+            <div data-role="customer-link"></div>
+            <div class="field"><label for="oeAddress">Delivery address</label><textarea class="input" id="oeAddress" name="deliveryAddress" rows="2" maxlength="300" placeholder="Leave blank for pick-up or walk-in">${state.deliveryAddress}</textarea></div>
+            <div class="oe-pair">
+              <div class="field"><label for="oeSource">Where did the order come from?</label><select class="input" id="oeSource" name="source"><option value="" ${state.source ? "" : "selected"}>Not set</option>${sourceOptions}</select></div>
+              <div class="field" data-role="source-other" ${state.source === "other" ? "" : "hidden"}><label for="oeSourceNote">Where? *</label><input class="input" id="oeSourceNote" name="sourceNote" value="${state.source === "other" ? state.sourceNote : ""}" maxlength="120" placeholder="e.g. Instagram, referral" autocomplete="off" /></div>
+            </div>
+          </section>
+          <section class="oe-section" data-role="oe-products">
+            <div class="field"><label for="oeProduct">Add product</label><select class="input" id="oeProduct" name="product" data-role="product-select" disabled><option value="">Loading products…</option></select></div>
+            <div class="table-wrap"><table class="table oe-lines"><thead><tr><th>Product</th><th class="num">Available</th><th class="num">Price</th><th class="num">Quantity</th><th class="num">Subtotal</th><th><span class="visually-hidden">Remove</span></th></tr></thead><tbody data-role="lines"></tbody></table></div>
+          </section>
+          <section class="oe-section" data-role="oe-money">
+            ${canDiscount ? html`<div class="field oe-discount"><label for="oeDiscount">Discount (${currency})</label><input class="input" id="oeDiscount" name="discount" value="${state.discountText}" inputmode="decimal" autocomplete="off" /></div>` : ""}
+            <dl class="dl oe-totals" data-role="totals"></dl>
+            <details class="form-more" ${state.notes || correcting ? "open" : ""}><summary>Order notes${correcting ? " and reason" : ""}</summary>
+              <div class="field"><label for="oeNotes">Order notes</label><textarea class="input" id="oeNotes" name="notes" rows="2" maxlength="500">${state.notes}</textarea></div>
+              ${correcting ? html`<div class="field"><label for="oeReason">Reason for the change</label><textarea class="input" id="oeReason" name="reason" rows="2" maxlength="300" placeholder="e.g. Encoded 10 by mistake, customer ordered 8"></textarea><div class="stat-hint">Needed when quantities, products or the discount change.</div></div>` : ""}
+            </details>
+          </section>
           <p class="form-error" data-role="error" role="alert" hidden></p>
         </div>
         <div class="modal-footer">
@@ -139,13 +147,14 @@ export function openOrderEditor({ session, deps, order = null, prefill = null })
       form.elements.name.readOnly = Boolean(state.customerId);
       form.elements.phone.readOnly = Boolean(state.customerId);
       if (state.customerId) {
-        render(linkEl, html`<p class="form-notice" data-role="linked">Saved customer: <strong>${state.customer.name}</strong> <button type="button" class="btn btn-compact" data-act="unlink">Unlink</button></p>`);
+        // Supporting information: quieter than the customer's own details.
+        render(linkEl, html`<p class="oe-linked" data-role="linked">Saved customer: <strong>${state.customer.name}</strong> · <button type="button" class="btn-linklike" data-act="unlink">Unlink</button></p>`);
         return;
       }
       if (!canLink) return render(linkEl, html``);
       render(
         linkEl,
-        html`<div class="page-actions"><button type="button" class="btn btn-compact" data-act="find-customer">Find saved customer</button><span class="stat-hint">or type a walk-in name above</span></div>
+        html`<p class="oe-linked"><button type="button" class="btn-linklike" data-act="find-customer">Find saved customer</button> <span class="stat-hint">or type a walk-in name</span></p>
           ${state.customerMatches.length
             ? html`<ul class="list" data-role="customer-matches">${state.customerMatches.map(
                 (c) => html`<li><button type="button" class="btn btn-compact" data-act="use-customer" data-id="${c.id}">Use</button> ${c.name}${c.company ? ` · ${c.company}` : ""}${c.phone ? ` · ${c.phone}` : ""}</li>`
@@ -177,12 +186,12 @@ export function openOrderEditor({ session, deps, order = null, prefill = null })
         linesEl,
         html`${p.lines.map(
           (l, i) => html`<tr data-line="${l.productId}">
-            <td>${l.sku} · ${l.name}</td>
-            <td class="num">${l.available === null ? "…" : `${formatQuantity(l.available + (l.reservedHere || 0))} ${UNITS[l.unit]?.label ?? l.unit}`}</td>
-            <td class="num">${formatCentavos(l.unitPrice, currency)}</td>
+            <td class="oe-line-name"><span class="cell-strong">${l.name}</span><span class="cell-sub">${l.sku}</span></td>
+            <td class="num oe-line-meta" data-label="Available">${l.available === null ? "…" : `${formatQuantity(l.available + (l.reservedHere || 0))} ${UNITS[l.unit]?.label ?? l.unit}`}</td>
+            <td class="num oe-line-meta" data-label="Price">${formatCentavos(l.unitPrice, currency)}</td>
             <td class="num"><input class="input input-qty" name="qty-${i}" data-line-index="${i}" value="${state.lines[i].quantityText}" inputmode="decimal" aria-label="Quantity for ${l.name}" autocomplete="off" />${l.qtyError ? html`<div class="form-error">${l.qtyError}</div>` : ""}</td>
             <td class="num" data-col="lineSubtotal">${l.quantity ? formatCentavos(computeTotals([l]).subtotal, currency) : "—"}</td>
-            <td><button type="button" class="btn" data-act="remove" data-index="${i}">Remove</button></td>
+            <td class="oe-line-remove"><button type="button" class="btn btn-compact btn-ghost" data-act="remove" data-index="${i}" aria-label="Remove ${l.name}">Remove</button></td>
           </tr>`
         )}`
       );
@@ -297,7 +306,6 @@ export function openOrderEditor({ session, deps, order = null, prefill = null })
         const bad = p.lines.find((l) => !l.quantity);
         if (bad) throw new Error(`${bad.name}: ${bad.qtyError || "enter a quantity"}`);
         if (p.discountError) throw new Error(p.discountError);
-        if (!state.source) throw new Error("Choose where the order came from");
         const payload = {
           customer: { name: state.customer.name, phone: state.customer.phone, notes: state.customer.notes },
           ...(state.customerId ? { customerId: state.customerId } : {}),

@@ -156,9 +156,11 @@ export function validateOrderInput(input, { requireItems = true } = {}) {
   };
   if (customer.phone && !/^[0-9+()\-. ]{3,40}$/.test(customer.phone)) throw new OrderError("invalid-input", "Phone may contain digits, spaces and + ( ) - . only");
 
-  if (!ORDER_SOURCE_IDS.includes(input.source)) throw new OrderError("invalid-input", `Source must be one of ${ORDER_SOURCE_IDS.join(", ")}`);
-  const sourceNote = text(input.sourceNote, { field: "Source note", max: 120 });
-  if (ORDER_SOURCES[input.source].needsNote && !sourceNote) throw new OrderError("invalid-input", "Say where the order came from");
+  // The source is optional (2026-10-20): blank = not recorded (null).
+  const source = input.source === undefined || input.source === null || input.source === "" ? null : input.source;
+  if (source !== null && !ORDER_SOURCE_IDS.includes(source)) throw new OrderError("invalid-input", `Source must be one of ${ORDER_SOURCE_IDS.join(", ")}`);
+  const sourceNote = source === null ? null : text(input.sourceNote, { field: "Source note", max: 120 });
+  if (source !== null && ORDER_SOURCES[source].needsNote && !sourceNote) throw new OrderError("invalid-input", "Say where the order came from");
   // Optional: blank for pick-up / walk-in.
   const deliveryAddress = text(input.deliveryAddress, { field: "Delivery address", max: 300 });
 
@@ -179,7 +181,7 @@ export function validateOrderInput(input, { requireItems = true } = {}) {
   const discount = input.discount === undefined || input.discount === null ? 0 : input.discount;
   if (!isCentavos(discount)) throw new OrderError("invalid-discount", "Discount must be a whole number of centavos, 0 or more");
 
-  return { customer, customerId, source: input.source, sourceNote, deliveryAddress, items, discount, notes: text(input.notes, { field: "Notes", max: 500 }) };
+  return { customer, customerId, source, sourceNote, deliveryAddress, items, discount, notes: text(input.notes, { field: "Notes", max: 500 }) };
 }
 
 // Server-priced lines -> totals. lines: [{ quantity, unitPrice }].

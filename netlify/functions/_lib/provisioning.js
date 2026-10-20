@@ -149,6 +149,9 @@ export async function createBusiness({
   // and Super Admin's agreed price for it (null: the product's price).
   termMonths = null,
   priceOverride = null,
+  addOns = {},
+  setupFee = null,
+  waiveSetupFee = false,
   clock = new Date(),
 }) {
   const businessName = cleanName(name, "Business name");
@@ -163,7 +166,7 @@ export async function createBusiness({
   const template = requireTemplate(workspaceTemplateId);
   const plan = await loadPlan(db, planId);
   requirePlanFits(plan, template.id);
-  const terms = billingTerms(() => newSubscriptionTerms(plan, seatDay(timezone, clock), { termMonths, priceOverride }));
+  const terms = billingTerms(() => newSubscriptionTerms(plan, seatDay(timezone, clock), { termMonths, priceOverride, addOns, setupFee, waiveSetupFee }));
   const ref = businessId ? db.collection("businesses").doc(businessId) : db.collection("businesses").doc();
   const now = admin.firestore.FieldValue.serverTimestamp();
 
@@ -189,7 +192,7 @@ export async function createBusiness({
       moduleOverrides: {},
       limitOverrides: {},
       featureOverrides: {},
-      entitlements: { ...buildEntitlementsSnapshot(plan, {}, template.id), computedAt: now },
+      entitlements: { ...buildEntitlementsSnapshot(plan, {}, template.id, terms.addOns ?? []), computedAt: now },
       createdAt: now,
       updatedAt: now,
       createdBy,
@@ -367,7 +370,11 @@ function planTermsUpdate(business, plan) {
   const kept = Object.fromEntries((Array.isArray(sub.addOns) ? sub.addOns : []).filter((a) => b.addOns.some((x) => x.id === a.id)).map((a) => [a.id, a.qty]));
   const termMonths = sameType && b.type !== "monthly" && b.terms.some((t) => t.months === sub.termMonths) ? sub.termMonths : null;
   const fresh = newSubscriptionTerms(plan, sameType ? sub.startDate : today, { termMonths, addOns: kept });
-  const next = sameType ? { ...fresh, accessUntil: sub.accessUntil ?? fresh.accessUntil, prepaidTerm: b.type === "monthly" ? sub.prepaidTerm ?? null : null } : { ...fresh, paidThrough: null, dueDate: null, nextRenewal: null };
+  // The one-time setup fee is never billed twice: a product change keeps what
+  // was billed / waived, and a business from before billing types was already
+  // set up (it never gets one).
+  const setup = sameType ? { setupFee: sub.setupFee ?? fresh.setupFee, setupFeeBilled: sub.setupFeeBilled === true, setupFeeWaived: sub.setupFeeWaived === true } : !sub.billingType ? { setupFeeBilled: true } : {};
+  const next = sameType ? { ...fresh, ...setup, accessUntil: sub.accessUntil ?? fresh.accessUntil, prepaidTerm: b.type === "monthly" ? sub.prepaidTerm ?? null : null } : { ...fresh, ...setup, paidThrough: null, dueDate: null, nextRenewal: null, accessPaid: 0, upgradeDue: null };
   return Object.fromEntries(Object.entries(next).map(([k, v]) => [`subscription.${k}`, v]));
 }
 
@@ -569,6 +576,15 @@ function userLimit(businessSnap, businessId) {
 function userLimitError(message, used, limit) {
   return Object.assign(new ProvisioningError("user-limit-reached", message), { details: { meterId: "activeUsers", used, limit } });
 }
+// "3 of 1 planning users are active. Existing members keep access; add
+// capacity to invite more." Nobody is removed when a business is over its
+// included users (an older business moved to the new products): only a NEW
+// member waits for more capacity.
+const SEAT_WORDS = { "bridal-expense": "planning users", "household-payroll": "family / admin users" };
+function seatLimitMessage(businessSnap, used, limit) {
+  const words = SEAT_WORDS[businessSnap.data()?.workspaceTemplateId] ?? "users";
+  return `${used} of ${limit} ${words} are active. Existing members keep access; add capacity to invite more.`;
+}
 async function withUserLimitNote({ db, tenant, FieldValue }, run) {
   try {
     return await run();
@@ -668,7 +684,7 @@ export async function addMember({
     if (status === "active" && seat && !wasSeat) {
       const limit = userLimit(businessSnap, businessId);
       if (seats >= limit) {
-        throw userLimitError(`Business ${businessId} already has ${seats}/${limit} active users.`, seats, limit);
+        throw userLimitError(seatLimitMessage(businessSnap, seats, limit), seats, limit);
       }
     }
     const activeAfter = seats + (status === "active" && seat ? 1 : 0);
@@ -741,7 +757,7 @@ export async function setMemberStatus({ db, admin, businessId, uid, status, audi
     const seats = activeSnap.docs.filter((d) => d.id !== uid && usesSeat(d.data())).length;
     if (status === "active" && member.status !== "active" && usesSeat(member)) {
       const limit = userLimit(businessSnap, businessId);
-      if (seats >= limit) throw userLimitError(`User limit reached (${seats}/${limit}).`, seats, limit);
+      if (seats >= limit) throw userLimitError(seatLimitMessage(businessSnap, seats, limit), seats, limit);
     }
     const activeAfter = seats + (status === "active" && usesSeat(member) ? 1 : 0);
     const userAlerts = await prepareUserAlerts(tx, { tenant, businessSnap, usersUsage, activeAfter });
@@ -979,7 +995,7 @@ export async function provisionBusiness({ db, admin, auth, request, actor = "cli
 
   // 2. The business (create() never overwrites; "exists" here = our own retry).
   try {
-    await createBusiness({ db, admin, name: req.name, planId: req.planId, workspaceTemplateId: req.workspaceTemplateId, timezone: req.timezone, businessId: req.businessId, isDemo, createdBy: actor, termMonths: req.termMonths ?? null, priceOverride: req.priceOverride ?? null });
+    await createBusiness({ db, admin, name: req.name, planId: req.planId, workspaceTemplateId: req.workspaceTemplateId, timezone: req.timezone, businessId: req.businessId, isDemo, createdBy: actor, termMonths: req.termMonths ?? null, priceOverride: req.priceOverride ?? null, addOns: req.addOns ?? {}, setupFee: req.setupFee ?? null, waiveSetupFee: req.waiveSetupFee === true });
   } catch (err) {
     if (!(err instanceof ProvisioningError && err.code === "business-exists")) throw err;
     const existing = (await bRef.get()).data();

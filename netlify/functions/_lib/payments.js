@@ -150,7 +150,7 @@ const historyAt = () => new Date();
 // ---------- Record ----------
 
 export async function recordPayment({ db, bucket, tenant, FieldValue, business, orderId, input, proof = null, actor, canVerify, now = new Date() }) {
-  const data = validatePaymentInput(input);
+  const data = validatePaymentInput(input, { hasProof: Boolean(proof) });
   const r = refs(tenant, { orderId });
   const paymentRef = tenant.collection("payments").doc();
   const decoded = proof ? decodeProof(proof) : null;
@@ -261,7 +261,7 @@ export async function updatePayment({ db, bucket, tenant, FieldValue, business, 
         method: changes.method ?? payment.method,
         reference: "reference" in changes ? changes.reference : payment.reference || "",
         note: "note" in changes ? changes.note : payment.note || "",
-      });
+      }, { hasProof: Boolean(decoded || payment.proof) });
       const orderRef = tenant.doc("orders", payment.orderId);
       const orderSnap = await tx.get(orderRef);
       if (!orderSnap.exists) throw new PaymentError("not-found", "Order not found");

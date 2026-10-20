@@ -112,20 +112,27 @@ export const PROOF_TYPES = Object.freeze({ "image/jpeg": "jpg", "image/png": "pn
 export const PROOF_MAX_BYTES = 3 * 1024 * 1024;
 
 // The tenant's submission (proof checked separately on the decoded bytes).
-export function validatePaymentSubmission(input, { today }) {
+// Proof of payment: a screenshot / receipt OR a reference number; one is
+// enough (hasProof: a file came with it). invoiceId: a specific bill (an
+// upgrade bill isn't a month's bill); otherwise the month's bill.
+export function validatePaymentSubmission(input, { today, hasProof = false }) {
   if (!input || typeof input !== "object" || Array.isArray(input)) throw new BillingError("invalid-input", "Invalid payment");
-  for (const k of Object.keys(input)) if (!["period", "amount", "paymentDate", "reference", "method", "note"].includes(k)) throw new BillingError("invalid-input", `Field ${k} can't be set`);
+  for (const k of Object.keys(input)) if (!["period", "invoiceId", "amount", "paymentDate", "reference", "method", "note"].includes(k)) throw new BillingError("invalid-input", `Field ${k} can't be set`);
+  if (input.invoiceId !== undefined && (typeof input.invoiceId !== "string" || !/^[A-Za-z0-9_-]{3,120}$/.test(input.invoiceId))) throw new BillingError("invalid-input", "Choose the bill you're paying");
   if (!isPeriod(input.period)) throw new BillingError("invalid-input", "Choose the billing month you're paying");
   const method = input.method ?? "bank_transfer";
   if (!Object.hasOwn(SUBSCRIPTION_PAYMENT_METHODS, method)) throw new BillingError("invalid-input", "Choose Bank Transfer");
   if (!isDay(input.paymentDate)) throw new BillingError("invalid-input", "Choose the date you paid");
   if (input.paymentDate > today) throw new BillingError("invalid-input", "The payment date can't be in the future");
+  const reference = text(input.reference, { field: "Reference number", max: 80 });
+  if (!reference && !hasProof) throw new BillingError("proof-required", "Add the reference number or attach the screenshot (one is enough)");
   return {
     period: input.period,
+    invoiceId: input.invoiceId ?? null,
     amount: amount(input.amount, "Amount paid"),
     paymentDate: input.paymentDate,
     method,
-    reference: text(input.reference, { field: "Reference number", max: 80, required: true }),
+    reference,
     note: text(input.note, { field: "Note", max: 300 }),
   };
 }

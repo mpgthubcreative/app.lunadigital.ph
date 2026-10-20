@@ -4083,3 +4083,66 @@ tr.is-saving {
   .sa-advanced .table-compact td { white-space: normal; overflow-wrap: anywhere; padding: var(--space-1) !important; }
   .sa-advanced .table-compact .select-compact { width: 100%; min-width: 0; }
 }
+
+/* ---------- Final polish (2026-10-20) ---------- */
+/* Super Admin rows on phones: name, plan, the date (never cut), status. */
+.sa-mcell { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; min-width: 0; }
+.sa-rows .sa-wrap { white-space: normal; overflow: visible; text-overflow: clip; overflow-wrap: anywhere; }
+.sa-when { font-size: var(--text-sm); font-weight: 500; color: var(--text); white-space: normal; }
+.sa-mstate { margin-top: var(--space-1); }
+
+/* Customers: name strongest, contact and address quiet, Add order beside them. */
+.cust-mcell { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.cust-name { font-weight: 700; font-size: var(--text-md); overflow-wrap: anywhere; }
+.cust-detail { font-size: var(--text-sm); color: var(--text-muted); overflow-wrap: anywhere; }
+.cust-rows td { vertical-align: middle; }
+@media (max-width: 719px) {
+  .cust-rows tr { align-items: center; }
+  .cust-rows td.m-only { flex: 1 1 0; }
+  .cust-rows td.cust-actions { flex: 0 0 auto; display: flex; flex-direction: row; align-items: center; gap: var(--space-1); }
+  .cust-actions .menu-wrap { margin-left: 0; }
+}
+
+/* New order: customer → products → money, clear spacing. */
+.oe-section { padding-bottom: var(--space-4); margin-bottom: var(--space-4); border-bottom: 1px solid var(--border); }
+.oe-section:last-of-type { border-bottom: 0; margin-bottom: 0; }
+.oe-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 0 var(--space-3); }
+.oe-linked { margin: calc(-1 * var(--space-1)) 0 var(--space-3); font-size: var(--text-sm); color: var(--text-muted); }
+.oe-linked strong { font-weight: 600; color: var(--text); }
+.oe-linked .btn-linklike { color: var(--luna-primary); font-size: inherit; text-decoration: underline; }
+.oe-totals { max-width: 22rem; margin-left: auto; }
+.oe-totals dd { text-align: right; font-variant-numeric: tabular-nums; }
+.oe-discount { max-width: 14rem; }
+@media (max-width: 719px) {
+  .oe-pair { grid-template-columns: 1fr; }
+  .oe-discount { max-width: none; }
+  .oe-totals { max-width: none; }
+  /* Product rows as small cards: name + Remove, then available · price, then quantity + subtotal. */
+  .oe-lines thead { display: none; }
+  .oe-lines, .oe-lines tbody { display: block; width: 100%; }
+  .oe-lines tr { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1) var(--space-3); padding: var(--space-3) 0; border-bottom: 1px solid var(--border); }
+  .oe-lines td { border: 0; padding: 0 !important; }
+  .oe-lines td.oe-line-name { flex: 1 1 0; min-width: 0; }
+  .oe-lines td.oe-line-remove { flex: 0 0 auto; }
+  .oe-lines td.oe-line-meta { flex: 0 0 auto; font-size: var(--text-xs); color: var(--text-muted); text-align: left; }
+  .oe-lines td.oe-line-meta::before { content: attr(data-label) ": "; }
+  .oe-lines td.oe-line-meta + td.oe-line-meta { flex: 1 1 auto; }
+  .oe-lines td:nth-child(4) { flex: 1 1 8rem; text-align: left; }
+  .oe-lines td:nth-child(4) .input-qty { width: 100%; max-width: 10rem; }
+  .oe-lines td[data-col="lineSubtotal"] { flex: 0 0 auto; font-weight: 600; }
+}
+/* A bill's breakdown (Subscription page, Super Admin): charges, then what's taken off. */
+.bill-lines { display: grid; grid-template-columns: 1fr auto; gap: 2px var(--space-3); margin: var(--space-2) 0 0; font-size: var(--text-sm); }
+.bill-lines dt { color: var(--text-muted); font-weight: 400; }
+.bill-lines dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; }
+.bill-lines .bill-minus { color: var(--success, #157f3b); }
+.bill-lines .bill-total { font-weight: 700; color: var(--text); border-top: 1px solid var(--border); padding-top: 2px; }
+.sa-bills { list-style: none; margin: 0; padding: 0; }
+.sa-bills > li { padding: var(--space-3) 0; border-top: 1px solid var(--border); }
+.sa-bills > li:first-child { border-top: 0; padding-top: 0; }
+.sa-bills > li.is-paid .bill-lines { opacity: 0.8; }
+.sa-bill-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+.sa-bill-amount { margin-left: auto; font-variant-numeric: tabular-nums; }
+.sa-bills .btn { margin-top: var(--space-2); }
+.sa-remove { margin-left: var(--space-1); font-size: var(--text-xs); color: var(--danger, #b42318); text-decoration: underline; }
+.tone-warning { color: var(--warning-text, #92400e); }

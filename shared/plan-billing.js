@@ -158,7 +158,10 @@ export function addOnAmount(addOns, months) {
 //   priceOverride  Super Admin's agreed price for the term (e.g. a Custom
 //                  wedding quoted above "starting at"), or null.
 //   addOns         { [addOnId]: qty }.
-export function newSubscriptionTerms(plan, startDate, { termMonths = null, priceOverride = null, addOns = {} } = {}) {
+//   setupFee       the one-time setup fee for this business (default: the
+//                  product's); waiveSetupFee: it still shows on the first
+//                  bill, with a "Setup fee waived" line taking it off.
+export function newSubscriptionTerms(plan, startDate, { termMonths = null, priceOverride = null, addOns = {}, setupFee = null, waiveSetupFee = false } = {}) {
   // A legacy plan without a billing type (Starter / Growth / Pro) keeps the
   // old calendar-month billing (due the 7th): only its monthly price.
   if (!BILLING_TYPE_IDS.includes(plan?.pricing?.billingType)) return { monthlyAmount: int(plan?.pricing?.monthly) };
@@ -167,6 +170,7 @@ export function newSubscriptionTerms(plan, startDate, { termMonths = null, price
   const term = b.terms.find((t) => t.months === months);
   if (!term) throw new Error(`${plan.name} is sold for ${b.terms.map((t) => monthsText(t.months)).join(", ")}`);
   if (priceOverride !== null && (!Number.isSafeInteger(priceOverride) || priceOverride <= 0)) throw new Error("Price override: an amount more than ₱0");
+  if (setupFee !== null && (!Number.isSafeInteger(setupFee) || setupFee < 0 || setupFee > 100_000_000)) throw new Error("Setup fee: ₱0 or more");
   const extras = addOnSnapshot(plan, addOns);
   const monthly = b.type === "monthly";
   const sub = {
@@ -177,7 +181,9 @@ export function newSubscriptionTerms(plan, startDate, { termMonths = null, price
     prepaidTerm: monthly && term.months > 1 ? { months: term.months, price: term.price } : null,
     priceOverride,
     addOns: extras,
-    setupFee: b.setupFee,
+    setupFee: b.type === "monthly" ? (setupFee ?? b.setupFee) : 0,
+    setupFeeBilled: false,
+    setupFeeWaived: b.type === "monthly" && waiveSetupFee === true,
     autoRenew: b.autoRenew,
     startDate,
     // Term (Bridal): access for the term from the start, no renewal.
@@ -207,6 +213,39 @@ export function billFigures(sub, { prepaid = false } = {}) {
   return { months, amount: base === null ? null : base + addOnAmount(sub.addOns, months) };
 }
 
+// ---------- A bill's breakdown (2026-10-20) ----------
+//
+// A bill keeps its own lines (frozen when it's made; a later price change
+// never rewrites it) and its adjustments:
+//   lines        { kind: base | addon | setup | upgrade, label, amount }
+//   adjustments  { id, type: discount | credit | setup_waived, description, amount }
+//                (amount positive = taken off)
+//   amountDue    max(0, lines - adjustments)
+export const ADJUSTMENT_TYPES = Object.freeze({
+  discount: { label: "Discount" },
+  credit: { label: "Credit / deduction" },
+  setup_waived: { label: "Setup fee waived" },
+});
+export const ADJUSTMENT_TYPE_IDS = Object.freeze(Object.keys(ADJUSTMENT_TYPES));
+export const sumLines = (lines) => (Array.isArray(lines) ? lines : []).reduce((t, l) => t + int(l.amount), 0);
+export const amountAfter = (lines, adjustments) => Math.max(0, sumLines(lines) - sumLines(adjustments));
+
+// The lines of one bill: the access charge, the add-ons for the months it
+// covers, and the one-time setup fee when `setup` (the first Distributor bill).
+export function billLines(sub, { prepaid = false, setup = false, planName = null } = {}) {
+  const f = billFigures(sub, { prepaid });
+  if (f.amount === null) return [];
+  const type = BILLING_TYPE_IDS.includes(sub?.billingType) ? sub.billingType : "monthly";
+  const base = type === "monthly" ? (prepaid && sub.prepaidTerm ? sub.prepaidTerm.price : Number.isSafeInteger(sub.priceOverride) ? sub.priceOverride : int(sub.amount ?? sub.monthlyAmount)) : Number.isSafeInteger(sub.priceOverride) ? sub.priceOverride : int(sub.amount);
+  const what = type === "monthly" && f.months === 1 ? "Monthly access" : `${f.months}-month access`;
+  const lines = [{ kind: "base", label: `${planName ? `${planName} · ` : ""}${what}${Number.isSafeInteger(sub.priceOverride) && !(prepaid && sub.prepaidTerm) ? " (agreed price)" : ""}`, amount: base }];
+  for (const a of Array.isArray(sub.addOns) ? sub.addOns : []) lines.push({ kind: "addon", label: `${a.qty} × ${a.label}`, amount: addOnAmount([a], f.months) });
+  if (setup && int(sub.setupFee) > 0) lines.push({ kind: "setup", label: "One-time setup fee", amount: int(sub.setupFee) });
+  return lines;
+}
+// Does the next bill of this subscription carry the one-time setup fee?
+export const owesSetupFee = (sub) => sub?.billingType === "monthly" && int(sub.setupFee) > 0 && sub.setupFeeBilled !== true;
+
 // The terms of a stored subscription. Older businesses without billing
 // fields read as monthly from their creation day (read-only: nothing is
 // written back).
@@ -221,7 +260,7 @@ export function subscriptionTerms(sub = {}, { createdDay = null } = {}) {
   const prepaidNext = type === "monthly" && Boolean(sub.prepaidTerm);
   return {
     billingType: type,
-    amount: billFigures(sub, { prepaid: prepaidNext }).amount,
+    amount: sub.upgradeDue?.amount ?? billFigures(sub, { prepaid: prepaidNext }).amount,
     termMonths: prepaidNext ? sub.prepaidTerm.months : termMonths,
     prepaidNext,
     priceOverride: Number.isSafeInteger(sub.priceOverride) ? sub.priceOverride : null,
@@ -230,8 +269,10 @@ export function subscriptionTerms(sub = {}, { createdDay = null } = {}) {
     startDate,
     paidThrough,
     // monthly: next due date. annual: first payment, then the renewal date.
-    // term: the one purchase (null once paid: no renewal).
-    dueDate: type === "term" && paidThrough ? null : nextDue,
+    // term: the one purchase (null once paid: no renewal), or an open
+    // upgrade bill (Luna Bridal → Custom: only the difference).
+    dueDate: sub.upgradeDue?.dueDate ?? (type === "term" && paidThrough ? null : nextDue),
+    upgradeDue: sub.upgradeDue?.amount ? { amount: sub.upgradeDue.amount, invoiceId: sub.upgradeDue.invoiceId ?? null } : null,
     renewal: type === "annual" && Boolean(paidThrough),
     // annual: access until the last day paid; term: access ends.
     accessUntil: type === "term" ? (isDayString(sub.accessUntil) ? sub.accessUntil : startDate ? shiftDay(addMonths(startDate, termMonths), -1) : null) : type === "annual" ? paidThrough : null,
@@ -249,7 +290,7 @@ export function attentionOf(terms, { status = "active", today } = {}) {
   const due = terms.dueDate;
   if (due) {
     const left = daysUntil(today, due);
-    const what = t === "annual" ? (terms.renewal ? "Renewal due" : "Payment due") : t === "term" ? "Payment due" : "Due";
+    const what = terms.upgradeDue ? "Upgrade due" : t === "annual" ? (terms.renewal ? "Renewal due" : "Payment due") : t === "term" ? "Payment due" : "Due";
     if (left < 0) return { kind: "overdue", date: due, days: -left, label: `${-left} day${left === -1 ? "" : "s"} overdue`, what, tone: "danger" };
     if (left <= soonFor(terms)) return { kind: "due", date: due, days: left, label: left === 0 ? "Due today" : "Due soon", what, tone: "warning" };
   }

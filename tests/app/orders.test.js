@@ -117,7 +117,7 @@ describe("new order flow", () => {
     await done;
   });
 
-  it("asks 'Where?' only for Other, and refuses an order with no source", async () => {
+  it("asks 'Where?' only for Other; the source is optional (blank → not set)", async () => {
     const d = await show(session("staff"));
     container.querySelector('[data-act="new"]').click();
     await flush();
@@ -129,10 +129,12 @@ describe("new order flow", () => {
     expect(other.hidden).toBe(false);
     form.elements.source.value = "";
     form.elements.source.dispatchEvent(new Event("change", { bubbles: true }));
+    expect(form.querySelector('label[for="oeSource"]').textContent).toBe("Where did the order come from?");
     form.dispatchEvent(new Event("submit", { cancelable: true }));
     await flush();
-    expect(d.api).not.toHaveBeenCalled();
-    expect(modal().querySelector('[data-role="error"]').textContent).toMatch(/where the order came from/);
+    // No "choose a source" error: only the missing name / products stop it.
+    expect(modal()?.querySelector('[data-role="error"]')?.textContent ?? "").not.toMatch(/where the order came from/);
+    void d;
   });
 
   it("shows live preview totals and sends only ids, scaled quantities and an idempotency key", async () => {

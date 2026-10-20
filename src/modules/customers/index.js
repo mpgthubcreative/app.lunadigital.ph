@@ -14,7 +14,7 @@
 
 import { html, render } from "../../lib/html.js";
 import { bindExport } from "../../lib/export.js";
-import { pageHeader, emptyState, badge, filterBar, bindFilterBar, mobileCell, rowMenu, bindRowOpen, skeleton } from "../../components/ui.js";
+import { pageHeader, emptyState, badge, filterBar, bindFilterBar, rowMenu, bindRowOpen, skeleton } from "../../components/ui.js";
 import { formDialog } from "../../components/form-dialog.js";
 import { confirmDialog, toast as defaultToast } from "../../components/feedback.js";
 import { api as defaultApi } from "../../lib/api.js";
@@ -144,7 +144,11 @@ export function mount(container, session, { data = defaultData, api = defaultApi
                     <thead><tr><th class="m-only"></th><th>Customer</th><th>Contact</th><th>Delivery address</th><th class="num col-secondary">Orders</th><th><span class="visually-hidden">Actions</span></th></tr></thead>
                     <tbody>${rows.map(
                       (r) => html`<tr data-customer="${r.id}" data-open>
-                        ${mobileCell({ title: r.name, sub: [r.contact, r.address].filter(Boolean).join(" · ") || (r.status === "inactive" ? "Inactive" : "") })}
+                        <td class="m-only"><div class="cust-mcell">
+                          <span class="cust-name">${r.name}${r.status === "inactive" ? html` ${badge("Inactive", "neutral")}` : ""}</span>
+                          ${r.contact ? html`<span class="cust-detail" data-m-col="contact">${r.contact}</span>` : ""}
+                          ${r.address ? html`<span class="cust-detail" data-m-col="address">${r.address}</span>` : ""}
+                        </div></td>
                         <td class="cell-strong">${r.name}${r.status === "inactive" ? html` ${badge("Inactive", "neutral")}` : ""}</td>
                         <td data-col="contact">${r.contact || html`<span class="stat-hint">—</span>`}</td>
                         <td class="cust-address" data-col="address">${r.address || html`<span class="stat-hint">—</span>`}</td>

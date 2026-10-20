@@ -85,7 +85,7 @@ export function validTimezone(tz) {
 
 // "Create business" input. businessId is the slug; the workspace must be
 // a live template; the owner's email resolves or creates their account.
-const CREATE_FIELDS = ["name", "businessId", "workspaceTemplateId", "planId", "ownerEmail", "ownerName", "timezone", "termMonths", "priceOverride"];
+const CREATE_FIELDS = ["name", "businessId", "workspaceTemplateId", "planId", "ownerEmail", "ownerName", "timezone", "termMonths", "priceOverride", "addOns", "setupFee", "waiveSetupFee"];
 export function validateCreateBusinessInput(input) {
   if (!input || typeof input !== "object" || Array.isArray(input)) throw new OperatorError("invalid-input", "Invalid business");
   for (const k of Object.keys(input)) if (!CREATE_FIELDS.includes(k)) throw new OperatorError("invalid-input", `Field ${k} can't be set here`);
@@ -100,7 +100,14 @@ export function validateCreateBusinessInput(input) {
     // The access term (checked against the product on the server) and an agreed price.
     termMonths: input.termMonths ?? null,
     priceOverride: input.priceOverride ?? null,
+    // Advanced: add-ons from the start, this business's setup fee, waive it.
+    addOns: input.addOns ?? {},
+    setupFee: input.setupFee ?? null,
+    waiveSetupFee: input.waiveSetupFee === true,
   };
+  if (!out.addOns || typeof out.addOns !== "object" || Array.isArray(out.addOns)) throw new OperatorError("invalid-input", "Add-ons: invalid");
+  if (out.setupFee !== null && (!Number.isSafeInteger(out.setupFee) || out.setupFee < 0)) throw new OperatorError("invalid-input", "Setup fee: ₱0 or more");
+  if (input.waiveSetupFee !== undefined && typeof input.waiveSetupFee !== "boolean") throw new OperatorError("invalid-input", "Waive setup fee: yes or no");
   if (out.termMonths !== null && (!Number.isSafeInteger(out.termMonths) || out.termMonths < 1 || out.termMonths > 36)) throw new OperatorError("invalid-input", "Term: 1 to 36 months");
   if (out.priceOverride !== null && (!Number.isSafeInteger(out.priceOverride) || out.priceOverride <= 0)) throw new OperatorError("invalid-input", "Price: an amount more than ₱0");
   // New ids are clean slugs (stricter than isValidBusinessId, which also

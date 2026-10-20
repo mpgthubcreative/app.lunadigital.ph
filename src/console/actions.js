@@ -13,7 +13,7 @@ import { badge, rowMenu } from "../components/ui.js";
 import { formDialog } from "../components/form-dialog.js";
 import { confirmDialog } from "../components/feedback.js";
 import { formatDayId } from "../lib/format.js";
-import { SUBSCRIPTION_LABELS, SUBSCRIPTION_ACTIONS, SUBSCRIPTION_ACTION_HELP, planWorkspace, isCatalogPlan, priceLabel, planBilling, termLabel, addOnLabel, monthsText, BILLING_TYPES } from "@shared/index.js";
+import { SUBSCRIPTION_LABELS, SUBSCRIPTION_ACTIONS, SUBSCRIPTION_ACTION_HELP, planWorkspace, isCatalogPlan, priceLabel, planBilling, termLabel, addOnLabel, monthsText, BILLING_TYPES, ADJUSTMENT_TYPES } from "@shared/index.js";
 
 export const peso = (c) => (c === null || c === undefined ? "—" : `${c < 0 ? "−" : ""}₱${(Math.abs(c) / 100).toLocaleString("en-PH", { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`);
 const todayManila = () => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Manila" }).format(new Date());
@@ -68,6 +68,18 @@ const productChoice = (ctx, r) => {
   return plansFor(ctx, r.workspaceTemplateId).some((p) => p.id !== r.planId) || !isCatalogPlan(cur) || !sold(cur);
 };
 
+// A subscription row on a phone: business name (strongest), plan, then the
+// date that matters on its own line (never cut off), then the status chip.
+// The ⋯ sits beside it (its own cell).
+export function billingCell(r, sub) {
+  return html`<td class="m-only"><div class="sa-mcell">
+    <span class="m-title sa-wrap">${r.name}</span>
+    ${sub ? html`<span class="m-sub sa-wrap">${sub}</span>` : ""}
+    <span class="sa-when" data-role="m-when">${whenText(r)}</span>
+    <span class="sa-mstate">${stateChip(r)}</span>
+  </div></td>`;
+}
+
 // The ⋯ menu for a subscription / business row.
 export function subscriptionMenu(r, { detail = false, ctx = null } = {}) {
   if (r.status === "deleted") return rowMenu(r.id, [{ act: "s-view", label: "Open" }, { act: "s-restore", label: "Restore business" }], { label: `Actions for ${r.name}` });
@@ -77,6 +89,7 @@ export function subscriptionMenu(r, { detail = false, ctx = null } = {}) {
     { act: "s-pay", label: "Record payment" },
     { act: "s-remind", label: "Send notification" },
     ...(!ctx || sold(cur) ? [{ act: "s-access", label: "Change access" }] : []),
+    { act: "s-adjust", label: "Add discount / deduction" },
     { act: "s-date", label: r.billingType === "term" && r.paidThrough ? "Change access end" : "Change due date" },
     ...(!ctx || productChoice(ctx, r) ? [{ act: "s-plan", label: "Change product" }] : []),
     ...(detail ? [] : [{ act: "s-members", label: "Members" }]),
@@ -144,6 +157,23 @@ async function changeAccessDialog(ctx, r) {
   });
 }
 
+// + Add discount / deduction: a line taken off a bill (default: the next
+// bill); the product's price never changes. Founding / referral discounts,
+// loyalty credits, promos, a waived setup fee, manual adjustments.
+export function adjustmentDialog(ctx, r, { invoiceId = null, title = null } = {}) {
+  return formDialog({
+    title: title ?? `Add discount / deduction · ${r.name}`,
+    intro: invoiceId ? "Taken off this bill. Allowed until a payment is recorded on it." : "Taken off the next bill. Allowed until a payment is recorded on it.",
+    fields: [
+      { name: "type", label: "Type", type: "select", options: Object.entries(ADJUSTMENT_TYPES).map(([value, t]) => ({ value, label: t.label })), value: "discount" },
+      { name: "description", label: "Description", required: true, suggestions: ["Founding discount", "Referral discount", "Loyalty credit", "Promo", "Setup fee waived", "Manual adjustment"] },
+      { name: "amount", label: "Amount (₱)", inputmode: "decimal", required: true },
+    ],
+    submitLabel: "Add",
+    onSubmit: (x) => ctx.call("addAdjustment", { businessId: r.id, ...(invoiceId ? { invoiceId } : {}), adjustment: { type: x.type, description: x.description.trim(), amount: toCentavos(x.amount, "Amount") } }),
+  });
+}
+
 // Runs one menu action for row `r`. Returns true when something changed.
 export async function runSubscriptionAction(ctx, act, r) {
   const ask = (title, intro, fields, submitLabel, send) => formDialog({ title, intro, fields, submitLabel, onSubmit: send });
@@ -169,6 +199,10 @@ export async function runSubscriptionAction(ctx, act, r) {
       const v = await ask(`Send notification · ${r.name}`, "The owners see it in Luna's notifications.", [{ name: "message", label: "Message (optional)", type: "textarea", hint: `Leave empty to send: ${whenText(r)}, the amount and how to pay.` }], "Send", (x) => ctx.call("sendReminder", { businessId: r.id, ...(x.message.trim() ? { message: x.message.trim() } : {}) }));
       return v ? done("Notification sent.") : false;
     }
+    if (act === "s-adjust") {
+      const v = await adjustmentDialog(ctx, r);
+      return v ? done(`Added. Amount due now ${peso(v.amountDue)}.`) : false;
+    }
     if (act === "s-access") {
       const v = await changeAccessDialog(ctx, r);
       return v ? done(v.warnings?.length ? `Saved. ${v.warnings[0]}` : "Access changed.") : false;
@@ -183,11 +217,15 @@ export async function runSubscriptionAction(ctx, act, r) {
     }
     if (act === "s-plan") {
       const list = plansFor(ctx, r.workspaceTemplateId);
-      const v = await ask(`Change product · ${r.name}`, "The business, its data and its dates stay. The new product's price and included limits apply.", [
-        { name: "planId", label: "Product", type: "select", options: list.map((p) => ({ value: p.id, label: `${p.name} · ${priceLabel(p)}` })), value: list.some((p) => p.id === r.planId) ? r.planId : list[0]?.id },
+      const v = await ask(`Change product · ${r.name}`, r.billingType === "term" && r.paidThrough ? "The wedding, its data, its links and its access end stay. A pricier product is billed only the difference." : "The business, its data and its dates stay. The new product's price and included limits apply.", [
+        { name: "planId", label: "Product", type: "select", options: list.map((p) => ({ value: p.id, label: `${p.name} · ${priceLabel(p)}` })), value: list.find((p) => p.id !== r.planId)?.id ?? list[0]?.id },
+        { name: "agreedPrice", label: "Agreed price (₱, optional)", inputmode: "decimal", hint: "For a Custom wedding's quote; empty = the product's price." },
         { name: "reason", label: "Reason", required: true },
-      ], "Change product", (x) => ctx.call("changePlan", { businessId: r.id, planId: x.planId, reason: x.reason }));
-      return v ? done("Product changed.") : false;
+      ], "Change product", (x) => {
+        const agreedPrice = toCentavos(x.agreedPrice, "Agreed price", { optional: true });
+        return ctx.call("changePlan", { businessId: r.id, planId: x.planId, reason: x.reason, ...(agreedPrice ? { agreedPrice } : {}) });
+      });
+      return v ? done(v.upgradeDue ? `Product changed. Upgrade due: ${peso(v.upgradeDue)}.` : "Product changed.") : false;
     }
     const status = act.startsWith("s-") ? act.slice(2) : null;
     if (Object.hasOwn(SUBSCRIPTION_ACTIONS, status)) {

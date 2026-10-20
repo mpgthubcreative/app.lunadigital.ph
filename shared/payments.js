@@ -69,7 +69,9 @@ export function referenceKey(method, reference) {
 }
 
 // Validates what the browser may send for a payment. Amount is centavos.
-export function validatePaymentInput(input) {
+// Proof for GCash / Maya / bank transfer: the reference number OR a
+// screenshot (hasProof); one is enough.
+export function validatePaymentInput(input, { hasProof = false } = {}) {
   if (!input || typeof input !== "object" || Array.isArray(input)) throw new PaymentError("invalid-input", "Invalid payment");
   for (const key of Object.keys(input)) {
     if (!["amount", "method", "reference", "note"].includes(key)) throw new PaymentError("invalid-input", `Field ${key} can't be set here`);
@@ -77,7 +79,7 @@ export function validatePaymentInput(input) {
   if (!PAYMENT_METHOD_IDS.includes(input.method)) throw new PaymentError("invalid-input", `Method must be one of ${PAYMENT_METHOD_IDS.join(", ")}`);
   if (!isCentavos(input.amount) || input.amount <= 0 || input.amount > MAX_CENTAVOS) throw new PaymentError("invalid-amount", "Amount must be more than ₱0");
   const reference = normalizeReference(input.reference);
-  if (PAYMENT_METHODS[input.method].referenceRequired && !reference) throw new PaymentError("reference-required", `${PAYMENT_METHODS[input.method].label} payments need a reference number`);
+  if (PAYMENT_METHODS[input.method].referenceRequired && !reference && !hasProof) throw new PaymentError("reference-required", `${PAYMENT_METHODS[input.method].label} payments need the reference number or a screenshot`);
   const note = typeof input.note === "string" ? input.note.trim().replace(/\s+/g, " ") : "";
   if (note.length > 300) throw new PaymentError("invalid-input", "Note is too long (max 300)");
   return { amount: input.amount, method: input.method, reference, note };

@@ -15,7 +15,7 @@ import { requireTenant } from "./_lib/tenant.js";
 import { tenantSubscription, submitPayment } from "./_lib/billing.js";
 import { BillingError } from "../../shared/billing.js";
 
-const STATUS = { "invalid-input": 400, "invalid-proof": 400, "no-invoice": 404, "already-paid": 409, "not-found": 404 };
+const STATUS = { "invalid-input": 400, "invalid-proof": 400, "proof-required": 400, "no-invoice": 404, "already-paid": 409, "not-found": 404 };
 const MAX_BODY = 4_600_000; // a 3 MB proof, base64-encoded, plus the form
 
 export function createSubscriptionHandler({ getAdmin: loadAdmin, now = () => new Date() }) {

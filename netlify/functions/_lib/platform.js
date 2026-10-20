@@ -370,7 +370,8 @@ export async function paymentDetail({ db, paymentId }) {
   const [inv, history] = await Promise.all([db.collection("subscriptionInvoices").doc(pay.invoiceId).get(), db.collection("subscriptionPayments").where("businessId", "==", pay.businessId).orderBy("submittedAt", "desc").limit(11).get()]);
   return {
     payment: { ...paymentRow(p), method: pay.method, note: pay.note ?? null, hasProof: Boolean(pay.proof?.path), proofType: pay.proof?.contentType ?? null, verifiedBy: pay.verifiedBy ?? null, rejectedBy: pay.rejectedBy ?? null, submittedBy: pay.submittedBy?.email ?? pay.submittedBy?.name ?? null },
-    invoice: inv.exists ? { period: inv.data().period, amountDue: inv.data().amountDue, amountPaid: inv.data().amountPaid, status: inv.data().status, dueDate: inv.data().dueDate } : null,
+    // The bill's breakdown (frozen with the bill): charges, then what's taken off.
+    invoice: inv.exists ? { period: inv.data().period, kind: inv.data().kind ?? "access", amountDue: inv.data().amountDue, amountPaid: inv.data().amountPaid, status: inv.data().status, dueDate: inv.data().dueDate, lines: inv.data().lines ?? null, adjustments: inv.data().adjustments ?? [] } : null,
     history: history.docs.filter((d) => d.id !== p.id).slice(0, 10).map(paymentRow),
   };
 }

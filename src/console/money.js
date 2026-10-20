@@ -16,7 +16,7 @@ import { confirmDialog } from "../components/feedback.js";
 import { formatBytes, formatNumber, formatDayId } from "../lib/format.js";
 import { SUBSCRIPTION_LABELS, NO_LIMIT_FROM } from "@shared/index.js";
 import { PAYMENT_STATUSES, PLATFORM_EXPENSE_CATEGORIES, PLATFORM_EXPENSE_KINDS } from "@shared/billing.js";
-import { whenText, stateChip, subscriptionMenu, toggleMenus, runSubscriptionAction, billingText } from "./actions.js";
+import { whenText, stateChip, billingCell, subscriptionMenu, toggleMenus, runSubscriptionAction, billingText } from "./actions.js";
 
 const peso = (c) => (c === null || c === undefined ? "—" : `${c < 0 ? "−" : ""}₱${(Math.abs(c) / 100).toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`);
 const monthLabel = (p) => new Date(`${p}-01T00:00:00Z`).toLocaleDateString("en-PH", { month: "short", timeZone: "UTC" });
@@ -56,7 +56,7 @@ export function subscriptionsView(el, ctx) {
                 <thead><tr><th class="m-only"></th><th>Name / plan</th><th>Billing</th><th>Date</th><th>Status</th><th></th></tr></thead>
                 <tbody>${rows.map(
                   (r) => html`<tr data-business="${r.id}">
-                    ${mobileCell({ title: r.name, sub: [r.planName ?? ctx.planName(r.planId), r.billingType === "annual" ? billingText(r) : null, whenText(r)].filter(Boolean).join(" · "), end: stateChip(r) })}
+                    ${billingCell(r, [r.planName ?? ctx.planName(r.planId), r.billingType === "annual" ? billingText(r) : null].filter(Boolean).join(" · "))}
                     <td><a class="cell-strong" href="${ctx.base}/businesses?b=${r.id}" data-link>${r.name}</a><span class="cell-sub">${r.planName ?? ctx.planName(r.planId)}</span></td>
                     <td>${billingText(r)}<span class="cell-sub">${peso(r.amount)}</span></td>
                     <td data-role="when">${whenText(r)}${r.attention?.kind === "overdue" ? html`<span class="cell-sub tone-danger">${r.attention.label}</span>` : ""}</td>
@@ -162,10 +162,10 @@ export function paymentsView(el, ctx) {
             <dt>Workspace</dt><dd>${ctx.workspaceName(p.workspaceTemplateId)}</dd>
             <dt>Plan</dt><dd>${p.planName}</dd>
             <dt>Billing month</dt><dd>${monthLong(p.period)}</dd>
-            <dt>Expected amount</dt><dd>${peso(p.amountDue)}${d.invoice && d.invoice.amountPaid ? ` (${peso(d.invoice.amountPaid)} already paid)` : ""}</dd>
+            <dt>Expected amount</dt><dd>${peso(p.amountDue)}${d.invoice && d.invoice.amountPaid ? ` (${peso(d.invoice.amountPaid)} already paid)` : ""}${d.invoice?.lines?.length ? html`<dl class="bill-lines" data-role="bill-lines">${d.invoice.lines.map((l) => html`<dt>${l.label}</dt><dd>${peso(l.amount)}</dd>`)}${d.invoice.adjustments.map((a) => html`<dt>${a.description}</dt><dd class="bill-minus">−${peso(a.amount)}</dd>`)}<dt class="bill-total">Amount due</dt><dd class="bill-total">${peso(d.invoice.amountDue)}</dd></dl>` : ""}</dd>
             <dt>Submitted amount</dt><dd data-role="submitted"><b>${peso(p.amountSubmitted)}</b></dd>
             <dt>Payment date</dt><dd>${formatDayId(p.paymentDate)}</dd>
-            <dt>Reference</dt><dd>${p.reference}</dd>
+            <dt>Reference</dt><dd>${p.reference || "None (screenshot)"}</dd>
             ${p.note ? html`<dt>Note</dt><dd>${p.note}</dd>` : ""}
             <dt>Sent by</dt><dd>${p.submittedBy ?? "—"}</dd>
             ${p.rejectionReason ? html`<dt>Rejected because</dt><dd>${p.rejectionReason}</dd>` : ""}
@@ -173,7 +173,7 @@ export function paymentsView(el, ctx) {
           </dl>
           <div class="proof-box" data-role="proof">${p.hasProof ? html`<span class="stat-hint">Loading the screenshot…</span>` : html`<span class="stat-hint">No proof attached</span>`}</div>
           ${d.history.length
-            ? html`<h3 class="section-title">Earlier payments from this business</h3><ul class="items" data-role="history">${d.history.map((h) => html`<li><div class="item"><span class="item-main"><span class="item-title">${monthLong(h.period)}</span><span class="item-sub">${formatDayId(h.paymentDate)} · ref ${h.reference}${h.rejectionReason ? ` · ${h.rejectionReason}` : ""}</span></span><span class="item-end">${peso(h.amountSubmitted)}<small>${PAYMENT_STATUSES[h.status]?.label}</small></span></div></li>`)}</ul>`
+            ? html`<h3 class="section-title">Earlier payments from this business</h3><ul class="items" data-role="history">${d.history.map((h) => html`<li><div class="item"><span class="item-main"><span class="item-title">${monthLong(h.period)}</span><span class="item-sub">${formatDayId(h.paymentDate)}${h.reference ? ` · ref ${h.reference}` : " · screenshot"}${h.rejectionReason ? ` · ${h.rejectionReason}` : ""}</span></span><span class="item-end">${peso(h.amountSubmitted)}<small>${PAYMENT_STATUSES[h.status]?.label}</small></span></div></li>`)}</ul>`
             : ""}
         </div>
         <div class="modal-footer">

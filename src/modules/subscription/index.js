@@ -10,6 +10,7 @@ import { toast as defaultToast } from "../../components/feedback.js";
 import { formatCentavos, formatDayId } from "../../lib/format.js";
 import { api as defaultApi } from "../../lib/api.js";
 import { prepareProof } from "../../lib/image.js";
+import { bindReferenceDetection, detectReference } from "../../lib/payment-reference.js";
 import { SUBSCRIPTION_LABELS, businessDate } from "@shared/index.js";
 import { INVOICE_STATUSES, PAYMENT_STATUSES, PROOF_MAX_BYTES, BILLING_TIMEZONE } from "@shared/billing.js";
 
@@ -46,7 +47,7 @@ function nextLine(s) {
 }
 
 export async function prepareSubscriptionProof(file) {
-  if (!file) throw new Error("Attach your payment screenshot or receipt");
+  if (!file) return null;
   if (file.type === "application/pdf") {
     if (file.size > PROOF_MAX_BYTES) throw new Error("The PDF is larger than 3 MB");
     return { contentType: "application/pdf", dataBase64: await readRaw(file) };
@@ -54,7 +55,7 @@ export async function prepareSubscriptionProof(file) {
   return prepareProof(file);
 }
 
-export function mount(container, session, { api = defaultApi, toast = defaultToast, now = () => new Date() } = {}) {
+export function mount(container, session, { api = defaultApi, toast = defaultToast, now = () => new Date(), detect = detectReference } = {}) {
   const state = { loading: true, error: null, s: null };
   let alive = true;
   const money = (c) => formatCentavos(c ?? 0, session.business.currency || "PHP");
@@ -72,16 +73,22 @@ export function mount(container, session, { api = defaultApi, toast = defaultToa
     draw();
   }
 
+  // A bill: what it's for, then its breakdown (charges, then what's taken off).
+  const billTitle = (inv) => (inv.kind === "upgrade" ? "Upgrade" : monthName(inv.period));
   function billRow(inv) {
     const waiting = inv.status === "for_verification";
-    return html`<div class="bill-row" data-period="${inv.period}">
+    const lines = inv.lines || [];
+    const adjustments = inv.adjustments || [];
+    const showLines = lines.length > 1 || adjustments.length > 0;
+    return html`<div class="bill-row" data-period="${inv.period}" data-bill="${inv.id}">
       <div class="bill-main">
-        <div class="bill-title">${monthName(inv.period)} ${badge(INVOICE_STATUSES[inv.status]?.label ?? inv.status, INVOICE_STATUSES[inv.status]?.tone ?? "neutral")}</div>
+        <div class="bill-title">${billTitle(inv)} ${badge(INVOICE_STATUSES[inv.status]?.label ?? inv.status, INVOICE_STATUSES[inv.status]?.tone ?? "neutral")}</div>
         <div class="stat-hint">${inv.planName} · due ${formatDayId(inv.dueDate)}${inv.amountPaid > 0 ? ` · ${money(inv.amountPaid)} already paid` : ""}</div>
+        ${showLines ? html`<dl class="bill-lines" data-role="bill-lines">${lines.map((l) => html`<dt>${l.label}</dt><dd>${money(l.amount)}</dd>`)}${adjustments.map((a) => html`<dt>${a.description}</dt><dd class="bill-minus">−${money(a.amount)}</dd>`)}<dt class="bill-total">Amount due</dt><dd class="bill-total">${money(inv.amountDue)}</dd></dl>` : ""}
       </div>
       <div class="bill-end">
         <div class="bill-amount">${money(inv.balance)}</div>
-        ${waiting ? html`<span class="stat-hint">Waiting for Luna to confirm</span>` : html`<button type="button" class="btn btn-primary btn-compact" data-act="pay" data-period="${inv.period}">Pay</button>`}
+        ${waiting ? html`<span class="stat-hint">Waiting for Luna to confirm</span>` : html`<button type="button" class="btn btn-primary btn-compact" data-act="pay" data-period="${inv.period}" data-id="${inv.id}">Pay</button>`}
       </div>
     </div>`;
   }
@@ -122,7 +129,7 @@ export function mount(container, session, { api = defaultApi, toast = defaultToa
                         <dt>Account number</dt><dd data-role="account-number">${s.instructions.accountNumber}</dd>
                       </dl>
                       ${s.instructions.instructions ? html`<p class="stat-note">${s.instructions.instructions}</p>` : ""}
-                      <p class="stat-note">Transfer the amount, then press <b>Pay</b> on the bill and upload your screenshot. Luna confirms it, usually within a business day.</p>`
+                      <p class="stat-note">Transfer the amount, then press <b>Pay</b> on the bill and add your screenshot or the reference number. Luna confirms it, usually within a business day.</p>`
                     : emptyState({ title: "Payment details coming soon", body: "Luna will share its bank details here." }),
                 })}
               </section>
@@ -134,8 +141,8 @@ export function mount(container, session, { api = defaultApi, toast = defaultToa
                         <thead><tr><th class="m-only"></th><th>For</th><th class="num">Amount</th><th>Paid on</th><th class="col-secondary">Reference</th><th>Status</th></tr></thead>
                         <tbody>${s.payments.map(
                           (p) => html`<tr data-payment="${p.id}">
-                            <td class="m-only"><div class="m-row"><div class="m-main"><span class="m-title">${monthName(p.period)}</span><span class="m-sub">${formatDayId(p.paymentDate)} · ref ${p.reference}${p.rejectionReason ? ` · ${p.rejectionReason}` : ""}</span></div><div class="m-end">${money(p.amountSubmitted)}<small>${p.statusLabel}</small></div></div></td>
-                            <td>${monthName(p.period)}</td><td class="num">${money(p.amountSubmitted)}</td><td>${formatDayId(p.paymentDate)}</td><td class="col-secondary">${p.reference}</td>
+                            <td class="m-only"><div class="m-row"><div class="m-main"><span class="m-title">${monthName(p.period)}</span><span class="m-sub">${formatDayId(p.paymentDate)}${p.reference ? ` · ref ${p.reference}` : " · screenshot"}${p.rejectionReason ? ` · ${p.rejectionReason}` : ""}</span></div><div class="m-end">${money(p.amountSubmitted)}<small>${p.statusLabel}</small></div></div></td>
+                            <td>${monthName(p.period)}</td><td class="num">${money(p.amountSubmitted)}</td><td>${formatDayId(p.paymentDate)}</td><td class="col-secondary">${p.reference || "Screenshot"}</td>
                             <td>${badge(PAYMENT_STATUSES[p.status]?.label ?? p.status, PAYMENT_STATUSES[p.status]?.tone ?? "neutral")}${p.rejectionReason ? html`<div class="stat-hint" data-role="reason">${p.rejectionReason}</div>` : ""}</td>
                           </tr>`
                         )}</tbody></table></div>`
@@ -150,21 +157,23 @@ export function mount(container, session, { api = defaultApi, toast = defaultToa
     const idempotencyKey = newKey();
     const today = businessDate(BILLING_TIMEZONE, now());
     return formDialog({
-      title: `Pay ${monthName(inv.period)}`,
-      intro: `Transfer ${money(inv.balance)} to Luna's account, then tell us the details. Luna confirms it; until then it shows For Verification.`,
+      title: `Pay ${inv.kind === "upgrade" ? "the upgrade" : monthName(inv.period)}`,
+      intro: `Transfer ${money(inv.balance)} to Luna's account, then add your screenshot or the reference number (one is enough). Luna confirms it; until then it shows For Verification.`,
       fields: [
         { name: "amount", label: "Amount you sent (₱)", value: (inv.balance / 100).toFixed(2), inputmode: "decimal", required: true },
         { name: "paymentDate", label: "Date you paid", type: "date", value: today, max: today, required: true },
-        { name: "reference", label: "Reference number", required: true, hint: "From your bank app or receipt" },
         { name: "proof", label: "Screenshot or receipt", type: "file", accept: "image/jpeg,image/png,image/webp,application/pdf" },
+        { name: "reference", label: "Reference number", hint: "Filled in from the screenshot when Luna can read it; or type it." },
         { name: "note", label: "Note (optional)", type: "textarea" },
       ],
       submitLabel: "Send payment",
+      onFormChange: (form) => bindReferenceDetection(form, { detect }),
       onSubmit: async (v) => {
         const amount = Math.round(Number(String(v.amount).replace(/[₱,\s]/g, "")) * 100);
         if (!Number.isSafeInteger(amount) || amount <= 0) throw new Error("Enter the amount you sent");
+        if (!v.proof && !v.reference.trim()) throw new Error("Add your screenshot or the reference number (one is enough)");
         const proof = await prepareSubscriptionProof(v.proof);
-        return api("subscription", { method: "POST", body: { action: "submit", idempotencyKey, payment: { period: inv.period, amount, paymentDate: v.paymentDate, reference: v.reference.trim(), ...(v.note && v.note.trim() ? { note: v.note.trim() } : {}) }, proof } });
+        return api("subscription", { method: "POST", body: { action: "submit", idempotencyKey, payment: { period: inv.period, ...(inv.id ? { invoiceId: inv.id } : {}), amount, paymentDate: v.paymentDate, ...(v.reference.trim() ? { reference: v.reference.trim() } : {}), ...(v.note && v.note.trim() ? { note: v.note.trim() } : {}) }, ...(proof ? { proof } : {}) } });
       },
     });
   }
@@ -172,7 +181,7 @@ export function mount(container, session, { api = defaultApi, toast = defaultToa
   const onClick = async (e) => {
     const el = e.target.closest('[data-act="pay"]');
     if (!el || !container.contains(el) || !state.s) return;
-    const inv = state.s.openInvoices.find((i) => i.period === el.dataset.period);
+    const inv = state.s.openInvoices.find((i) => (el.dataset.id ? i.id === el.dataset.id : i.period === el.dataset.period));
     if (!inv) return;
     try {
       const r = await payDialog(inv);

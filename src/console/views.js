@@ -17,7 +17,7 @@ import { formatBytes, formatNumber } from "../lib/format.js";
 import { invitationDesignView } from "./design.js";
 import { apiDownload } from "../lib/api.js";
 import { saveBlob } from "../lib/export.js";
-import { peso, dateText, whenText, stateChip, subscriptionMenu, toggleMenus, runSubscriptionAction, termText } from "./actions.js";
+import { peso, dateText, whenText, stateChip, billingCell, subscriptionMenu, toggleMenus, runSubscriptionAction, termText, adjustmentDialog } from "./actions.js";
 
 const when = (iso) => (iso ? new Date(iso).toLocaleString("en-PH", { dateStyle: "medium", timeStyle: "short" }) : "—");
 const loading = (title) => html`${pageHeader({ title })}${card({ body: emptyState({ title: "Loading…" }) })}`;
@@ -63,7 +63,7 @@ export async function overviewView(el, ctx) {
                 <thead><tr><th class="m-only"></th><th>Name / plan</th><th>Date</th><th>Status</th><th></th></tr></thead>
                 <tbody>${rows.map(
                   (r) => html`<tr data-business="${r.id}" data-kind="${r.attention.kind}">
-                    ${mobileCell({ title: r.name, sub: `${r.planName ?? ""} · ${whenText(r)}`, end: stateChip(r) })}
+                    ${billingCell(r, r.planName ?? ctx.planName(r.planId))}
                     <td><span class="cell-strong">${r.name}</span><span class="cell-sub">${r.planName ?? ctx.planName(r.planId)}</span></td>
                     <td data-role="when">${whenText(r)}${r.attention.kind === "overdue" ? html`<span class="cell-sub tone-danger">${r.attention.label}</span>` : ""}</td>
                     <td>${stateChip(r)}</td>
@@ -140,7 +140,7 @@ export function businessesView(el, ctx) {
                     <thead><tr><th class="m-only"></th><th>Name</th><th>Workspace</th><th>Plan</th><th>Status</th><th></th></tr></thead>
                     <tbody>${rows.map(
                       (b) => html`<tr data-business="${b.id}">
-                        ${mobileCell({ title: b.name, sub: `${ctx.workspaceName(b.workspaceTemplateId)} · ${b.planName ?? ctx.planName(b.planId)}`, end: stateChip(b) })}
+                        ${billingCell(b, `${ctx.workspaceName(b.workspaceTemplateId)} · ${b.planName ?? ctx.planName(b.planId)}`)}
                         <td><a class="cell-strong" href="${ctx.base}/businesses?b=${b.id}" data-link>${b.name}</a></td>
                         <td>${ctx.workspaceName(b.workspaceTemplateId)}</td>
                         <td>${b.planName ?? ctx.planName(b.planId)}</td>
@@ -209,9 +209,13 @@ export function createBusinessDialog(ctx) {
       { name: "name", label: "Business / workspace name", required: true },
       { name: "ownerName", label: "Owner name", required: true },
       { name: "ownerEmail", label: "Owner email", required: true, inputmode: "email" },
+      { name: "price", label: "Agreed price (₱, optional)", inputmode: "decimal", hint: "Only when it differs from the product's price (e.g. a Custom wedding's quote).", more: true },
+      { name: "addonUsers", label: "Extra users (add-on packs)", value: "0", inputmode: "numeric", more: true, default: true },
+      { name: "addonStorage", label: "Extra storage (add-on packs)", value: "0", inputmode: "numeric", more: true, default: true },
+      { name: "setupFee", label: "Setup fee (₱)", inputmode: "decimal", more: true, default: true },
+      { name: "waiveSetupFee", label: "Setup fee", type: "select", options: [{ value: "no", label: "Bill it on the first bill" }, { value: "yes", label: "Waive it (shown as waived)" }], value: "no", more: true, default: true },
       { name: "businessId", label: "Business ID", hint: "Made from the name. Permanent.", more: true, default: true },
       { name: "timezone", label: "Timezone", value: "Asia/Manila", more: true, default: true },
-      { name: "price", label: "Agreed price (₱, optional)", inputmode: "decimal", hint: "Only when it differs from the product's price (e.g. a Custom wedding's quote).", more: true },
     ],
     moreLabel: "Advanced",
     submitLabel: "Create business",
@@ -226,6 +230,21 @@ export function createBusinessDialog(ctx) {
       }
       // One term (Bridal, Baby): nothing to choose.
       els.termMonths.closest(".field").hidden = opts.length < 2;
+      // Advanced: this product's add-ons and setup fee (none: hidden).
+      const b = planBilling(plan);
+      const packOf = (kind) => b.addOns.find((a) => (kind === "users" ? a.users > 0 : a.storageMb > 0));
+      for (const [field, kind] of [["addonUsers", "users"], ["addonStorage", "storage"]]) {
+        const a = packOf(kind);
+        const f = els[field].closest(".field");
+        f.hidden = !a;
+        if (a) f.querySelector("label").textContent = `Extra: ${addOnLabel(a)}`;
+      }
+      els.setupFee.closest(".field").hidden = !b.setupFee;
+      els.waiveSetupFee.closest(".field").hidden = !b.setupFee;
+      if (els.setupFee.dataset.plan !== plan.id) {
+        els.setupFee.dataset.plan = plan.id;
+        els.setupFee.value = b.setupFee ? String(b.setupFee / 100) : "";
+      }
       const hint = els.planId.closest(".field")?.querySelector(".stat-hint");
       if (hint) hint.textContent = `${priceLabel(plan)} · ${limitsText(plan)}${planBilling(plan).type === "term" ? " · no automatic renewal" : ""}`;
       if (!idTouched && els.businessId) els.businessId.value = businessIdFromName(els.name.value);
@@ -242,7 +261,18 @@ export function createBusinessDialog(ctx) {
       const s = String(v.price || "").replace(/[₱,\s]/g, "");
       const priceOverride = s ? Math.round(Number(s) * 100) : null;
       if (priceOverride !== null && (!Number.isSafeInteger(priceOverride) || priceOverride <= 0)) throw new Error("Agreed price: an amount more than ₱0");
-      const r = await ctx.call("createBusiness", { business: { name: v.name, businessId, workspaceTemplateId: planWorkspace(plan), planId: plan.id, termMonths: Number(v.termMonths) || planBilling(plan).defaultTermMonths, ...(priceOverride ? { priceOverride } : {}), ownerName: v.ownerName, ownerEmail: v.ownerEmail, timezone: v.timezone || "Asia/Manila" } });
+      const b = planBilling(plan);
+      const addOns = {};
+      for (const [field, kind] of [["addonUsers", "users"], ["addonStorage", "storage"]]) {
+        const a = b.addOns.find((x) => (kind === "users" ? x.users > 0 : x.storageMb > 0));
+        const n = Number(String(v[field] || "0").trim() || "0");
+        if (!Number.isSafeInteger(n) || n < 0 || n > 50) throw new Error("Add-ons: a whole number from 0 to 50");
+        if (a && n) addOns[a.id] = n;
+      }
+      const fee = String(v.setupFee || "").replace(/[₱,\s]/g, "");
+      const setupFee = b.setupFee && fee !== "" ? Math.round(Number(fee) * 100) : null;
+      if (setupFee !== null && (!Number.isSafeInteger(setupFee) || setupFee < 0)) throw new Error("Setup fee: ₱0 or more");
+      const r = await ctx.call("createBusiness", { business: { name: v.name, businessId, workspaceTemplateId: planWorkspace(plan), planId: plan.id, termMonths: Number(v.termMonths) || b.defaultTermMonths, ...(priceOverride ? { priceOverride } : {}), ...(Object.keys(addOns).length ? { addOns } : {}), ...(setupFee !== null && setupFee !== b.setupFee ? { setupFee } : {}), ...(b.setupFee && v.waiveSetupFee === "yes" ? { waiveSetupFee: true } : {}), ownerName: v.ownerName, ownerEmail: v.ownerEmail, timezone: v.timezone || "Asia/Manila" } });
       ctx.toast(r.created ? "Business created." : "Already created: nothing was duplicated.", "success");
       return r;
     },
@@ -291,7 +321,7 @@ export async function businessDetailView(el, ctx, businessId) {
         <section class="card" data-role="usage">
           <div class="card-header"><h2 class="card-title">Usage <span class="hint">this month</span></h2></div>
           <div class="card-body"><dl class="dl dl-compact sa-usage">
-            <dt>Active users</dt><dd data-usage="users">${ofLimit(u.users ?? 0, lim.users)}</dd>
+            <dt>Active users</dt><dd data-usage="users">${ofLimit(u.users ?? 0, lim.users)}${Number.isSafeInteger(lim.users) && (u.users ?? 0) > lim.users ? html`<span class="cell-sub tone-warning" data-role="over-capacity">Existing members keep access. Add capacity to invite more.</span>` : ""}</dd>
             <dt>Storage</dt><dd data-usage="storage">${ofLimit(u.storageBytes ?? 0, lim.storageBytes, formatBytes)}</dd>
             <dt>Excel downloads</dt><dd data-usage="downloads">${formatNumber(u.downloads ?? 0)}</dd>
             <dt>Excel transfer</dt><dd data-usage="transfer">${formatBytes(u.transferBytes ?? 0)}</dd>
@@ -299,6 +329,7 @@ export async function businessDetailView(el, ctx, businessId) {
           </dl></div>
         </section>
       </div>
+      ${billsCard(d.bills || [], b)}
       <section class="section card" id="members" data-role="members">
         <div class="card-header"><h2 class="card-title">Members</h2><button type="button" class="btn btn-compact" data-act="add-member">Add member</button></div>
         <div class="table-wrap"><table class="table table-compact rows sa-rows" data-role="member-rows">
@@ -379,6 +410,15 @@ export async function businessDetailView(el, ctx, businessId) {
       if (await runSubscriptionAction(ctx, act, r)) reload();
       return;
     }
+    if (act === "bill-adjust") {
+      run(() => adjustmentDialog(ctx, r, { invoiceId: t.dataset.id, title: `Add discount / deduction · ${t.dataset.label}` }), "Added.");
+      return;
+    }
+    if (act === "bill-unadjust") {
+      const ok = await confirmDialog({ title: `Remove ${t.dataset.label}?`, body: "The bill goes back up by that amount.", confirmLabel: "Remove" });
+      if (ok) run(() => ctx.call("removeAdjustment", { businessId, invoiceId: t.dataset.id, adjustmentId: t.dataset.adj }), "Removed.");
+      return;
+    }
     if (act === "general") {
       run(() => withReason("Edit name / timezone", "A timezone change doesn't move records already dated.", [{ name: "name", label: "Business name", value: b.name, required: true }, { name: "timezone", label: "Timezone", value: b.timezone }], "Save", (v) => ctx.call("updateGeneral", { businessId, changes: { name: v.name, timezone: v.timezone }, reason: v.reason, expectedRevision: b.adminRevision })), "Saved.");
     } else if (act === "limit" || act === "limit-default") {
@@ -425,6 +465,25 @@ export async function businessDetailView(el, ctx, businessId) {
       run(() => ctx.call("setTerminology", { businessId, terminology: { [t.dataset.id]: t.value } }), "Saved.");
     }
   };
+}
+
+// ---------- Bills (breakdown, discounts / credits) ----------
+// Open bills show their lines and what's taken off, with + Add discount /
+// deduction until a payment is recorded; a paid bill keeps its breakdown.
+function billsCard(bills, b) {
+  if (!bills.length) return "";
+  const title = (i) => (i.kind === "upgrade" ? `Upgrade · ${dateText(i.dueDate)}` : `${i.period} · due ${dateText(i.dueDate)}`);
+  const status = (i) => (i.status === "paid" ? badge("Paid", "success") : i.status === "for_verification" ? badge("For verification", "info") : badge("Due", "warning"));
+  return html`<section class="section card" data-role="bills">
+    <div class="card-header"><h2 class="card-title">Bills</h2></div>
+    <div class="card-body"><ul class="sa-bills">${bills.map(
+      (i) => html`<li data-bill="${i.id}" class="${i.status === "paid" ? "is-paid" : ""}">
+        <div class="sa-bill-head"><span class="cell-strong">${title(i)}</span>${status(i)}<strong class="sa-bill-amount">${peso(i.amountDue)}</strong></div>
+        <dl class="bill-lines">${i.lines.map((l) => html`<dt>${l.label}</dt><dd>${peso(l.amount)}</dd>`)}${i.adjustments.map((a) => html`<dt>${a.description}${i.editable ? html` <button type="button" class="btn-linklike sa-remove" data-act="bill-unadjust" data-id="${i.id}" data-adj="${a.id}" data-label="${a.description}" aria-label="Remove ${a.description}">Remove</button>` : ""}</dt><dd class="bill-minus">−${peso(a.amount)}</dd>`)}<dt class="bill-total">Amount due</dt><dd class="bill-total">${peso(i.amountDue)}</dd></dl>
+        ${i.editable && b.status !== "deleted" ? html`<button type="button" class="btn btn-compact" data-act="bill-adjust" data-id="${i.id}" data-label="${title(i)}">+ Add discount / deduction</button>` : ""}
+      </li>`
+    )}</ul></div>
+  </section>`;
 }
 
 // ---------- Limit overrides (Advanced) ----------

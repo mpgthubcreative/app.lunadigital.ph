@@ -140,9 +140,14 @@ describe("billing by workspace", () => {
     expect(biz("dist-1").subscription).toMatchObject({ billingType: "monthly", amount: 49900, setupFee: 99900, startDate: "2026-09-12", monthlyAmount: 49900 });
     let t = subscriptionTerms(biz("dist-1").subscription);
     expect(attentionOf(t, { today: "2026-10-19" })).toMatchObject({ kind: "overdue", date: "2026-09-12", days: 37, label: "37 days overdue", what: "Due" });
-    expect(billFor(biz("dist-1"), "2026-10")).toMatchObject({ dueDate: "2026-10-12", amountDue: 49900, coverFrom: "2026-10-12", coverTo: "2026-11-11" });
-    const paid = await recordOperatorPayment({ db: world.db, FieldValue: FV(), businessId: "dist-1", input: { amount: 49900, paymentDate: "2026-10-18", reference: "Cash" }, operator: "ops@luna.test", now: OCT19 });
+    // The first bill carries the one-time setup fee: ₱499 + ₱999 = ₱1,498.
+    expect(billFor(biz("dist-1"), "2026-09")).toMatchObject({ dueDate: "2026-09-12", amountDue: 149800, lines: [{ kind: "base", label: "Distributor · Monthly access", amount: 49900 }, { kind: "setup", label: "One-time setup fee", amount: 99900 }] });
+    const paid = await recordOperatorPayment({ db: world.db, FieldValue: FV(), businessId: "dist-1", input: { paymentDate: "2026-10-18", reference: "Cash" }, operator: "ops@luna.test", now: OCT19 });
     expect(paid).toMatchObject({ status: "paid", paidThrough: "2026-10-11" });
+    // Billed once: tracked, never on a later bill.
+    expect(biz("dist-1").subscription.setupFeeBilled).toBe(true);
+    expect(billFor(biz("dist-1"), "2026-10")).toMatchObject({ dueDate: "2026-10-12", amountDue: 49900, coverFrom: "2026-10-12", coverTo: "2026-11-11" });
+    expect(billFor(biz("dist-1"), "2026-10").lines.map((l) => l.kind)).toEqual(["base"]);
     t = subscriptionTerms(biz("dist-1").subscription);
     expect(t.dueDate).toBe("2026-10-12");
     expect(attentionOf(t, { today: "2026-10-19" })).toMatchObject({ kind: "overdue", days: 7, label: "7 days overdue" });
@@ -151,13 +156,14 @@ describe("billing by workspace", () => {
     expect([t.paidThrough, t.dueDate]).toEqual(["2026-11-11", "2026-11-12"]);
     expect(attentionOf(t, { today: "2026-10-19" })).toBeNull();
     expect(attentionOf(t, { today: "2026-11-06" })).toMatchObject({ kind: "due", label: "Due soon" });
-    expect(world.db.docs.get("platformMetrics/2026-10").revenueByBillingType).toMatchObject({ monthly: 99800 });
+    expect(world.db.docs.get("platformMetrics/2026-10").revenueByBillingType).toMatchObject({ monthly: 149800 + 49900 });
   });
 
   it("Distributor 3-month prepaid starter: one ₱1,290 bill covering 3 months (no bills in between), then ₱499 monthly; not recurring income until monthly", async () => {
     await owned("dist-pre", "distributor-basic", "distributor", { termMonths: 3 });
     expect(biz("dist-pre").subscription).toMatchObject({ billingType: "monthly", amount: 49900, prepaidTerm: { months: 3, price: 129000 }, startDate: "2026-10-19", monthlyAmount: 49900 });
-    expect(billFor(biz("dist-pre"), "2026-10")).toMatchObject({ dueDate: "2026-10-19", amountDue: 129000, months: 3, prepaid: true, coverTo: "2027-01-18" });
+    // 3-month access ₱1,290 + one-time setup fee ₱999 = ₱2,289.
+    expect(billFor(biz("dist-pre"), "2026-10")).toMatchObject({ dueDate: "2026-10-19", amountDue: 228900, months: 3, prepaid: true, coverTo: "2027-01-18" });
     expect(billFor(biz("dist-pre"), "2026-11")).toBeNull();
     expect(billFor(biz("dist-pre"), "2026-12")).toBeNull();
     const paid = await recordOperatorPayment({ db: world.db, FieldValue: FV(), businessId: "dist-pre", input: { paymentDate: "2026-10-19" }, operator: "ops@luna.test", now: OCT19 });
@@ -300,10 +306,118 @@ describe("Overview + Action Center", () => {
     ok(await op({ action: "setAccess", businessId: "dist-acc", changes: { addOns: { users: 1, storage: 1 } }, reason: "growing" }));
     expect(biz("dist-acc").entitlements.limits).toMatchObject({ users: 4, storageBytes: (500 + 1024) * MB });
     expect(biz("dist-acc").subscription.monthlyAmount).toBe(49900 + 14900 + 9900);
-    expect(billFor(biz("dist-acc"), "2026-11")).toMatchObject({ amountDue: 74700, months: 1 });
+    expect(billFor(biz("dist-acc"), "2026-11", { setup: false })).toMatchObject({ amountDue: 74700, months: 1 });
+    expect(billFor(biz("dist-acc"), "2026-11", { setup: false }).lines.map((l) => [l.label, l.amount])).toEqual([["Distributor · Monthly access", 49900], ["1 × +2 users", 14900], ["1 × +1 GB storage", 9900]]);
     // Next bill as a 3-month prepaid term (add-ons for 3 months too).
     ok(await op({ action: "setAccess", businessId: "dist-acc", changes: { termMonths: 3 }, reason: "prepay" }));
     expect(subscriptionTerms(biz("dist-acc").subscription)).toMatchObject({ prepaidNext: true, termMonths: 3, amount: 129000 + 3 * (14900 + 9900) });
+  });
+});
+
+describe("bills: setup fee, discounts / credits, Bridal upgrade, frozen history", () => {
+  const nextBill = (id) => [...world.db.docs.entries()].filter(([k, v]) => k.startsWith("subscriptionInvoices/") && v.businessId === id).map(([k, v]) => ({ id: k.split("/")[1], ...v }));
+
+  it("a waived setup fee still shows: the fee, then 'Setup fee waived'", async () => {
+    await createBusiness({ ...world, name: "Waived", planId: "distributor-basic", workspaceTemplateId: "distributor", businessId: "dist-w", clock: OCT19, waiveSetupFee: true });
+    const paid = await recordOperatorPayment({ db: world.db, FieldValue: FV(), businessId: "dist-w", input: { paymentDate: "2026-10-19" }, operator: "ops@luna.test", now: OCT19 });
+    expect(paid.status).toBe("paid");
+    const [inv] = nextBill("dist-w");
+    expect(inv.lines.map((l) => [l.kind, l.amount])).toEqual([["base", 49900], ["setup", 99900]]);
+    expect(inv.adjustments).toEqual([{ id: "setup-waived", type: "setup_waived", description: "Setup fee waived", amount: 99900 }]);
+    expect([inv.amountDue, inv.amountPaid]).toEqual([49900, 49900]);
+    expect([...world.db.docs.values()].some((v) => v.type === "billing.setup-fee-waived" && v.businessId === "dist-w")).toBe(true);
+  });
+
+  it("+ Add discount / deduction: negative lines (Founding −₱300, Referral −₱100 → ₱1,098); removable before payment; never below ₱0; locked once paid", async () => {
+    await owned("dist-d", "distributor-basic", "distributor");
+    const a = ok(await op({ action: "addAdjustment", businessId: "dist-d", adjustment: { type: "discount", description: "Founding discount", amount: 30000 } }));
+    const b = ok(await op({ action: "addAdjustment", businessId: "dist-d", adjustment: { type: "credit", description: "Referral credit", amount: 10000 } }));
+    expect([a.amountDue, b.amountDue]).toEqual([119800, 109800]);
+    const [inv] = nextBill("dist-d");
+    expect(inv.lines.map((l) => l.amount)).toEqual([49900, 99900]);
+    expect(inv.adjustments.map((x) => [x.type, x.description, x.amount])).toEqual([["discount", "Founding discount", 30000], ["credit", "Referral credit", 10000]]);
+    // The product's price is untouched.
+    expect(biz("dist-d").subscription.amount).toBe(49900);
+    ok(await op({ action: "removeAdjustment", businessId: "dist-d", invoiceId: inv.id, adjustmentId: inv.adjustments[1].id }));
+    expect(nextBill("dist-d")[0].amountDue).toBe(119800);
+    const big = ok(await op({ action: "addAdjustment", businessId: "dist-d", adjustment: { type: "credit", description: "Loyalty credit", amount: 500000 } }));
+    expect(big.amountDue).toBe(0);
+    const paid = ok(await op({ action: "recordPayment", businessId: "dist-d", payment: { paymentDate: "2026-10-19" } }));
+    expect(paid.status).toBe("paid");
+    // After payment the breakdown is frozen.
+    expect((await op({ action: "addAdjustment", businessId: "dist-d", invoiceId: inv.id, adjustment: { type: "discount", description: "Late promo", amount: 100 } })).body.error).toBe("bill-locked");
+    expect((await op({ action: "removeAdjustment", businessId: "dist-d", invoiceId: inv.id, adjustmentId: inv.adjustments[0].id })).body.error).toBe("bill-locked");
+    expect((await op({ action: "addAdjustment", businessId: "dist-d", adjustment: { type: "discount", description: "x", amount: 0 } })).status).toBe(400);
+    const audits = [...world.db.docs.values()].filter((v) => v.type === "billing.adjustment-added" && v.businessId === "dist-d");
+    expect(audits[0]).toMatchObject({ actor: "ops@luna.test", amount: 30000 });
+    expect(audits[0].summary).toMatch(/Founding discount −₱300\.00/);
+  });
+
+  it("a later price change never rewrites a bill: the paid bill keeps its lines; only new businesses get the new price", async () => {
+    await world.db.collection("plans").doc("distributor-basic").set(structuredClone(PLAN_SEED["distributor-basic"]));
+    await owned("dist-h", "distributor-basic", "distributor");
+    await recordOperatorPayment({ db: world.db, FieldValue: FV(), businessId: "dist-h", input: { paymentDate: "2026-10-19" }, operator: "ops@luna.test", now: OCT19 });
+    const before = structuredClone(nextBill("dist-h")[0]);
+    ok(await op({ action: "savePlan", planId: "distributor-basic", changes: { termPrices: { 1: 59900 }, setupFee: 150000 } }));
+    const after = nextBill("dist-h")[0];
+    expect([after.lines, after.amountDue, after.amountPaid]).toEqual([before.lines, before.amountDue, before.amountPaid]);
+    expect(billFor(biz("dist-h"), "2026-11").amountDue).toBe(49900);
+  });
+
+  it("Luna Bridal → Custom on paid access: only the difference (₱2,990 − ₱1,490 = ₱1,500), discount allowed, access end kept; a downgrade bills nothing", async () => {
+    await owned("wed-u", "bridal-basic", "bridal-expense");
+    await recordOperatorPayment({ db: world.db, FieldValue: FV(), businessId: "wed-u", input: { paymentDate: "2026-10-19" }, operator: "ops@luna.test", now: OCT19 });
+    const accessUntil = biz("wed-u").subscription.accessUntil;
+    const r = ok(await op({ action: "changePlan", businessId: "wed-u", planId: "bridal-plus", reason: "custom invitation", agreedPrice: 299000 }));
+    expect(r.upgradeDue).toBe(150000);
+    const sub = biz("wed-u").subscription;
+    expect(sub).toMatchObject({ planId: "bridal-plus", accessUntil, priceOverride: 299000, upgradeDue: { amount: 150000 } });
+    const t = subscriptionTerms(sub);
+    expect(attentionOf(t, { today: "2026-10-19" })).toMatchObject({ what: "Upgrade due", kind: "due" });
+    const up = nextBill("wed-u").find((i) => i.kind === "upgrade");
+    expect(up.lines).toEqual([{ kind: "upgrade", label: "Upgrade to Luna Bridal Custom (₱2,990.00 − ₱1,490.00 already paid)", amount: 150000 }]);
+    const disc = ok(await op({ action: "addAdjustment", businessId: "wed-u", adjustment: { type: "discount", description: "Loyalty discount", amount: 30000 } }));
+    expect(disc).toMatchObject({ invoiceId: up.id, amountDue: 120000 });
+    const paid = ok(await op({ action: "recordPayment", businessId: "wed-u", payment: { paymentDate: "2026-10-19" } }));
+    expect(paid.status).toBe("paid");
+    expect(biz("wed-u").subscription).toMatchObject({ upgradeDue: null, accessUntil, paidThrough: accessUntil });
+    expect(attentionOf(subscriptionTerms(biz("wed-u").subscription), { today: "2026-10-19" })).toBeNull();
+    // Down again: no refund, no bill.
+    const down = ok(await op({ action: "changePlan", businessId: "wed-u", planId: "bridal-basic", reason: "back to standard" }));
+    expect(down.upgradeDue ?? 0).toBe(0);
+    expect(nextBill("wed-u").filter((i) => i.kind === "upgrade")).toHaveLength(1);
+    expect([...world.db.docs.values()].some((v) => v.type === "billing.upgrade-billed" && v.businessId === "wed-u" && v.amount === 150000)).toBe(true);
+  });
+
+  it("an unpaid wedding changing product: its open bill is re-priced (no upgrade bill)", async () => {
+    await owned("wed-n", "bridal-basic", "bridal-expense");
+    ok(await op({ action: "addAdjustment", businessId: "wed-n", adjustment: { type: "discount", description: "Promo", amount: 10000 } }));
+    ok(await op({ action: "changePlan", businessId: "wed-n", planId: "bridal-plus", reason: "custom", agreedPrice: 349000 }));
+    const bills = nextBill("wed-n");
+    expect(bills).toHaveLength(1);
+    expect(bills[0].lines[0]).toMatchObject({ amount: 349000 });
+    expect(bills[0].amountDue).toBe(349000 - 10000);
+  });
+
+  it("an older wedding over its included users keeps everyone; only a new invitation waits for capacity", async () => {
+    const owner = await owned("wed-cap", "bridal-basic", "bridal-expense");
+    await roomForTeam(world, "wed-cap", 3);
+    for (const n of ["Planner Two", "Planner Three"]) {
+      const x = await ensureAuthUser({ auth: world.auth, email: `${n.replace(" ", ".").toLowerCase()}@cap.test`, name: n });
+      await addMember({ ...world, businessId: "wed-cap", uid: x.uid, email: x.email, name: n, roleTemplate: "manager" });
+    }
+    ok(await op({ action: "setLimitOverride", businessId: "wed-cap", limitKey: "users", value: null, reason: "back to the product's 1 planner" }));
+    expect(biz("wed-cap").entitlements.limits.users).toBe(1);
+    expect([...world.db.docs.keys()].filter((k) => k.split("/").length === 4 && k.startsWith("businesses/wed-cap/members/")).length).toBe(3);
+    const x = await ensureAuthUser({ auth: world.auth, email: "planner4@cap.test", name: "Planner Four" });
+    await expect(addMember({ ...world, businessId: "wed-cap", uid: x.uid, email: x.email, name: "Planner Four", roleTemplate: "manager" })).rejects.toThrow("3 of 1 planning users are active. Existing members keep access; add capacity to invite more.");
+    void owner;
+  });
+
+  it("Create Business (Advanced): add-ons from the start raise the limits and the first bill; a custom setup fee", async () => {
+    ok(await op({ action: "createBusiness", business: { workspaceTemplateId: "distributor", planId: "distributor-basic", name: "Big Start", ownerName: "B", ownerEmail: "b@big.test", businessId: "big-start", addOns: { users: 1 }, setupFee: 50000 } }));
+    expect(biz("big-start").entitlements.limits.users).toBe(4);
+    expect(billFor(biz("big-start"), "2026-10").lines.map((l) => [l.kind, l.amount])).toEqual([["base", 49900], ["addon", 14900], ["setup", 50000]]);
   });
 });
 

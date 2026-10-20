@@ -15,7 +15,8 @@
 //   setBillingDate, sendReminder, removeMember, deleteBusiness (typed name,
 //   recoverable), restoreBusiness, savePlan
 // Final pricing model (2026-10-20): setAccess (term, paid through, add-ons,
-//   price override; the product stays)
+//   price override; the product stays), addAdjustment / removeAdjustment
+//   (discounts / credits on a bill), changePlan agreedPrice (+ upgrade bill)
 // Phase 18.6 (Luna's own money; operators only):
 //   money (Overview story), subscriptions, payments, payment, paymentProof,
 //   confirmPayment, rejectPayment, billingSettings, saveBillingSettings,
@@ -31,7 +32,7 @@ import { OperatorError, validateCreateBusinessInput, validateSubscriptionStatus,
 import { ROLE_TEMPLATES } from "../../shared/permissions.js";
 import { isValidBusinessId } from "../../shared/tenancy.js";
 import { BillingError } from "../../shared/billing.js";
-import { confirmPayment, rejectPayment, readPaymentProof, getBillingSettings, setBillingSettings, recordOperatorPayment, setBillingDate, sendBillingReminder } from "./_lib/billing.js";
+import { confirmPayment, rejectPayment, readPaymentProof, getBillingSettings, setBillingSettings, recordOperatorPayment, setBillingDate, sendBillingReminder, addBillAdjustment, removeBillAdjustment, repriceOpenBill, createUpgradeBill, businessBills } from "./_lib/billing.js";
 import { removeMember } from "./_lib/provisioning.js";
 import { unlinkStaffLogin } from "./_lib/members.js";
 import { deleteBusiness, restoreBusiness } from "./_lib/lifecycle.js";
@@ -56,6 +57,7 @@ const STATUS = {
   "already-paid": 409,
   "confirm-mismatch": 400,
   "legacy-plan": 409,
+  "bill-locked": 409,
 };
 const obj = (v) => (v && typeof v === "object" && !Array.isArray(v) ? v : {});
 
@@ -95,7 +97,14 @@ const ACTIONS = {
     },
   },
   listBusinesses: { fields: ["filters", "after"], run: async ({ db, admin }, b) => listBusinesses({ db, FieldPath: admin.firestore.FieldPath, filters: b.filters && typeof b.filters === "object" && !Array.isArray(b.filters) ? b.filters : {}, after: b.after ?? null }) },
-  business: { fields: ["businessId"], run: async ({ db }, b) => businessDetail({ db, businessId: b.businessId }) },
+  // The business page, with its bills (breakdown, discounts / credits).
+  business: {
+    fields: ["businessId"],
+    run: async ({ db }, b) => {
+      const d = await businessDetail({ db, businessId: b.businessId });
+      return { ...d, bills: await businessBills({ db, businessId: bid(b.businessId) }) };
+    },
+  },
   audit: { fields: ["after"], run: async ({ db }, b) => listAudit({ db, after: b.after ?? null }) },
   usageOverview: { fields: ["after"], run: async ({ db, admin }, b) => usageOverview({ db, FieldPath: admin.firestore.FieldPath, after: b.after ?? null }) },
 
@@ -119,11 +128,22 @@ const ACTIONS = {
       return { email: m.email, link: await passwordSetupLink({ auth, email: m.email, continueUrl }) };
     },
   },
+  // Change product. agreedPrice (optional, e.g. a Custom wedding's quote)
+  // becomes the new product's agreed price. Paid 12-month access moving to
+  // a pricier product (Luna Bridal → Custom) gets a bill for only the
+  // difference; otherwise an unpaid next bill is re-priced.
   changePlan: {
-    fields: ["businessId", "planId", "reason", "expectedRevision"],
+    fields: ["businessId", "planId", "reason", "expectedRevision", "agreedPrice"],
     run: async ({ db, admin, op }, b) => {
-      const r = await assignPlan({ db, admin, businessId: bid(b.businessId), planId: b.planId, actor: actorOf(op), reason: validateReason(b.reason), expectedRevision: rev(b.expectedRevision) });
-      return { planId: r.planId, warnings: r.warnings, adminRevision: r.adminRevision };
+      const businessId = bid(b.businessId);
+      const reason = validateReason(b.reason);
+      const FieldValue = admin.firestore.FieldValue;
+      const before = (await db.collection("businesses").doc(businessId).get()).data()?.subscription ?? null;
+      const r = await assignPlan({ db, admin, businessId, planId: b.planId, actor: actorOf(op), reason, expectedRevision: rev(b.expectedRevision) });
+      if (b.agreedPrice !== undefined && b.agreedPrice !== null) await setAccess({ db, admin, businessId, changes: { priceOverride: b.agreedPrice }, actor: actorOf(op), reason });
+      const upgrade = before?.planId !== r.planId ? await createUpgradeBill({ db, FieldValue, businessId, before, operator: actorOf(op) }) : null;
+      if (!upgrade?.invoiceId) await repriceOpenBill({ db, FieldValue, businessId, operator: actorOf(op) });
+      return { planId: r.planId, warnings: r.warnings, adminRevision: r.adminRevision, upgradeDue: upgrade?.upgradeDue ?? null };
     },
   },
   // Change access (2026-10-20): the product stays; term, paid-through date,
@@ -132,9 +152,14 @@ const ACTIONS = {
     fields: ["businessId", "changes", "reason", "expectedRevision"],
     run: async ({ db, admin, op }, b) => {
       const r = await setAccess({ db, admin, businessId: bid(b.businessId), changes: obj(b.changes), actor: actorOf(op), reason: validateReason(b.reason), expectedRevision: rev(b.expectedRevision) });
+      await repriceOpenBill({ db, FieldValue: admin.firestore.FieldValue, businessId: bid(b.businessId), operator: actorOf(op) });
       return { warnings: r.warnings, limits: r.entitlements.limits, adminRevision: r.adminRevision };
     },
   },
+  // + Add discount / deduction on a bill (default: the next one), and remove
+  // one, before any payment is recorded on it. The plan price never changes.
+  addAdjustment: { fields: ["businessId", "invoiceId", "adjustment"], run: async ({ db, admin, op }, b) => addBillAdjustment({ db, FieldValue: admin.firestore.FieldValue, businessId: bid(b.businessId), invoiceId: b.invoiceId ?? null, adjustment: obj(b.adjustment), operator: actorOf(op) }) },
+  removeAdjustment: { fields: ["businessId", "invoiceId", "adjustmentId"], run: async ({ db, admin, op }, b) => removeBillAdjustment({ db, FieldValue: admin.firestore.FieldValue, businessId: bid(b.businessId), invoiceId: b.invoiceId, adjustmentId: b.adjustmentId, operator: actorOf(op) }) },
   // Default / Enabled / Disabled for ONE module the workspace allows.
   setModuleOverride: {
     fields: ["businessId", "moduleId", "choice", "reason", "expectedRevision"],

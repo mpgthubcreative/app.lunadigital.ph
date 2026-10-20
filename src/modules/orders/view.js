@@ -5,7 +5,8 @@
 import { ORDER_SOURCES, FULFILLMENT_STATUSES, PAYMENT_STATUSES, formatQuantity, UNITS } from "@shared/index.js";
 import { formatCentavos } from "../../lib/format.js";
 
-export const sourceLabel = (id) => ORDER_SOURCES[id]?.label ?? id;
+// An order without a source (optional since 2026-10-20): "Not set".
+export const sourceLabel = (id) => (id ? ORDER_SOURCES[id]?.label ?? id : "Not set");
 export const fulfillmentLabel = (id) => FULFILLMENT_STATUSES[id]?.label ?? id;
 export const paymentLabel = (id) => PAYMENT_STATUSES[id]?.label ?? id;
 export const qtyText = (scaled, unit) => `${formatQuantity(scaled)} ${UNITS[unit]?.label ?? unit}`;
