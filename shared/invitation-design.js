@@ -53,10 +53,11 @@ const ASSET_SLOTS = ["pageBackground", "cardBackground", "heroOverlay", "ornamen
 export const ASSET_SLOT_LABELS = Object.freeze({ pageBackground: "Page background", cardBackground: "Card background", heroOverlay: "Hero frame / overlay", ornamentTop: "Top ornament", ornamentBottom: "Bottom ornament", divider: "Section divider" });
 const TEXT_LIMITS = { scriptLine: 60, rsvpTitle: 30, footerLine: 120 };
 
-// The templates live in src/modules/wedding/invitation/templates/{id}/
-// (registry.js): one list for the guest page, Wedding Setup, Super Admin
-// and this validation. Nothing about a template is copied into a wedding.
-export { TEMPLATES, TEMPLATE_IDS, STANDARD_TEMPLATE_IDS, DEFAULT_TEMPLATE_ID, SECTION_IDS, getTemplate, isStandardTemplate } from "../src/modules/wedding/invitation/registry.js";
+// The designs live in src/modules/wedding/invitation/templates/{id}/
+// (Standard) and customized/{id}/ (Luna Bridal Custom); registry.js is one
+// list for the guest page, Wedding Setup, Super Admin and this validation.
+// Nothing about a template is copied into a wedding.
+export { TEMPLATES, TEMPLATE_IDS, TEMPLATE_REGISTRY, CATEGORIES as TEMPLATE_CATEGORIES, STANDARD_TEMPLATE_IDS, CUSTOMIZED_TEMPLATE_IDS, DEFAULT_TEMPLATE_ID, SECTION_IDS, getTemplate, isStandardTemplate } from "../src/modules/wedding/invitation/registry.js";
 import { TEMPLATES, TEMPLATE_IDS, SECTION_IDS } from "../src/modules/wedding/invitation/registry.js";
 
 export class DesignError extends Error {

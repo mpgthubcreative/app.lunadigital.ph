@@ -16,11 +16,11 @@ import { EXPENSE_METHODS, EXPENSE_METHOD_IDS, parseCentavos, businessDate } from
 import { categoryName, optionsOf, activityLines, detailsDialog } from "../baby/common.js";
 import * as defaultData from "./data.js";
 import { categoryField, resolveCategory } from "./categories.js";
-import { prepareProof as defaultPrepareProof } from "../../lib/image.js";
+import { prepareProof as defaultPrepareProof, PHOTO_OR_PDF_ACCEPT } from "../../lib/image.js";
 import { viewProof } from "../../components/proof-viewer.js";
 
 // Owner-pilot Bridal: a receipt photo / screenshot or a PDF on an expense.
-const PROOF_ACCEPT = "image/jpeg,image/png,image/webp,application/pdf";
+const PROOF_ACCEPT = PHOTO_OR_PDF_ACCEPT;
 export const proofField = (label = "Proof: receipt photo or PDF (optional)") => ({ name: "proof", label, type: "file", accept: PROOF_ACCEPT, more: true });
 const proofWord = (p) => (p?.contentType === "application/pdf" ? "PDF" : "Photo");
 // "Photo · added Oct 17, 2026" (uploadedAt is a Firestore Timestamp).

@@ -4,7 +4,6 @@ export default {
   id: "garden",
   label: "Garden",
   description: "Sage greens with the photo above the names.",
-  tier: "custom",
   theme: { background: "#eef3ec", card: "#fbfdf9", text: "#2f3b2f", muted: "#66756a", accent: "#4f6f52", accentText: "#ffffff", border: "#d5e0d2", headingFont: "Cormorant Garamond", bodyFont: "Lato", scriptFont: "Parisienne" },
   layout: { cardWidth: "normal", spacing: "normal", align: "center", corners: "round", buttonStyle: "pill", frame: "card", namesCase: "normal" },
   hero: { style: "photo-above-names" },

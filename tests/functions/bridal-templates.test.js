@@ -1,5 +1,5 @@
 // Bridal invitation templates + the free trial (2026-10-21). Templates live
-// in src/modules/wedding/invitation/templates/{id}/ (registry.js); a wedding
+// in src/modules/wedding/invitation/templates/{id}/ and customized/{id}/ (registry.js); a wedding
 // stores only its templateId. During the free trial the couple chooses a
 // Standard template, fills in the details and previews; guest links are
 // made and opened once Luna Bridal is paid. Switching template never

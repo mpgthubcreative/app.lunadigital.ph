@@ -16,6 +16,7 @@ import { randomBytes } from "node:crypto";
 import { validateDesignConfig, resolveDesign, assetIdsOf, invitationLevelOf, invitationStatus, invitationContent, SAMPLE_GUEST, PLAN_MARKETING_NAMES, TEMPLATES, SECTION_IDS, DEFAULT_TEMPLATE_ID, isStandardTemplate, DesignError } from "../../../shared/invitation-design.js";
 import { trialOpen } from "../../../shared/trial.js";
 import { rsvpOpen } from "../../../shared/wedding.js";
+import { sniffImageType } from "../../../shared/image-type.js";
 import { businessDate } from "../../../shared/metrics.js";
 import { rolesPlan } from "../../../shared/wedding-roles.js";
 
@@ -186,7 +187,7 @@ export async function designWorkspace({ tenant }) {
     assets,
     // Only the invitation fields of the Wedding Setup (privacy: nothing else).
     content: { setup: invitationContent(setup.exists ? setup.data() : {}), hero: hero.exists ? hero.data().dataUrl : null },
-    templates: Object.fromEntries(Object.entries(TEMPLATES).map(([id, t]) => [id, { label: t.label, tier: t.tier, description: t.description }])),
+    templates: Object.fromEntries(Object.entries(TEMPLATES).map(([id, t]) => [id, { label: t.label, tier: t.tier, category: t.category, description: t.description }])),
     sections: SECTION_IDS,
   };
 }
@@ -278,6 +279,8 @@ export async function uploadAsset({ tenant, FieldValue, name, dataUrl, actor }) 
   const m = typeof dataUrl === "string" && dataUrl.length <= ASSET_MAX_CHARS ? ASSET_TYPES.exec(dataUrl) : null;
   if (!m) throw new InvitationDesignError("invalid-asset", "Upload a PNG, JPG, WebP or SVG image up to about 500 KB");
   const bytes = Buffer.from(m[2], "base64");
+  // A raster image must really be the type it claims (its first bytes).
+  if (m[1] !== "image/svg+xml" && sniffImageType(bytes) !== m[1]) throw new InvitationDesignError("invalid-asset", "That file isn't the image type it claims to be");
   if (m[1] === "image/svg+xml") {
     // Rendered only as an image (never inline), but refuse active content anyway.
     const svg = bytes.toString("utf8");

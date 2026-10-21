@@ -30,7 +30,7 @@ import { formatCentavos, formatDayId } from "../../lib/format.js";
 import { exportButton, bindExport, mayExport, exportHint } from "../../lib/export.js";
 import { SALARY_METHODS, businessDate, periodFor, addDays, parseCentavos, daysIn, paidTotal, staffPeriod } from "@shared/index.js";
 import * as defaultData from "../household/data.js";
-import { prepareProof } from "../../lib/image.js";
+import { prepareProof, PHOTO_OR_PDF_ACCEPT } from "../../lib/image.js";
 import { viewProof } from "../../components/proof-viewer.js";
 import { editAmount, moveTo, takeOff, repay, methodOptions } from "../advances/plan.js";
 
@@ -539,7 +539,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
         const r = await formDialog({ title: "Add a deduction", fields: [{ name: "description", label: "What for", required: true, placeholder: "e.g. Broken plate" }, { name: "amount", label: "Amount (₱)", required: true, inputmode: "decimal" }], onSubmit: async (v) => data.payrollApi({ action: "addDeduction", payrollId: await ensure(), deduction: { description: v.description, amount: parseCentavos(v.amount) } }) });
         if (r) refresh();
       } else if (x === "add-proof") {
-        const r = await formDialog({ title: "Add payment proof", intro: "A GCash or bank screenshot, or a PDF. It doesn't change the payment or the helper's confirmation.", fields: [{ name: "proof", label: "Proof", type: "file", accept: "image/jpeg,image/png,image/webp,application/pdf" }], submitLabel: "Upload", onSubmit: async (v) => { if (!v.proof) throw new Error("Choose a file"); return data.payrollApi({ action: "attachProof", payrollId, proof: await prepareProof(v.proof, { pdf: true }) }); } });
+        const r = await formDialog({ title: "Add payment proof", intro: "A GCash or bank screenshot, or a PDF. It doesn't change the payment or the helper's confirmation.", fields: [{ name: "proof", label: "Proof", type: "file", accept: PHOTO_OR_PDF_ACCEPT }], submitLabel: "Upload", onSubmit: async (v) => { if (!v.proof) throw new Error("Choose a file"); return data.payrollApi({ action: "attachProof", payrollId, proof: await prepareProof(v.proof, { pdf: true }) }); } });
         if (r) {
           toast("Proof added.", "success");
           refresh();
@@ -632,7 +632,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
             { name: "method", label: "Paid by", type: "select", value: "cash", options: methodOptions() },
             { name: "paidDate", label: "Date paid", type: "date", value: today, max: today },
             ...(ongoing ? [{ name: "prepaidDays", label: "Also pay upcoming days (prepaid salary)?", type: "select", value: String(upcoming.length), options: prepaidOptions }] : []),
-            { name: "proof", label: "Proof (screenshot or PDF, optional)", type: "file", accept: "image/jpeg,image/png,image/webp,application/pdf" },
+            { name: "proof", label: "Proof (screenshot or PDF, optional)", type: "file", accept: PHOTO_OR_PDF_ACCEPT },
             { name: "reference", label: "Reference no. (optional)", more: true },
           ],
           submitLabel: "Pay salary",

@@ -30,6 +30,7 @@ import { attendingMarksFor } from "./wedding-roles.js";
 import { liveDesignFor, ownerInvitationStatus, previewDesign, TRIAL_PREVIEW_MESSAGE } from "./invitation-design.js";
 import { trialOpen } from "../../../shared/trial.js";
 import { invitationContent } from "../../../shared/invitation-design.js";
+import { dataUrlImageType } from "../../../shared/image-type.js";
 
 const TX_OPTIONS = { maxAttempts: 10 };
 const MAX_HISTORY = 200;
@@ -78,7 +79,7 @@ export async function readSetup({ tenant, business }) {
 const galleryCol = (tenant) => tenant.collection("weddingGallery");
 const MAX_GALLERY = 6;
 export async function addGalleryPhoto({ tenant, FieldValue, dataUrl, actor }) {
-  if (typeof dataUrl !== "string" || dataUrl.length > 400_000 || !/^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/.test(dataUrl)) throw new WeddingError("invalid-input", "Choose a JPEG, PNG or WebP photo (it's shrunk before upload)");
+  if (typeof dataUrl !== "string" || dataUrl.length > 400_000 || !dataUrlImageType(dataUrl)) throw new WeddingError("invalid-input", "Choose a JPEG, PNG or WebP photo (it's shrunk before upload)");
   const all = await galleryCol(tenant).orderBy("order").limit(MAX_GALLERY + 1).get();
   if (all.size >= MAX_GALLERY) throw new WeddingError("invalid-input", `Up to ${MAX_GALLERY} gallery photos`);
   const last = all.docs.at(-1);
@@ -163,7 +164,7 @@ export async function saveHero({ tenant, FieldValue, dataUrl, actor }) {
     await heroRef(tenant).delete();
     return { hero: false };
   }
-  if (typeof dataUrl !== "string" || dataUrl.length > HERO_MAX || !/^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/.test(dataUrl)) throw new WeddingError("invalid-input", "Choose a JPEG, PNG or WebP photo (it's shrunk before upload)");
+  if (typeof dataUrl !== "string" || dataUrl.length > HERO_MAX || !dataUrlImageType(dataUrl)) throw new WeddingError("invalid-input", "Choose a JPEG, PNG or WebP photo (it's shrunk before upload)");
   await heroRef(tenant).set({ dataUrl, updatedBy: who(actor), updatedAt: FieldValue.serverTimestamp() });
   return { hero: true };
 }

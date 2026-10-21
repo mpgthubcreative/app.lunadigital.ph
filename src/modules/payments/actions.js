@@ -6,7 +6,7 @@ import { html, render } from "../../lib/html.js";
 import { formDialog } from "../../components/form-dialog.js";
 import { formatCentavos } from "../../lib/format.js";
 import { PAYMENT_METHODS, PAYMENT_METHOD_IDS, parseCentavos, normalizeReference } from "@shared/index.js";
-import { prepareProof as defaultPrepareProof } from "../../lib/image.js";
+import { prepareProof as defaultPrepareProof, PHOTO_ACCEPT } from "../../lib/image.js";
 import { bindReferenceDetection, detectReference } from "../../lib/payment-reference.js";
 
 const METHOD_OPTIONS = PAYMENT_METHOD_IDS.map((id) => ({ value: id, label: PAYMENT_METHODS[id].label }));
@@ -30,7 +30,7 @@ export function recordPaymentDialog({ order, api, currency = "PHP", fullBalance 
     fields: [
       { name: "method", label: "Method", type: "select", options: METHOD_OPTIONS, value: "gcash" },
       { name: "amount", label: `Amount (${currency})`, value: fullBalance ? pesos(balance) : "", required: true, inputmode: "decimal" },
-      { name: "proof", label: "Screenshot", type: "file", accept: "image/jpeg,image/png,image/webp", hint: "GCash, Maya and bank transfers: a screenshot or the reference number is enough." },
+      { name: "proof", label: "Screenshot", type: "file", accept: PHOTO_ACCEPT, hint: "GCash, Maya and bank transfers: a screenshot or the reference number is enough." },
       { name: "reference", label: "Reference no.", hint: "Filled in from the screenshot when Luna can read it; check it." },
       { name: "note", label: "Note", type: "textarea" },
     ],
@@ -58,7 +58,7 @@ export function editPaymentDialog({ payment, api, currency = "PHP", prepareProof
       { name: "method", label: "Method", type: "select", options: METHOD_OPTIONS, value: payment.method },
       { name: "amount", label: `Amount (${currency})`, value: pesos(payment.amount), required: true, inputmode: "decimal" },
       { name: "reference", label: "Reference no.", value: payment.reference || "" },
-      { name: "proof", label: payment.proof ? "Replace screenshot (optional)" : "Screenshot (optional)", type: "file", accept: "image/jpeg,image/png,image/webp" },
+      { name: "proof", label: payment.proof ? "Replace screenshot (optional)" : "Screenshot (optional)", type: "file", accept: PHOTO_ACCEPT },
       { name: "note", label: "Note", type: "textarea", value: payment.note || "" },
     ],
     submitLabel: "Save",

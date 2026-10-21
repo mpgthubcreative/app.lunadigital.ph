@@ -27,7 +27,7 @@ import { formatCentavos, formatDayId } from "../../lib/format.js";
 import { exportButton, bindExport, mayExport, exportHint } from "../../lib/export.js";
 import { ADVANCE_STATUSES, SALARY_METHODS, SCHEDULE_STATES, businessDate, parseCentavos, advanceRemaining, advanceCapacity, advanceSummary } from "@shared/index.js";
 import * as defaultData from "../household/data.js";
-import { prepareProof } from "../../lib/image.js";
+import { prepareProof, PHOTO_OR_PDF_ACCEPT } from "../../lib/image.js";
 import { viewProof } from "../../components/proof-viewer.js";
 import { editPlan, repay, periodText, methodOptions } from "./plan.js";
 
@@ -204,7 +204,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
         { name: "date", label: "Date given", type: "date", value: today, max: today, more: true, default: true },
         { name: "method", label: "How", type: "select", value: lastMethod(), options: methodOptions(), more: true },
         { name: "reference", label: "Reference (optional)", more: true },
-        { name: "proof", label: "Proof (screenshot or PDF, optional)", type: "file", accept: "image/jpeg,image/png,image/webp,application/pdf", more: true },
+        { name: "proof", label: "Proof (screenshot or PDF, optional)", type: "file", accept: PHOTO_OR_PDF_ACCEPT, more: true },
         { name: "description", label: "Note (optional)", more: true, placeholder: "e.g. Fare home" },
       ],
       submitLabel: "Give advance",
@@ -336,7 +336,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
         }
       } else if (act === "proof") viewProof({ title: `Advance proof · ${a.staffName}`, load: async () => (await api({ action: "proof", advanceId: a.id })).proof });
       else if (act === "add-proof") {
-        const r = await formDialog({ title: "Add proof", intro: "A GCash or bank screenshot, or a PDF. The helper can see it on their own screen.", fields: [{ name: "proof", label: "Proof", type: "file", accept: "image/jpeg,image/png,image/webp,application/pdf" }], submitLabel: "Upload", onSubmit: async (v) => { if (!v.proof) throw new Error("Choose a file"); return api({ action: "attachProof", advanceId: a.id, proof: await prepareProof(v.proof, { pdf: true }) }); } });
+        const r = await formDialog({ title: "Add proof", intro: "A GCash or bank screenshot, or a PDF. The helper can see it on their own screen.", fields: [{ name: "proof", label: "Proof", type: "file", accept: PHOTO_OR_PDF_ACCEPT }], submitLabel: "Upload", onSubmit: async (v) => { if (!v.proof) throw new Error("Choose a file"); return api({ action: "attachProof", advanceId: a.id, proof: await prepareProof(v.proof, { pdf: true }) }); } });
         if (r) load();
       } else if (act === "release") {
         const r = await formDialog({
@@ -345,7 +345,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
           fields: [
             { name: "paidDate", label: "Date given", type: "date", value: today, max: today },
             { name: "method", label: "How", type: "select", value: "cash", options: methodOptions() },
-            { name: "proof", label: "Proof (optional)", type: "file", accept: "image/jpeg,image/png,image/webp,application/pdf" },
+            { name: "proof", label: "Proof (optional)", type: "file", accept: PHOTO_OR_PDF_ACCEPT },
             { name: "reference", label: "Reference (optional)", more: true },
           ],
           submitLabel: "Mark given",

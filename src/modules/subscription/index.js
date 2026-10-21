@@ -15,7 +15,7 @@ import { formDialog } from "../../components/form-dialog.js";
 import { toast as defaultToast } from "../../components/feedback.js";
 import { formatCentavos, formatDayId } from "../../lib/format.js";
 import { api as defaultApi } from "../../lib/api.js";
-import { prepareProof } from "../../lib/image.js";
+import { prepareProof, PHOTO_OR_PDF_ACCEPT } from "../../lib/image.js";
 import { bindReferenceDetection, detectReference } from "../../lib/payment-reference.js";
 import { SUBSCRIPTION_LABELS, businessDate } from "@shared/index.js";
 import { INVOICE_STATUSES, PAYMENT_STATUSES, PROOF_MAX_BYTES, BILLING_TIMEZONE } from "@shared/billing.js";
@@ -210,7 +210,7 @@ export function mount(container, session, { api = defaultApi, toast = defaultToa
       fields: [
         { name: "amount", label: "Amount you sent (₱)", value: (inv.balance / 100).toFixed(2), inputmode: "decimal", required: true },
         { name: "paymentDate", label: "Date you paid", type: "date", value: today, max: today, required: true },
-        { name: "proof", label: "Screenshot or receipt", type: "file", accept: "image/jpeg,image/png,image/webp,application/pdf" },
+        { name: "proof", label: "Screenshot or receipt", type: "file", accept: PHOTO_OR_PDF_ACCEPT },
         { name: "reference", label: "Reference number", hint: "Filled in from the screenshot when Luna can read it; or type it." },
         { name: "note", label: "Note (optional)", type: "textarea" },
       ],

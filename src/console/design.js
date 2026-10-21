@@ -9,6 +9,7 @@ import { html, render } from "../lib/html.js";
 import { pageHeader, card } from "../components/ui.js";
 import { confirmDialog } from "../components/feedback.js";
 import { api } from "../lib/api.js";
+import { designAssetDataUrl, PHOTO_ACCEPT } from "../lib/image.js";
 import { TEMPLATES, TEMPLATE_IDS, FONTS, DESIGN_ENUMS, SECTION_IDS, SECTION_LABELS, ASSET_SLOT_LABELS, SAMPLE_GUEST, resolveDesign } from "@shared/invitation-design.js";
 import { openInvitePreview } from "../modules/wedding/invitation/preview.js";
 
@@ -42,7 +43,7 @@ export async function invitationDesignView(el, ctx, businessId) {
         <form data-role="design-form" class="section grid grid-2">
           ${card({
             title: "Template & colours",
-            body: html`<div class="field"><label>Template</label>${sel("templateId", d.templateId, TEMPLATE_IDS.map((id) => [id, TEMPLATES[id].label]))} <button type="button" class="btn btn-compact" data-act="template-defaults">Use this template's defaults</button></div>
+            body: html`<div class="field"><label>Template</label>${sel("templateId", d.templateId, TEMPLATE_IDS.map((id) => [id, `${TEMPLATES[id].label} · ${TEMPLATES[id].category === "customized" ? "Customized" : "Standard"}`]))} <button type="button" class="btn btn-compact" data-act="template-defaults">Use this template's defaults</button></div>
               <div class="grid grid-2">${Object.entries(COLOR_LABELS).map(([k, l]) => html`<div class="field"><label for="c-${k}">${l}</label><input class="input" type="color" id="c-${k}" name="color-${k}" value="${d.theme[k]}"></div>`)}</div>
               ${["headingFont", "bodyFont", "scriptFont"].map((k) => html`<div class="field"><label>${{ headingFont: "Heading font", bodyFont: "Body font", scriptFont: "Script line font" }[k]}</label>${sel(k, d.theme[k], FONTS.map((f) => [f, f]))}</div>`)}`,
           })}
@@ -71,7 +72,7 @@ export async function invitationDesignView(el, ctx, businessId) {
             title: "Designer images",
             body: html`${Object.entries(ASSET_SLOT_LABELS).map(([k, l]) => html`<div class="field"><label>${l}</label>${imgSel(`asset-${k}`, d.assets[k])}</div>`)}
               <p class="stat-hint">PNG / JPG / WebP / SVG from the designer, up to about 500 KB each.</p>
-              <label class="btn btn-compact">Upload image<input class="visually-hidden" type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml" data-role="asset-upload" aria-label="Upload a design image"></label>
+              <label class="btn btn-compact">Upload image<input class="visually-hidden" type="file" accept="${PHOTO_ACCEPT},image/svg+xml,.svg" data-role="asset-upload" aria-label="Upload a design image"></label>
               <ul class="list" data-role="assets">${w.assets.map((a) => html`<li class="design-asset"><img src="${a.dataUrl}" alt="${a.name}"><span>${a.name} · ${Math.round(a.bytes / 1024)} KB</span><button type="button" class="btn btn-compact btn-ghost" data-act="asset-delete" data-id="${a.id}">Delete</button></li>`)}</ul>`,
           })}
         </form>
@@ -162,14 +163,8 @@ export async function invitationDesignView(el, ctx, businessId) {
     if (e.target.dataset?.role !== "asset-upload") return;
     const file = e.target.files[0];
     if (!file) return;
-    const dataUrl = await new Promise((res, rej) => {
-      const r = new FileReader();
-      r.onload = () => res(String(r.result));
-      r.onerror = () => rej(new Error("Couldn't read the file"));
-      r.readAsDataURL(file);
-    });
     d = resolveDesign(readForm());
-    run(() => call("uploadAsset", { businessId, name: file.name, dataUrl }), "Image uploaded.");
+    run(async () => call("uploadAsset", { businessId, name: file.name, dataUrl: await designAssetDataUrl(file) }), "Image uploaded.");
   };
   draw();
 }

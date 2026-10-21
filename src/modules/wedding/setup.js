@@ -14,6 +14,7 @@
 // previews; guest links open once Luna Bridal is paid.
 
 import { html, render } from "../../lib/html.js";
+import { photoDataUrl, PHOTO_ACCEPT } from "../../lib/image.js";
 import { pageHeader, skeleton } from "../../components/ui.js";
 import { toast as defaultToast } from "../../components/feedback.js";
 import { api as defaultApi } from "../../lib/api.js";
@@ -47,28 +48,10 @@ export const cleanSlugInput = (v) =>
     .replace(/-{2,}/g, "-")
     .slice(0, 60);
 
-// A photo shrunk in the browser to a small JPEG data URL (≤ 1200 px).
-export async function shrinkPhoto(file) {
-  if (!file || !/^image\/(jpeg|png|webp)$/.test(file.type)) throw new Error("Choose a JPEG, PNG or WebP photo");
-  const url = await new Promise((res, rej) => {
-    const r = new FileReader();
-    r.onload = () => res(String(r.result));
-    r.onerror = () => rej(new Error("Couldn't read the photo"));
-    r.readAsDataURL(file);
-  });
-  const img = await new Promise((res, rej) => {
-    const i = new Image();
-    i.onload = () => res(i);
-    i.onerror = () => rej(new Error("Couldn't open the photo"));
-    i.src = url;
-  });
-  const scale = Math.min(1, 1200 / Math.max(img.naturalWidth, img.naturalHeight));
-  const c = document.createElement("canvas");
-  c.width = Math.max(1, Math.round(img.naturalWidth * scale));
-  c.height = Math.max(1, Math.round(img.naturalHeight * scale));
-  c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
-  return c.toDataURL("image/jpeg", 0.8);
-}
+// A photo shrunk in the browser to a small JPEG data URL (≤ 1200 px, under
+// the gallery's 400,000-character limit): iPhone HEIC photos too
+// (../../lib/image.js).
+export const shrinkPhoto = (file) => photoDataUrl(file, { maxSide: 1200, quality: 0.8, maxChars: 400_000 });
 
 // The form's values, as the API takes them (blank = null).
 export function readSetupForm(form) {
@@ -142,7 +125,7 @@ export function mount(container, session, { api = defaultApi, toast = defaultToa
         <div class="field"><label for="ws-footerNote">Closing line</label><input class="input" id="ws-footerNote" name="footerNote" maxlength="200" value="${s.footerNote ?? ""}" placeholder="e.g. With love, Carlo & Yanie" ${canEdit ? "" : "disabled"}></div>
         <p class="stat-hint">Gallery photos (up to 6)</p>
         <div class="ws-gallery" data-role="gallery">${state.gallery.map((g) => html`<figure class="ws-gallery-item"><img src="${g.dataUrl}" alt="Gallery photo">${canEdit ? html`<button type="button" class="btn btn-compact btn-ghost" data-act="gallery-remove" data-id="${g.id}" aria-label="Remove this photo">Remove</button>` : ""}</figure>`)}</div>
-        ${canEdit && state.gallery.length < 6 ? html`<label class="btn btn-compact">Add photo<input class="visually-hidden" type="file" accept="image/jpeg,image/png,image/webp" data-role="gallery-add" aria-label="Add a gallery photo"></label>` : ""}
+        ${canEdit && state.gallery.length < 6 ? html`<label class="btn btn-compact">Add photo<input class="visually-hidden" type="file" accept="${PHOTO_ACCEPT}" data-role="gallery-add" aria-label="Add a gallery photo"></label>` : ""}
         <p class="stat-hint">Luna shows these where your design has a Story, FAQ, Gallery or Footer section. The design itself is set up by Luna.</p>
       </details>` : ""}
     </fieldset>`;
@@ -178,7 +161,7 @@ export function mount(container, session, { api = defaultApi, toast = defaultToa
   const heroBox = () =>
     html`${state.hero ? html`<img class="ws-hero-thumb" src="${state.hero}" alt="Current cover photo" data-role="hero-preview">` : ""}
       <p class="stat-hint" data-role="hero-state">${state.hasHero ? "A photo is set." : "No photo: the invitation shows a soft colour instead."}</p>
-      ${canEdit ? html`<div class="ws-hero-actions"><label class="btn btn-compact">${state.hasHero ? "Change photo" : "Choose photo"}<input class="visually-hidden" type="file" accept="image/jpeg,image/png,image/webp" data-role="hero" aria-label="Cover photo"></label>${state.hasHero ? html`<button type="button" class="btn btn-compact btn-ghost" data-act="hero-remove">Remove photo</button>` : ""}</div>` : ""}`;
+      ${canEdit ? html`<div class="ws-hero-actions"><label class="btn btn-compact">${state.hasHero ? "Change photo" : "Choose photo"}<input class="visually-hidden" type="file" accept="${PHOTO_ACCEPT}" data-role="hero" aria-label="Cover photo"></label>${state.hasHero ? html`<button type="button" class="btn btn-compact btn-ghost" data-act="hero-remove">Remove photo</button>` : ""}</div>` : ""}`;
   // Partial redraws: the photo part, and the Save button + status.
   const drawHero = () => {
     const box = container.querySelector('[data-role="hero-box"]');

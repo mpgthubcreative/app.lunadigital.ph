@@ -203,7 +203,10 @@ describe("Sample Budget lines and the cover photo (server)", () => {
   });
 
   it("Wedding Setup get returns the current cover photo so the Owner sees it", async () => {
-    const PHOTO = "data:image/jpeg;base64,QUJD";
+    const PHOTO = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQ";
+    // Checked by its bytes, not the label: "ABC" called a JPEG is refused.
+    expect((await api("setup", u.carlo, { action: "hero", dataUrl: "data:image/jpeg;base64,QUJD" })).status).toBe(400);
+    expect((await api("setup", u.carlo, { action: "galleryAdd", dataUrl: "data:image/png;base64,/9j/4AAQSkZJRgABAQ" })).status).toBe(400);
     ok(await api("setup", u.carlo, { action: "hero", dataUrl: PHOTO }));
     expect(ok(await api("setup", u.carlo, { action: "get" }))).toMatchObject({ hasHero: true, hero: PHOTO });
     ok(await api("setup", u.carlo, { action: "hero", dataUrl: null }));

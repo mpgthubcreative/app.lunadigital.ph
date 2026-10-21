@@ -161,6 +161,7 @@ function mountApp(session) {
   currentShell = shell;
 
   let navToken = 0;
+  let shownPath = null;
   const generation = mountGeneration;
   const current = (token) => token === navToken && generation === mountGeneration;
   const routes = buildRoutes(session);
@@ -178,6 +179,12 @@ function mountApp(session) {
       if (typeof currentCleanup === "function") currentCleanup();
       currentCleanup = null;
       shell.setActive(route);
+      // A new page starts at the top (2026-10-21 mobile fix). Without this a
+      // short page opened from a scrolled long one kept the old offset; on
+      // iPhone Safari (toolbar collapsed by the scroll) that left the bottom
+      // tabs floating above a blank gap.
+      if (route.path !== shownPath) window.scrollTo(0, 0);
+      shownPath = route.path;
       try {
         const mod = await MODULE_LOADERS[route.moduleId](session);
         if (!current(token)) return;

@@ -6,8 +6,11 @@
 .shell {
   display: grid;
   grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
+  /* At least the full screen with Safari's toolbar collapsed (lvh, not
+     dvh): a short page still reaches the bottom of the screen, so the fixed
+     bottom tabs never sit above a blank gap (2026-10-21, iPhone). */
   min-height: 100vh;
-  min-height: 100dvh; /* Safari: the height with its toolbar showing */
+  min-height: 100lvh;
 }
 
 /* ---------- Sidebar ---------- */
@@ -324,6 +327,11 @@
     background: rgba(255, 255, 255, 0.97);
     backdrop-filter: blur(8px);
     border-top: 1px solid var(--border);
+  }
+
+  /* The keyboard is open: the tabs step aside (see shell.js). */
+  .shell.keyboard-open .tabbar {
+    display: none;
   }
 
   .tab-link {

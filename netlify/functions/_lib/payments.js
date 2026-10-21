@@ -20,6 +20,7 @@
 // Payments never touch Sales or COGS (those belong to fulfillment).
 
 import { applyRollup, paymentContribution, diffRollup } from "./reports.js";
+import { sniffImageType, STORED_IMAGE_TYPES } from "../../../shared/image-type.js";
 import { applyCustomerStats } from "./customers.js";
 import { randomUUID } from "node:crypto";
 import {
@@ -46,13 +47,12 @@ const peso = (c) => `₱${(c / 100).toLocaleString("en-PH", { minimumFractionDig
 
 // ---------- Proof images ----------
 
-// Real type from the file's first bytes, not from what the browser claims.
-function sniffImage(buf) {
-  if (buf.length > 8 && buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) return "image/png";
-  if (buf.length > 3 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return "image/jpeg";
-  if (buf.length > 12 && buf.toString("ascii", 0, 4) === "RIFF" && buf.toString("ascii", 8, 12) === "WEBP") return "image/webp";
-  return null;
-}
+// Real type from the file's first bytes, not from what the browser claims
+// (shared/image-type.js; HEIC is converted to JPEG in the browser first).
+const sniffImage = (buf) => {
+  const t = sniffImageType(buf);
+  return STORED_IMAGE_TYPES.includes(t) ? t : null;
+};
 
 // proof: { contentType, dataBase64 } from the browser -> validated Buffer.
 export function decodeProof(proof) {

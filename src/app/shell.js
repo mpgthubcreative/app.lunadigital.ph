@@ -142,6 +142,11 @@ export function shellNavigation(session) {
 }
 
 // handlers: { onSignOut(), onSwitchBusiness(businessId) }
+// The on-screen keyboard: the visual viewport shrinks by more than this
+// while a text field has focus.
+const KEYBOARD_MIN = 150;
+export const isTyping = (el) => Boolean(el?.matches?.('textarea, select, [contenteditable="true"], input:not([type="checkbox"], [type="radio"], [type="button"], [type="submit"], [type="file"], [type="range"], [type="color"])'));
+
 export function renderShell(root, session, handlers = {}) {
   // Tenant terminology (Phase 17) may relabel a module; ids and paths never change.
   const labels = terminologyLabels(session.config);
@@ -278,6 +283,18 @@ export function renderShell(root, session, handlers = {}) {
   };
   document.addEventListener("keydown", onKey);
 
+  // Phone keyboard (2026-10-21): while it is open the bottom tabs step aside
+  // (on iPhone they would otherwise float mid-screen over the form). When it
+  // closes, iPhone Safari can leave the page offset with a blank strip at
+  // the bottom; re-applying the scroll position puts the tabs back.
+  const vv = window.visualViewport;
+  const onViewport = () => {
+    const open = window.innerHeight - vv.height > KEYBOARD_MIN && isTyping(document.activeElement);
+    if (!open && shell.classList.contains("keyboard-open")) window.scrollTo(window.scrollX, window.scrollY);
+    shell.classList.toggle("keyboard-open", open);
+  };
+  vv?.addEventListener("resize", onViewport);
+
   root.querySelector("#feedbackBtn")?.addEventListener("click", async () => {
     if (await openFeedback()) root.querySelector('[data-role="feedback-reminder"]')?.remove();
   });
@@ -314,6 +331,7 @@ export function renderShell(root, session, handlers = {}) {
       bell = null;
       document.removeEventListener("click", onDocClick);
       document.removeEventListener("keydown", onKey);
+      vv?.removeEventListener("resize", onViewport);
     },
   };
 }
