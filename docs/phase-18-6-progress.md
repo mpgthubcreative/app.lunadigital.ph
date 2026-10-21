@@ -1315,11 +1315,30 @@ c6e6ffd was NOT the final baseline: the owner's final spec for Reports and the H
   - Trial check: 72/72.
   - Not testable here: a real iPhone's Safari. Headless Chrome emulates the screen, safe area and keyboard resize, not Safari's own toolbar behaviour.
 
-### Production migration baseline (2026-10-21, third)
+### 2026-10-21 · ⋯ menus and compact rows, every workspace (b078ddc, 1c6605e, 3d16e7b)
 
-- **Baseline = the commit that adds this entry.** Its code is identical to e5b6050 (CI passing).
-- It supersedes the earlier 2026-10-21 baselines (code 7a8edf8, 6f7aec7) and every earlier one.
-- Production (Singapore Firebase, Netlify production, the domains) is set up only on the owner's go-ahead.
+- **Root cause (global):** both ⋯ menu kinds (`details.line-menu` and `rowMenu()`) were absolutely positioned in CSS with a fixed direction (down, or up with a modifier), never measured. Near the bottom, inside the phone frame's scroll column, a menu spilled under the bottom tabs (Household → Expenses: the last row's menu ran to y=882 with the tabs at 782). Table wraps and the desktop window edge clipped them the same way.
+- **Placement** (`src/components/menus.js`, one shared system; the console now installs it too; Guests' own positioning removed):
+  - Each open menu is measured and placed `position: fixed`, so no card, table or scroll column clips it.
+  - It opens down when it fits below, else up. A long menu that fits on neither side is shown whole, shifted over its ⋯. Only a menu taller than the usable screen scrolls.
+  - The usable screen is below the top bar and above the phone tabs (which include the home-indicator padding). Without tabs, the measured safe-area inset is used. It stays inside the visible viewport, so the keyboard counts. Horizontally the menu lines up with the ⋯ and moves inward at an edge.
+  - Menus are placed again on resize; closing resets the placement. Open / close behaviour is unchanged.
+- **Rows** (`src/styles/components.css`, shared):
+  - One 44×44 ⋯ tap target everywhere, centred. Rows without a ⋯ keep the empty slot. Amounts are right-aligned in one column.
+  - On phone table rows the ⋯ shares the name's line; extra controls take the next line.
+  - A long customer name wraps on desktop instead of pushing + Order / ⋯ off the screen.
+- **Tests:**
+  - Unit: 1834 pass (118 files), including the menu placement tests.
+  - Emulator: no server / rules change since the 41-file / 2970 run; CI ran the full emulator suite on every commit (green).
+  - Staging menu checks, one workspace per run (top / middle / last row, down / up, safe area, keyboard, edges, 44×44, row alignment, open / close behaviour, desktop): Household 27/27, Distributor 37/37, Bridal 37/37, Baby 27/27 (Providers: Baby Expenses rows have an open button, no ⋯), Super Admin 14/14.
+  - Release checks: phone frame + Preview 113/113; photos + frame 71/71 (its four old floating-tab checks rewritten for the frame); trial / pricing 72/72; guest links 5/5 (snapshot re-saved after the gallery fix).
+  - Retired: three pre-2026-10-21 pricing scripts (superseded by the trial check and unit tests).
+
+### Production migration baseline (2026-10-21, fourth)
+
+- **Baseline = the commit that adds this entry.** Its code is identical to 3d16e7b (CI passing).
+- It supersedes the earlier 2026-10-21 baselines (code e5b6050, 7a8edf8, 6f7aec7) and every earlier one.
+- Production (Singapore Firebase, Netlify production, the domains) is set up only on the owner's go-ahead, after the owner's own iPhone check.
 
 ## Plan (decisions made from the brief)
 

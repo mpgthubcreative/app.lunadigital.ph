@@ -2,7 +2,7 @@
 
 Prepared 2026-10-19. **Status: PLAN ONLY. Nothing here has been created or deployed.** Execution needs the owner's explicit approval, step by step.
 
-- **Baseline:** the commit recorded under "Production migration baseline" in `docs/phase-18-6-progress.md` (the third 2026-10-21 baseline: the phone app frame, one invitation data contract and Luna Bridal ₱499, on top of the HEIC photos / invitation folders and trial / Continue with Luna / Reset releases; it supersedes every earlier baseline). CI must pass on it.
+- **Baseline:** the commit recorded under "Production migration baseline" in `docs/phase-18-6-progress.md` (the fourth 2026-10-21 baseline: ⋯ menus placed from real space and one compact-row standard, on top of the phone app frame, invitation data contract, Luna Bridal ₱499, HEIC photos and trial releases; it supersedes every earlier baseline). CI must pass on it.
 - **Locked behaviour:** these are not to change during migration except for real defects:
   - Download Excel (the Business workbook includes Customers again);
   - Master Backup (Super Admin only);
