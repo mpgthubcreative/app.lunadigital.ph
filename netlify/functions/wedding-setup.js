@@ -23,7 +23,7 @@ export const createWeddingSetupHandler = (deps) =>
       // Owner-pilot Bridal+: gallery photos and a preview of the draft / live design.
       galleryAdd: { permission: "guests.manage", fields: ["action", "dataUrl"], run: (c, b) => addGalleryPhoto({ ...c, dataUrl: b.dataUrl }) },
       galleryRemove: { permission: "guests.manage", fields: ["action", "photoId"], run: (c, b) => removeGalleryPhoto({ ...c, photoId: b.photoId }) },
-      preview: { permission: "guests.view", fields: ["action", "which"], run: (c, b) => previewInvitation({ ...c, which: b.which }) },
+      preview: { permission: "guests.view", fields: ["action", "which", "templateId"], run: (c, b) => previewInvitation({ ...c, which: b.which, templateId: b.templateId }) },
       save: { permission: "guests.manage", fields: ["action", "setup"], run: (c, b) => saveSetup({ ...c, input: b.setup }) },
       hero: { permission: "guests.manage", fields: ["action", "dataUrl"], run: (c, b) => saveHero({ ...c, dataUrl: b.dataUrl ?? null }) },
     },

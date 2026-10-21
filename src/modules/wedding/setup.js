@@ -18,10 +18,12 @@ import { photoDataUrl, PHOTO_ACCEPT } from "../../lib/image.js";
 import { pageHeader, skeleton } from "../../components/ui.js";
 import { toast as defaultToast } from "../../components/feedback.js";
 import { api as defaultApi } from "../../lib/api.js";
-import { isWeddingSlug, suggestWeddingSlug, rsvpOpen } from "@shared/index.js";
+import { isWeddingSlug, suggestWeddingSlug, rsvpOpen, businessDate } from "@shared/index.js";
 import { openInvitePreview, copyText } from "./invitation/preview.js";
-import { TEMPLATES, STANDARD_TEMPLATE_IDS, DEFAULT_TEMPLATE_ID, resolveDesign } from "@shared/invitation-design.js";
+import { TEMPLATES, STANDARD_TEMPLATE_IDS, DEFAULT_TEMPLATE_ID, resolveDesign, invitationData } from "@shared/invitation-design.js";
 
+// The guest the Owner's Preview shows (never a real guest or link).
+const OWNER_SAMPLE_GUEST = Object.freeze({ name: "Your guest's name", seats: 2, rsvp: "awaiting", confirmed: 0, roles: [] });
 export const TRIAL_PREVIEW_MESSAGE = "Preview your invitation during your free trial. Publish it when you continue with Luna Bridal.";
 // The chosen Standard template as a design (Luna Standard: the original page).
 export const standardPreviewDesign = (templateId) => (STANDARD_TEMPLATE_IDS.includes(templateId) && templateId !== DEFAULT_TEMPLATE_ID ? { config: resolveDesign({ templateId }), assets: {}, standard: true } : null);
@@ -322,19 +324,22 @@ export function mount(container, session, { api = defaultApi, toast = defaultToa
       return;
     }
     if (act === "preview" || act === "preview-draft") {
-      // What a guest sees, from the details on screen now (not yet saved too),
-      // in the live design (or the draft one Luna is preparing).
+      // What a guest sees: the same loader as a guest's link (the server:
+      // live or draft design, the saved photos, the entourage) and the same
+      // invitation contract (invitationData), with the details on screen now
+      // (not yet saved too) and a sample guest.
       const now = form() ? readSetupForm(form()) : {};
       const w = { ...(state.setup || {}), ...now };
-      let look = { design: null };
-      if (state.invitation?.level === "custom") {
-        try {
-          look = await api("wedding-setup", { method: "POST", body: { action: "preview", which: act === "preview-draft" ? "draft" : "live" } });
-        } catch (err) {
-          toast(err.message || "Couldn't load the design", "danger");
-        }
+      const custom = state.invitation?.level === "custom";
+      let look;
+      try {
+        look = await api("wedding-setup", { method: "POST", body: { action: "preview", which: act === "preview-draft" ? "draft" : "live", ...(custom ? {} : { templateId: w.templateId || DEFAULT_TEMPLATE_ID }) } });
+      } catch (err) {
+        // Offline: the template on screen and the photos already loaded here.
+        toast(err.message || "Couldn't load the design", "danger");
+        look = { design: custom ? null : standardPreviewDesign(w.templateId), gallery: state.gallery.map((g) => g.dataUrl) };
       }
-      const invitation = { wedding: w, hero: state.hero, guest: { name: "Your guest's name", seats: 2, rsvp: "awaiting", confirmed: 0 }, rsvpOpen: rsvpOpen(w, new Date().toISOString().slice(0, 10)), design: look.design || (state.invitation?.level === "custom" ? null : standardPreviewDesign(w.templateId)), gallery: look.gallery || state.gallery.map((g) => g.dataUrl), entourage: look.entourage || [] };
+      const invitation = invitationData({ setup: w, hero: state.hero, guest: OWNER_SAMPLE_GUEST, rsvpOpen: rsvpOpen(w, businessDate(session.business?.timezone || "Asia/Manila")), look, sample: true });
       const fetchImpl = async () => ({ ok: true, status: 200, json: async () => ({ success: true, invitation }) });
       await preview({ token: "P".repeat(32), fetchImpl, note: act === "preview-draft" ? "Draft design (not live yet), with a sample guest" : "Preview: what your guests see (with a sample guest)" });
       return;

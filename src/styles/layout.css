@@ -6,11 +6,7 @@
 .shell {
   display: grid;
   grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
-  /* At least the full screen with Safari's toolbar collapsed (lvh, not
-     dvh): a short page still reaches the bottom of the screen, so the fixed
-     bottom tabs never sit above a blank gap (2026-10-21, iPhone). */
-  min-height: 100vh;
-  min-height: 100lvh;
+  min-height: 100vh; /* desktop / tablet; the phone frame is inset: 0 (below) */
 }
 
 /* ---------- Sidebar ---------- */
@@ -295,11 +291,37 @@
     display: none;
   }
 
-  /* Owner-pilot: one bottom-space rule for every phone page (Bridal and
-     the rest): content ends above the tab bar + safe area, and anything
-     scrolled into view (focus, links) stops above it too. */
-  html {
-    scroll-padding-bottom: var(--bottom-nav-space);
+  /* The phone app frame (2026-10-21, second pass; every workspace). The
+     app is a fixed frame exactly the size of the visible screen (inset 0,
+     no vh / dvh height), the main column is its ONE scroller and the tabs
+     are the frame's bottom row. The document itself never scrolls, so
+     iPhone Safari can't leave it offset (toolbar collapsing on scroll, the
+     keyboard, a page switch) with the tabs floating above a blank gap. */
+  html:has(.shell:not(.console-shell)),
+  html:has(.shell:not(.console-shell)) body {
+    height: 100%;
+    min-height: 0;
+    overflow: hidden;
+    overscroll-behavior: none;
+  }
+
+  .shell:not(.console-shell) {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+
+  .shell:not(.console-shell) > .main-col {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior-y: contain;
+    -webkit-overflow-scrolling: touch;
+    /* Anything scrolled into view (focus, links) stops above the bottom. */
+    scroll-padding-bottom: var(--space-8);
   }
 
   .topbar {
@@ -307,8 +329,10 @@
     padding: env(safe-area-inset-top, 0px) max(var(--space-4), env(safe-area-inset-right, 0px)) 0 max(var(--space-4), env(safe-area-inset-left, 0px));
   }
 
+  /* The tabs are below the scroller (not over it): the page needs only its
+     own bottom space. */
   .content {
-    padding: var(--space-4) max(var(--space-4), env(safe-area-inset-right, 0px)) var(--bottom-nav-space) max(var(--space-4), env(safe-area-inset-left, 0px));
+    padding: var(--space-4) max(var(--space-4), env(safe-area-inset-right, 0px)) var(--space-8) max(var(--space-4), env(safe-area-inset-left, 0px));
   }
 
   .banner {
@@ -316,8 +340,8 @@
   }
 
   .tabbar {
-    position: fixed;
-    inset: auto 0 0 0;
+    position: relative;
+    flex: none;
     z-index: 30;
     display: grid;
     grid-auto-flow: column;

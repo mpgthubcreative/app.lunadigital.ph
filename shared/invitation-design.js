@@ -31,6 +31,25 @@ export const PLAN_MARKETING_NAMES = Object.freeze({ "bridal-basic": "Luna Bridal
 // Super Admin's invitation work (2026-10-20 privacy model).
 export const INVITATION_CONTENT_FIELDS = Object.freeze(["coupleNames", "weddingDate", "ceremonyTime", "ceremonyVenue", "ceremonyAddress", "ceremonyMap", "receptionTime", "receptionVenue", "receptionAddress", "receptionMap", "dressCode", "welcomeMessage", "rsvpDeadline", "story", "footerNote", "faq"]);
 export const invitationContent = (setup) => Object.fromEntries(INVITATION_CONTENT_FIELDS.map((k) => [k, setup?.[k] ?? null]));
+// The one invitation data contract (2026-10-21): what the renderer
+// (src/modules/wedding/invitation/renderer.js) draws, for a guest's link,
+// the Owner's Wedding Setup Preview and Super Admin's preview alike.
+// look = { design, gallery, entourage } from the same server loader
+// (liveDesignFor / previewDesign). Only the source (live / draft) and the
+// guest (real / sample) differ.
+export function invitationData({ setup, hero = null, guest, rsvpOpen, look = null, path = null, sample = false }) {
+  return {
+    wedding: invitationContent(setup),
+    hero: typeof hero === "string" ? hero : null,
+    guest,
+    rsvpOpen: rsvpOpen === true,
+    design: look?.design ?? null,
+    gallery: Array.isArray(look?.gallery) ? look.gallery.filter((u) => typeof u === "string") : [],
+    entourage: Array.isArray(look?.entourage) ? look.entourage : [],
+    ...(path ? { path } : {}),
+    ...(sample ? { sample: true } : {}),
+  };
+}
 // The guest a Super Admin preview shows: never a real guest or link.
 export const SAMPLE_GUEST = Object.freeze({ name: "Sample Guest", seats: 2, rsvp: "awaiting", confirmed: 0, roles: [] });
 

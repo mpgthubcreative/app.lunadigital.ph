@@ -86,9 +86,9 @@ describe("Bridal free trial: choose, fill in, preview; publish once paid", () =>
     expect(blocked.body).toMatchObject({ error: "trial-preview", message: "Preview your invitation during your free trial. Publish it when you continue with Luna Bridal." });
     expect((await guests({ action: "regenerateInvite", guestId: g })).body.error).toBe("trial-preview");
     expect([...world.db.docs.keys()].some((k) => k.startsWith("invitations/"))).toBe(false);
-    // Continue with Luna Bridal (₱1,490): choose, Luna records the payment.
+    // Continue with Luna Bridal (₱499): choose, Luna records the payment.
     const chosen = ok(await sub({ action: "choose", termMonths: 12 }));
-    expect(chosen.invoice.amountDue).toBe(149000);
+    expect(chosen.invoice.amountDue).toBe(49900);
     ok(await op({ action: "recordPayment", businessId: W, payment: { paymentDate: TODAY } }));
     expect(world.db.docs.get(`businesses/${W}`).subscription.trialStatus).toBe("converted");
     const path = ok(await guests({ action: "inviteLink", guestId: g })).path;

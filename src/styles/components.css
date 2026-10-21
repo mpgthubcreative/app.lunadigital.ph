@@ -2770,7 +2770,7 @@ tr.is-saving {
 }
 .att-save {
   position: sticky;
-  bottom: calc(var(--tabbar-height) + env(safe-area-inset-bottom, 0px) + 8px);
+  bottom: var(--space-2); /* inside the page's scroller, above the tabs */
   z-index: 5;
   display: flex;
   align-items: center;

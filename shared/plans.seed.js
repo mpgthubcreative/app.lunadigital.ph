@@ -9,8 +9,10 @@
 //   Luna Distributor     6 months ₱1,299 · 12 months ₱2,390 (Best Value)
 //                        + ₱250 one-time setup (first paid bill only); no
 //                        monthly option; 2 users, 500 MB
-//   Luna Bridal          ₱1,490 one-time for 12 months; 1 planner, 500 MB,
-//                        standard website invitation
+//   Luna Bridal          ₱499 one-time for 12 months (was ₱1,490 until
+//                        2026-10-21; earlier bills / weddings keep theirs);
+//                        30-day trial; 1 planner, 500 MB, the Standard
+//                        invitation templates
 //   Luna Bridal Custom   starting at ₱2,990 / 12 months; customized website
 //                        invitation + designer work (plan id bridal-plus,
 //                        kept: the invitation level is tied to it)
@@ -329,7 +331,7 @@ export const PLAN_SEED = Object.freeze({
     users: 1,
     storage: 500 * MB,
     modules: BRIDAL_MODULES,
-    billing: { billingType: "term", price: 149000, termMonths: 12, autoRenew: false, trialDays: 30, terms: [{ months: 12, price: 149000, kind: "main" }] },
+    billing: { billingType: "term", price: 49900, termMonths: 12, autoRenew: false, trialDays: 30, terms: [{ months: 12, price: 49900, kind: "main" }] },
   }),
   // Luna Bridal Custom: the customized invitation website + designer work
   // (a service, not a bigger limit). "Starting at": the price follows the

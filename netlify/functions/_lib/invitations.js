@@ -29,7 +29,7 @@ import { accessPolicy } from "../../../shared/subscription.js";
 import { attendingMarksFor } from "./wedding-roles.js";
 import { liveDesignFor, ownerInvitationStatus, previewDesign, TRIAL_PREVIEW_MESSAGE } from "./invitation-design.js";
 import { trialOpen } from "../../../shared/trial.js";
-import { invitationContent } from "../../../shared/invitation-design.js";
+import { invitationData } from "../../../shared/invitation-design.js";
 import { dataUrlImageType } from "../../../shared/image-type.js";
 
 const TX_OPTIONS = { maxAttempts: 10 };
@@ -92,7 +92,7 @@ export async function removeGalleryPhoto({ tenant, photoId }) {
   await galleryCol(tenant).doc(photoId).delete();
   return { removed: true };
 }
-export const previewInvitation = ({ tenant, business, which }) => previewDesign({ tenant, business, which: which === "draft" ? "draft" : "live" });
+export const previewInvitation = ({ tenant, business, which, templateId }) => previewDesign({ tenant, business, which: which === "draft" ? "draft" : "live", templateId: typeof templateId === "string" ? templateId : undefined });
 // The wedding link (slug) is unique in Luna: weddingSlugs/{slug} =
 // { businessId } (top level, server-only; rules deny all). Blank = made
 // from the couple's names ("carlo-and-yanie-wedding", then -2, -3… when
@@ -220,26 +220,28 @@ async function resolve(db, token) {
   return { businessId, guestId, biz, business: b.data(), guest: g.data(), linkRef: link.ref };
 }
 // What a guest sees of the Wedding Setup (shared/invitation-design.js).
-const publicSetup = (s) => invitationContent(s);
 
 export async function viewInvite({ db, token, now = new Date() }) {
   const r = await resolve(db, token);
   const [s, h] = await Promise.all([r.biz.collection("weddingSetup").doc("current").get(), r.biz.collection("weddingSetup").doc("hero").get()]);
   const setup = s.exists ? s.data() : {};
   const today = businessDate(r.business.timezone || "Asia/Manila", now);
-  // Only what this party needs: their name, seats and answer. No ids.
-  return {
-    wedding: publicSetup(setup),
+  // The shared invitation contract (shared/invitation-design.js), as the
+  // Owner's and Super Admin's previews use it. Only what this party needs:
+  // their name, seats and answer. No ids.
+  return invitationData({
+    setup,
     hero: h.exists ? h.data().dataUrl : null,
     // roles: ready for personal wording later ("…one of our Principal Sponsors"); not shown yet.
     guest: { name: r.guest.name, seats: int(r.guest.partySize), rsvp: r.guest.rsvp, confirmed: int(r.guest.confirmed), roles: (Array.isArray(r.guest.roles) ? r.guest.roles : []).map((x) => roleLabel(x)) },
     rsvpOpen: rsvpOpen(setup, today),
     // The canonical address (current wedding link): an older link moves to it.
     path: invitePath(setup.weddingSlug, token),
-    // The published Luna Bridal+ design (or null = the Standard invitation),
-    // with the images / gallery / entourage its sections need.
-    ...((await liveDesignFor({ tenant: tenantDb(db, r.businessId), business: r.business, setup })) ?? { design: null }),
-  };
+    // The live design (published Custom, the chosen Standard template, or
+    // null = the Luna Standard page) with the images / gallery / entourage
+    // its sections need.
+    look: await liveDesignFor({ tenant: tenantDb(db, r.businessId), business: r.business, setup }),
+  });
 }
 
 export async function respondInvite({ db, FieldValue, token, rsvp, now = new Date() }) {

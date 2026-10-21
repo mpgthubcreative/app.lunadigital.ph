@@ -63,7 +63,7 @@ export async function prepareSubscriptionProof(file) {
 }
 
 // "6 Months — ₱1,299 + ₱250 setup", "12 Months — ₱2,390 — BEST VALUE",
-// "Luna Bridal — ₱1,490", "Luna Bridal Custom — starts ₱2,990".
+// "Luna Bridal — ₱499", "Luna Bridal Custom — starts ₱2,990".
 const whole = (c) => `₱${(c / 100).toLocaleString("en-PH", { maximumFractionDigits: 2 })}`;
 export function optionLabel(o, t) {
   const price = `${o.priceIsMinimum ? "starts " : ""}${whole(t.price)}`;

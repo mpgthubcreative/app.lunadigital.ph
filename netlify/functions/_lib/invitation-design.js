@@ -13,7 +13,7 @@
 // Publishing changes appearance only: guests, tokens, slugs, RSVPs untouched.
 
 import { randomBytes } from "node:crypto";
-import { validateDesignConfig, resolveDesign, assetIdsOf, invitationLevelOf, invitationStatus, invitationContent, SAMPLE_GUEST, PLAN_MARKETING_NAMES, TEMPLATES, SECTION_IDS, DEFAULT_TEMPLATE_ID, isStandardTemplate, DesignError } from "../../../shared/invitation-design.js";
+import { validateDesignConfig, resolveDesign, assetIdsOf, invitationLevelOf, invitationStatus, invitationContent, invitationData, SAMPLE_GUEST, PLAN_MARKETING_NAMES, TEMPLATES, SECTION_IDS, DEFAULT_TEMPLATE_ID, isStandardTemplate, DesignError } from "../../../shared/invitation-design.js";
 import { trialOpen } from "../../../shared/trial.js";
 import { rsvpOpen } from "../../../shared/wedding.js";
 import { sniffImageType } from "../../../shared/image-type.js";
@@ -64,23 +64,26 @@ async function assetsByIds(tenant, ids) {
 }
 
 // The content components need (gallery, entourage), only when shown.
+// resolved null = the Luna Standard page, which shows the gallery (and
+// Our story / FAQ / closing line) when the couple added them.
 async function componentData(tenant, resolved) {
   const extra = {};
-  if (resolved.sections.visible.gallery) {
+  if (!resolved || resolved.sections.visible.gallery) {
     const g = await tenant.collection("weddingGallery").orderBy("order").limit(6).get();
     extra.gallery = g.docs.map((d) => d.data().dataUrl).filter((u) => typeof u === "string");
   }
-  if (resolved.sections.visible.entourage) {
+  if (resolved?.sections.visible.entourage) {
     const guests = await tenant.collection("guests").limit(2000).get();
     extra.entourage = rolesPlan(guests.docs.map((d) => ({ id: d.id, ...d.data() }))).map((gr) => ({ label: gr.label, names: gr.people.map((p) => p.name) }));
   }
   return extra;
 }
-// A Standard invitation in the template the Owner chose (Wedding Setup).
-// Luna Standard (the default) is the original page: null.
-export async function standardDesignFor({ tenant, setup }) {
-  const id = setup?.templateId;
-  if (!isStandardTemplate(id) || id === DEFAULT_TEMPLATE_ID) return null;
+// A Standard invitation in the template the Owner chose (Wedding Setup;
+// templateId: the choice on screen, for the Owner's Preview). Luna Standard
+// (the default) is the original page: design null, with its gallery.
+export async function standardDesignFor({ tenant, setup, templateId = setup?.templateId }) {
+  const id = templateId;
+  if (!isStandardTemplate(id) || id === DEFAULT_TEMPLATE_ID) return { design: null, ...(await componentData(tenant, null)) };
   const resolved = resolveDesign({ templateId: id });
   return { design: { config: resolved, assets: {}, standard: true }, ...(await componentData(tenant, resolved)) };
 }
@@ -99,11 +102,18 @@ export async function liveDesignFor({ tenant, business, setup = null }) {
   const resolved = resolveDesign(doc.published.config);
   return { design: { config: resolved, assets: await assetsByIds(tenant, assetIdsOf(doc.published.config)), version: doc.published.version }, ...(await componentData(tenant, resolved)) };
 }
-// Owner / Super Admin preview of the draft or the live design.
-export async function previewDesign({ tenant, business, which = "live" }) {
+// Owner / Super Admin preview of the draft or the live design: the same
+// loader as a guest's link (liveDesignFor). templateId: the Owner's
+// Standard choice still on screen (Luna Bridal; ignored for Custom).
+export async function previewDesign({ tenant, business, which = "live", templateId }) {
+  const custom = invitationLevelOf(planOf(business)) === "custom";
   const doc = await readDesign(tenant);
-  const config = which === "draft" ? doc?.draft?.config : doc?.live === "custom" && invitationLevelOf(planOf(business)) === "custom" ? doc?.published?.config : null;
-  if (!config) return which === "draft" ? { design: null } : ((await standardDesignFor({ tenant, setup: await setupOf(tenant) })) ?? { design: null });
+  const config = which === "draft" ? doc?.draft?.config : doc?.live === "custom" && custom ? doc?.published?.config : null;
+  if (!config) {
+    if (which === "draft") return { design: null, ...(await componentData(tenant, null)) };
+    const setup = await setupOf(tenant);
+    return standardDesignFor({ tenant, setup, templateId: !custom && isStandardTemplate(templateId) ? templateId : setup.templateId });
+  }
   const resolved = resolveDesign(config);
   return { design: { config: resolved, assets: await assetsByIds(tenant, assetIdsOf(config)) }, ...(await componentData(tenant, resolved)) };
 }
@@ -116,14 +126,7 @@ export async function sampleInvitation({ tenant, business, which = "draft", now 
   const [setupSnap, heroSnap, preview] = await Promise.all([tenant.doc("weddingSetup", "current").get(), tenant.doc("weddingSetup", "hero").get(), previewDesign({ tenant, business, which })]);
   const setup = setupSnap.exists ? setupSnap.data() : {};
   return {
-    invitation: {
-      wedding: invitationContent(setup),
-      hero: heroSnap.exists ? heroSnap.data().dataUrl : null,
-      guest: { ...SAMPLE_GUEST },
-      rsvpOpen: rsvpOpen(setup, businessDate(business.timezone || "Asia/Manila", now)),
-      sample: true,
-      ...preview,
-    },
+    invitation: invitationData({ setup, hero: heroSnap.exists ? heroSnap.data().dataUrl : null, guest: { ...SAMPLE_GUEST }, rsvpOpen: rsvpOpen(setup, businessDate(business.timezone || "Asia/Manila", now)), look: preview, sample: true }),
     which,
   };
 }

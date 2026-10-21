@@ -37,6 +37,46 @@ designs (`invitationDesign/current` draft / published `config.templateId`)
 store them. Never rename or reuse an id; a folder's name is its id. An
 unknown or missing id shows Luna Standard.
 
+## Which sections each design shows
+
+`registry.js` lists this per design (`shows` / `doesNotShow`). A design
+that doesn't show a section never displays that saved content. Super Admin
+can turn sections on or off in a Custom design.
+
+| Design | Story | Map links | Entourage | Gallery | FAQ | Closing line |
+| --- | --- | --- | --- | --- | --- | --- |
+| Luna Standard page (`standard` in Wedding Setup; no design) | when added | in Ceremony / Reception | no | when added | when added | when added |
+| `classic` | yes | yes | no | **no** | **no** | yes |
+| `modern` | **no** | yes | no | yes | **no** | yes |
+| `romantic` | yes | **no** | no | **no** | **no** | yes |
+| `editorial` | yes | yes | no | **no** | yes | yes |
+| `garden` (Customized) | yes | **no** | yes | yes | **no** | yes |
+
+Every design shows the names, date, cover photo, welcome message,
+ceremony, reception, dress code and RSVP. Our story, FAQ, the closing line
+and gallery photos are entered in Wedding Setup on Luna Bridal Custom
+weddings (Luna Bridal Owners don't see those fields, so those Standard
+templates have nothing to drop). The Luna Standard page is the original
+hard-coded invitation in `renderer.js` (`draw()`); the `standard` template
+file is its look for a Custom design that starts from it, with the
+sections listed in that file.
+
+## One data path (Wedding Setup → Preview → guests)
+
+```
+Wedding Setup (businesses/{bid}/weddingSetup/current, /hero, weddingGallery/*)
+  → the server loader: liveDesignFor (a guest's link) / previewDesign
+    (Owner Preview, Super Admin preview; draft or live)
+      → { design, gallery, entourage }
+  → invitationData(...) in shared/invitation-design.js: the one contract
+      { wedding (the content fields), hero, guest, rsvpOpen, design, gallery, entourage }
+  → renderer.js: the Luna Standard page or the design's sections
+```
+
+Only these change: live or draft design, a real or sample guest, and in
+the Owner's Preview the details still on screen (not saved yet) and the
+Standard template picked on screen.
+
 ## Add a Standard template
 
 1. Copy a folder under `templates/`, e.g. `templates/classic/` to

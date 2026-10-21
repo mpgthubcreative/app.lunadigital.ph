@@ -25,7 +25,13 @@ export const CATEGORIES = Object.freeze({
   customized: { label: "Customized", availability: "Luna Bridal Custom: Super Admin assigns it, then previews and publishes" },
 });
 
-// id · name · category · source · availability, in the order they're shown.
+// Every section an invitation can show, in the default order.
+export const SECTION_IDS = Object.freeze(["hero", "welcome", "story", "ceremony", "reception", "map", "dressCode", "entourage", "gallery", "faq", "rsvp", "footer"]);
+
+// id · name · category · source · availability · the sections the design
+// shows and the ones it deliberately doesn't (a wedding's saved Gallery,
+// Story or FAQ isn't shown by a design that lists it in doesNotShow; the
+// README's table says the same). In the order they're offered.
 export const TEMPLATE_REGISTRY = Object.freeze(
   [
     [standard, "standard"],
@@ -41,13 +47,12 @@ export const TEMPLATE_REGISTRY = Object.freeze(
       category,
       source: `src/modules/wedding/invitation/${category === "standard" ? "templates" : "customized"}/${file.id}/template.js`,
       availability: CATEGORIES[category].availability,
+      shows: Object.freeze([...file.show]),
+      doesNotShow: Object.freeze(SECTION_IDS.filter((id) => !file.show.includes(id))),
       file,
     })
   )
 );
-
-// Every section an invitation can show, in the default order.
-export const SECTION_IDS = Object.freeze(["hero", "welcome", "story", "ceremony", "reception", "map", "dressCode", "entourage", "gallery", "faq", "rsvp", "footer"]);
 
 // A design file → the full defaults the design engine expects. `tier` is
 // the older name of the category ("standard" / "custom"), kept because

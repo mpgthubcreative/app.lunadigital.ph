@@ -107,7 +107,7 @@ describe("a free trial is never a bill", () => {
     expect(ok(await sub("home-trial", h)).subscription.options[0]).toMatchObject({ name: "Luna Household", setupFee: 0, terms: [{ months: 6, price: 129900 }, { months: 12, price: 239000, bestValue: true }] });
     const w = await trialBusiness("wed-trial", "bridal-basic", "bridal-expense");
     const opts = ok(await sub("wed-trial", w)).subscription.options;
-    expect(opts.map((o) => [o.name, o.priceIsMinimum, o.terms.map((t) => t.price)])).toEqual([["Luna Bridal", false, [149000]], ["Luna Bridal Custom", true, [299000]]]);
+    expect(opts.map((o) => [o.name, o.priceIsMinimum, o.terms.map((t) => t.price)])).toEqual([["Luna Bridal", false, [49900]], ["Luna Bridal Custom", true, [299000]]]);
     await createBusiness({ ...world, name: "Custom", planId: "bridal-plus", workspaceTemplateId: "bridal-expense", businessId: "wed-custom", trial: true, clock: NOW });
     expect(biz("wed-custom").subscription.trialStatus).toBeUndefined();
   });

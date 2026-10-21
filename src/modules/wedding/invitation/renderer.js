@@ -187,7 +187,11 @@ export function renderInvitePage(root, { token = inviteTokenFrom(window.location
       render(root, html`<main class="inv-page"><article class="inv-card"><p class="inv-quiet" data-role="message">${state.status === "loading" ? "Opening your invitation…" : state.message}</p></article></main>`);
       return;
     }
-    const { wedding: w, hero, guest } = state.inv;
+    // Luna Standard (the original page). Our story, Gallery, FAQ and the
+    // closing line appear when the couple added them (Wedding Setup); a
+    // wedding without them sees exactly the original page.
+    const { wedding: w, hero, guest, gallery = [] } = state.inv;
+    const faq = Array.isArray(w.faq) ? w.faq : [];
     render(
       root,
       html`<main class="inv-page" data-role="invite-page">
@@ -199,8 +203,11 @@ export function renderInvitePage(root, { token = inviteTokenFrom(window.location
           </header>
           ${hero ? html`<img class="inv-hero" src="${hero}" alt="">` : html`<div class="inv-hero inv-hero-plain" aria-hidden="true"></div>`}
           ${w.welcomeMessage ? html`<p class="inv-message">${w.welcomeMessage}</p>` : ""}
+          ${w.story ? html`<section class="inv-section inv-sec-story" data-section="story"><h3>Our story</h3><p class="inv-story">${w.story}</p></section>` : ""}
           <section class="inv-venues">${venue("Ceremony", w.ceremonyTime, w.ceremonyVenue, w.ceremonyAddress, w.ceremonyMap)}${venue("Reception", w.receptionTime, w.receptionVenue, w.receptionAddress, w.receptionMap)}</section>
           ${w.dressCode ? html`<section class="inv-venue"><h3>Dress code</h3><p>${w.dressCode}</p></section>` : ""}
+          ${gallery.length ? html`<section class="inv-section inv-sec-gallery" data-section="gallery"><div class="inv-gallery" data-style="grid">${gallery.map((src) => html`<img src="${src}" alt="" loading="lazy">`)}</div></section>` : ""}
+          ${faq.length ? html`<section class="inv-section inv-sec-faq" data-section="faq"><h3>Questions</h3><dl class="inv-faq">${faq.map((f) => html`<dt>${f.q}</dt><dd>${f.a}</dd>`)}</dl></section>` : ""}
           <section class="inv-rsvp" data-role="rsvp">
             <h2>RSVP</h2>
             <p class="inv-quiet">This invitation is for</p>
@@ -209,6 +216,7 @@ export function renderInvitePage(root, { token = inviteTokenFrom(window.location
             ${rsvpBlock()}
             ${state.message ? html`<p class="inv-error" role="alert">${state.message}</p>` : ""}
           </section>
+          ${w.footerNote ? html`<section class="inv-section inv-sec-footer" data-section="footer"><div class="inv-footer"><p>${w.footerNote}</p></div></section>` : ""}
         </article>
       </main>`
     );

@@ -26,16 +26,16 @@ const submit = (f) => f.dispatchEvent(new Event("submit", { bubbles: true, cance
 const DIST = [{ planId: "distributor-basic", name: "Luna Distributor", tagline: "x", current: true, priceIsMinimum: false, setupFee: 25000, terms: [{ months: 6, price: 129900, label: "6 months · ₱1,299", bestValue: false }, { months: 12, price: 239000, label: "12 months · ₱2,390 · Best Value", bestValue: true }] }];
 const HOME = [{ ...DIST[0], planId: "household-basic", name: "Luna Household", setupFee: 0 }];
 const BRIDAL = [
-  { planId: "bridal-basic", name: "Luna Bridal", tagline: "Plan the wedding", current: true, priceIsMinimum: false, setupFee: 0, terms: [{ months: 12, price: 149000, label: "12 months · ₱1,490", bestValue: false }] },
+  { planId: "bridal-basic", name: "Luna Bridal", tagline: "Plan the wedding", current: true, priceIsMinimum: false, setupFee: 0, terms: [{ months: 12, price: 49900, label: "12 months · ₱1,490", bestValue: false }] },
   { planId: "bridal-plus", name: "Luna Bridal Custom", tagline: "Custom invitation", current: false, priceIsMinimum: true, setupFee: 0, terms: [{ months: 12, price: 299000, label: "12 months · from ₱2,990", bestValue: false }] },
 ];
 const trialView = (options, trial = {}) => ({ plan: { id: options[0].planId, name: options[0].name }, billing: { type: "annual", amount: 239000, termMonths: 12 }, status: "active", trial: { status: "trial_active", startedAt: "2026-10-01", endsAt: "2026-10-30", day: 20, daysLeft: 10, open: true, ended: false, conversion: null, ...trial }, options, paidThrough: null, current: null, openInvoices: [], payments: [], instructions: null });
 
 describe("Continue with Luna", () => {
-  it("the exact price lines: 6 / 12 Months (+ ₱250 setup for Distributor, BEST VALUE), Luna Bridal ₱1,490, Custom starts ₱2,990", () => {
+  it("the exact price lines: 6 / 12 Months (+ ₱250 setup for Distributor, BEST VALUE), Luna Bridal ₱499, Custom starts ₱2,990", () => {
     expect(DIST[0].terms.map((t) => optionLabel(DIST[0], t))).toEqual(["6 Months — ₱1,299 + ₱250 setup", "12 Months — ₱2,390 + ₱250 setup"]);
     expect(HOME[0].terms.map((t) => optionLabel(HOME[0], t))).toEqual(["6 Months — ₱1,299", "12 Months — ₱2,390"]);
-    expect(BRIDAL.map((o) => optionLabel(o, o.terms[0]))).toEqual(["Luna Bridal — ₱1,490", "Luna Bridal Custom — starts ₱2,990"]);
+    expect(BRIDAL.map((o) => optionLabel(o, o.terms[0]))).toEqual(["Luna Bridal — ₱499", "Luna Bridal Custom — starts ₱2,990"]);
   });
 
   it("during the trial: the plans, BEST VALUE on 12 months; the Owner chooses and the bill appears", async () => {

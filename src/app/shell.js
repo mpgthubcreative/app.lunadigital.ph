@@ -145,6 +145,8 @@ export function shellNavigation(session) {
 // The on-screen keyboard: the visual viewport shrinks by more than this
 // while a text field has focus.
 const KEYBOARD_MIN = 150;
+// The phone layout (layout.css: the app frame and bottom tabs).
+const PHONE = "(max-width: 719px)";
 export const isTyping = (el) => Boolean(el?.matches?.('textarea, select, [contenteditable="true"], input:not([type="checkbox"], [type="radio"], [type="button"], [type="submit"], [type="file"], [type="range"], [type="color"])'));
 
 export function renderShell(root, session, handlers = {}) {
@@ -283,17 +285,41 @@ export function renderShell(root, session, handlers = {}) {
   };
   document.addEventListener("keydown", onKey);
 
-  // Phone keyboard (2026-10-21): while it is open the bottom tabs step aside
-  // (on iPhone they would otherwise float mid-screen over the form). When it
-  // closes, iPhone Safari can leave the page offset with a blank strip at
-  // the bottom; re-applying the scroll position puts the tabs back.
-  const vv = window.visualViewport;
-  const onViewport = () => {
-    const open = window.innerHeight - vv.height > KEYBOARD_MIN && isTyping(document.activeElement);
-    if (!open && shell.classList.contains("keyboard-open")) window.scrollTo(window.scrollX, window.scrollY);
-    shell.classList.toggle("keyboard-open", open);
+  // The phone frame (layout.css): the main column is the page's scroller
+  // and the document never scrolls. iPhone Safari still moves the document
+  // on its own (the keyboard panning to a field, then not moving back), and
+  // that offset is the blank gap under the tabs, so it is put back to 0
+  // whenever nobody is typing.
+  const mainCol = root.querySelector(".main-col");
+  const phone = () => window.matchMedia?.(PHONE).matches === true;
+  const anchor = () => {
+    if (phone() && (window.scrollY || window.scrollX)) window.scrollTo(0, 0);
   };
+  // The keyboard: while it is open the tabs step aside (they'd sit on top
+  // of it); when it closes the frame is re-anchored. Measured against the
+  // tallest screen seen (iPhone keeps the layout height, Android shrinks it).
+  const vv = window.visualViewport;
+  let fullHeight = window.innerHeight;
+  let fullWidth = window.innerWidth;
+  const onViewport = () => {
+    if (window.innerWidth !== fullWidth) {
+      // Rotated: measure again.
+      fullWidth = window.innerWidth;
+      fullHeight = window.innerHeight;
+    }
+    fullHeight = Math.max(fullHeight, window.innerHeight);
+    const open = phone() && fullHeight - vv.height > KEYBOARD_MIN && isTyping(document.activeElement);
+    const was = shell.classList.contains("keyboard-open");
+    shell.classList.toggle("keyboard-open", open);
+    if (was && !open) anchor();
+  };
+  const onWindowScroll = () => {
+    if (!isTyping(document.activeElement)) anchor();
+  };
+  const onFocusOut = () => setTimeout(() => !isTyping(document.activeElement) && anchor(), 120);
   vv?.addEventListener("resize", onViewport);
+  window.addEventListener("scroll", onWindowScroll, { passive: true });
+  document.addEventListener("focusout", onFocusOut);
 
   root.querySelector("#feedbackBtn")?.addEventListener("click", async () => {
     if (await openFeedback()) root.querySelector('[data-role="feedback-reminder"]')?.remove();
@@ -332,6 +358,14 @@ export function renderShell(root, session, handlers = {}) {
       document.removeEventListener("click", onDocClick);
       document.removeEventListener("keydown", onKey);
       vv?.removeEventListener("resize", onViewport);
+      window.removeEventListener("scroll", onWindowScroll);
+      document.removeEventListener("focusout", onFocusOut);
+    },
+    // A new page starts at the top of the scroller that actually scrolls:
+    // the main column on a phone, the document elsewhere (both are reset).
+    scrollToTop() {
+      if (mainCol) mainCol.scrollTop = 0;
+      window.scrollTo(0, 0);
     },
   };
 }

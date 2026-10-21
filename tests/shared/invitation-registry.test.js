@@ -4,7 +4,7 @@
 // not change what any wedding shows.
 import { describe, it, expect } from "vitest";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
-import { TEMPLATE_REGISTRY, TEMPLATES, TEMPLATE_IDS, STANDARD_TEMPLATE_IDS, CUSTOMIZED_TEMPLATE_IDS, DEFAULT_TEMPLATE_ID, getTemplate, isStandardTemplate } from "../../src/modules/wedding/invitation/registry.js";
+import { TEMPLATE_REGISTRY, SECTION_IDS, TEMPLATES, TEMPLATE_IDS, STANDARD_TEMPLATE_IDS, CUSTOMIZED_TEMPLATE_IDS, DEFAULT_TEMPLATE_ID, getTemplate, isStandardTemplate } from "../../src/modules/wedding/invitation/registry.js";
 import * as shared from "../../shared/invitation-design.js";
 
 const ROOT = `${process.cwd()}/src/modules/wedding/invitation`;
@@ -41,6 +41,18 @@ describe("invitation registry", () => {
       const src = readFileSync(`${process.cwd()}/${r.source}`, "utf8");
       expect(src, r.id).not.toMatch(/businessId|weddingId|guestId|coupleNames|weddingDate|\b20\d\d-\d\d-\d\d\b/);
       expect(Object.keys(r.file).sort(), r.id).toEqual(["description", "gallery", "hero", "id", "label", "layout", "order", "show", "theme"]);
+    }
+  });
+  it("each design says which sections it shows; the README table matches (nothing dropped silently)", () => {
+    const all = readFileSync(`${ROOT}/README.md`, "utf8");
+    const readme = all.slice(all.indexOf("## Which sections each design shows"));
+    const cols = ["story", "map", "entourage", "gallery", "faq", "footer"];
+    for (const r of TEMPLATE_REGISTRY.filter((x) => x.id !== "standard")) {
+      expect([...r.shows, ...r.doesNotShow].sort(), r.id).toEqual([...SECTION_IDS].sort());
+      const row = readme.split("\n").find((l) => l.startsWith(`| \`${r.id}\``));
+      expect(row, r.id).toBeTruthy();
+      const cells = row.split("|").slice(2, 8).map((c) => !/no/.test(c));
+      expect(cells, r.id).toEqual(cols.map((c) => r.shows.includes(c)));
     }
   });
   it("the shared module re-exports the same registry (one source)", () => {

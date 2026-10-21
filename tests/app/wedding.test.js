@@ -1589,13 +1589,24 @@ describe("Luna Bridal / Luna Bridal+ invitations (one engine, per-wedding design
   };
   const base = { wedding: WED, hero: null, guest: { name: "Sanrah", seats: 5, rsvp: "awaiting", confirmed: 0 }, rsvpOpen: true };
 
-  it("no design (Luna Bridal / not published): the Standard invitation, unchanged", async () => {
-    const root = await mountInvite({ ...base, design: null });
+  it("no design (Luna Bridal / Custom not published yet): the Luna Standard page, with the couple's story, gallery, FAQ and closing line", async () => {
+    const root = await mountInvite({ ...base, design: null, gallery: ["data:image/jpeg;base64,/9j/4AAQ", "data:image/jpeg;base64,/9j/4BBB"] });
     const page = root.querySelector(".inv-page");
     expect(page.classList.contains("inv-designed")).toBe(false);
     expect(page.style.getPropertyValue("--inv-accent")).toBe("");
     expect(root.querySelector(".inv-names").textContent).toBe("Carlo & Yanie");
-    expect(root.textContent).not.toContain("We met at a wedding."); // story isn't a Standard section
+    // 2026-10-21: nothing the couple saved is silently dropped.
+    expect(root.querySelector('[data-section="story"]').textContent).toContain("We met at a wedding.");
+    expect(root.querySelectorAll('[data-section="gallery"] img')).toHaveLength(2);
+    expect(root.querySelector('[data-section="faq"]').textContent).toContain("Parking?");
+    expect(root.querySelector('[data-section="footer"]').textContent).toContain("With love");
+  });
+
+  it("no design and none of those details: exactly the original Luna Standard page", async () => {
+    const { story, faq, footerNote, ...plain } = WED;
+    const root = await mountInvite({ ...base, wedding: plain, design: null, gallery: [] });
+    expect(root.querySelector("[data-section]")).toBeNull();
+    expect([...root.querySelector(".inv-card").children].map((el) => el.className)).toEqual(["inv-head", "inv-hero inv-hero-plain", "inv-message", "inv-venues", "inv-venue", "inv-rsvp"]);
   });
 
   it("a published design: its section order / visibility, colours and fonts as CSS variables, images, wording; RSVP still works by seat count", async () => {
