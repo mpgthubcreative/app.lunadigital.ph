@@ -148,6 +148,24 @@ describe("Sanrah's Party: 5 confirmed, seated one person at a time", () => {
     expect(doc(`guests/${g}`).history.at(-1).label).toBe("Party member removed: Mayet · seat freed: Mayet");
   });
 
+  it("naming a specific unnamed person (Guest Details: Member 4 ✎) keeps THAT person's table; the others keep theirs; renaming a seated member keeps the seat", async () => {
+    const { g, mayet } = await sanrahsParty();
+    const t1 = await table("Table 1", 10);
+    const t2 = await table("Table 2", 10);
+    ok(await seat(g, mayet, t1));
+    ok(await seat(g, "u1", t1)); // Member 3
+    ok(await seat(g, "u2", t2)); // Member 4
+    const jo = ok(await api({ action: "addMember", guestId: g, name: "Jo", seatKey: "u2" }), 201).memberId; // names Member 4
+    expect(doc(`guests/${g}`).seats).toEqual({ [mayet]: t1, u1: t1, [jo]: t2 });
+    const people = seatablePeople({ id: g, ...doc(`guests/${g}`) }).map((p) => p.name);
+    expect(people).toEqual(["Sanrah", "Mayet", "Jo", "Member 4", "Member 5"]);
+    ok(await api({ action: "renameMember", guestId: g, memberId: mayet, name: "Mayet Cruz" }));
+    expect(doc(`guests/${g}`).seats[mayet]).toBe(t1);
+    ok(await api({ action: "update", guestId: g, expectedRevision: doc(`guests/${g}`).revision, changes: { name: "Sanrah Cruz" } }));
+    expect(doc(`guests/${g}`)).toMatchObject({ name: "Sanrah Cruz", rsvp: "attending", confirmed: 5 });
+    expect((await api({ action: "addMember", guestId: g, name: "X", seatKey: "uX" })).status).toBe(400);
+  });
+
   it("an older whole-party record: shown per person, converted on the next change; deleting a table frees its people", async () => {
     const { g } = await sanrahsParty();
     const t1 = await table("Table 1", 10);

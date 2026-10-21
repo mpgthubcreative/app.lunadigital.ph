@@ -3711,9 +3711,17 @@ tr.is-saving {
 
 /* Owner-pilot Bridal: a party's named people in Guest Details. */
 .wl-party { padding: 0; margin: 0 0 var(--space-2); }
-.wl-member { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; min-height: 40px; padding: 4px 0; border-top: 1px solid var(--border); list-style: none; }
+/* Guest Details people (2026-10-21): NAME first, details second, actions last. */
+.wl-member { display: flex; align-items: center; gap: var(--space-2); min-height: 52px; padding: 4px 0; border-top: 1px solid var(--border); list-style: none; }
 .wl-member:first-child { border-top: 0; }
-.wl-member-name { flex: 1 1 8rem; min-width: 0; }
+.wl-person { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; }
+.wl-person-name { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; margin: -6px 0; padding: 0; border: 0; background: none; color: var(--text); font: inherit; font-size: var(--text-md); font-weight: 700; text-align: left; overflow-wrap: anywhere; }
+button.wl-person-name { cursor: pointer; }
+.wl-edit { flex: none; color: var(--text-muted); font-size: 0.85em; font-weight: 400; }
+button.wl-person-name:hover .wl-edit, button.wl-person-name:focus-visible .wl-edit { color: var(--luna-primary); }
+.wl-person-meta { font-size: var(--text-sm); color: var(--text-muted); line-height: 1.35; }
+.wl-person-actions { flex: none; display: flex; align-items: center; gap: var(--space-1); }
+.wl-person-actions .wl-mark:not(.is-on) { font-weight: 500; color: var(--text-muted); }
 .wl-mark.is-on { color: var(--success); }
 [data-role="party-figures"] { margin-bottom: var(--space-3); }
 
@@ -4282,9 +4290,6 @@ tr.is-saving {
   margin: var(--space-2) 0 var(--space-1);
   font-size: var(--text-xs);
   color: var(--text-muted);
-}
-.wl-member [data-role="member-table"] {
-  margin-left: var(--space-1);
 }
 .wl-cat-counts.is-full {
   color: var(--text-muted);

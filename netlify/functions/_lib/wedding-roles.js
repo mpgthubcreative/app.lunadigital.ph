@@ -122,19 +122,24 @@ export async function moveRole({ db, tenant, FieldValue, fromGuestId, fromMember
 // member, or changing who's marked attending, frees seats that no longer
 // belong to a confirmed person (named in the history).
 
-// u1 → the new member, u2 → u1, u3 → u2 … (the unnamed seats shift down).
-function namingShift(g, memberId) {
-  const rename = { u1: memberId };
+// Naming unnamed person `uN` (default u1): their seat goes to the new
+// member; the unnamed people after them shift down (u(N+1) → uN …).
+function namingShift(g, memberId, named = 1) {
+  const rename = { [`u${named}`]: memberId };
   for (const k of Object.keys(seatsOf(g))) {
-    const n = UNNAMED_SEAT.exec(k)?.[1];
-    if (n && Number(n) > 1) rename[k] = `u${Number(n) - 1}`;
+    const n = Number(UNNAMED_SEAT.exec(k)?.[1]);
+    if (n > named) rename[k] = `u${n - 1}`;
   }
   return rename;
 }
 const freedText = (released) => (released.length ? ` · seat freed: ${released.map((r) => r.name).join(", ")}` : "");
 
-export async function addMember({ db, tenant, FieldValue, guestId, name, actor, now = new Date() }) {
+// seatKey "uN": the unnamed person being named (Member n in Guest Details),
+// so their table stays with them; absent = the first unnamed one.
+export async function addMember({ db, tenant, FieldValue, guestId, name, seatKey = null, actor, now = new Date() }) {
   const n = cleanName(name);
+  const slot = seatKey === null || seatKey === undefined ? 1 : Number(UNNAMED_SEAT.exec(String(seatKey))?.[1]);
+  if (!slot) throw new WeddingError("invalid-input", "Invalid party member");
   const ref = gRef(tenant, guestId);
   return db.runTransaction(async (tx) => {
     const snap = await tx.get(ref);
@@ -147,7 +152,7 @@ export async function addMember({ db, tenant, FieldValue, guestId, name, actor, 
     if ([g.name, ...members.map((m) => m.name)].some((x) => keyOf(x) === lowered)) throw new WeddingError("invalid-input", `${n} is already in this party`);
     const m = { id: newMemberId(), name: n, roles: [] };
     const next = { ...g, members: [...members, m] };
-    const seating = reconcileSeats(g, next, { rename: namingShift(g, m.id) });
+    const seating = reconcileSeats(g, next, { rename: namingShift(g, m.id, slot) });
     tx.update(ref, { members: next.members, ...seating.fields, history: append(g.history, { at: now, actor: who(actor), label: `Party member added: ${n}${freedText(seating.released)}` }), updatedBy: who(actor), updatedAt: FieldValue.serverTimestamp() });
     return { guestId: ref.id, memberId: m.id };
   }, TX_OPTIONS);

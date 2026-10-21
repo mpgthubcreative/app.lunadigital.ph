@@ -389,8 +389,17 @@ export function mount(container, session, { data = defaultData, toast = defaultT
       // Where each person sits (per person).
       const tableNames = new Map(tables().map((t) => [t.id, t.name]));
       const where = seatsOf(g);
-      const tableChip = (key) => (where[key] && tableNames.has(where[key]) ? html` <small class="wl-opt" data-role="member-table">${tableNames.get(where[key])}</small>` : "");
-      const memberMenu = (m) => (canManage ? menu(`More for ${m.name}`, [{ act: "", id: m.id, label: "Rename", pa: "rename" }, { act: "", id: m.id, label: "Remove from party", pa: "remove", danger: true }].map((x) => ({ ...x, act: `member-${x.pa}` }))) : "");
+      const tableOf = (key) => (where[key] && tableNames.has(where[key]) ? tableNames.get(where[key]) : null);
+      // One person: NAME first (bold; tap it or ✎ to edit), then quiet
+      // details (Primary · role · table), then actions (Mark attending, ⋯).
+      const nameEl = (name, pa, attrs = {}) =>
+        canManage
+          ? html`<button type="button" class="wl-person-name" data-pa="${pa}" data-mid="${attrs.mid ?? ""}" data-slot="${attrs.slot ?? ""}" aria-label="Edit name: ${name}"><span data-role="person-name">${name}</span><span class="wl-edit" aria-hidden="true">✎</span></button>`
+          : html`<span class="wl-person-name"><span data-role="person-name">${name}</span></span>`;
+      const details = (parts) => (parts.filter(Boolean).length ? html`<span class="wl-person-meta" data-role="member-meta">${parts.filter(Boolean).join(" · ")}</span>` : "");
+      const personRow = (key, name, actions) => html`<li class="wl-member" data-member="${key}"><div class="wl-person">${name}</div><div class="wl-person-actions">${actions}</div></li>`;
+      // ⋯ only for the less common / destructive action.
+      const memberMenu = (m) => (canManage ? menu(`More for ${m.name}`, [{ act: "member-remove", id: m.id, label: "Remove from party", danger: true }]) : "");
       const linkCell = () => {
         if (!canManage) return g.invitation?.status === "active" ? "Created" : "Not created yet";
         if (trial) return html`<a class="btn btn-compact btn-ghost" href="/wedding-setup" data-link data-act="close">Preview in Wedding Setup (free trial)</a>`;
@@ -407,11 +416,11 @@ export function mount(container, session, { data = defaultData, toast = defaultT
             <dl class="dl dl-compact" data-role="party-figures"><dt>Invited</dt><dd>${seats}</dd><dt>Attending</dt><dd>${g.rsvp === "attending" ? String(g.confirmed) : g.rsvp === "declined" ? "0" : "Waiting"}</dd></dl>
             <h3 class="section-title">${seats > 1 ? "Members" : "Guest"}</h3>
             <ul class="list wl-party" data-role="members">
-              <li class="wl-member" data-member="primary"><span class="wl-member-name">${g.name} <small class="wl-opt">Primary</small>${rolesTxt(g.roles) ? html` <small class="wl-opt" data-role="member-roles">${rolesTxt(g.roles)}</small>` : ""}${tableChip("primary")}</span>${markBtn("primary", g.attending === true)}</li>
-              ${members.map((m) => html`<li class="wl-member" data-member="${m.id}"><span class="wl-member-name">${m.name}${rolesTxt(m.roles) ? html` <small class="wl-opt" data-role="member-roles">${rolesTxt(m.roles)}</small>` : ""}${tableChip(m.id)}</span>${markBtn(m.id, m.attending === true)}${memberMenu(m)}</li>`)}
-              ${canManage ? Array.from({ length: Math.min(unnamed, 12) }, () => html`<li class="wl-member"><button type="button" class="btn btn-compact btn-ghost" data-pa="add">+ Add name</button></li>`) : unnamed ? html`<li class="wl-member stat-hint">${unnamed} more invited (no names yet)</li>` : ""}
+              ${personRow("primary", html`${nameEl(g.name, "name-primary")}${details(["Primary", rolesTxt(g.roles), tableOf("primary")])}`, markBtn("primary", g.attending === true))}
+              ${members.map((m) => personRow(m.id, html`${nameEl(m.name, "name-member", { mid: m.id })}${details([rolesTxt(m.roles), tableOf(m.id)])}`, html`${markBtn(m.id, m.attending === true)}${memberMenu(m)}`))}
+              ${Array.from({ length: Math.min(unnamed, 12) }, (_, i) => personRow(`u${i + 1}`, html`${nameEl(`Member ${members.length + 2 + i}`, "name-unnamed", { slot: i + 1 })}${details([tableOf(`u${i + 1}`)])}`, ""))}
             </ul>
-            ${unnamed && canManage ? html`<p class="stat-hint">Names are optional: the RSVP works by seat count, and names can be added later.</p>` : ""}
+            ${canManage ? html`<p class="stat-hint">Tap a name to edit it. Names are optional: the RSVP works by seat count.</p>` : ""}
             <dl class="dl dl-compact wl-details" data-role="fields">${rows.map(([k, v]) => html`<dt>${k}</dt><dd>${v}</dd>`)}</dl>
           </div>
           <div class="modal-footer">${canManage ? html`<button type="button" class="btn btn-danger" data-act="remove">Remove guest</button><button type="button" class="btn" data-act="edit">Edit</button>` : ""}<button type="button" class="btn" data-act="close">Close</button></div>
@@ -428,7 +437,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     backdrop.addEventListener("click", async (ev) => {
       const actEl = ev.target.closest("[data-act]");
       const act = actEl?.dataset.act;
-      const memberAct = act === "member-rename" ? "rename" : act === "member-remove" ? "remove" : null;
+      const memberAct = act === "member-remove" ? "remove" : null;
       const pa = memberAct ? { dataset: { pa: memberAct, mid: actEl.dataset.id } } : ev.target.closest("[data-pa]");
       if (ev.target === backdrop || act === "close") return close();
       try {
@@ -450,12 +459,15 @@ export function mount(container, session, { data = defaultData, toast = defaultT
         if (!pa) return undefined;
         const mid = pa.dataset.mid;
         const m = membersOf(g).find((x) => x.id === mid);
-        if (pa.dataset.pa === "add") {
-          const r = await formDialog({ title: `Add a name to ${g.name}'s party`, fields: [{ name: "name", label: "Name", value: "", required: true, placeholder: "e.g. Anna" }], submitLabel: "Add", onSubmit: (v) => data.guestsApi({ action: "addMember", guestId: g.id, name: v.name }) });
-          if (r) await refresh();
-        } else if (pa.dataset.pa === "rename" && m) {
-          const r = await formDialog({ title: `Rename ${m.name}`, fields: [{ name: "name", label: "Name", value: m.name, required: true }], submitLabel: "Save", onSubmit: (v) => data.guestsApi({ action: "renameMember", guestId: g.id, memberId: m.id, name: v.name }) });
-          if (r) await refresh();
+        // Edit a name here (the seat, roles and RSVP stay with the person).
+        const editName = (current, onSave) => formDialog({ title: "Edit name", fields: [{ name: "name", label: "Member name", value: current, required: true, placeholder: "e.g. Mayet" }], submitLabel: "Save", cancelLabel: "Cancel", onSubmit: (v) => (v.name.trim() === current ? { unchanged: true } : onSave(v.name.trim())) });
+        if (pa.dataset.pa === "name-primary") {
+          if (await editName(g.name, (name) => data.guestsApi({ action: "update", guestId: g.id, expectedRevision: g.revision, changes: { name } }))) await refresh();
+        } else if (pa.dataset.pa === "name-member" && m) {
+          if (await editName(m.name, (name) => data.guestsApi({ action: "renameMember", guestId: g.id, memberId: m.id, name }))) await refresh();
+        } else if (pa.dataset.pa === "name-unnamed") {
+          // "Member 4" gets a real name: that person (and their table) is named.
+          if (await editName("", (name) => data.guestsApi({ action: "addMember", guestId: g.id, name, seatKey: `u${pa.dataset.slot}` }))) await refresh();
         } else if (pa.dataset.pa === "remove" && m) {
           try {
             await data.guestsApi({ action: "removeMember", guestId: g.id, memberId: m.id });

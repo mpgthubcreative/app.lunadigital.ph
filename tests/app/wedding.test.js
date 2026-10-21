@@ -1519,28 +1519,44 @@ describe("Owner-pilot Bridal: party members are real people (RSVP · Roles · Se
     expect(container.querySelector('[data-table="tA1b2c3d4"] [data-role="table-seats"]').textContent.trim()).toBe("· 3/8");
   });
 
-  it("Details = the party sheet: Invited 5 · Attending 3; members (primary first, roles shown); + Add name for each unnamed seat; add / rename; marking attending", async () => {
+  it("Details = the party sheet: each person's NAME first (bold, tap / ✎ to edit), then Primary · role · table, then actions; Member 4 / 5 can be named; ⋯ only for Remove from party", async () => {
     const data = await mountParty();
     container.querySelector('[data-guest="gSanrah0001"] .wl-main').click();
     const d = document.querySelector('[data-role="details"]');
     expect(d.querySelector(".card-title").textContent).toBe("Sanrah's Party");
     expect([...d.querySelectorAll('[data-role="party-figures"] dd')].map((x) => x.textContent)).toEqual(["5", "3"]);
-    // Each person shows the table they sit at (per-person seating).
-    expect([...d.querySelectorAll('[data-role="members"] .wl-member-name')].map((x) => x.textContent.replace(/\s+/g, " ").trim())).toEqual(["Sanrah Primary Maid / Matron of Honor Table 5", "Anna Bridesmaid Table 5", "Bea Table 5"]);
-    expect([...d.querySelectorAll('[data-pa="add"]')].length).toBe(2);
+    const people = () => [...document.querySelectorAll('[data-role="details"] [data-role="members"] .wl-member')].map((li) => [li.querySelector('[data-role="person-name"]').textContent, li.querySelector('[data-role="member-meta"]')?.textContent ?? ""]);
+    // The name is its own element; "Primary", roles and the table are the quiet line under it.
+    expect(people()).toEqual([["Sanrah", "Primary · Maid / Matron of Honor · Table 5"], ["Anna", "Bridesmaid · Table 5"], ["Bea", "Table 5"], ["Member 4", ""], ["Member 5", ""]]);
+    expect([...d.querySelectorAll(".wl-person-name .wl-edit")]).toHaveLength(5); // every name is editable (✎)
     expect([...d.querySelectorAll('[data-pa="attend"]')].map((b) => b.textContent)).toEqual(["Attending ✓", "Attending ✓", "Mark attending"]);
-    d.querySelector('[data-pa="add"]').click();
+    // The member ⋯ holds only the destructive action.
+    expect([...d.querySelectorAll('[data-member="mAnna000001"] .menu-item')].map((b) => b.textContent)).toEqual(["Remove from party"]);
+    // Tap a member's name: "Member name", Save / Cancel, in place.
+    d.querySelector('[data-pa="name-member"][data-mid="mAnna000001"]').click();
     await flush();
-    lastForm().elements.name.value = "Carla";
-    submit(lastForm());
-    await flush();
-    expect(data.guestsApi).toHaveBeenCalledWith({ action: "addMember", guestId: "gSanrah0001", name: "Carla" });
-    document.querySelector('[data-role="details"] [data-act="member-rename"][data-id="mAnna000001"]').click();
-    await flush();
+    expect(lastForm().querySelector("label").textContent).toMatch(/^Member name/);
+    expect(lastForm().elements.name.value).toBe("Anna");
+    expect([...lastForm().querySelectorAll("button")].map((b) => b.textContent.trim())).toEqual(expect.arrayContaining(["Cancel", "Save"]));
     lastForm().elements.name.value = "Annabelle";
     submit(lastForm());
     await flush();
     expect(data.guestsApi).toHaveBeenCalledWith({ action: "renameMember", guestId: "gSanrah0001", memberId: "mAnna000001", name: "Annabelle" });
+    expect(document.querySelector('[data-role="details"]')).not.toBeNull(); // still on Guest Details
+    // Name an unnamed person ("Member 5"): that exact person (and any table) is named.
+    document.querySelector('[data-role="details"] [data-pa="name-unnamed"][data-slot="2"]').click();
+    await flush();
+    lastForm().elements.name.value = "Carla";
+    submit(lastForm());
+    await flush();
+    expect(data.guestsApi).toHaveBeenCalledWith({ action: "addMember", guestId: "gSanrah0001", name: "Carla", seatKey: "u2" });
+    // The primary guest's name too (the guest record).
+    document.querySelector('[data-role="details"] [data-pa="name-primary"]').click();
+    await flush();
+    lastForm().elements.name.value = "Sanrah Cruz";
+    submit(lastForm());
+    await flush();
+    expect(data.guestsApi).toHaveBeenCalledWith({ action: "update", guestId: "gSanrah0001", expectedRevision: SANRAH.revision, changes: { name: "Sanrah Cruz" } });
     document.querySelector('[data-role="details"] [data-pa="attend"][data-mid="mBea0000001"]').click();
     await flush();
     expect(data.guestsApi).toHaveBeenCalledWith({ action: "setAttending", guestId: "gSanrah0001", memberId: "mBea0000001", attending: true });

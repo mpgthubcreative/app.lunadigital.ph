@@ -18,7 +18,7 @@
 //   { action: "unassignRole", guestId, memberId?, role }                 the guest and RSVP stay
 //   { action: "moveRole", fromGuestId, fromMemberId?, toGuestId?, toMemberId?, role, toRole? }
 //   Party members (Owner-pilot Bridal):
-//   { action: "addMember", guestId, name }                  at most party size − 1 names
+//   { action: "addMember", guestId, name, seatKey? }        at most party size − 1 names; seatKey "uN" names that unnamed person (keeps their table)
 //   { action: "renameMember", guestId, memberId, name }     roles / marks stay (same id)
 //   { action: "removeMember", guestId, memberId, force? }   force after the "has a role" warning
 //   { action: "setAttending", guestId, memberId?, attending }   which named people are coming
@@ -54,7 +54,7 @@ export const createGuestsHandler = (deps) =>
       assignRole: { permission: M, fields: ["action", "guestId", "memberId", "role"], run: (c, b) => assignRole({ ...c, guestId: guestIdOf(b), memberId: b.memberId ?? null, role: b.role }) },
       unassignRole: { permission: M, fields: ["action", "guestId", "memberId", "role"], run: (c, b) => unassignRole({ ...c, guestId: guestIdOf(b), memberId: b.memberId ?? null, role: b.role }) },
       moveRole: { permission: M, fields: ["action", "fromGuestId", "fromMemberId", "toGuestId", "toMemberId", "role", "toRole"], run: (c, b) => moveRole({ ...c, fromGuestId: b.fromGuestId, fromMemberId: b.fromMemberId ?? null, toGuestId: b.toGuestId ?? null, toMemberId: b.toMemberId ?? null, role: b.role, toRole: b.toRole ?? null }) },
-      addMember: { permission: M, created: true, fields: ["action", "guestId", "name"], run: (c, b) => addMember({ ...c, guestId: guestIdOf(b), name: b.name }) },
+      addMember: { permission: M, created: true, fields: ["action", "guestId", "name", "seatKey"], run: (c, b) => addMember({ ...c, guestId: guestIdOf(b), name: b.name, seatKey: b.seatKey ?? null }) },
       renameMember: { permission: M, fields: ["action", "guestId", "memberId", "name"], run: (c, b) => renameMember({ ...c, guestId: guestIdOf(b), memberId: b.memberId, name: b.name }) },
       removeMember: { permission: M, fields: ["action", "guestId", "memberId", "force"], run: (c, b) => removeMember({ ...c, guestId: guestIdOf(b), memberId: b.memberId, force: b.force === true }) },
       setAttending: { permission: M, fields: ["action", "guestId", "memberId", "attending"], run: (c, b) => setMemberAttending({ ...c, guestId: guestIdOf(b), memberId: b.memberId ?? null, attending: b.attending }) },
