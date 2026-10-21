@@ -569,38 +569,16 @@ export function mount(container, session, { data = defaultData, toast = defaultT
       box.setSelectionRange(pos, pos);
     }
   };
-  // A ⋯ menu inside a scrolling list floats (fixed) so the box doesn't clip
-  // it; scrolling the box closes it.
-  const onToggle = (event) => {
-    const d = event.target;
-    if (!d.matches?.("details.line-menu") || !d.closest(".wl-scroll")) return;
-    const list = d.querySelector(".line-menu-list");
-    if (!d.open) {
-      list.removeAttribute("style");
-      return;
-    }
-    // Below the ⋯ when it fits, else above it, else pinned inside the screen (scrolling).
-    const r = d.querySelector("summary").getBoundingClientRect();
-    list.style.cssText = `position:fixed;left:auto;right:${Math.max(8, innerWidth - r.right)}px;top:${r.bottom + 4}px;bottom:auto;max-height:${innerHeight - 16}px;overflow-y:auto`;
-    const h = list.getBoundingClientRect().height;
-    if (r.bottom + 4 + h > innerHeight - 8) list.style.top = `${Math.max(8, r.top - 4 - h)}px`;
-  };
-  const onScroll = (event) => {
-    if (!event.target.classList?.contains("wl-scroll")) return;
-    for (const d of event.target.querySelectorAll("details.line-menu[open]")) d.removeAttribute("open");
-  };
+  // ⋯ menus (also inside the scrolling lists) are placed, kept clear of the
+  // bottom tabs and closed on scroll by components/menus.js.
   container.addEventListener("click", onClick);
   container.addEventListener("change", onChange);
   container.addEventListener("input", onInput);
-  container.addEventListener("toggle", onToggle, true);
-  container.addEventListener("scroll", onScroll, true);
   load();
   return () => {
     alive = false;
-    container.removeEventListener("scroll", onScroll, true);
     container.removeEventListener("click", onClick);
     container.removeEventListener("change", onChange);
     container.removeEventListener("input", onInput);
-    container.removeEventListener("toggle", onToggle, true);
   };
 }

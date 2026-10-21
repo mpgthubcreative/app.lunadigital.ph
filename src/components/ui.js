@@ -296,7 +296,8 @@ export function bindRowMenus(root) {
       closeAll(menu);
       menu.hidden = !menu.hidden;
       btn.setAttribute("aria-expanded", String(!menu.hidden));
-      if (!menu.hidden) menu.querySelector(".menu-item")?.focus();
+      // No scroll: the menu is placed (components/menus.js) after it shows.
+      if (!menu.hidden) menu.querySelector(".menu-item")?.focus({ preventScroll: true });
       return;
     }
     if (!e.target.closest(".menu-wrap[data-menu]")) closeAll();

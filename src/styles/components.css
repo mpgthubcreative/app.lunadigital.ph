@@ -3548,7 +3548,6 @@ tr.is-saving {
 .wl-due { min-width: 3.6em; text-align: right; color: var(--text-muted); }
 .wl-end { flex: none; display: flex; align-items: center; gap: var(--space-1); }
 .wl-row .line-menu { flex: none; }
-.wl-row .line-menu > summary { min-width: 40px; }
 .select.select-chip.wl-status { flex: none; width: auto; max-width: 8.5rem; }
 .wl-chip {
   flex: none;
@@ -3616,7 +3615,7 @@ tr.is-saving {
 .wl-state { flex: none; display: flex; flex-direction: column; align-items: flex-end; gap: 2px; min-width: 4.6rem; }
 .wl-state small { font-size: var(--text-xs); color: var(--text-muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .wl-chip[data-tone="danger"] { color: var(--danger); background: var(--danger-bg); border-color: #f3c3be; }
-.wl-menu-gap { flex: none; width: 40px; }
+.wl-menu-gap { flex: none; }
 .wl-money .d-only { display: none; }
 @media (min-width: 720px) {
   .wl-money .wl-main { flex-direction: row; align-items: center; gap: var(--space-3); }
@@ -3651,7 +3650,6 @@ tr.is-saving {
   .wl-row { gap: 6px; }
   .wl-due { min-width: 3.1em; }
 }
-.wl-amt { padding-right: var(--space-3); }
 /* Wedding Setup form. */
 .wl-form { max-width: 40rem; }
 .wl-fieldset { margin: var(--space-3) 0; padding: var(--space-2) var(--space-3); border: 1px solid var(--border); border-radius: var(--radius); }
@@ -4201,3 +4199,50 @@ tr.is-saving {
 /* Reviews & Feedback: long text wraps inside the row (no sideways scroll) */
 .sa-rows td.fb-text { white-space: normal; min-width: 180px; max-width: 280px; }
 .sa-rows td.fb-text .cell-sub-line { display: block; }
+
+/* ---------- One compact-row standard (2026-10-21) ----------
+   Every list row in every workspace (wl-row lists, phone table rows, the
+   console): name + details on the left; the amount, then ONE ⋯ slot, on
+   the right. The ⋯ slot is the same 44 px tap target everywhere (the icon
+   stays small), vertically centred; rows without a ⋯ keep the empty slot so
+   amounts line up. Menus themselves are placed by components/menus.js. */
+:root {
+  --row-action: 44px;
+}
+.btn-icon[data-act="row-menu"],
+.wl-row .line-menu > summary,
+.rows .line-menu > summary,
+.row-actions .line-menu > summary {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: var(--row-action);
+  min-width: var(--row-action);
+  height: var(--row-action);
+  min-height: var(--row-action);
+  padding: 0;
+}
+.wl-menu-gap {
+  width: var(--row-action);
+}
+.wl-amt {
+  min-width: 5.5em;
+  padding-right: 0;
+  text-align: right;
+}
+@media (max-width: 719px) {
+  /* Phone table rows: the ⋯ shares the first line with the name (right,
+     centred); extra controls / bars go to the next line. */
+  .rows td.m-only {
+    flex: 1 1 calc(100% - var(--row-action) - var(--space-2) - 1px);
+  }
+  .rows td[data-m="more"] {
+    order: 1;
+    align-self: center;
+  }
+  .rows td[data-m="ctl"],
+  .rows td[data-m="bar"],
+  .rows td[data-m="info"] {
+    order: 2;
+  }
+}

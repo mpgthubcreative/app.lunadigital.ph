@@ -22,6 +22,7 @@ import { renderLogin, renderBoot } from "../app/screens.js";
 import { overviewView, businessesView, plansView, auditView } from "./views.js";
 import { subscriptionsView, paymentsView, usageCostView } from "./money.js";
 import { feedbackView } from "./feedback.js";
+import { installMenuBehavior } from "../components/menus.js";
 
 const BASE = "/console";
 const SECTIONS = [
@@ -116,6 +117,8 @@ function mountConsole(root, session, plans) {
 
 async function boot() {
   const root = document.getElementById("app");
+  // The same ⋯ menu placement / closing as the app (components/menus.js).
+  installMenuBehavior(document);
   setTokenProvider(currentIdToken);
   renderBoot(root, "Loading Luna Console…");
   await watchUser(async (user) => {
