@@ -1334,10 +1334,42 @@ c6e6ffd was NOT the final baseline: the owner's final spec for Reports and the H
   - Release checks: phone frame + Preview 113/113; photos + frame 71/71 (its four old floating-tab checks rewritten for the frame); trial / pricing 72/72; guest links 5/5 (snapshot re-saved after the gallery fix).
   - Retired: three pre-2026-10-21 pricing scripts (superseded by the trial check and unit tests).
 
-### Production migration baseline (2026-10-21, fourth)
+### 2026-10-21 · Bridal: seating per person, Guest Details, FAQ setup (2461c8d)
 
-- **Baseline = the commit that adds this entry.** Its code is identical to 3d16e7b (CI passing).
-- It supersedes the earlier 2026-10-21 baselines (code e5b6050, 7a8edf8, 6f7aec7) and every earlier one.
+- **Seating per person** (`shared/wedding-seating.js`):
+  - The RSVP stays per party (rsvp, partySize, confirmed, link, history).
+  - Each confirmed PERSON has a table: `guests/{id}.seats { seatKey: tableId }` + `tableIds`.
+  - seatKey is `primary`, a party member id, or `u1`, `u2`… for people without a name yet (shown "Member n").
+  - Who can be seated: the confirmed people, marked attending first, then named, then unnamed.
+  - One table per person. Capacity counts people and is enforced: seating past it, a whole-party seat without room, and fewer seats than people seated are all refused with a clear message.
+  - A declined or waiting party, or more people than confirmed, can't be seated.
+  - Owner RSVP, the guest's own RSVP, adding or removing a member, and attending marks all reconcile seats. Seats that no longer belong to a confirmed person are freed (last people first) and named in the history and the reply / toast.
+  - Naming an unnamed seated person keeps their table.
+  - Older whole-party records (`tableId`) read as all their people and convert on their next change (no migration).
+  - New action `seatPerson`; `seat` still seats the whole party.
+- **Screens and exports:**
+  - The Seating view lists people: Unassigned grouped by party (quiet label) with Assign; tables list people with ⋯ Move / Unassign; full tables are marked.
+  - The workbook Seating sheet has one row per person (Person, Party, Table, RSVP Status). Master Backup Tables count people and parties.
+- **Guest Details:**
+  - Name + RSVP on top; Category, Role, RSVP date, Side, Invitation sent, Invitation link with direct [View] [Copy] (or Create link).
+  - Each person shows their table.
+  - Exactly one Remove guest: member Rename / Remove from party moved into a small ⋯.
+  - Activity moved to ⋯ → View history; nothing deleted. Contact and Notes stay in Edit.
+- **Wedding Setup FAQ:**
+  - "Frequently Asked Questions" with a short explanation and no empty pairs by default.
+  - Saved FAQs show as FAQ 1 / FAQ 2; + Add FAQ adds one at a time with example placeholders; Remove renumbers.
+  - Stored as before (`setup.faq [{ q, a }]`); removing all clears. Preview / guest links show saved FAQs as before.
+- **Tests:**
+  - Unit: 1846 pass (119 files), including tests/functions/wedding-seating.test.js (the Sanrah / Mayet case).
+  - Emulator: 41 files / 2970 pass (4 foreground batches).
+  - Build OK. CI passed on 2461c8d.
+  - Staging (temporary `st-wed-tmp`, removed afterwards): 24/24 at 390 and 1280.
+  - Regression: Preview / frame 113/113, trial 72/72, Bridal menus 37/37, guest links 5/5 (snapshot re-saved after the owner edited veah-bridal's Wedding Setup at 06:53 UTC).
+
+### Production migration baseline (2026-10-21, fifth)
+
+- **Baseline = the commit that adds this entry.** Its code is identical to 2461c8d (CI passing).
+- It supersedes the earlier 2026-10-21 baselines (code 3d16e7b, e5b6050, 7a8edf8, 6f7aec7) and every earlier one.
 - Production (Singapore Firebase, Netlify production, the domains) is set up only on the owner's go-ahead, after the owner's own iPhone check.
 
 ## Plan (decisions made from the brief)
