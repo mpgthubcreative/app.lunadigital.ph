@@ -275,9 +275,9 @@ describe("Luna Bridal workbook", () => {
     const wb = await workbook(u.camille, W, { range: "month" }); // a wedding ignores the range
     expect(wb.status).toBe(200);
     expect(wb.fileName).toBe("Luna-Bridal-Carlo-Yanie.xlsx");
-    expect(sheetNames(wb.bytes)).toEqual(["Money", "Payments", "Tasks", "Guests", "Party Members", "Seating", "Roles", "Crew Meals", "Music & Program", "Wedding Setup"]);
-    expect(rowsOf(wb.bytes, "Money")[0]).toEqual(["Category", "Supplier / Description", "Total", "Paid", "Remaining", "Status", "Next Due"]);
-    expect(dataOf(wb.bytes, "Money")).toEqual([["Catering", "Admiral Hotel Reception", "800000", "470000", "330000", "Partial", ""]]);
+    expect(sheetNames(wb.bytes)).toEqual(["Expenses", "Payments", "Tasks", "Guests", "Party Members", "Seating", "Roles", "Crew Meals", "Music & Program", "Wedding Setup"]);
+    expect(rowsOf(wb.bytes, "Expenses")[0]).toEqual(["Category", "Supplier / Description", "Total", "Paid", "Remaining", "Status", "Next Due"]);
+    expect(dataOf(wb.bytes, "Expenses")).toEqual([["Catering", "Admiral Hotel Reception", "800000", "470000", "330000", "Partial", ""]]);
     expect(dataOf(wb.bytes, "Payments")).toEqual([["Admiral Hotel Reception", serial("2026-10-05"), "470000", "Bank Transfer", "BT-1"]]);
     expect(rowsOf(wb.bytes, "Tasks")[0]).toEqual(["Task", "Assigned To", "Due Date", "Bride Status", "Groom Status", "Overall Status"]);
     expect(dataOf(wb.bytes, "Tasks")).toEqual([["Get CENOMAR", "Yanie", serial("2026-11-01"), "Done", "Not done", "In Progress"]]);
@@ -291,7 +291,7 @@ describe("Luna Bridal workbook", () => {
     expect(dataOf(wb.bytes, "Crew Meals")).toEqual([["Photo team", "", "2", "3", "0", "Hotel", ""]]);
     expect(dataOf(wb.bytes, "Music & Program")).toEqual([["Ceremony", "1", "Processional", "Canon in D", "", "String quartet", ""]]);
     expect(dataOf(wb.bytes, "Wedding Setup")).toEqual([["Carlo & Yanie", serial("2027-02-14"), "San Agustin Church", "3:00 PM", "Admiral Hotel", "6:30 PM", serial("2027-01-15")]]);
-    expectCleanSheet(wb.bytes, "Money", { money: ["C", "D", "E"] });
+    expectCleanSheet(wb.bytes, "Expenses", { money: ["C", "D", "E"] });
     expectCleanSheet(wb.bytes, "Payments", { money: ["C"], dates: ["B"] });
     const token = link.url ? link.url.split("/").pop() : link.token;
     expectReadable(wb.bytes, [W, ids.g, ids.anna, ids.sup, ids.catering, ids.table, "Cruz Secret Guest", "weddingSlug", "maid_of_honor", ...(token ? [token] : [])]);

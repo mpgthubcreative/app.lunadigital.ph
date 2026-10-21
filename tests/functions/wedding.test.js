@@ -435,8 +435,8 @@ describe("the bell's Needs attention in a wedding (GET /api/wedding-attention)",
     ok(await api("tasks", u.camille, { action: "create", task: { title: "Gown fitting", dueDate: "2026-10-30" } }), 201);
     const r = ok(await attention(u.camille));
     expect(r.summary.todos.map((x) => [x.kind, x.name, x.text, x.read])).toEqual([
-      ["paymentOverdue", "Money", "ABC Photo Studio: Downpayment (₱10,000) is overdue, due Oct 10.", false],
-      ["paymentDue", "Money", "ABC Photo Studio: Second payment (₱10,000) is due Oct 20.", false],
+      ["paymentOverdue", "Expenses", "ABC Photo Studio: Downpayment (₱10,000) is overdue, due Oct 10.", false],
+      ["paymentDue", "Expenses", "ABC Photo Studio: Second payment (₱10,000) is due Oct 20.", false],
       ["taskOverdue", "Tasks", '"Submit church requirements" was due Oct 12.', false],
     ]);
     expect(r.summary.todos[0].href).toBe(`/wedding-suppliers?supplier=${s}`);

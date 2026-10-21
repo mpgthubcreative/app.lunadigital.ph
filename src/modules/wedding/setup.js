@@ -121,7 +121,6 @@ export function mount(container, session, { api = defaultApi, toast = defaultToa
         : inv.hasDraft
           ? `${inv.draftState === "ready" ? "Ready for publishing" : "Draft"} · Your current Standard invitation remains live.`
           : "Luna is preparing your design. Your current Standard invitation remains live.";
-    const faq = Array.isArray(s.faq) ? s.faq : [];
     const trial = session.subscription?.trial?.open === true;
     const chosen = STANDARD_TEMPLATE_IDS.includes(s.templateId) ? s.templateId : DEFAULT_TEMPLATE_ID;
     const picker = custom
@@ -135,17 +134,29 @@ export function mount(container, session, { api = defaultApi, toast = defaultToa
       <p class="stat-hint" data-role="invitation-line">${stateLine}</p>
       ${picker}
       <div class="ws-link-actions"><button type="button" class="btn btn-compact" data-act="preview">Preview${custom && inv.live !== "custom" ? " (live: Standard)" : ""}</button>${custom && inv.hasDraft ? html`<button type="button" class="btn btn-compact" data-act="preview-draft">Preview draft design</button>` : ""}</div>
-      ${custom ? html`<details class="wl-fold" data-role="plus-content"><summary>More for your customized invitation</summary>
-        <div class="field"><label for="ws-story">Our story</label><textarea class="input" id="ws-story" name="story" rows="4" maxlength="1500" ${canEdit ? "" : "disabled"}>${s.story ?? ""}</textarea></div>
-        ${faqSection(faq)}
-        <div class="field"><label for="ws-footerNote">Closing line</label><input class="input" id="ws-footerNote" name="footerNote" maxlength="200" value="${s.footerNote ?? ""}" placeholder="e.g. With love, Carlo & Yanie" ${canEdit ? "" : "disabled"}></div>
-        <p class="stat-hint">Gallery photos (up to 6)</p>
-        <div class="ws-gallery" data-role="gallery">${state.gallery.map((g) => html`<figure class="ws-gallery-item"><img src="${g.dataUrl}" alt="Gallery photo">${canEdit ? html`<button type="button" class="btn btn-compact btn-ghost" data-act="gallery-remove" data-id="${g.id}" aria-label="Remove this photo">Remove</button>` : ""}</figure>`)}</div>
-        ${canEdit && state.gallery.length < 6 ? html`<label class="btn btn-compact">Add photo<input class="visually-hidden" type="file" accept="${PHOTO_ACCEPT}" data-role="gallery-add" aria-label="Add a gallery photo"></label>` : ""}
-        <p class="stat-hint">Luna shows these where your design has a Story, FAQ, Gallery or Footer section. The design itself is set up by Luna.</p>
-      </details>` : ""}
+      <div class="field"><label for="ws-welcomeMessage">Welcome message</label><textarea class="input" id="ws-welcomeMessage" name="welcomeMessage" rows="3" maxlength="600" ${canEdit ? "" : "disabled"}>${s.welcomeMessage ?? ""}</textarea></div>
+      ${custom ? html`<p class="stat-hint">Luna shows your story, FAQ, closing line and gallery where your design has those sections. The design itself is set up by Luna.</p>` : ""}
     </fieldset>`;
   };
+  // Optional content appears on request (+ Add …); saved content always shows.
+  const isCustom = () => (state.invitation || {}).level === "custom";
+  const reveal = (key, has) => has || state.shown?.has(key);
+  const storySection = (s) => {
+    const story = reveal("story", Boolean(s.story));
+    const closing = reveal("footerNote", Boolean(s.footerNote));
+    return html`<section class="ws-section" data-role="story-section"><h3 class="ws-sub-title">Story</h3>
+      ${story ? html`<div class="field"><label for="ws-story">Our story</label><textarea class="input" id="ws-story" name="story" rows="4" maxlength="1500" ${canEdit ? "" : "disabled"}>${s.story ?? ""}</textarea></div>` : canEdit ? html`<button type="button" class="btn btn-compact" data-act="reveal" data-key="story">+ Add story</button>` : ""}
+      ${closing ? html`<div class="field"><label for="ws-footerNote">Closing line</label><input class="input" id="ws-footerNote" name="footerNote" maxlength="200" value="${s.footerNote ?? ""}" placeholder="e.g. With love, Carlo & Yanie" ${canEdit ? "" : "disabled"}></div>` : canEdit ? html`<button type="button" class="btn btn-compact btn-ghost" data-act="reveal" data-key="footerNote">+ Add closing line</button>` : ""}
+    </section>`;
+  };
+  const galleryBox = () => html`<p class="stat-hint">Gallery (up to 6)</p>
+    <div class="ws-gallery" data-role="gallery">${state.gallery.map((g) => html`<figure class="ws-gallery-item"><img src="${g.dataUrl}" alt="Gallery photo">${canEdit ? html`<button type="button" class="btn btn-compact btn-ghost" data-act="gallery-remove" data-id="${g.id}" aria-label="Remove this photo">Remove</button>` : ""}</figure>`)}</div>
+    ${canEdit && state.gallery.length < 6 ? html`<label class="btn btn-compact">+ Add photo<input class="visually-hidden" type="file" accept="${PHOTO_ACCEPT}" data-role="gallery-add" aria-label="Add a gallery photo"></label>` : ""}`;
+  const photosSection = () => html`<section class="ws-section" data-role="photos-section"><h3 class="ws-sub-title">Photos</h3>
+      <p class="stat-hint">Cover photo</p><div data-role="hero-box">${heroBox()}</div>
+      ${isCustom() ? html`<div data-role="gallery-box">${galleryBox()}</div>` : ""}
+    </section>`;
+
   // The wedding's own link (identity) vs each guest's private invitation.
   const origin = () => globalThis.location?.origin || "https://app.lunadigital.ph";
   const linkBox = () => {
@@ -222,21 +233,25 @@ export function mount(container, session, { api = defaultApi, toast = defaultToa
             ? skeleton(6)
             : html`<form class="wl-form" data-role="setup" novalidate>
                 <p class="stat-hint">What your guests see on their invitation. After saving, make each guest's link from Guests → ⋯ → Create invitation link.</p>
+                <section class="ws-section" data-role="couple-section"><h3 class="ws-sub-title">Couple &amp; Date</h3>
                 ${field("coupleNames", "Couple names", "e.g. Camille & Carlo", s.coupleNames)}
                 ${slugField(s)}
                 ${linkBox()}
                 ${field("weddingDate", "Wedding date", "", s.weddingDate, "date")}
+                </section>
+                <section class="ws-section" data-role="venues-section"><h3 class="ws-sub-title">Ceremony &amp; Reception</h3>
                 <fieldset class="wl-fieldset"><legend>Ceremony</legend>${field("ceremonyTime", "Time", "", s.ceremonyTime, "time")}${TEXT.slice(1, 4).map(([n, l, p]) => field(n, l.replace("Ceremony ", "").replace(/^./, (c) => c.toUpperCase()), p, s[n], n.endsWith("Map") ? "url" : "text"))}</fieldset>
                 <fieldset class="wl-fieldset"><legend>Reception</legend>${field("receptionTime", "Time", "", s.receptionTime, "time")}${TEXT.slice(4, 7).map(([n, l, p]) => field(n, l.replace("Reception ", "").replace(/^./, (c) => c.toUpperCase()), p, s[n], n.endsWith("Map") ? "url" : "text"))}</fieldset>
                 ${field("dressCode", "Dress code", "e.g. Formal", s.dressCode)}
-                <div class="field"><label for="ws-welcomeMessage">Welcome message</label><textarea class="input" id="ws-welcomeMessage" name="welcomeMessage" rows="3" maxlength="600" ${canEdit ? "" : "disabled"}>${s.welcomeMessage ?? ""}</textarea></div>
+                </section>
+                ${invitationBox(s)}
+                ${isCustom() ? html`<div data-role="plus-content">${storySection(s)}${faqSection(Array.isArray(s.faq) ? s.faq : [])}</div>` : ""}
+                ${photosSection()}
                 <fieldset class="wl-fieldset"><legend>RSVP</legend>
                   <label class="wl-check"><input type="checkbox" name="rsvpEnabled" ${s.rsvpEnabled ? "checked" : ""} ${canEdit ? "" : "disabled"}> Guests can RSVP from their invitation</label>
                   ${field("rsvpDeadline", "RSVP deadline", "", s.rsvpDeadline, "date")}
                   <label class="wl-check"><input type="checkbox" name="closeAfterDeadline" ${s.closeAfterDeadline === false ? "" : "checked"} ${canEdit ? "" : "disabled"}> Close guest RSVPs after the deadline (you can still change RSVPs in Luna)</label>
                 </fieldset>
-                <fieldset class="wl-fieldset"><legend>Cover photo</legend><div data-role="hero-box">${heroBox()}</div></fieldset>
-                ${invitationBox(s)}
                 ${canEdit ? html`<div class="page-actions"><button type="submit" class="btn btn-primary" ${state.saving ? "disabled" : ""}>${state.saving ? "Saving…" : "Save"}</button></div><div data-role="save-box">${statusLine()}</div>` : ""}
               </form>`}`
     );
@@ -309,15 +324,8 @@ export function mount(container, session, { api = defaultApi, toast = defaultToa
   async function reloadGallery() {
     const r = await api("wedding-setup", { method: "POST", body: { action: "get" } });
     state.gallery = Array.isArray(r.gallery) ? r.gallery.filter((g) => typeof g.dataUrl === "string" && g.dataUrl.startsWith("data:image/")) : [];
-    const box = container.querySelector('[data-role="invitation-level"]');
-    const open = container.querySelector('[data-role="plus-content"]')?.open;
-    if (box) {
-      state.draft = readSetupForm(form());
-      const holder = document.createElement("div");
-      render(holder, invitationBox(state.draft));
-      box.replaceWith(holder.firstElementChild);
-      if (open) container.querySelector('[data-role="plus-content"]')?.setAttribute("open", "");
-    }
+    const box = container.querySelector('[data-role="gallery-box"]');
+    if (box) render(box, galleryBox());
   }
   const onChange = async (event) => {
     if (event.target.dataset?.role === "gallery-add") {
@@ -345,6 +353,13 @@ export function mount(container, session, { api = defaultApi, toast = defaultToa
   };
   const onClick = async (event) => {
     const act = event.target.closest("[data-act]")?.dataset.act;
+    if (act === "reveal") {
+      const key = event.target.closest("[data-act]").dataset.key;
+      state.shown = new Set([...(state.shown || []), key]);
+      draw();
+      container.querySelector(key === "story" ? "#ws-story" : "#ws-footerNote")?.focus();
+      return;
+    }
     if (act === "faq-add" || act === "faq-remove") {
       const list = faqTyped();
       if (act === "faq-add") list.push({ q: "", a: "" });

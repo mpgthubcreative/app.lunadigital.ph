@@ -137,7 +137,7 @@ export async function bridalSheets(x) {
       const dues = upcoming.filter((p) => p.supplierId === r.id).map((p) => p.dueDate).sort();
       r.nextDue = r.record.nextDue ?? dues[0] ?? null;
     }
-    sheets.push({ name: "Money", columns: MONEY_COLUMNS, rows });
+    sheets.push({ name: "Expenses", columns: MONEY_COLUMNS, rows });
   }
 
   if (seesExpenses) {

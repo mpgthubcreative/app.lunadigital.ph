@@ -101,7 +101,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     render(
       container,
       html`
-        ${pageHeader({ title: "Wedding Expenses", subtitle: html`<a href="/wedding-suppliers" data-link>‹ Money</a>`, actions: can.create ? html`<button type="button" class="btn btn-primary" data-act="new">+ Add expense</button>` : "" })}
+        ${pageHeader({ title: "Wedding Expenses", subtitle: html`<a href="/wedding-suppliers" data-link>‹ Expenses</a>`, actions: can.create ? html`<button type="button" class="btn btn-primary" data-act="new">+ Add expense</button>` : "" })}
         ${filterBar({
           fields: [
             { name: "search", label: "Payee or reference", type: "search", primary: true, value: f.search },

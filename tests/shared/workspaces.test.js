@@ -444,7 +444,7 @@ describe("navigation", () => {
   it("non-Distributor workspaces get no Distributor navigation, and their own names", () => {
     // Phase 18.5: the wedding story order (Tasks → Guests → Suppliers → Payments → Budget / Expenses).
     // Owner-pilot Bridal UX: Money first (home), no Dashboard; Expenses / Payments keep a route.
-    expect(nav("bridal-expense", "owner")).toEqual(["/wedding-suppliers Money", "/wedding-tasks Tasks", "/guests Guests", "/budget Budget", "/expenses Wedding Expenses", "/supplier-payments Supplier Payments", "/users Users", "/settings Settings"]);
+    expect(nav("bridal-expense", "owner")).toEqual(["/wedding-suppliers Expenses", "/wedding-tasks Tasks", "/guests Guests", "/budget Budget", "/expenses Wedding Expenses", "/supplier-payments Supplier Payments", "/users Users", "/settings Settings"]);
     expect(nav("baby-expense", "owner")).toEqual(["/ Baby Dashboard", "/budget Budget & Categories", "/expenses Baby Expenses", "/payment-schedule Payment Schedule", "/providers Providers / Vendors", "/users Users", "/settings Settings"]);
     // Owner-pilot UX (2026-10-17): no Dashboard in Household; Payroll first (home).
     expect(nav("household-payroll", "owner")).toEqual(["/payroll Payroll", "/attendance Attendance", "/expenses Expenses", "/advances Advances", "/household-staff Household Staff", "/payment-schedule Bills", "/budget Categories", "/users Users", "/settings Settings"]);
@@ -483,7 +483,7 @@ describe("navigation", () => {
 
   it("labels never change ids, paths or permissions", () => {
     const m = resolveNavigation(access("bridal-expense"))[0];
-    expect(m).toMatchObject({ id: "vendors", path: "/wedding-suppliers", permission: "vendors.view", label: "Money" });
+    expect(m).toMatchObject({ id: "vendors", path: "/wedding-suppliers", permission: "vendors.view", label: "Expenses" });
   });
 });
 

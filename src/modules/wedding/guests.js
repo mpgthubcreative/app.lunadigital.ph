@@ -142,7 +142,15 @@ export function mount(container, session, { data = defaultData, toast = defaultT
       { act: "history", id: g.id, label: "View history" },
       ...(canManage ? [{ act: "remove", id: g.id, label: "Remove guest", danger: true, sep: true }] : []),
     ]);
-  const rsvpRow = (g) => html`<li class="wl-row wl-guest" data-guest="${g.id}"><button type="button" class="wl-main" data-act="view" data-id="${g.id}"><span class="wl-name">${g.name}</span></button>${seats(g)}${rsvpControl(g)}${guestMenu(g)}</li>`;
+  // People of this party at a table (per-person seating).
+  const seatedOf = (g) => {
+    const can = new Set(seatablePeople(g).map((p) => p.key));
+    const live = state.seating?.tables || {};
+    return Object.entries(seatsOf(g)).filter(([k, t]) => can.has(k) && live[t]).length;
+  };
+  // One row per party: name, then a quiet line (seated · side); RSVP and ⋯ on the right.
+  const rowSub = (g) => [g.rsvp === "attending" ? `${seatedOf(g)} seated` : "", GUEST_SIDES[g.side]?.label ?? ""].filter(Boolean).join(" · ");
+  const rsvpRow = (g) => html`<li class="wl-row wl-guest" data-guest="${g.id}"><button type="button" class="wl-main" data-act="view" data-id="${g.id}"><span class="wl-name">${g.name}</span>${rowSub(g) ? html`<span class="wl-sub" data-role="guest-sub">${rowSub(g)}</span>` : ""}</button>${seats(g)}${rsvpControl(g)}${guestMenu(g)}</li>`;
 
   const shown = () => {
     const q = state.search.toLowerCase();
@@ -269,8 +277,8 @@ export function mount(container, session, { data = defaultData, toast = defaultT
             ? html`<p class="wl-count" data-role="roles-summary">${fmt(new Set(roles.flatMap((r) => r.people.map((pp) => pp.key))).size)} people · ${fmt(roles.length)} roles</p>`
           : seatingOn
             ? html`<p class="wl-count" data-role="seating-summary">${fmt(plan.attendingSeats)} attending · ${fmt(plan.seatedSeats)} seated · <strong class="${plan.unassignedSeats ? "is-warn" : ""}">${fmt(plan.unassignedSeats)} unassigned</strong></p>`
-            : html`<p class="wl-count" data-role="rsvp-summary" title="People (seats), not invitations">${fmt(t.invitedSeats)} invited · ${fmt(t.attendingSeats)} attending · ${fmt(t.awaitingSeats)} waiting${t.declinedSeats ? ` · ${fmt(t.declinedSeats)} declined` : ""}</p>`}
-        <div class="wl-tools">${segmented("view", [["rsvp", "RSVP"], ["seating", "Seating"], ["roles", "Roles"]], state.view, { label: "Guests view" })}</div>
+            : html`<p class="wl-count" data-role="rsvp-summary" title="People (seats), not invitations">${fmt(t.invitedSeats)} invited · ${fmt(t.attendingSeats)} attending · ${fmt(seatingPlan(state.rows, state.seating).seatedSeats)} seated</p>`}
+        <div class="wl-tools">${segmented("view", [["rsvp", "All Guests"], ["seating", "Seating"], ["roles", "Roles"]], state.view, { label: "Guests view" })}</div>
         ${seatingOn || rolesOn || !state.rows.length
           ? ""
           : html`<div class="wl-tools wl-guest-tools">
@@ -386,17 +394,34 @@ export function mount(container, session, { data = defaultData, toast = defaultT
       const attendingOn = canManage && g.rsvp === "attending";
       const rolesTxt = (roles) => (Array.isArray(roles) && roles.length ? roles.map((r) => roleLabel(r)).join(", ") : "");
       const markBtn = (mid, on) => (attendingOn ? html`<button type="button" class="btn btn-compact btn-ghost wl-mark${on ? " is-on" : ""}" data-pa="attend" data-mid="${mid}" aria-pressed="${on ? "true" : "false"}">${on ? "Attending ✓" : "Mark attending"}</button>` : on && g.rsvp === "attending" ? html`<span class="wl-chip" data-tone="success">Attending</span>` : "");
-      // Where each person sits (per person).
-      const tableNames = new Map(tables().map((t) => [t.id, t.name]));
+      // Where each person sits (per person), and who can be seated now.
+      const plan = tables();
+      const tableNames = new Map(plan.map((t) => [t.id, t.name]));
       const where = seatsOf(g);
+      const seatable = new Set(seatablePeople(g).map((p) => p.key));
       const tableOf = (key) => (where[key] && tableNames.has(where[key]) ? tableNames.get(where[key]) : null);
       // One person: NAME first (bold; tap it or ✎ to edit), then quiet
-      // details (Primary · role · table), then actions (Mark attending, ⋯).
+      // details (Primary · roles), then the table and role controls.
       const nameEl = (name, pa, attrs = {}) =>
         canManage
           ? html`<button type="button" class="wl-person-name" data-pa="${pa}" data-mid="${attrs.mid ?? ""}" data-slot="${attrs.slot ?? ""}" aria-label="Edit name: ${name}"><span data-role="person-name">${name}</span><span class="wl-edit" aria-hidden="true">✎</span></button>`
           : html`<span class="wl-person-name"><span data-role="person-name">${name}</span></span>`;
+      // Roles stay on the person: chips (tap to remove) and + Role, right here.
+      const roleChips = (roles, mid) =>
+        canManage
+          ? html`${(roles || []).map((r) => html`<button type="button" class="wl-role-chip" data-pa="role-remove" data-mid="${mid}" data-key="${roleKey(r)}" aria-label="Remove role ${roleLabel(r)}">${roleLabel(r)}</button>`)}<button type="button" class="wl-role-chip is-add" data-pa="role-add" data-mid="${mid}">+ Role</button>`
+          : rolesTxt(roles);
+      // Table: a picker right on the person (no dialog); full tables can't be chosen.
+      const tablePick = (key) =>
+        canManage && seatable.has(key) && plan.length
+          ? html`<label class="wl-table-pick"><span class="visually-hidden">Table for this person</span><select class="select select-compact" data-pa="table" data-key="${key}" aria-label="Table"><option value="" ${where[key] ? "" : "selected"}>Not seated</option>${plan.map((t) => html`<option value="${t.id}" ${where[key] === t.id ? "selected" : ""} ${t.used >= t.capacity && where[key] !== t.id ? "disabled" : ""}>${t.name} · ${t.used}/${t.capacity}${t.used >= t.capacity && where[key] !== t.id ? " · full" : ""}</option>`)}</select></label>`
+          : "";
       const details = (parts) => (parts.filter(Boolean).length ? html`<span class="wl-person-meta" data-role="member-meta">${parts.filter(Boolean).join(" · ")}</span>` : "");
+      const tools = (key, roles, mid) => {
+        const t = tablePick(key);
+        const r = canManage && mid !== null ? roleChips(roles, mid) : "";
+        return t || r ? html`<div class="wl-person-tools" data-role="person-tools">${r}${t}</div>` : "";
+      };
       const personRow = (key, name, actions) => html`<li class="wl-member" data-member="${key}"><div class="wl-person">${name}</div><div class="wl-person-actions">${actions}</div></li>`;
       // ⋯ only for the less common / destructive action.
       const memberMenu = (m) => (canManage ? menu(`More for ${m.name}`, [{ act: "member-remove", id: m.id, label: "Remove from party", danger: true }]) : "");
@@ -407,23 +432,29 @@ export function mount(container, session, { data = defaultData, toast = defaultT
         if (g.invitation?.status !== "active") return html`<button type="button" class="btn btn-compact" data-act="invite-create">Create link</button>`;
         return html`<span class="wl-link-actions" data-role="link-actions"><button type="button" class="btn btn-compact" data-act="invite-view">View</button><button type="button" class="btn btn-compact" data-act="invite-copy">Copy</button></span>`;
       };
+      // RSVP, managed here: status, and how many when attending.
+      const rsvpCell = canManage
+        ? html`<span class="wl-rsvp-cell"><select class="select select-chip wl-status" data-pa="rsvp" data-role="details-rsvp" data-tone="${RSVP_TONE[g.rsvp] || ""}" aria-label="RSVP for ${g.name}">${Object.keys(RSVP_STATUSES).map((k) => html`<option value="${k}" ${k === g.rsvp ? "selected" : ""}>${RSVP_WORDS[k]}</option>`)}</select>${g.rsvp === "attending" && seats > 1 ? html`<button type="button" class="btn btn-compact btn-ghost" data-pa="count" data-role="rsvp-count">${g.confirmed} of ${seats} · Change</button>` : ""}</span>`
+        : html`<span class="wl-chip" data-tone="${RSVP_TONE[g.rsvp] || ""}" data-role="details-rsvp">${RSVP_WORDS[g.rsvp] ?? g.rsvp}</span>`;
+      const headMenu = canManage ? menu(`More for ${g.name}`, [{ act: "details-history", id: g.id, label: "View history" }, { act: "details-remove", id: g.id, label: "Remove guest", danger: true, sep: true }]) : menu(`More for ${g.name}`, [{ act: "details-history", id: g.id, label: "View history" }]);
       const rows = [["Category", GUEST_CATEGORIES[g.category]?.label ?? "Not set"], ["Role", rolesTxt(g.roles) || "—"], ["RSVP date", g.rsvpDate ? formatDayId(g.rsvpDate) : "—"], ["Side", GUEST_SIDES[g.side]?.label ?? "—"], ["Invitation sent", g.invitationSent ? formatDayId(g.invitationSent) : "Not sent"], ["Invitation link", linkCell()]];
       render(
         backdrop,
         html`<div class="modal modal-wide" role="dialog" aria-modal="true" aria-label="${g.name}" data-role="details">
-          <div class="modal-header"><h2 class="card-title">${seats > 1 ? `${g.name}'s Party` : g.name}</h2><div class="page-actions"><span class="wl-chip" data-tone="${RSVP_TONE[g.rsvp] || ""}" data-role="details-rsvp">${RSVP_WORDS[g.rsvp] ?? g.rsvp}</span></div></div>
+          <div class="modal-header wl-details-head"><h2 class="card-title">${seats > 1 ? `${g.name}'s Party` : g.name}</h2><div class="page-actions">${headMenu}</div></div>
           <div class="modal-body">
+            <div class="wl-rsvp-row" data-role="details-rsvp-row"><span class="wl-rsvp-label">RSVP</span>${rsvpCell}</div>
             <dl class="dl dl-compact" data-role="party-figures"><dt>Invited</dt><dd>${seats}</dd><dt>Attending</dt><dd>${g.rsvp === "attending" ? String(g.confirmed) : g.rsvp === "declined" ? "0" : "Waiting"}</dd></dl>
             <h3 class="section-title">${seats > 1 ? "Members" : "Guest"}</h3>
             <ul class="list wl-party" data-role="members">
-              ${personRow("primary", html`${nameEl(g.name, "name-primary")}${details(["Primary", rolesTxt(g.roles), tableOf("primary")])}`, markBtn("primary", g.attending === true))}
-              ${members.map((m) => personRow(m.id, html`${nameEl(m.name, "name-member", { mid: m.id })}${details([rolesTxt(m.roles), tableOf(m.id)])}`, html`${markBtn(m.id, m.attending === true)}${memberMenu(m)}`))}
-              ${Array.from({ length: Math.min(unnamed, 12) }, (_, i) => personRow(`u${i + 1}`, html`${nameEl(`Member ${members.length + 2 + i}`, "name-unnamed", { slot: i + 1 })}${details([tableOf(`u${i + 1}`)])}`, ""))}
+              ${personRow("primary", html`${nameEl(g.name, "name-primary")}${details(["Primary", canManage ? "" : rolesTxt(g.roles), canManage && seatable.has("primary") && plan.length ? "" : tableOf("primary")])}${tools("primary", g.roles, "primary")}`, markBtn("primary", g.attending === true))}
+              ${members.map((m) => personRow(m.id, html`${nameEl(m.name, "name-member", { mid: m.id })}${details([canManage ? "" : rolesTxt(m.roles), canManage && seatable.has(m.id) && plan.length ? "" : tableOf(m.id)])}${tools(m.id, m.roles, m.id)}`, html`${markBtn(m.id, m.attending === true)}${memberMenu(m)}`))}
+              ${Array.from({ length: Math.min(unnamed, 12) }, (_, i) => personRow(`u${i + 1}`, html`${nameEl(`Member ${members.length + 2 + i}`, "name-unnamed", { slot: i + 1 })}${details([canManage && seatable.has(`u${i + 1}`) && plan.length ? "" : tableOf(`u${i + 1}`)])}${tools(`u${i + 1}`, [], null)}`, ""))}
             </ul>
             ${canManage ? html`<p class="stat-hint">Tap a name to edit it. Names are optional: the RSVP works by seat count.</p>` : ""}
             <dl class="dl dl-compact wl-details" data-role="fields">${rows.map(([k, v]) => html`<dt>${k}</dt><dd>${v}</dd>`)}</dl>
           </div>
-          <div class="modal-footer">${canManage ? html`<button type="button" class="btn btn-danger" data-act="remove">Remove guest</button><button type="button" class="btn" data-act="edit">Edit</button>` : ""}<button type="button" class="btn" data-act="close">Close</button></div>
+          <div class="modal-footer">${canManage ? html`<button type="button" class="btn" data-act="edit">Edit</button>` : ""}<button type="button" class="btn" data-act="close">Close</button></div>
         </div>`
       );
     };
@@ -434,6 +465,23 @@ export function mount(container, session, { data = defaultData, toast = defaultT
       g = fresh;
       return paint();
     };
+    backdrop.addEventListener("change", async (ev) => {
+      const el = ev.target;
+      try {
+        if (el.dataset?.pa === "table") {
+          await data.guestsApi({ action: "seatPerson", guestId: g.id, seatKey: el.dataset.key, tableId: el.value || null });
+          await refresh();
+        } else if (el.dataset?.pa === "rsvp") {
+          const status = el.value;
+          const r = status === "attending" && (g.partySize || 1) > 1 ? await rsvpDialog(g, "attending") : await data.guestsApi({ action: "setRsvp", guestId: g.id, rsvp: status === "attending" ? { status, confirmed: g.partySize || 1 } : { status } });
+          if (r?.unseated?.length) toast(`RSVP saved. Seats freed: ${r.unseated.join(", ")}.`, "success");
+          await refresh();
+        }
+      } catch (err) {
+        toast(err.message || "Something went wrong", "danger");
+        await refresh();
+      }
+    });
     backdrop.addEventListener("click", async (ev) => {
       const actEl = ev.target.closest("[data-act]");
       const act = actEl?.dataset.act;
@@ -452,13 +500,38 @@ export function mount(container, session, { data = defaultData, toast = defaultT
           close();
           return after("Saved.")(await editDialog(g));
         }
-        if (act === "remove") {
+        if (act === "details-remove") {
           if (await removeGuest(g)) close();
           return undefined;
         }
+        if (act === "details-history") return openHistory(g);
         if (!pa) return undefined;
         const mid = pa.dataset.mid;
         const m = membersOf(g).find((x) => x.id === mid);
+        const who = (id) => (id && id !== "primary" ? { guestId: g.id, memberId: id } : { guestId: g.id });
+        if (pa.dataset.pa === "count") {
+          const r = await rsvpDialog(g);
+          if (r) {
+            if (r.unseated?.length) toast(`Seats freed: ${r.unseated.join(", ")}.`, "success");
+            await refresh();
+          }
+          return undefined;
+        }
+        if (pa.dataset.pa === "role-add") {
+          const name = mid === "primary" ? g.name : m?.name;
+          const r = await formDialog({ title: `Role for ${name}`, fields: [{ name: "role", label: "Role", type: "select", options: ROLE_OPTIONS, value: "maid_of_honor" }, { name: "customRole", label: "Custom role name", value: "", hint: "Only for Custom role." }], submitLabel: "Add role", onSubmit: (v) => data.guestsApi({ action: "assignRole", ...who(mid), role: roleOf(v) }) });
+          if (r) await refresh();
+          return undefined;
+        }
+        if (pa.dataset.pa === "role-remove") {
+          const roles = mid === "primary" ? g.roles : m?.roles;
+          const role = (roles || []).find((r) => roleKey(r) === pa.dataset.key);
+          const name = mid === "primary" ? g.name : m?.name;
+          if (!role || !(await confirm({ title: `Remove ${roleLabel(role)} from ${name}?`, body: "Only the role is removed. The guest, their RSVP, seat and table stay.", confirmLabel: "Remove role", danger: true }))) return undefined;
+          await data.guestsApi({ action: "unassignRole", ...who(mid), role });
+          await refresh();
+          return undefined;
+        }
         // Edit a name here (the seat, roles and RSVP stay with the person).
         const editName = (current, onSave) => formDialog({ title: "Edit name", fields: [{ name: "name", label: "Member name", value: current, required: true, placeholder: "e.g. Mayet" }], submitLabel: "Save", cancelLabel: "Cancel", onSubmit: (v) => (v.name.trim() === current ? { unchanged: true } : onSave(v.name.trim())) });
         if (pa.dataset.pa === "name-primary") {

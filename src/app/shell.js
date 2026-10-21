@@ -55,7 +55,7 @@ const MANAGE = new Set(["users", "settings", "imports", "subscription", "downloa
 export const navGroup = (id) => (id === "dashboard" ? "overview" : id === "reports" ? "analyze" : MANAGE.has(id) ? "manage" : "work");
 const GROUP_LABELS = { overview: "Overview", work: "Work", analyze: "Analyze", manage: "Manage" };
 // One-word labels for the phone tab bar (display only; ids never change).
-const SHORT = { dashboard: "Dashboard", tasks: "Tasks", guests: "Guests", vendors: "Money", vendorpayments: "Payments", expenses: "Expenses", budget: "Budget", schedule: "Schedule", providers: "Providers", grocery: "Grocery", household: "Staff", attendance: "Attendance", payroll: "Payroll", advances: "Advances", orders: "Orders", inventory: "Inventory", payments: "Payments", customers: "Customers" };
+const SHORT = { dashboard: "Dashboard", tasks: "Tasks", guests: "Guests", vendors: "Expenses", vendorpayments: "Payments", expenses: "Expenses", budget: "Budget", schedule: "Schedule", providers: "Providers", grocery: "Grocery", household: "Staff", attendance: "Attendance", payroll: "Payroll", advances: "Advances", orders: "Orders", inventory: "Inventory", payments: "Payments", customers: "Customers" };
 // Tenant terminology (Phase 17) always wins over the short label.
 // A template that renames a page (Household: the schedule is "Bills") keeps its own short name.
 export const shortLabel = (m, terms = {}) => terms[m.id] ?? (m.id === "schedule" && m.label !== "Payment Schedule" ? m.label : SHORT[m.id]) ?? m.label;

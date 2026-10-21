@@ -211,7 +211,7 @@ const TEMPLATES = [
       empty: { title: "Your wedding workspace is ready", body: "Set your budget, add suppliers, tasks and guests to get started." },
       sectionLabels: { period: "Spending in the selected period", current: "Wedding plan" },
     },
-    labels: { modules: { dashboard: "Wedding Dashboard", budget: "Budget", expenses: "Wedding Expenses", vendors: "Money", vendorpayments: "Supplier Payments", tasks: "Tasks", guests: "Guests" } },
+    labels: { modules: { dashboard: "Wedding Dashboard", budget: "Budget", expenses: "Wedding Expenses", vendors: "Expenses", vendorpayments: "Supplier Payments", tasks: "Tasks", guests: "Guests" } },
     settings: {},
     plannedModules: [{ id: "wedding-reports", name: "Reports" }],
   },

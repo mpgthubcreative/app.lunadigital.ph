@@ -26,7 +26,7 @@ export async function weddingAttention({ tenant, business, permissions = {}, uid
   const soon = addDays(today, DUE_SOON_DAYS);
   const when = (d) => (d === today ? "today" : d === addDays(today, -1) ? "yesterday" : d === addDays(today, 1) ? "tomorrow" : dayText(d));
   const todos = [];
-  const todo = (group, kind, about, text, href, sort) => todos.push({ id: `${kind}:${about}`.replace(/[^A-Za-z0-9:_-]/g, "_").slice(0, 120), staffId: group, name: group === "money" ? "Money" : "Tasks", kind, text, href, sort });
+  const todo = (group, kind, about, text, href, sort) => todos.push({ id: `${kind}:${about}`.replace(/[^A-Za-z0-9:_-]/g, "_").slice(0, 120), staffId: group, name: group === "money" ? "Expenses" : "Tasks", kind, text, href, sort });
 
   const [payments, tasks] = await Promise.all([
     permissions["vendorpayments.view"] === true ? tenant.collection("supplierPayments").where("status", "==", "upcoming").limit(MAX_ROWS).get() : null,

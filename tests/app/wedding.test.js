@@ -79,7 +79,7 @@ function fakeData(extra = {}) {
 describe("navigation and loaders", () => {
   it("Bridal owner (Owner-pilot UX): Money is home, no Dashboard route; Expenses / Payments / Budget still open; Staff: the dashboard only", () => {
     const routes = buildRoutes(wedding());
-    expect(routes.map((r) => r.label)).toEqual(expect.arrayContaining(["Money", "Tasks", "Guests", "Budget", "Wedding Expenses", "Supplier Payments"]));
+    expect(routes.map((r) => r.label)).toEqual(expect.arrayContaining(["Expenses", "Tasks", "Guests", "Budget", "Wedding Expenses", "Supplier Payments"]));
     expect(routes.find((r) => r.path === "/")).toMatchObject({ redirect: "/wedding-suppliers", moduleId: "vendors" });
     expect(routes.some((r) => r.moduleId === "dashboard")).toBe(false);
     for (const p of buildRoutes(wedding("staff")).map((r) => r.path)) expect(["/", "/notifications"]).toContain(p);
@@ -88,7 +88,7 @@ describe("navigation and loaders", () => {
     document.body.innerHTML = '<div id="app"></div>';
     renderShell(document.getElementById("app"), wedding());
     const tabs = [...document.querySelectorAll(".tabbar .tab-link")].map((a) => a.textContent.trim());
-    expect(tabs.slice(0, 3)).toEqual(["Money", "Tasks", "Guests"]);
+    expect(tabs.slice(0, 3)).toEqual(["Expenses", "Tasks", "Guests"]);
     expect(tabs).toHaveLength(4);
     expect(tabs[3]).toMatch(/More/);
   });
@@ -136,6 +136,47 @@ describe("Money (Owner-pilot Bridal): ONE list of everything the wedding costs",
     return data;
   };
 
+  it("Expenses (2026-10-21): Next payment line; an owing supplier's row shows Pay (records a payment to THAT supplier, no menu); + Add → supplier payment / upcoming payment, with an existing supplier or + New supplier in the same form", async () => {
+    const data = await mountMoney(money({ suppliersApi: vi.fn(async () => ({ supplierId: "supNewBloom01" })) }));
+    expect(container.querySelector(".page-header h1").textContent).toBe("Expenses");
+    expect(container.querySelector('[data-role="next-payment"]').textContent.replace(/\s+/g, " ").trim()).toBe("Next payment: Dec 1 · ABC Photo Studio ₱30k");
+    // Pay, visible on the row, under what's left.
+    const pay = container.querySelector('[data-supplier="supABCphoto01"] [data-act="pay"]');
+    expect(pay.textContent).toBe("Pay");
+    expect(pay.closest(".wl-owe-col").querySelector('[data-role="left"]').textContent).toBe("₱60k left");
+    pay.click();
+    await flush();
+    expect(lastForm().closest(".modal").querySelector("h2").textContent).toBe("ABC Photo Studio: record a payment");
+    lastForm().elements.amount.value = "5000";
+    submit(lastForm());
+    await flush();
+    expect(data.expensesApi).toHaveBeenLastCalledWith(expect.objectContaining({ action: "create", expense: expect.objectContaining({ supplierId: SUP.id, amount: 500000 }) }));
+    // + Add → Add supplier payment with + New supplier (created in the same form).
+    container.querySelector('[data-role="add"] [data-x="payment"]').click();
+    await flush();
+    const f = lastForm();
+    expect([...f.elements.supplierId.options].map((o) => o.textContent)).toEqual(["ABC Photo Studio", "+ New supplier"]);
+    f.elements.supplierId.value = "__new";
+    f.elements.newSupplier.value = "Bloom Flowers";
+    f.elements.category.value = "Photo / Video";
+    f.elements.amount.value = "1000";
+    submit(f);
+    await flush();
+    expect(data.suppliersApi).toHaveBeenCalledWith(expect.objectContaining({ action: "create", supplier: expect.objectContaining({ name: "Bloom Flowers", categoryId: "catPhotoVid01" }) }));
+    expect(data.expensesApi).toHaveBeenLastCalledWith(expect.objectContaining({ action: "create", expense: expect.objectContaining({ supplierId: "supNewBloom01", amount: 100000, category: "catPhotoVid01" }) }));
+    // + Add → Add upcoming payment for an existing supplier (its category by default).
+    container.querySelector('[data-role="add"] [data-x="upcoming"]').click();
+    await flush();
+    const u = lastForm();
+    u.elements.supplierId.value = SUP.id;
+    u.elements.description.value = "Balance";
+    u.elements.amount.value = "30000";
+    u.elements.dueDate.value = "2027-01-10";
+    submit(u);
+    await flush();
+    expect(data.paymentsApi).toHaveBeenLastCalledWith({ action: "create", payment: { supplierId: SUP.id, description: "Balance", amount: 3000000, dueDate: "2027-01-10", category: "catPhotoVid01" } });
+  });
+
   it("top: two boxes, Spent ₱20k and To pay ₱60k (no double counting), the budget a quiet line; one + Add (Expense / Supplier / Budget item / From sample budget); no tabs, no Download", async () => {
     await mountMoney();
     const k = (x) => container.querySelector(`[data-role="money-summary"] [data-k="${x}"]`);
@@ -143,7 +184,7 @@ describe("Money (Owner-pilot Bridal): ONE list of everything the wedding costs",
     expect(k("still").title).toBe("₱60,000.00");
     expect(container.querySelector('[data-role="budget-line"]').textContent).toBe("Budget ₱500k · ₱420k left");
     expect([shortPeso(15250000), shortPeso(120000000), shortPeso(85000)]).toEqual(["₱152.5k", "₱1.2M", "₱850"]);
-    expect([...container.querySelectorAll('[data-role="add"] .menu-item')].map((b) => b.textContent)).toEqual(["Expense (paid)", "Supplier", "Budget item", "From sample budget"]);
+    expect([...container.querySelectorAll('[data-role="add"] .menu-item')].map((b) => b.textContent)).toEqual(["Add expense", "Add supplier", "Add supplier payment", "Add upcoming payment", "Budget item", "From sample budget"]);
     expect(container.querySelector('[data-role="seg-view"]')).toBeNull(); // no My Money | Sample Budget tabs
     expect(container.querySelectorAll(".page-header .btn-primary")).toHaveLength(1);
     expect(container.querySelector('[data-act="export"]')).toBeNull();
@@ -155,7 +196,7 @@ describe("Money (Owner-pilot Bridal): ONE list of everything the wedding costs",
     const groups = [...container.querySelectorAll(".hx-group")].map((g) => [g.querySelector(".wl-group-title").textContent, [...g.querySelectorAll(".wl-money-row")].map((r) => [r.dataset.kind, r.querySelector(".wl-name").textContent, r.querySelector('[data-role="status"]').textContent.replace(/\s+/g, " ").trim(), r.querySelector('[data-role="left"]').textContent])]);
     // What is still owed is the figure on the right; paid / planned lines are quiet.
     expect(groups).toEqual([
-      ["Photo / Video", [["supplier", "ABC Photo Studio", "₱80k total · Partial", "₱60k left"]]],
+      ["Photo / Video", [["supplier", "ABC Photo Studio", "₱80k total · ₱20k paid · Next Dec 1", "₱60k left"]]],
       ["Venue", [["planned", "No supplier yet", "₱150k planned", ""], ["expense", "Grab to venue", "Paid · ₱1.5k", ""]]],
     ]);
     expect(moneyGroups([{ categoryId: null, category: "", name: "x" }])).toEqual([{ key: "none", name: "Other", rows: [{ categoryId: null, category: "", name: "x" }] }]);
@@ -177,7 +218,7 @@ describe("Money (Owner-pilot Bridal): ONE list of everything the wedding costs",
     expect(menuOf(`[data-expense="${OTHER.id}"]`)).toEqual(["Edit", "Details", "Remove"]);
     expect(menuOf('[data-planned="catVenue00001"]')).toEqual(["Edit", "Details", "Remove"]);
     // The status reads quietly under the supplier; what's left stands out.
-    expect(rowOf('[data-supplier="supABCphoto01"] [data-role="status"]').textContent.replace(/\s+/g, " ").trim()).toBe("₱80k total · Partial");
+    expect(rowOf('[data-supplier="supABCphoto01"] [data-role="status"]').textContent.replace(/\s+/g, " ").trim()).toBe("₱80k total · ₱20k paid · Next Dec 1");
     expect(rowOf('[data-supplier="supABCphoto01"] [data-role="left"]').textContent).toBe("₱60k left");
   });
 
@@ -552,7 +593,7 @@ describe("Guests (Owner-pilot Bridal UX): RSVP | Seating", () => {
     mountGuests(container, wedding(), { data, toast: () => {} });
     await flush();
     expect(data.listGuests).toHaveBeenCalledWith("demo-distributor-a", {}, { pageSize: 1000 });
-    expect(container.querySelector('[data-role="rsvp-summary"]').textContent).toBe("9 invited · 3 attending · 4 waiting · 2 declined");
+    expect(container.querySelector('[data-role="rsvp-summary"]').textContent).toBe("9 invited · 3 attending · 2 seated"); // people (2026-10-21: invited · attending · seated)
     expect(container.querySelectorAll(".stat-card")).toHaveLength(0);
     // Order: summary, RSVP | Seating, then Search + RSVP ▾ (one dropdown, no chips).
     const order = [...container.querySelectorAll('[data-role="rsvp-summary"], [data-role="seg-view"], [data-role="search"], [data-role="filter"]')].map((x) => x.dataset.role);
@@ -1356,7 +1397,7 @@ describe("Owner-pilot Bridal: Guests → Roles", () => {
 
   it("RSVP | Seating | Roles; roles grouped compactly (MAID / MATRON OF HONOR · 1, PRINCIPAL SPONSORS · 2), one line per guest; the rest under 'Not assigned yet'", async () => {
     await mountRoles();
-    expect([...container.querySelectorAll('[data-role="seg-view"] .seg-btn')].map((b) => b.textContent)).toEqual(["RSVP", "Seating", "Roles"]);
+    expect([...container.querySelectorAll('[data-role="seg-view"] .seg-btn')].map((b) => b.textContent)).toEqual(["All Guests", "Seating", "Roles"]);
     const groups = [...container.querySelectorAll("[data-role-group]")].map((s) => [s.querySelector(".wl-group-title").textContent, s.querySelector(".wl-cat-counts").textContent, [...s.querySelectorAll(".wl-name")].map((n) => n.textContent)]);
     expect(groups).toEqual([["Maid / Matron of Honor", "· 1", ["Sarah Barnes"]], ["Principal Sponsors", "· 2", ["Ryan Reyes", "Shirley Saragcon"]]]);
     expect(container.querySelector('[data-role="roles-summary"]').textContent).toBe("3 people · 2 roles");
@@ -1527,7 +1568,14 @@ describe("Owner-pilot Bridal: party members are real people (RSVP · Roles · Se
     expect([...d.querySelectorAll('[data-role="party-figures"] dd')].map((x) => x.textContent)).toEqual(["5", "3"]);
     const people = () => [...document.querySelectorAll('[data-role="details"] [data-role="members"] .wl-member')].map((li) => [li.querySelector('[data-role="person-name"]').textContent, li.querySelector('[data-role="member-meta"]')?.textContent ?? ""]);
     // The name is its own element; "Primary", roles and the table are the quiet line under it.
-    expect(people()).toEqual([["Sanrah", "Primary · Maid / Matron of Honor · Table 5"], ["Anna", "Bridesmaid · Table 5"], ["Bea", "Table 5"], ["Member 4", ""], ["Member 5", ""]]);
+    expect(people()).toEqual([["Sanrah", "Primary"], ["Anna", ""], ["Bea", ""], ["Member 4", ""], ["Member 5", ""]]);
+    // Roles and the table are managed right on each person (the sheet is the hub).
+    const chips = (key) => [...document.querySelectorAll(`[data-role="details"] [data-member="${key}"] .wl-role-chip`)].map((b) => b.textContent);
+    expect([chips("primary"), chips("mAnna000001"), chips("mBea0000001"), chips("u1")]).toEqual([["Maid / Matron of Honor", "+ Role"], ["Bridesmaid", "+ Role"], ["+ Role"], []]);
+    const pick = (key) => document.querySelector(`[data-role="details"] [data-member="${key}"] select[data-pa="table"]`);
+    expect([pick("primary").value, pick("mAnna000001").value, pick("mBea0000001").value]).toEqual(["tA1b2c3d4", "tA1b2c3d4", "tA1b2c3d4"]);
+    expect([...pick("primary").options].map((o) => o.textContent)).toEqual(["Not seated", "Table 5 · 3/8"]);
+    expect(pick("u1")).toBeNull(); // Member 4 isn't confirmed (3 of 5 attending)
     expect([...d.querySelectorAll(".wl-person-name .wl-edit")]).toHaveLength(5); // every name is editable (✎)
     expect([...d.querySelectorAll('[data-pa="attend"]')].map((b) => b.textContent)).toEqual(["Attending ✓", "Attending ✓", "Mark attending"]);
     // The member ⋯ holds only the destructive action.
@@ -1570,8 +1618,11 @@ describe("Owner-pilot Bridal: party members are real people (RSVP · Roles · Se
     expect(d.querySelector('[data-role="activity"]')).toBeNull();
     expect(d.textContent).not.toMatch(/Activity|⋯ → View/);
     expect([...d.querySelectorAll("button")].filter((b) => /^Remove guest$/.test(b.textContent.trim()))).toHaveLength(1);
+    expect(d.querySelector(".modal-header .menu-item[data-act='details-remove']").textContent).toBe("Remove guest"); // in the sheet's ⋯
+    expect([...d.querySelectorAll(".modal-footer button")].map((b) => b.textContent)).toEqual(["Edit", "Close"]);
     expect([...d.querySelectorAll("button")].filter((b) => /^Remove$/.test(b.textContent.trim()))).toHaveLength(0); // member removal is "Remove from party", in the member's ⋯
-    expect(d.querySelector('[data-role="details-rsvp"]').textContent).toBe("Attending");
+    expect(d.querySelector('[data-role="details-rsvp"]').value).toBe("attending");
+    expect(d.querySelector('[data-role="rsvp-count"]').textContent).toBe("3 of 5 · Change");
     const link = d.querySelector('[data-role="link-actions"]');
     expect([...link.querySelectorAll("button")].map((b) => b.textContent)).toEqual(["View", "Copy"]);
     // History: a secondary action on the row.
@@ -1580,6 +1631,51 @@ describe("Owner-pilot Bridal: party members are real people (RSVP · Roles · Se
     container.querySelector('[data-guest="gSanrah0001"] [data-act="history"]').click();
     expect(document.querySelector('[data-role="details"] .card-title').textContent).toBe("Sanrah: history");
     void data;
+  });
+
+  it("the Guest Details sheet is the hub: table per person (picker, no dialog), RSVP status / count, + Role and removing a role, history and Remove guest in the sheet's ⋯", async () => {
+    const asked = [];
+    const data = await mountParty({}, async (c) => (asked.push(c), true));
+    container.querySelector('[data-guest="gSanrah0001"] .wl-main').click();
+    const d = () => document.querySelector('[data-role="details"]');
+    const change = (el, value) => {
+      el.value = value;
+      el.dispatchEvent(new Event("change", { bubbles: true }));
+    };
+    // Seat / unseat one person from the sheet.
+    change(d().querySelector('[data-member="mBea0000001"] select[data-pa="table"]'), "");
+    await flush();
+    expect(data.guestsApi).toHaveBeenCalledWith({ action: "seatPerson", guestId: "gSanrah0001", seatKey: "mBea0000001", tableId: null });
+    change(d().querySelector('[data-member="primary"] select[data-pa="table"]'), "tA1b2c3d4");
+    await flush();
+    // RSVP: Declined straight away; Attending asks how many.
+    change(d().querySelector('[data-role="details-rsvp"]'), "declined");
+    await flush();
+    expect(data.guestsApi).toHaveBeenCalledWith({ action: "setRsvp", guestId: "gSanrah0001", rsvp: { status: "declined" } });
+    d().querySelector('[data-role="rsvp-count"]')?.click();
+    await flush();
+    if (lastForm()?.elements.confirmed) {
+      lastForm().elements.confirmed.value = "4";
+      submit(lastForm());
+      await flush();
+      expect(data.guestsApi).toHaveBeenCalledWith({ action: "setRsvp", guestId: "gSanrah0001", rsvp: { status: "attending", confirmed: 4 } });
+    }
+    // + Role on a member, right here.
+    d().querySelector('[data-member="mBea0000001"] [data-pa="role-add"]').click();
+    await flush();
+    lastForm().elements.role.value = "bridesmaid";
+    submit(lastForm());
+    await flush();
+    expect(data.guestsApi).toHaveBeenCalledWith({ action: "assignRole", guestId: "gSanrah0001", memberId: "mBea0000001", role: { id: "bridesmaid" } });
+    // Tap a role chip to remove it (asks first).
+    d().querySelector('[data-member="primary"] [data-pa="role-remove"]').click();
+    await flush();
+    expect(asked.at(-1)).toMatchObject({ title: "Remove Maid / Matron of Honor from Sanrah?", confirmLabel: "Remove role" });
+    expect(data.guestsApi).toHaveBeenCalledWith({ action: "unassignRole", guestId: "gSanrah0001", role: { id: "maid_of_honor" } });
+    // The sheet's ⋯: View history, Remove guest.
+    expect([...d().querySelectorAll(".modal-header .menu-item")].map((b) => b.textContent)).toEqual(["View history", "Remove guest"]);
+    d().querySelector('.modal-header [data-act="details-history"]').click();
+    expect([...document.querySelectorAll('[data-role="details"] .card-title')].map((t) => t.textContent)).toContain("Sanrah: history");
   });
 
   it("removing a companion with a role warns with the reason first, then removes with force; without a link it just removes", async () => {
@@ -1695,8 +1791,13 @@ describe("Luna Bridal / Luna Bridal+ invitations (one engine, per-wedding design
     const live = await mountWith({ level: "custom", live: "custom", publishedVersion: 2, hasDraft: true, draftState: "draft" });
     expect(live).toMatchObject({ state: "Live" });
     expect(live.line).toMatch(/^Live \(version 2\)/);
-    // Only content fields for the couple: no design controls.
+    // Only content fields for the couple: no design controls. Optional
+    // content appears on request (+ Add story), never as empty fields.
+    expect(container.querySelector('[name="story"]')).toBeNull();
+    expect([...container.querySelectorAll('[data-act="reveal"]')].map((b) => b.textContent)).toEqual(["+ Add story", "+ Add closing line"]);
+    container.querySelector('[data-act="reveal"][data-key="story"]').click();
     expect(container.querySelector('[name="story"]')).not.toBeNull();
+    expect([...container.querySelectorAll(".ws-sub-title")].map((h) => h.textContent)).toEqual(["Couple & Date", "Ceremony & Reception", "Story", "Frequently Asked Questions", "Photos"]);
     expect(container.querySelector('[name="templateId"], [type="color"]')).toBeNull();
   });
 

@@ -4296,3 +4296,92 @@ button.wl-person-name:hover .wl-edit, button.wl-person-name:focus-visible .wl-ed
   color: var(--text-muted);
   font-weight: 600;
 }
+
+/* Bridal Expenses (2026-10-21): what's left, with Pay right under it. */
+.wl-owe-col {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+  padding: 4px 0;
+}
+.wl-pay {
+  min-height: 36px;
+  min-width: 64px;
+}
+
+/* Bridal Guest Details hub (2026-10-21): RSVP on top; per person, roles and
+   the table right under the name. */
+.wl-rsvp-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+}
+.wl-rsvp-label {
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+  min-width: 3.5rem;
+}
+.wl-rsvp-cell {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+.wl-person-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+}
+.wl-role-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  cursor: pointer;
+}
+.wl-role-chip.is-add {
+  border-style: dashed;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+.wl-table-pick .select {
+  min-height: 36px;
+  max-width: 11rem;
+  font-size: var(--text-sm);
+}
+.wl-details-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+/* Wedding Setup sections (2026-10-21): clear headings, optional parts on request. */
+.ws-section {
+  margin: var(--space-4) 0;
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border);
+}
+.ws-section:first-of-type {
+  border-top: 0;
+  padding-top: 0;
+}
+.ws-section > .ws-sub-title {
+  margin-bottom: var(--space-2);
+}
+.ws-section > .btn + .btn {
+  margin-left: var(--space-2);
+}

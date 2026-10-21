@@ -92,7 +92,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     render(
       container,
       html`
-        ${pageHeader({ title: "Supplier Payments", subtitle: html`<a href="/wedding-suppliers" data-link>‹ Money</a>`, actions: canManage ? html`<button type="button" class="btn btn-primary" data-act="new">Schedule payment</button>` : "" })}
+        ${pageHeader({ title: "Supplier Payments", subtitle: html`<a href="/wedding-suppliers" data-link>‹ Expenses</a>`, actions: canManage ? html`<button type="button" class="btn btn-primary" data-act="new">Schedule payment</button>` : "" })}
         ${filterBar({
           fields: [
             { name: "status", label: "Status", type: "select", primary: true, options: Object.entries(SUPPLIER_PAYMENT_STATUSES).map(([k, s]) => [k, s.label]), value: f.status || "upcoming", def: "upcoming" },

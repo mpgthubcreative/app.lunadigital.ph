@@ -39,7 +39,7 @@ import { expenseActions, proofField } from "./expenses.js";
 import { SUPPLIER_SERVICES, SUPPLIER_STATUSES, EXPENSE_METHODS, EXPENSE_METHOD_IDS, supplierBalance, businessDate, parseCentavos, weddingSummary } from "@shared/index.js";
 import { parseBudget } from "../baby/budget.js";
 import { activityLines, detailsDialog, categoryName } from "../baby/common.js";
-import { paymentActions } from "./payments.js";
+import { paymentActions, parseSupplierPayment } from "./payments.js";
 import { categoryField, resolveCategory, categoryNameOf, guessService } from "./categories.js";
 import * as defaultData from "./data.js";
 import { paidState, moneyRows, moneyLabel, MONEY_STATUS } from "@shared/wedding-money.js";
@@ -155,7 +155,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
       state.error = null;
     } catch (err) {
       console.error("money: load failed:", err && (err.code || err.message));
-      state.error = "Couldn't load Money.";
+      state.error = "Couldn't load Expenses.";
     }
     state.loading = false;
     draw();
@@ -214,25 +214,33 @@ export function mount(container, session, { data = defaultData, toast = defaultT
         ? r.total === null ? html`<span class="wl-state-word" data-tone="info">Planned</span> · amount not set` : html`${shortPeso(r.total)} <span class="wl-state-word" data-tone="info">planned</span>`
         : r.status === "paid"
           ? html`<span class="wl-state-word" data-tone="success">Paid</span> · ${shortPeso(r.total ?? 0)}`
-          : html`${r.total === null ? "" : `${shortPeso(r.total)} total · `}<span class="wl-state-word${late ? " is-late" : ""}" data-tone="${tone}">${word}</span>`;
+          : r.kind === "supplier"
+            ? html`${r.total === null ? "" : `${shortPeso(r.total)} total · `}${shortPeso(r.record.paid ?? 0)} paid${upcomingOf(r.record)[0] ? ` · Next ${short(upcomingOf(r.record)[0].dueDate)}` : ""}${late ? html` · <span class="wl-state-word is-late" data-tone="danger">Overdue</span>` : ""}`
+            : html`${r.total === null ? "" : `${shortPeso(r.total)} total · `}<span class="wl-state-word${late ? " is-late" : ""}" data-tone="${tone}">${word}</span>`;
     const menu = menuItems(r);
+    const payBtn = r.kind === "supplier" && owes && canPay && r.record.status === "active" ? html`<button type="button" class="btn btn-compact wl-pay" data-act="pay" data-id="${r.id}" aria-label="Pay ${who}">Pay</button>` : "";
     return html`<li class="wl-row hx-row wl-money-row" data-kind="${r.kind}" data-${r.kind === "supplier" ? "supplier" : r.kind === "planned" ? "planned" : "expense"}="${r.id}" data-state="${r.status}">
       <button type="button" class="wl-main hx-main" data-act="open" data-kind="${r.kind}" data-id="${r.id}">
         <span class="wl-name">${who}</span>
         <span class="wl-sub hx-sub" data-role="status">${sub}</span>
       </button>
-      ${owes ? html`<span class="wl-amt hx-amt wl-owed${late ? " is-late" : ""}" data-role="left">${shortPeso(r.remaining)} left</span>` : html`<span class="wl-amt hx-amt" data-role="left"></span>`}
+      ${owes ? html`<span class="wl-owe-col">${html`<span class="wl-amt hx-amt wl-owed${late ? " is-late" : ""}" data-role="left">${shortPeso(r.remaining)} left</span>`}${payBtn}</span>` : html`<span class="wl-amt hx-amt" data-role="left"></span>`}
       ${menu.length ? html`<details class="line-menu"><summary class="btn btn-compact btn-ghost" aria-label="More for ${who}">⋯</summary><div class="line-menu-list" role="menu">${menu.map((i) => html`${i.danger ? html`<div class="menu-sep" role="separator"></div>` : ""}<button type="button" class="menu-item${i.danger ? " menu-danger" : ""}" role="menuitem" data-act="menu" data-kind="${r.kind}" data-x="${i.x}" data-id="${r.id}">${i.label}</button>`)}</div></details>` : html`<span class="wl-menu-gap"></span>`}
     </li>`;
   }
   const groupsHtml = (rows, role) => moneyGroups(rows).map((g) => html`<section class="wl-section hx-group" data-group="${g.key}"><h2 class="wl-cat-head hx-group-head"><span class="wl-group-title">${g.name}</span></h2><ul class="wl-list" data-role="${role}">${g.rows.map(row)}</ul></section>`);
 
+  // Bridal Expenses (2026-10-21): ONE + Add for all wedding money.
   const addItems = () => [
-    ...(canPay ? [{ x: "expense", label: "Expense (paid)" }] : []),
-    ...(canManage ? [{ x: "supplier", label: "Supplier" }] : []),
+    ...(canPay ? [{ x: "expense", label: "Add expense" }] : []),
+    ...(canManage ? [{ x: "supplier", label: "Add supplier" }] : []),
+    ...(canPay && (canManage || state.rows.length) ? [{ x: "payment", label: "Add supplier payment" }] : []),
+    ...(canSchedule && (canManage || state.rows.length) ? [{ x: "upcoming", label: "Add upcoming payment" }] : []),
     ...(canCategory ? [{ x: "budget", label: "Budget item" }] : []),
     ...(canCategory ? [{ x: "sample", label: "From sample budget" }] : []),
   ];
+  // The next payment due (scheduled, any supplier).
+  const nextDue = () => [...state.upcoming].sort((a, b) => (a.dueDate < b.dueDate ? -1 : a.dueDate > b.dueDate ? 1 : 0))[0] ?? null;
 
   // Two boxes (Spent / To pay); a set budget is a quiet line under them.
   function summary() {
@@ -240,6 +248,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     if (state.loading) return skeleton(1);
     const sum = moneySummary(state.budget, [...state.rows, ...state.inactive]);
     return html`<div class="hx-sum" data-role="money-summary"><div class="hx-sum-item" data-k="spent" title="${money(sum.spent)}"><span class="kpi-label">Spent</span><b class="kpi-value">${shortPeso(sum.spent)}</b></div><div class="hx-sum-item" data-k="still" title="${money(sum.stillToPay)}"><span class="kpi-label">To pay</span><b class="kpi-value">${shortPeso(sum.stillToPay)}</b></div></div>
+      ${nextDue() ? html`<p class="stat-hint wl-budget-line" data-role="next-payment">Next payment: <b>${short(nextDue().dueDate)}</b> · ${nextDue().supplierName ?? nextDue().description} ${shortPeso(nextDue().amount)}${nextDue().dueDate < today() ? " · overdue" : ""}</p>` : ""}
       ${sum.budget !== null ? html`<p class="stat-hint wl-budget-line" data-role="budget-line">Budget ${shortPeso(sum.budget)} · ${sum.remaining < 0 ? `over by ${shortPeso(-sum.remaining)}` : `${shortPeso(sum.remaining)} left`}</p>` : ""}`;
   }
 
@@ -250,13 +259,13 @@ export function mount(container, session, { data = defaultData, toast = defaultT
       container,
       html`
         ${pageHeader({
-          title: "Money",
+          title: "Expenses",
           actions: add.length ? html`<details class="line-menu wl-add" data-role="add"><summary class="btn btn-primary" aria-label="Add">+ Add</summary><div class="line-menu-list" role="menu">${add.map((i) => html`<button type="button" class="menu-item" role="menuitem" data-act="add" data-x="${i.x}">${i.label}</button>`)}</div></details>` : "",
         })}
         ${state.error
           ? html`<section class="card">${emptyState({ title: "Couldn't load", body: state.error })}</section>`
           : state.view === "sample"
-            ? html`<p class="wl-links"><button type="button" class="btn btn-compact btn-ghost" data-act="sample-back">‹ Money</button></p>
+            ? html`<p class="wl-links"><button type="button" class="btn btn-compact btn-ghost" data-act="sample-back">‹ Expenses</button></p>
                 <h2 class="section-title">Sample budget</h2>
                 ${state.loading ? skeleton(5) : sampleList({ groups: SAMPLE_BUDGET, added: new Set(allRows().map((r) => sampleKey(r.category))), canAdd: canCategory, role: "sample-money", intro: "Not in your totals until you + Add a line." })}`
           : html`
@@ -512,6 +521,82 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     });
   }
 
+  // Add supplier payment / Add upcoming payment from + Add: choose a
+  // supplier, or + New supplier right in the same form (never leave the flow).
+  const NEW_SUPPLIER = "__new";
+  const supplierPick = () => ({
+    name: "supplierId",
+    label: "Supplier",
+    type: "select",
+    options: [...state.rows.map((s) => ({ value: s.id, label: s.name })), ...(canManage ? [{ value: NEW_SUPPLIER, label: "+ New supplier" }] : [])],
+    value: state.rows[0]?.id ?? NEW_SUPPLIER,
+  });
+  const newSupplierName = { name: "newSupplier", label: "New supplier's name", value: "", placeholder: "e.g. Nice Print Photography", hint: "Only for + New supplier." };
+  async function supplierFrom(v) {
+    if (v.supplierId !== NEW_SUPPLIER) {
+      const s = state.rows.find((x) => x.id === v.supplierId);
+      if (!s) throw new Error("Choose a supplier");
+      return s;
+    }
+    const name = (v.newSupplier || "").trim();
+    if (!name) throw new Error("Enter the new supplier's name");
+    if (!v.category) throw new Error("Choose a category for the new supplier");
+    const input = toSupplierInput(await withCategory({ name, category: v.category, agreedAmount: "", service: "" }));
+    const r = await data.suppliersApi({ action: "create", supplier: input });
+    return { id: r.supplierId, name, categoryId: input.categoryId };
+  }
+  function supplierPaymentDialog() {
+    const idempotencyKey = newKey();
+    return formDialog({
+      title: "Add supplier payment",
+      fields: [
+        supplierPick(),
+        ...(canManage ? [newSupplierName] : []),
+        { name: "amount", label: "Amount paid (₱)", value: "", inputmode: "decimal", required: true },
+        { name: "date", label: "Date paid", type: "date", value: today(), max: today(), required: true },
+        { ...categoryField(state.categories), label: "Category", hint: "Leave blank to use the supplier's category (needed for a new supplier).", required: false },
+        { name: "method", label: "Payment method", type: "select", options: METHOD_OPTIONS, value: "bank_transfer", more: true, default: true },
+        { name: "reference", label: "Reference (OR no., invoice, transfer ref)", value: "", more: true },
+        proofField(),
+      ],
+      moreLabel: "More options",
+      submitLabel: "Record payment",
+      onSubmit: async (v) => {
+        const amount = parseCentavos(v.amount);
+        if (!(amount > 0)) throw new Error("Enter an amount more than ₱0");
+        const s = await supplierFrom(v);
+        const category = v.category ? await categoryFor(v.category) : s.categoryId;
+        if (!category) throw new Error("Choose a category");
+        const r = await data.expensesApi({ action: "create", idempotencyKey, expense: { date: v.date, category, amount, supplierId: s.id, method: v.method, ...(v.reference.trim() ? { reference: v.reference.trim() } : {}) } });
+        await exp.attachAfter(r, v.proof);
+        return r;
+      },
+    });
+  }
+  const upcomingDialog = () =>
+    formDialog({
+      title: "Add upcoming payment",
+      intro: "Not spent yet: it shows under To pay until you mark it paid.",
+      fields: [
+        supplierPick(),
+        ...(canManage ? [newSupplierName] : []),
+        { name: "description", label: "Description", value: "", required: true, placeholder: "e.g. Second payment" },
+        { name: "amount", label: "Amount (₱)", value: "", inputmode: "decimal", required: true },
+        { name: "dueDate", label: "Due date", type: "date", value: "", required: true },
+        { ...categoryField(state.categories), label: "Category", hint: "Leave blank to use the supplier's category (needed for a new supplier).", required: false, more: true },
+        { name: "notes", label: "Notes", type: "textarea", value: "", more: true },
+      ],
+      moreLabel: "More options",
+      submitLabel: "Add payment",
+      onSubmit: async (v) => {
+        const s = await supplierFrom(v);
+        const category = v.category ? await categoryFor(v.category) : s.categoryId;
+        const p = parseSupplierPayment({ description: v.description, amount: v.amount, dueDate: v.dueDate, notes: v.notes, category, supplierId: s.id }, [s]);
+        if (p.notes === null) delete p.notes;
+        return data.paymentsApi({ action: "create", payment: p });
+      },
+    });
+
   const exp = expenseActions({ data, currency, timezone, can, toast, getCtx: () => ({ today: today(), categories: state.categories, suppliers: state.rows }), reload: () => load(), ...(prepareProof ? { prepareProof } : {}) });
 
   const recorded = (r) => {
@@ -558,7 +643,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
       if (c.status !== "active") await data.budgetApi({ action: "setCategoryStatus", categoryId: c.id, status: "active" });
       await data.budgetApi({ action: "updateCategory", categoryId: c.id, changes: { planned: true } });
     }
-    toast(`Added to Money: ${name} (Planned)`, "success");
+    toast(`Added to Expenses: ${name} (Planned)`, "success");
     load();
   }
   const onClick = async (event) => {
@@ -570,6 +655,8 @@ export function mount(container, session, { data = defaultData, toast = defaultT
       if (a === "add") {
         const x = el.dataset.x;
         if (x === "supplier") saved("Supplier added.")(await addSupplierDialog());
+        else if (x === "payment") recorded(await supplierPaymentDialog());
+        else if (x === "upcoming") saved("Upcoming payment added.")(await upcomingDialog());
         else if (x === "expense") exp.done("Expense added")(await exp.addDialog());
         else if (x === "budget") saved("Budget item added.")(await budgetItemDialog());
         else if (x === "sample") {
@@ -584,6 +671,11 @@ export function mount(container, session, { data = defaultData, toast = defaultT
         return;
       }
       if (a === "open") return await openRow(el.dataset.kind, el.dataset.id);
+      // Pay, right on the supplier's row (no menu, no sheet first).
+      if (a === "pay") {
+        const s = state.rows.find((x) => x.id === el.dataset.id);
+        return s ? recorded(await recordPayment(s, false)) : undefined;
+      }
       if (a === "seg") {
         state.view = el.dataset.value === "sample" ? "sample" : "mine";
         draw();
