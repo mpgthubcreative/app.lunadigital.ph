@@ -1293,10 +1293,32 @@ c6e6ffd was NOT the final baseline: the owner's final spec for Reports and the H
   - Staging, temporary `mb-*-tmp` businesses and operator (removed afterwards): 71/71. Covers short / long pages, a tab tapped from a scrolled page, the iPhone safe area, the More sheet, dialogs, 1280 desktop in all four workspaces, real uploads (JPG, JPEG, PNG, WebP, HEIC, HEIF, EXIF-rotated, damaged, unsupported), a HEIC receipt and all five Standard templates.
   - Existing staging guest links (including a published Garden design) were identical before and after the deploy: 5/5. The trial check passed again: 72/72.
 
-### Production migration baseline (2026-10-21, second)
+### 2026-10-21 · Blocker fixes: phone app frame, Wedding Setup → Preview → guest link, Luna Bridal ₱499 (f3e0f4d, e5b6050)
 
-- **Baseline = the commit that adds this entry.** Its code is identical to 7a8edf8 (CI passing).
-- It supersedes the earlier 2026-10-21 baseline (code 6f7aec7) and every earlier one.
+- **Phone bottom tabs (every workspace), second pass:**
+  - Remaining root cause: on a phone the DOCUMENT was the scroller, with the tabs `position: fixed` over it. iPhone Safari moves the document by itself: the toolbar collapses on scroll, the keyboard pans to a field and doesn't always move back, and a shorter page leaves an offset. Any leftover offset showed the tabs floating above a blank gap. Resetting `window` on a page change (the first fix) covered only one of those paths, and `100lvh` changed only the minimum height.
+  - Now (`src/styles/layout.css`, phone only): the app is a fixed frame the size of the visible screen (`position: fixed; inset: 0`, no `vh` / `dvh` height). `html` / `body` don't scroll, the main column is the one scroller, and the tabs are the frame's bottom row (not floating), keeping the safe-area padding.
+  - `src/app/shell.js`: `scrollToTop()` resets the real scroller on a page change (`main.js`). A document offset Safari leaves is put back to 0 whenever nobody is typing (scroll / focusout / keyboard close). The keyboard is detected on iPhone (visual viewport) and Android (layout shrinks); the tabs step aside while it's open.
+  - Desktop, tablet and the Super Admin console keep normal document scrolling. The Attendance save bar now sits inside the scroller.
+- **Wedding Setup → Preview → guest link:**
+  - Root cause 1: a Luna Bridal Custom wedding whose design isn't published shows guests the Luna Standard page, which had no Our story, Gallery, FAQ or closing line; the server didn't even send the gallery (`componentData` loaded photos only for a design that shows them). Preview showed the same gaps.
+  - Root cause 2: Wedding Setup opened again on the same screen adopted the old screen's form as its draft before the plan was known, so the Custom fields came back empty (and Save would have blanked them).
+  - Root cause 3: the Owner's Preview built its own data in the browser, different from the guest link's.
+  - Now: one contract, `invitationData` (`shared/invitation-design.js`), for the guest link, the Owner's Preview and Super Admin's preview, fed by one loader (`liveDesignFor` / `previewDesign`). The Owner's Preview asks the server, passing the template on screen. The Luna Standard page shows Story, Gallery, FAQ and the closing line when the couple added them. The draft holds only the fields on the form. The registry and README list which sections each design shows.
+  - Existing staging links: same address, status, design and details for all 5. `veah-bridal`'s links now also carry its 2 gallery photos (the fix).
+- **Luna Bridal: ₱499** one-time for 12 months (was ₱1,490), 30-day trial, Standard templates. `seed:plans --overwrite` on staging. Paid bills and older weddings keep their price. The Custom upgrade bills the Custom price minus what that wedding actually paid (₱2,990 − ₱499 = ₱2,491 now; ₱2,990 − ₱1,490 = ₱1,500 for an older wedding).
+- **Tests:**
+  - Unit: 1822 pass (117 files).
+  - Emulator: 41 files / 2970 pass (foreground batches).
+  - Build OK. CI passed on f3e0f4d and e5b6050.
+  - Staging matrix (temporary `n2-*-tmp` businesses, removed afterwards): 113/113. Per workspace: short, list, form, long / Settings pages; scrolled to the end; tab switch after scrolling; forced document offset; keyboard open / closed; safe area; More sheet and a page from it; a dialog; desktop. Bridal: a Custom wedding with every field, a cover and 3 gallery photos matches the real guest link; all 5 Standard templates show every detail at 390 and 1280; Wedding Setup is unchanged by previewing.
+  - Trial check: 72/72.
+  - Not testable here: a real iPhone's Safari. Headless Chrome emulates the screen, safe area and keyboard resize, not Safari's own toolbar behaviour.
+
+### Production migration baseline (2026-10-21, third)
+
+- **Baseline = the commit that adds this entry.** Its code is identical to e5b6050 (CI passing).
+- It supersedes the earlier 2026-10-21 baselines (code 7a8edf8, 6f7aec7) and every earlier one.
 - Production (Singapore Firebase, Netlify production, the domains) is set up only on the owner's go-ahead.
 
 ## Plan (decisions made from the brief)
