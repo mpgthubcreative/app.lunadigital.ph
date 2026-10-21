@@ -1269,11 +1269,35 @@ c6e6ffd was NOT the final baseline: the owner's final spec for Reports and the H
   - Build OK. CI passed on f32ecd7, 4adc0c0 and 6f7aec7.
   - Live on staging (temporary `tr-*-tmp` businesses and operator, removed afterwards): 72/72 at 390 and 1280.
 
-### Production migration baseline (2026-10-21)
+### 2026-10-21 · Mobile tabs, photo uploads (HEIC / HEIF), Bridal invitation folders (392168d, 7a8edf8)
 
-- **Baseline = the commit that adds this entry.** Its code is identical to 6f7aec7 (CI passing).
-- It supersedes the 2026-10-20 baseline (code e6847fa) and every earlier one.
-- Production (Singapore Firebase, Netlify production, the domains) is set up only on the owner's go-ahead. Planned for 2026-10-21.
+- **Phone bottom tabs** (shared shell, every workspace):
+  - Root cause: a new page kept the old scroll position. On iPhone Safari, scrolling a long page collapses the toolbar; opening a short page from there left the fixed tabs above a blank gap (a known WebKit behaviour with fixed bottom bars).
+  - Fix, once, in the shell: a new page starts at the top (`src/app/main.js`); the shell is at least `100lvh`, not `dvh` (`src/styles/layout.css`); while the keyboard is open the tabs step aside and the page is re-anchored when it closes (`src/app/shell.js`, visualViewport).
+  - Unchanged: the tabs are `position: fixed` with `env(safe-area-inset-bottom)`; content keeps `--bottom-nav-space` below it; toasts sit above the tabs and dialogs cover them; desktop is untouched.
+- **Photos** (one path for every upload, `src/lib/image.js` + `shared/image-type.js`):
+  - Root cause: three separate client paths (Bridal cover / gallery, proofs, Custom design images) accepted only `file.type` = JPEG / PNG / WebP. iPhone photos arrive as `image/heic`, `image/heif` or an empty type.
+  - Now: the real type comes from the file's bytes. JPEG, PNG, WebP, HEIC and HEIF are opened upright (EXIF / HEIF rotation), shrunk and re-encoded as JPEG in the browser; only that JPEG is uploaded (no original HEIC, no EXIF / location data). Damaged and non-photo files are refused in plain words.
+  - HEIC: Safari decodes it natively. Other browsers load `heic-to@1.6.5` (LGPL, unmodified, its own lazy chunk of about 3.2 MB) only when a HEIC photo is chosen. CSP `worker-src` now allows `blob:` for its worker; scripts stay `'self'`.
+  - Server: Bridal cover / gallery photos and raster design images are now checked by their bytes (the payments / proof checks already were). HEIC is never stored.
+  - Surfaces: Bridal cover and gallery, Custom design images (Super Admin), payment, subscription, payroll, advance and expense / receipt proofs. PDF rules and spreadsheet imports are unchanged.
+- **Bridal invitations:**
+  - `templates/` (Standard: standard, classic, modern, romantic, editorial) and `customized/` (Luna Bridal Custom: garden) under `src/modules/wedding/invitation/`.
+  - `registry.js` lists id, name, category, source and availability; ids are unchanged. Every template's output is identical to before (compared field by field).
+  - Wedding Setup, its data, guest links and Draft / Published are unchanged. Customized templates are not newly connected to Wedding Setup; that is a separate step.
+  - Guests ⋯ during the Bridal trial points to Preview in Wedding Setup (392168d).
+- **Tests:**
+  - Unit: 1807 pass (116 files).
+  - Emulator: 41 files / 2970 pass (3 foreground batches).
+  - Build OK. CI passed on 7a8edf8.
+  - Staging, temporary `mb-*-tmp` businesses and operator (removed afterwards): 71/71. Covers short / long pages, a tab tapped from a scrolled page, the iPhone safe area, the More sheet, dialogs, 1280 desktop in all four workspaces, real uploads (JPG, JPEG, PNG, WebP, HEIC, HEIF, EXIF-rotated, damaged, unsupported), a HEIC receipt and all five Standard templates.
+  - Existing staging guest links (including a published Garden design) were identical before and after the deploy: 5/5. The trial check passed again: 72/72.
+
+### Production migration baseline (2026-10-21, second)
+
+- **Baseline = the commit that adds this entry.** Its code is identical to 7a8edf8 (CI passing).
+- It supersedes the earlier 2026-10-21 baseline (code 6f7aec7) and every earlier one.
+- Production (Singapore Firebase, Netlify production, the domains) is set up only on the owner's go-ahead.
 
 ## Plan (decisions made from the brief)
 
