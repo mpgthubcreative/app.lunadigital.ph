@@ -922,6 +922,17 @@ it("Wedding link / hashtag: suggested from the couple names, cleaned as typed (#
     expect(link.hasAttribute("data-link")).toBe(true);
   });
 
+  it("Guest ⋯ during the free trial: no guest links, Preview is in Wedding Setup", async () => {
+    const data = fakeData({ listGuests: vi.fn(async () => ({ rows: [{ ...GUEST, category: "family", invitation: { status: "active" } }], hasMore: false })), getSeating: vi.fn(async () => null), getWeddingSetup: vi.fn(async () => ({ setup: FULL })), guestsApi: vi.fn() });
+    mountGuests(container, { ...wedding(), subscription: { trial: { open: true } } }, { data, toast: () => {}, confirm: async () => true });
+    await flush();
+    expect(guestMenuItems()).toContain("Invitation: preview in Wedding Setup (free trial) →");
+    expect(guestMenuItems()).not.toContain("Create invitation link");
+    expect(guestMenuItems()).not.toContain("View invitation");
+    expect(container.querySelector('[data-guest="guestPrado001"] [data-act="invite-setup"]').getAttribute("href")).toBe("/wedding-setup");
+    expect(data.guestsApi).not.toHaveBeenCalled();
+  });
+
   it("Guest ⋯ with Wedding Setup done and no link yet: Create invitation link creates, copies and refreshes", async () => {
     const data = fakeData({ listGuests: vi.fn(async () => ({ rows: [{ ...GUEST, category: "family" }], hasMore: false })), getSeating: vi.fn(async () => null), getWeddingSetup: vi.fn(async () => ({ setup: FULL })), guestsApi: vi.fn(async () => ({ path: "/invite/" + "a".repeat(32), created: true })) });
     Object.assign(navigator, { clipboard: { writeText: vi.fn(async () => {}) } });

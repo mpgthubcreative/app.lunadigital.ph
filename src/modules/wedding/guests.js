@@ -124,8 +124,11 @@ export function mount(container, session, { data = defaultData, toast = defaultT
       : html`<span class="wl-chip" data-tone="${RSVP_TONE[g.rsvp] || ""}">${RSVP_WORDS[g.rsvp] ?? g.rsvp}</span>`;
   const seats = (g, text = seatsText(g)) => html`<span class="wl-seats" data-role="seats" aria-label="${text} seats">${text}</span>`;
   // Invitation link actions, always visible to the Owner: Create (no link
-  // yet), View / Copy / Regenerate (a link exists), or why not yet.
+  // yet), View / Copy / Regenerate (a link exists), or why not yet. During
+  // the free trial there are no guest links: Preview is in Wedding Setup.
+  const trial = session.subscription?.trial?.open === true;
   const inviteItems = (g) => {
+    if (trial) return [{ act: "invite-setup", id: g.id, href: "/wedding-setup", label: "Invitation: preview in Wedding Setup (free trial) →" }];
     if (state.setupMissing?.length) return [{ act: "invite-setup", id: g.id, href: "/wedding-setup", label: "Invitation: complete Wedding Setup first →" }];
     if (g.invitation?.status !== "active") return [{ act: "invite-create", id: g.id, label: "Create invitation link" }];
     return [{ act: "invite-view", id: g.id, label: "View invitation" }, { act: "invite-copy", id: g.id, label: "Copy invitation link" }, ...(canShare() ? [{ act: "invite-share", id: g.id, label: "Share invitation" }] : []), { act: "invite-new", id: g.id, label: "Regenerate link" }];
