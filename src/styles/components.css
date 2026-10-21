@@ -4385,3 +4385,9 @@ button.wl-person-name:hover .wl-edit, button.wl-person-name:focus-visible .wl-ed
 .ws-section > .btn + .btn {
   margin-left: var(--space-2);
 }
+/* The supplier line (total · paid · next payment) wraps instead of cutting off. */
+.wl-money-row .wl-sub {
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+}
