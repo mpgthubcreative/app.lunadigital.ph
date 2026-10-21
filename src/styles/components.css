@@ -3721,6 +3721,7 @@ button.wl-person-name { cursor: pointer; }
 button.wl-person-name:hover .wl-edit, button.wl-person-name:focus-visible .wl-edit { color: var(--luna-primary); }
 .wl-person-meta { font-size: var(--text-sm); color: var(--text-muted); line-height: 1.35; }
 .wl-person-actions { flex: none; display: flex; align-items: center; gap: var(--space-1); }
+.wl-person-actions .btn { min-height: 44px; } /* 44 px touch targets beside the name */
 .wl-person-actions .wl-mark:not(.is-on) { font-weight: 500; color: var(--text-muted); }
 .wl-mark.is-on { color: var(--success); }
 [data-role="party-figures"] { margin-bottom: var(--space-3); }
