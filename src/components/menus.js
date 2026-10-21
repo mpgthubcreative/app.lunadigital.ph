@@ -21,8 +21,9 @@ const EDGE = 8; // kept clear at the screen's edges
 
 // ---------- Placement (2026-10-21) ----------
 // Every open menu is placed from the real space around its ⋯: it opens
-// downward when it fits below, else upward, else on the roomier side with
-// its own scroll. It is `position: fixed`, so no card, table or scroll
+// downward when it fits below, else upward, else (a long menu) whole on
+// the screen, shifted over its ⋯; only a menu taller than the usable screen
+// scrolls. It is `position: fixed`, so no card, table or scroll
 // column can clip it, and it stays inside the USABLE screen: below the top
 // bar, above the phone's bottom tabs (which already include the iPhone
 // home-indicator space) or, without tabs, above the safe area, and inside
@@ -86,8 +87,9 @@ export function placeMenu(m, doc = document) {
   let dir;
   if (preferUp) dir = h <= above || above >= below ? "up" : "down";
   else dir = h <= below || below >= above ? "down" : "up";
-  const room = Math.max(0, dir === "down" ? below : above);
-  const height = Math.min(h, room);
+  // Fits on neither side but on the screen: shown whole, shifted over its ⋯.
+  // Only a menu taller than the whole usable screen scrolls.
+  const height = Math.min(h, area.bottom - area.top);
   let top = dir === "down" ? t.bottom + GAP : t.top - GAP - height;
   top = Math.max(area.top, Math.min(top, area.bottom - height));
   const startAligned = preferUp || m.classList.contains("line-menu-start");

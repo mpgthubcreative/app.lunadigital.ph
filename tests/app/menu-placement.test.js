@@ -79,11 +79,18 @@ describe("placement (the ⋯ near the top, middle, and last rows)", () => {
     open(400);
     expect($("#m").dataset.menuPlaced).toBe("down");
   });
-  it("no room either way (a long menu, short screen): the roomier side, with its own scroll", () => {
+  it("a long menu that fits on neither side but on the screen (Super Admin): shown whole, shifted over its ⋯, no scroll", () => {
+    size($("#m .line-menu-list"), 220, 520);
+    const list = open(400); // 336 above, 326 below; the screen has 710
+    expect(px(list, "top")).toBeGreaterThanOrEqual(64);
+    expect(px(list, "top") + 520).toBeLessThanOrEqual(774);
+    expect(list.style.maxHeight).toBe("");
+    expect(list.style.overflowY).toBe("");
+  });
+  it("a menu taller than the whole usable screen: fills it and scrolls inside", () => {
     size($("#m .line-menu-list"), 220, 900);
     const list = open(500);
-    expect($("#m").dataset.menuPlaced).toBe("up");
-    expect(px(list, "max-height")).toBe(500 - 4 - 64);
+    expect(px(list, "max-height")).toBe(774 - 64);
     expect(list.style.overflowY).toBe("auto");
     expect(px(list, "top")).toBe(64);
   });
