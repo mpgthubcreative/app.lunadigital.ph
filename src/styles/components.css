@@ -4066,6 +4066,8 @@ tr.is-saving {
 
 /* ---------- Customers (Business, 2026-10-20): name · contact · delivery address, Add order ---------- */
 .cust-rows td.cust-address { white-space: normal; min-width: 12rem; max-width: 24rem; }
+/* A long customer name wraps (never pushes + Order / ⋯ off the screen). */
+.cust-rows td.cell-strong { white-space: normal; overflow-wrap: anywhere; min-width: 10rem; }
 .cust-actions > * { vertical-align: middle; }
 .cust-actions .menu-wrap { display: inline-block; margin-left: var(--space-1); }
 @media (min-width: 720px) {
@@ -4234,15 +4236,24 @@ tr.is-saving {
   /* Phone table rows: the ⋯ shares the first line with the name (right,
      centred); extra controls / bars go to the next line. */
   .rows td.m-only {
-    flex: 1 1 calc(100% - var(--row-action) - var(--space-2) - 1px);
+    flex: 1 1 0;
   }
   .rows td[data-m="more"] {
     order: 1;
+    flex: 0 0 auto;
     align-self: center;
+  }
+  /* One line break before the row's controls (they share that line). */
+  .rows tr:has(> td[data-m="ctl"], > td[data-m="bar"], > td[data-m="info"])::after {
+    content: "";
+    order: 2;
+    flex-basis: 100%;
+    height: 0;
+    margin-top: calc(-1 * var(--space-2)); /* no extra gap for the empty line */
   }
   .rows td[data-m="ctl"],
   .rows td[data-m="bar"],
   .rows td[data-m="info"] {
-    order: 2;
+    order: 3;
   }
 }
