@@ -1,45 +1,34 @@
-// Money (Owner-pilot Bridal UX; the Wedding Suppliers module): everything
-// the wedding costs, laid out like Household Expenses (2026-10-18):
-//   Spent ₱470k | To pay ₱400k            (two boxes; the budget, if set, a quiet line)
-//   RECEPTION                              (category heading, no total)
-//     Admiral Hotel          ₱800k   ⋯     (supplier / payee / description)
-//     Partial · ₱330k left                (status + what's left, quiet)
-// Sample Budget is a secondary view (+ Add → From sample budget), not a tab.
+// Bridal Expenses (the Wedding Suppliers module): everything the wedding
+// costs, as ONE system (2026-10-21, final Bridal UX):
+//   Spent ₱470k | To pay ₱400k            (two boxes; next payment, quiet)
+//   PHOTO & VIDEO                          (category heading)
+//     ABC Photo & Films                    [Pay]  ⋯
+//     ₱90k total · ₱20k paid · ₱70k left
+//     Next: Nov 10
 //   Row kinds
-//             supplier  a saved supplier: total = its contract (or what was
-//                       paid without one), Paid / Partial / Unpaid
-//             planned   a budget line (category with a budget) that has no
-//                       supplier yet: "No supplier yet", Planned. Adding a
-//                       supplier in that category replaces it (no duplicate)
-//             expense   an expense paid to no saved supplier: Paid, ₱0 left
-//   Summary   Budget · Spent · To pay · Left, one small line (Spent = every
-//             active Wedding Expense, supplier payments included, so nothing
-//             is counted twice; To pay = what suppliers are still owed;
-//             Left = budget − spent − to pay)
-//   + Add     one button: Expense / Supplier / Budget item
-//   ⋯         supplier: Record payment, View payments, Edit, Change
-//             category, Payment schedule, Archive (Delete when nothing was
-//             recorded); expense: Details, View / Add / Replace proof,
-//             Change category, Remove; planned: Add supplier, Add expense,
-//             Change amount, Remove from budget
-//   Proof     a receipt photo or PDF on an expense (a supplier payment is
-//             an expense): under ⋯, in Details and in View payments; never
-//             a column. Record payment / Add expense take one too (More options).
-// No budget category is needed first: forms take a category NAME and Luna
-// creates it if new (./categories.js). Downloads live under More.
+//             supplier  a saved supplier (a contract): total = its contract
+//                       (or what was paid / scheduled without one)
+//             expense   an expense paid to no saved supplier: Paid
+//   + Add Expense  the one smart form: Category (+ Add category), Supplier
+//             (+ Add supplier, or none), Total contract, Record payment,
+//             Paid now / Pay later (+ Due date). Suppliers, payments and
+//             scheduled payments stay separate records underneath.
+//   Pay       on each open contract: Amount, Paid now / Schedule for later;
+//             pays a scheduled payment too (it is marked paid, never twice)
+//   ⋯         Edit / Details / Remove (payment history lives in Details)
+// Bridal has no Budget: old budget amounts stay stored but never show.
+// The server keeps every check (paid + scheduled never above the contract).
 
 import { html, render } from "../../lib/html.js";
-import { pageHeader, emptyState, badge, skeleton, segmented } from "../../components/ui.js";
-import { SAMPLE_BUDGET, sampleKey } from "@shared/wedding-samples.js";
-import { sampleList, sampleItem } from "./samples.js";
+import { pageHeader, emptyState, badge, skeleton } from "../../components/ui.js";
 import { formDialog } from "../../components/form-dialog.js";
 import { toast as defaultToast, confirmDialog } from "../../components/feedback.js";
 import { formatCentavos, formatDayId } from "../../lib/format.js";
 import { expenseActions, proofField } from "./expenses.js";
-import { SUPPLIER_SERVICES, SUPPLIER_STATUSES, EXPENSE_METHODS, EXPENSE_METHOD_IDS, supplierBalance, businessDate, parseCentavos, weddingSummary } from "@shared/index.js";
+import { SUPPLIER_SERVICES, EXPENSE_METHODS, EXPENSE_METHOD_IDS, supplierBalance, businessDate, weddingSummary } from "@shared/index.js";
 import { parseBudget } from "../baby/budget.js";
-import { activityLines, detailsDialog, categoryName } from "../baby/common.js";
-import { paymentActions, parseSupplierPayment } from "./payments.js";
+import { activityLines, detailsDialog } from "../baby/common.js";
+import { paymentActions } from "./payments.js";
 import { categoryField, resolveCategory, categoryNameOf, guessService } from "./categories.js";
 import * as defaultData from "./data.js";
 import { paidState, moneyRows, moneyLabel, MONEY_STATUS } from "@shared/wedding-money.js";
@@ -48,11 +37,9 @@ const METHOD_OPTIONS = EXPENSE_METHOD_IDS.map((id) => ({ value: id, label: EXPEN
 // Money rows, paid state and labels: shared/wedding-money.js (the Download
 // Excel workbook lists the same rows).
 export { paidState, moneyRows, moneyLabel };
-const PAID_STATES = { unpaid: "Unpaid", partly: "Partly paid", paid: "Paid" };
-// Words in the Money list.
+// Words in the Expenses list.
 const STATUS = MONEY_STATUS;
-const STATUS_TONE = { unpaid: "", partly: "warning", paid: "success", planned: "info" };
-const FILTERS = [["all", "All"], ["unpaid", "Unpaid"], ["partly", "Partial"], ["paid", "Paid"], ["planned", "Planned"]];
+const STATUS_TONE = { unpaid: "", partly: "warning", paid: "success" };
 
 // Money rows grouped under their category (the heading), in category order.
 export function moneyGroups(rows) {
@@ -69,14 +56,14 @@ export function moneyGroups(rows) {
   return groups;
 }
 
-// The Money figures (all in centavos; remaining null without a budget).
-export function moneySummary(budget, suppliers) {
-  const s = weddingSummary(budget);
+// The Expenses figures (centavos). totals: budgets/current, where Luna
+// keeps what was spent (no budget is shown).
+export function moneySummary(totals, suppliers) {
   const stillToPay = suppliers.reduce((sum, x) => {
     const bal = supplierBalance(x);
     return sum + (bal === null ? Math.max(0, x.upcoming ?? 0) : Math.max(0, bal));
   }, 0);
-  return { budget: s.total, spent: s.spent, stillToPay, remaining: s.total === null ? null : s.total - s.spent - stillToPay };
+  return { spent: weddingSummary(totals).spent, stillToPay };
 }
 // ₱500k / ₱152.5k / ₱1.2M / ₱850: short figures for the summary line.
 export function shortPeso(c) {
@@ -89,22 +76,18 @@ export function shortPeso(c) {
 }
 const newKey = () => (globalThis.crypto && crypto.randomUUID ? crypto.randomUUID() : `k${Date.now()}${Math.random().toString(36).slice(2)}`).replace(/[^A-Za-z0-9_-]/g, "");
 
-const SERVICE_OPTIONS = Object.entries(SUPPLIER_SERVICES).map(([value, s]) => ({ value, label: s.label }));
 const serviceLabel = (s) => SUPPLIER_SERVICES[s]?.label ?? s;
 const pesosText = (c) => (Number.isSafeInteger(c) ? String(c / 100) : "");
-
-// Supplier name, Category, Total amount; the rest under More options.
-const supplierFields = (s = {}, categories = []) => [
-  { name: "name", label: "Supplier name", value: s.name ?? "", required: true, placeholder: "e.g. Nice Print Photography" },
-  categoryField(categories, { value: categoryNameOf(categories, s.categoryId) }),
-  { name: "agreedAmount", label: "Total / contract amount (₱)", value: pesosText(s.agreedAmount), inputmode: "decimal", hint: "Optional. Luna works out what's still due." },
-  { name: "service", label: "Service", type: "select", options: [{ value: "", label: "— Match the category —" }, ...SERVICE_OPTIONS], value: s.service ?? "", more: true, default: true },
-  { name: "contactPerson", label: "Contact person", value: s.contactPerson ?? "", more: true },
-  { name: "phone", label: "Phone", value: s.phone ?? "", inputmode: "tel", more: true },
-  { name: "email", label: "Email", value: s.email ?? "", more: true },
-  { name: "location", label: "Address / location", value: s.location ?? "", more: true },
-  { name: "notes", label: "Notes", type: "textarea", value: s.notes ?? "", more: true },
-];
+// ₱ text -> centavos (null when blank), with a plain message.
+function pesos(text, what) {
+  try {
+    return parseBudget(text, what);
+  } catch {
+    throw new Error(`Enter a valid ${what} (e.g. 20000 or 20,000.50), or leave it blank`);
+  }
+}
+const NEW = "__new";
+const NONE = "__none";
 
 export function toSupplierInput(v) {
   const out = { name: v.name.trim(), service: v.service, agreedAmount: parseBudget(v.agreedAmount, "agreed amount"), categoryId: v.categoryId || null };
@@ -118,7 +101,8 @@ export function mount(container, session, { data = defaultData, toast = defaultT
   const canSchedule = perms["vendorpayments.manage"] === true;
   const canPay = perms["expenses.create"] === true;
   const seesPayments = perms["vendorpayments.view"] === true;
-  const seesBudget = perms["budget.view"] === true;
+  // budget.view: the categories and the spent figure (no budget is shown).
+  const seesTotals = perms["budget.view"] === true;
   const seesExpenses = perms["expenses.view"] === true;
   const canCategory = perms["budget.manage"] === true;
   const can = { create: canPay, update: perms["expenses.update"] === true, remove: perms["expenses.delete"] === true, category: canCategory };
@@ -126,8 +110,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
   const currency = session.business.currency || "PHP";
   const timezone = session.business.timezone;
   const today = () => businessDate(timezone, now());
-  // view: "mine" (My Money) | "sample" (the read-only Sample Budget).
-  const state = { view: "mine", filter: "all", search: "", rows: [], inactive: [], other: [], otherMore: false, budget: null, categories: [], upcoming: [], loading: true, error: null };
+  const state = { rows: [], inactive: [], other: [], otherMore: false, totals: null, categories: [], upcoming: [], loading: true, error: null };
   let alive = true;
   let focus = new URLSearchParams(loc?.search || "").get("supplier");
   const money = (c) => (c === null || c === undefined ? "—" : formatCentavos(c, currency));
@@ -137,16 +120,16 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     state.loading = !state.rows.length;
     draw();
     try {
-      const [cats, budget, page, inactive, upcoming, expenses] = await Promise.all([
-        seesBudget ? data.listCategories(businessId).catch(() => state.categories) : state.categories,
-        seesBudget && data.getBudget ? data.getBudget(businessId).catch(() => null) : null,
+      const [cats, totals, page, inactive, upcoming, expenses] = await Promise.all([
+        seesTotals ? data.listCategories(businessId).catch(() => state.categories) : state.categories,
+        seesTotals && data.getBudget ? data.getBudget(businessId).catch(() => null) : null,
         data.listSuppliers(businessId, { status: "active" }, { pageSize: 200 }),
         data.listSuppliers(businessId, { status: "inactive" }, { pageSize: 200 }).catch(() => ({ rows: [] })),
         seesPayments ? data.listSupplierPayments(businessId, { status: "upcoming" }, { pageSize: 200 }).then((r) => r.rows).catch(() => []) : [],
         seesExpenses && data.listWeddingExpenses ? data.listWeddingExpenses(businessId, { status: "active" }, { pageSize: 300 }).catch(() => ({ rows: [] })) : { rows: [] },
       ]);
       state.categories = cats;
-      state.budget = budget;
+      state.totals = totals;
       state.upcoming = upcoming;
       state.rows = page.rows;
       state.inactive = inactive.rows;
@@ -154,7 +137,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
       state.otherMore = Boolean(expenses.hasMore);
       state.error = null;
     } catch (err) {
-      console.error("money: load failed:", err && (err.code || err.message));
+      console.error("expenses: load failed:", err && (err.code || err.message));
       state.error = "Couldn't load Expenses.";
     }
     state.loading = false;
@@ -168,112 +151,96 @@ export function mount(container, session, { data = defaultData, toast = defaultT
 
   const upcomingOf = (s) => state.upcoming.filter((p) => p.supplierId === s.id).sort((a, b) => (a.dueDate < b.dueDate ? -1 : 1));
   const short = (d) => formatDayId(d).replace(/, \d{4}$/, "");
-  const allRows = () => moneyRows({ suppliers: state.rows, categories: state.categories, budget: state.budget, expenses: state.other, upcoming: state.upcoming });
-  const shown = () => {
-    const q = state.search.toLowerCase();
-    return allRows().filter((r) => (state.filter === "all" || r.status === state.filter) && (!q || `${r.name || ""} ${r.category}`.toLowerCase().includes(q)));
-  };
+  const allRows = () => moneyRows({ suppliers: state.rows, categories: state.categories, expenses: state.other, upcoming: state.upcoming });
   const findRow = (kind, id) => allRows().find((r) => r.kind === kind && r.id === id) || (kind === "supplier" ? moneyRows({ suppliers: state.inactive, categories: state.categories }).find((r) => r.id === id) : null);
+  // What can still be paid or scheduled on a contract (null: no contract).
+  const openOf = (s) => {
+    const bal = supplierBalance(s);
+    return bal === null ? null : Math.max(0, bal - upcomingOf(s).reduce((n, p) => n + p.amount, 0));
+  };
+  const mayPay = canPay || canSchedule;
 
-  // Owner-pilot Bridal: ⋯ is just Edit / Details / Remove. Edit is the one
-  // place to change a Money line (category, supplier, total, payments,
-  // schedule); Details is read-only; Remove keeps any payment history.
+  // ⋯ is just Edit / Details / Remove. Edit is the one place to change a
+  // contract (category, supplier, total, payments, schedule); Details is
+  // read-only with the payment history; Remove keeps any payment history.
   function menuItems(r) {
     const items = [];
     if (r.kind === "supplier") {
-      const s = r.record;
-      const active = s.status === "active";
+      const active = r.record.status === "active";
       if (canManage && active) items.push({ x: "edit", label: "Edit" });
       items.push({ x: "view", label: "Details" });
       if (canManage) items.push(active ? { x: "remove", label: "Remove", danger: true } : { x: "restore", label: "Bring back" });
-    } else if (r.kind === "expense") {
+    } else {
       if (can.update) items.push({ x: "edit", label: "Edit" });
       items.push({ x: "view", label: "Details" });
       if (can.remove) items.push({ x: "remove", label: "Remove", danger: true });
-    } else {
-      if (canCategory) items.push({ x: "edit", label: "Edit" });
-      items.push({ x: "view", label: "Details" });
-      if (canCategory) items.push({ x: "remove", label: "Remove", danger: true });
     }
     return items;
   }
 
-  // A Money row (2026-10-18): what is still owed is the figure that stands
-  // out; paid and planned lines are quiet.
-  //   Admiral Hotel                    ₱330k left
-  //   ₱800k total · Partial
-  //   Nice Print / Paid · ₱40k         Wedding Gown / ₱80k planned
+  // One row (2026-10-21):
+  //   ABC Photo & Films                         [Pay]  ⋯
+  //   ₱90k total · ₱20k paid · ₱70k left
+  //   Next: Nov 10
+  // Each figure keeps its word (it never breaks inside "₱90k total").
+  const piece = (text) => html`<span class="wl-nobr">${text}</span>`;
   function row(r) {
-    const late = r.kind === "supplier" && upcomingOf(r.record).some((p) => p.dueDate < today());
+    const s = r.kind === "supplier" ? r.record : null;
+    const plan = s ? upcomingOf(s) : [];
+    const late = plan.some((p) => p.dueDate < today());
     const who = moneyLabel(r);
-    const word = late ? "Overdue" : STATUS[r.status];
-    const tone = late ? "danger" : STATUS_TONE[r.status];
-    const owes = (r.status === "unpaid" || r.status === "partly") && Number.isSafeInteger(r.remaining) && r.remaining > 0;
-    const sub =
-      r.status === "planned"
-        ? r.total === null ? html`<span class="wl-state-word" data-tone="info">Planned</span> · amount not set` : html`${shortPeso(r.total)} <span class="wl-state-word" data-tone="info">planned</span>`
-        : r.status === "paid"
-          ? html`<span class="wl-state-word" data-tone="success">Paid</span> · ${shortPeso(r.total ?? 0)}`
-          : r.kind === "supplier"
-            ? html`${r.total === null ? "" : `${shortPeso(r.total)} total · `}${shortPeso(r.record.paid ?? 0)} paid${upcomingOf(r.record)[0] ? ` · Next ${short(upcomingOf(r.record)[0].dueDate)}` : ""}${late ? html` · <span class="wl-state-word is-late" data-tone="danger">Overdue</span>` : ""}`
-            : html`${r.total === null ? "" : `${shortPeso(r.total)} total · `}<span class="wl-state-word${late ? " is-late" : ""}" data-tone="${tone}">${word}</span>`;
+    let line;
+    if (!s) line = html`${piece(shortPeso(r.total ?? 0))} · <span class="wl-state-word" data-tone="success">Paid</span>`;
+    else if (r.status === "paid" && !(r.remaining > 0)) line = html`${piece(`${shortPeso(r.total ?? 0)} total`)} · <span class="wl-state-word" data-tone="success">Paid</span>`;
+    else {
+      const parts = [];
+      if (r.total > 0 || Number.isSafeInteger(s.agreedAmount)) parts.push(piece(`${shortPeso(r.total ?? 0)} total`));
+      parts.push(piece(`${shortPeso(s.paid ?? 0)} paid`));
+      if (r.remaining > 0) parts.push(html`<b class="wl-nobr wl-owed${late ? " is-late" : ""}" data-role="left">${shortPeso(r.remaining)} left</b>`);
+      line = parts.map((x, i) => html`${i ? " · " : ""}${x}`);
+    }
+    const next = plan[0] ? html`<span class="wl-sub hx-sub wl-next" data-role="next">Next: ${short(plan[0].dueDate)}${late ? html` · <span class="wl-state-word is-late" data-tone="danger">Overdue</span>` : ""}</span>` : "";
     const menu = menuItems(r);
-    const payBtn = r.kind === "supplier" && owes && canPay && r.record.status === "active" ? html`<button type="button" class="btn btn-compact wl-pay" data-act="pay" data-id="${r.id}" aria-label="Pay ${who}">Pay</button>` : "";
-    return html`<li class="wl-row hx-row wl-money-row" data-kind="${r.kind}" data-${r.kind === "supplier" ? "supplier" : r.kind === "planned" ? "planned" : "expense"}="${r.id}" data-state="${r.status}">
+    const payable = s && s.status === "active" && mayPay && (s.agreedAmount === null || s.agreedAmount === undefined || r.remaining > 0);
+    return html`<li class="wl-row hx-row wl-money-row" data-kind="${r.kind}" data-${s ? "supplier" : "expense"}="${r.id}" data-state="${r.status}">
       <button type="button" class="wl-main hx-main" data-act="open" data-kind="${r.kind}" data-id="${r.id}">
         <span class="wl-name">${who}</span>
-        <span class="wl-sub hx-sub" data-role="status">${sub}</span>
+        <span class="wl-sub hx-sub" data-role="status">${line}</span>
+        ${next}
       </button>
-      ${owes ? html`<span class="wl-owe-col">${html`<span class="wl-amt hx-amt wl-owed${late ? " is-late" : ""}" data-role="left">${shortPeso(r.remaining)} left</span>`}${payBtn}</span>` : html`<span class="wl-amt hx-amt" data-role="left"></span>`}
+      ${payable ? html`<span class="wl-owe-col"><button type="button" class="btn btn-compact wl-pay" data-act="pay" data-id="${r.id}" aria-label="Pay ${who}">Pay</button></span>` : html`<span class="wl-amt hx-amt"></span>`}
       ${menu.length ? html`<details class="line-menu"><summary class="btn btn-compact btn-ghost" aria-label="More for ${who}">⋯</summary><div class="line-menu-list" role="menu">${menu.map((i) => html`${i.danger ? html`<div class="menu-sep" role="separator"></div>` : ""}<button type="button" class="menu-item${i.danger ? " menu-danger" : ""}" role="menuitem" data-act="menu" data-kind="${r.kind}" data-x="${i.x}" data-id="${r.id}">${i.label}</button>`)}</div></details>` : html`<span class="wl-menu-gap"></span>`}
     </li>`;
   }
   const groupsHtml = (rows, role) => moneyGroups(rows).map((g) => html`<section class="wl-section hx-group" data-group="${g.key}"><h2 class="wl-cat-head hx-group-head"><span class="wl-group-title">${g.name}</span></h2><ul class="wl-list" data-role="${role}">${g.rows.map(row)}</ul></section>`);
 
-  // Bridal Expenses (2026-10-21): ONE + Add for all wedding money.
-  const addItems = () => [
-    ...(canPay ? [{ x: "expense", label: "Add expense" }] : []),
-    ...(canManage ? [{ x: "supplier", label: "Add supplier" }] : []),
-    ...(canPay && (canManage || state.rows.length) ? [{ x: "payment", label: "Add supplier payment" }] : []),
-    ...(canSchedule && (canManage || state.rows.length) ? [{ x: "upcoming", label: "Add upcoming payment" }] : []),
-    ...(canCategory ? [{ x: "budget", label: "Budget item" }] : []),
-    ...(canCategory ? [{ x: "sample", label: "From sample budget" }] : []),
-  ];
   // The next payment due (scheduled, any supplier).
   const nextDue = () => [...state.upcoming].sort((a, b) => (a.dueDate < b.dueDate ? -1 : a.dueDate > b.dueDate ? 1 : 0))[0] ?? null;
 
-  // Two boxes (Spent / To pay); a set budget is a quiet line under them.
+  // Two boxes: Spent / To pay; the next payment due under them.
   function summary() {
-    if (!seesBudget) return "";
+    if (!seesTotals) return "";
     if (state.loading) return skeleton(1);
-    const sum = moneySummary(state.budget, [...state.rows, ...state.inactive]);
+    const sum = moneySummary(state.totals, [...state.rows, ...state.inactive]);
+    const n = nextDue();
     return html`<div class="hx-sum" data-role="money-summary"><div class="hx-sum-item" data-k="spent" title="${money(sum.spent)}"><span class="kpi-label">Spent</span><b class="kpi-value">${shortPeso(sum.spent)}</b></div><div class="hx-sum-item" data-k="still" title="${money(sum.stillToPay)}"><span class="kpi-label">To pay</span><b class="kpi-value">${shortPeso(sum.stillToPay)}</b></div></div>
-      ${nextDue() ? html`<p class="stat-hint wl-budget-line" data-role="next-payment">Next payment: <b>${short(nextDue().dueDate)}</b> · ${nextDue().supplierName ?? nextDue().description} ${shortPeso(nextDue().amount)}${nextDue().dueDate < today() ? " · overdue" : ""}</p>` : ""}
-      ${sum.budget !== null ? html`<p class="stat-hint wl-budget-line" data-role="budget-line">Budget ${shortPeso(sum.budget)} · ${sum.remaining < 0 ? `over by ${shortPeso(-sum.remaining)}` : `${shortPeso(sum.remaining)} left`}</p>` : ""}`;
+      ${n ? html`<p class="stat-hint wl-budget-line" data-role="next-payment">Next payment: <b>${short(n.dueDate)}</b> · ${n.supplierName ?? n.description} ${shortPeso(n.amount)}${n.dueDate < today() ? " · overdue" : ""}</p>` : ""}`;
   }
 
   function draw() {
     if (!alive) return;
-    const add = addItems();
     render(
       container,
       html`
-        ${pageHeader({
-          title: "Expenses",
-          actions: add.length ? html`<details class="line-menu wl-add" data-role="add"><summary class="btn btn-primary" aria-label="Add">+ Add</summary><div class="line-menu-list" role="menu">${add.map((i) => html`<button type="button" class="menu-item" role="menuitem" data-act="add" data-x="${i.x}">${i.label}</button>`)}</div></details>` : "",
-        })}
+        ${pageHeader({ title: "Expenses", actions: canPay || canManage ? html`<button type="button" class="btn btn-primary" data-act="add-expense">+ Add Expense</button>` : "" })}
         ${state.error
           ? html`<section class="card">${emptyState({ title: "Couldn't load", body: state.error })}</section>`
-          : state.view === "sample"
-            ? html`<p class="wl-links"><button type="button" class="btn btn-compact btn-ghost" data-act="sample-back">‹ Expenses</button></p>
-                <h2 class="section-title">Sample budget</h2>
-                ${state.loading ? skeleton(5) : sampleList({ groups: SAMPLE_BUDGET, added: new Set(allRows().map((r) => sampleKey(r.category))), canAdd: canCategory, role: "sample-money", intro: "Not in your totals until you + Add a line." })}`
           : html`
             ${summary()}
             ${state.loading
               ? skeleton(5)
               : !allRows().length
-                ? emptyState({ iconName: "budget", title: "Nothing here yet", body: "Tap + Add for an expense, a supplier or a budget item, or pick lines from the sample budget." })
+                ? emptyState({ iconName: "budget", title: "Nothing here yet", body: "Tap + Add Expense for a supplier, a payment or something you still need to pay." })
                 : html`${groupsHtml(allRows(), "money")}
                   ${state.otherMore ? html`<p class="wl-links"><a href="/expenses" data-link>All expenses ›</a></p>` : ""}`}
             ${state.inactive.length ? html`<details class="wl-fold"><summary>Removed from the list (${state.inactive.length})</summary><ul class="wl-list" data-role="suppliers-inactive">${moneyRows({ suppliers: state.inactive, categories: state.categories }).map(row)}</ul></details>` : ""}`}`
@@ -287,15 +254,8 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     return { ...v, categoryId, service: v.service || guessService(categoryNameOf(state.categories, categoryId)) };
   };
 
-  const addSupplierDialog = (categoryName = "") =>
-    formDialog({
-      title: "Add supplier",
-      fields: supplierFields({}, state.categories).map((f) => (f.name === "category" && categoryName ? { ...f, value: categoryName } : f)),
-      moreLabel: "More options",
-      submitLabel: "Add supplier",
-      onSubmit: async (v) => data.suppliersApi({ action: "create", supplier: toSupplierInput(await withCategory(v)) }),
-    });
-  // Details (read-only): what happened with this wedding expense.
+  // Details (read-only): Total contract / Paid / Remaining, scheduled
+  // payments, then the payment history and activity folded away.
   async function openView(s) {
     let paid = [];
     try {
@@ -304,15 +264,11 @@ export function mount(container, session, { data = defaultData, toast = defaultT
       paid = [];
     }
     const plan = upcomingOf(s);
-    // Details (2026-10-18): what it is, then Total / Paid / Remaining (the
-    // figure the couple cares about), scheduled payments, and the payment
-    // history and activity folded away. Nothing is said twice.
     const total = Number.isSafeInteger(s.agreedAmount) ? s.agreedAmount : null;
     const balance = supplierBalance(s);
-    const shortDay = (d) => formatDayId(d).replace(/, \d{4}$/, "");
     const proofWord = (e) => (e.proof ? (e.proof.contentType === "application/pdf" ? "PDF proof" : "Photo proof") : "No proof");
     const hero = html`<div class="dd-money" data-role="money-figures">
-      <div class="dd-fig"><span>Total</span><b data-role="total">${total === null ? "Not set" : whole(total)}</b></div>
+      <div class="dd-fig"><span>Total contract</span><b data-role="total">${total === null ? "Not set" : whole(total)}</b></div>
       <div class="dd-fig"><span>Paid</span><b data-role="paid">${whole(s.paid ?? 0)}</b>${total !== null ? html`<small class="dd-of" data-role="paid-of">of ${whole(total)}</small>` : ""}</div>
       ${balance !== null ? html`<div class="dd-fig dd-fig-main${balance > 0 ? "" : " is-done"}"><span>Remaining</span><b data-role="remaining">${whole(Math.max(0, balance))}</b></div>` : ""}
     </div>`;
@@ -329,8 +285,8 @@ export function mount(container, session, { data = defaultData, toast = defaultT
         ["Notes", s.notes],
       ],
       sections: [
-        ...(plan.length ? [{ title: "Scheduled payments", key: "scheduled", lines: plan.map((p) => ({ date: shortDay(p.dueDate), amount: whole(p.amount), sub: [p.description, p.dueDate < today() ? "Overdue" : ""].filter(Boolean).join(" · ") })) }] : []),
-        { title: "Payment history", key: "history", fold: { open: `View payment history${paid.length ? ` (${paid.length})` : ""}`, close: "Hide payment history" }, lines: [...paid].sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0)).map((e) => ({ date: shortDay(e.date), amount: whole(e.amount), sub: [e.method ? EXPENSE_METHODS[e.method]?.label ?? e.method : "", e.reference ? `Ref ${e.reference}` : "", proofWord(e)].filter(Boolean).join(" · ") })), empty: "Nothing paid yet." },
+        ...(plan.length ? [{ title: "Scheduled payments", key: "scheduled", lines: plan.map((p) => ({ date: short(p.dueDate), amount: whole(p.amount), sub: [p.description, p.dueDate < today() ? "Overdue" : ""].filter(Boolean).join(" · ") })) }] : []),
+        { title: "Payment history", key: "history", fold: { open: `View payment history${paid.length ? ` (${paid.length})` : ""}`, close: "Hide payment history" }, lines: [...paid].sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0)).map((e) => ({ date: short(e.date), amount: whole(e.amount), sub: [e.method ? EXPENSE_METHODS[e.method]?.label ?? e.method : "", e.reference ? `Ref ${e.reference}` : "", proofWord(e)].filter(Boolean).join(" · ") })), empty: "Nothing paid yet." },
       ],
       activity: activityLines(s.history, timezone),
       activityFold: true,
@@ -339,8 +295,8 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     });
   }
 
-  // Edit (one sheet): Category, Supplier, Total, then Payments (Record
-  // payment, proofs) and Payment schedule; contact details folded.
+  // Edit (one sheet): Category, Supplier, Total contract, then Payments
+  // (Pay, proofs) and Payment schedule; contact details folded.
   async function editSheet(s) {
     let paid = [];
     try {
@@ -359,14 +315,14 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     const proofBtn = (e) => (e.proof ? html`<button type="button" class="btn btn-compact btn-ghost" data-x="proof-view" data-id="${e.id}">View proof</button>` : can.update ? html`<button type="button" class="btn btn-compact btn-ghost" data-x="proof-add" data-id="${e.id}">Add proof</button>` : "");
     render(
       backdrop,
-      html`<div class="modal modal-wide" role="dialog" aria-modal="true" aria-label="Edit money item" data-role="money-edit">
-        <div class="modal-header"><h2 class="card-title">Edit money item</h2></div>
+      html`<div class="modal modal-wide" role="dialog" aria-modal="true" aria-label="Edit ${s.name}" data-role="money-edit">
+        <div class="modal-header"><h2 class="card-title">Edit ${s.name}</h2></div>
         <div class="modal-body">
           <form data-role="money-edit-form" novalidate>
             <datalist id="me-cats">${cats.map((n) => html`<option value="${n}"></option>`)}</datalist>
             ${input("category", "Category", categoryNameOf(state.categories, s.categoryId), 'list="me-cats" autocomplete="off"')}
             ${input("name", "Supplier", s.name, "required")}
-            ${input("agreedAmount", "Total (₱)", pesosText(s.agreedAmount), 'inputmode="decimal" placeholder="Optional"')}
+            ${input("agreedAmount", "Total contract (₱)", pesosText(s.agreedAmount), 'inputmode="decimal" placeholder="Optional"')}
             <details class="wl-fold"><summary>More details</summary>
               ${input("contactPerson", "Contact person", s.contactPerson)}${input("phone", "Phone", s.phone, 'inputmode="tel"')}${input("email", "Email", s.email)}${input("location", "Address / location", s.location)}
               <div class="field"><label for="me-notes">Notes</label><textarea class="input" id="me-notes" name="notes" rows="2">${s.notes ?? ""}</textarea></div>
@@ -374,17 +330,16 @@ export function mount(container, session, { data = defaultData, toast = defaultT
             <p class="form-error" role="alert" data-role="me-error" hidden></p>
           </form>
           <h3 class="slip-head">Payments</h3>
-          <p class="wl-count" data-role="me-paid">${whole(s.paid ?? 0)} paid${balance === null ? "" : ` · ${whole(balance)} remaining`} · <span class="wl-chip" data-tone="${STATUS_TONE[paidState(s)] || ""}">${STATUS[paidState(s)]}</span></p>
+          <p class="wl-count" data-role="me-paid">${whole(s.paid ?? 0)} paid${balance === null ? "" : ` · ${whole(Math.max(0, balance))} remaining`} · <span class="wl-chip" data-tone="${STATUS_TONE[paidState(s)] || ""}">${STATUS[paidState(s)]}</span></p>
           ${paid.length ? html`<ul class="slip" data-role="paid-list">${paid.map((e) => html`<li data-expense="${e.id}"><span class="slip-what">${whole(e.amount)} paid ${short(e.date)}${e.reference ? html`<small>${e.reference}</small>` : ""}</span><span class="slip-amt"></span><span class="slip-act">${proofBtn(e)}</span></li>`)}</ul>` : ""}
-          ${canPay ? html`<button type="button" class="btn btn-compact" data-x="record">Record payment</button>` : ""}
+          ${mayPay ? html`<button type="button" class="btn btn-compact" data-x="record">Pay</button>` : ""}
           <h3 class="slip-head">Payment schedule</h3>
           ${plan.length ? html`<ul class="wl-list" data-role="scheduled-list">${plan.map((p) => html`<li class="wl-row"><button type="button" class="wl-main" data-x="scheduled" data-id="${p.id}"><span class="wl-name">${short(p.dueDate)} · ${whole(p.amount)}</span><span class="wl-sub">${p.dueDate < today() ? "Overdue · " : ""}${p.description || "Tap to pay, edit or cancel"}</span></button></li>`)}</ul>` : html`<p class="stat-hint">Nothing scheduled.</p>`}
-          ${canSchedule ? html`<button type="button" class="btn btn-compact" data-x="schedule">${plan.length ? "Add to schedule" : "Add a payment schedule"}</button>` : ""}
         </div>
         <div class="modal-footer"><button type="button" class="btn" data-x="close">Close</button><button type="button" class="btn btn-primary" data-x="save">Save changes</button></div>
       </div>`
     );
-    // After a payment / schedule change, reopen the sheet with fresh figures.
+    // After a payment change, reopen the sheet with fresh figures.
     const again = async () => {
       await load();
       const fresh = state.rows.find((x) => x.id === s.id);
@@ -408,12 +363,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
           load();
         } else if (x === "record") {
           close();
-          if (recorded(await recordPayment(s, false))) await again();
-        } else if (x === "schedule") {
-          close();
-          const r = await pay.newDialog(s);
-          await pay.after("Payment scheduled.")(r);
-          if (r) await again();
+          if (paid_(await paySheet(s))) await again();
         } else if (x === "scheduled") {
           const p = state.upcoming.find((y) => y.id === ev.target.closest("[data-x]").dataset.id);
           close();
@@ -436,257 +386,251 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     });
   }
 
-  // Planned line: Edit (category, amount, optional supplier) and Details.
-  const plannedEdit = (c) =>
-    formDialog({
-      title: "Edit money item",
-      fields: [
-        { name: "name", label: "Category", value: c.name, required: true },
-        { name: "budget", label: "Amount (₱)", value: Number.isSafeInteger(c.budget) ? String(c.budget / 100) : "", inputmode: "decimal", hint: "Optional: leave blank until you know it." },
-        ...(canManage ? [{ name: "supplier", label: "Supplier / Payee", value: "", placeholder: "e.g. Nice Print Photography", hint: "Optional. Adding one turns this planned line into a supplier line." }] : []),
-      ],
-      submitLabel: "Save changes",
-      onSubmit: async (v) => {
-        const budget = v.budget.trim() ? parseBudget(v.budget, "amount") : null;
-        const changes = {};
-        if (v.name.trim() !== c.name) changes.name = v.name.trim();
-        if ((c.budget ?? null) !== budget) changes.budget = budget;
-        if (budget === null && !c.planned) changes.planned = true; // stays on the plan without an amount
-        if (Object.keys(changes).length) await data.budgetApi({ action: "updateCategory", categoryId: c.id, ...(c.revision ? { expectedRevision: c.revision } : {}), changes });
-        const name = (v.supplier || "").trim();
-        if (name) await data.suppliersApi({ action: "create", supplier: toSupplierInput({ name, service: guessService(changes.name || c.name), agreedAmount: budget === null ? "" : String(budget / 100), categoryId: c.id }) });
-        return Object.keys(changes).length || name ? { saved: true } : { unchanged: true };
-      },
-    });
-  const plannedView = (r) =>
-    detailsDialog({
-      title: r.category,
-      badgeHtml: badge("Planned", "info"),
-      rows: [["Category", r.category], ["Supplier", "No supplier yet"], ["Planned amount", r.total === null ? "Amount not set" : money(r.total)], ["Spent so far", money((state.budget?.spentByCategory || {})[r.id] ?? 0)], ["Remaining", r.remaining === null ? "—" : money(r.remaining)]],
-      activity: activityLines(r.record.history, timezone),
-      actions: [],
-      onAction: async () => false,
-    });
-
   // Remove: nothing recorded -> deleted; payments / schedule -> off the
-  // active list (records, payments and history kept). Planned -> off the plan.
+  // active list (records, payments and history kept).
   async function removeRow(r) {
     if (r.kind === "supplier") {
       const s = r.record;
       const activity = s.paid > 0 || s.upcomingCount > 0;
       const keep = activity ? ` Its ${s.paid > 0 ? `${whole(s.paid)} in payments` : ""}${s.paid > 0 && s.upcomingCount > 0 ? " and " : ""}${s.upcomingCount > 0 ? "scheduled payments" : ""} stay in your records and history.` : "";
-      if (!(await confirm({ title: "Remove this money item?", body: `It will no longer appear in your active wedding money list.${keep}`, confirmLabel: "Remove", danger: true }))) return;
+      if (!(await confirm({ title: `Remove ${s.name}?`, body: `It will no longer appear in your Expenses list.${keep}`, confirmLabel: "Remove", danger: true }))) return;
       if (activity) await data.suppliersApi({ action: "setStatus", supplierId: s.id, status: "inactive" });
       else await data.suppliersApi({ action: "delete", supplierId: s.id });
       toast("Removed.", "success");
       load();
-    } else if (r.kind === "expense") exp.done("Removed")(await exp.removeDialog(r.record));
-    else {
-      const c = r.record;
-      if (!(await confirm({ title: "Remove this money item?", body: "It will no longer appear in your active wedding money list. Anything already paid stays.", confirmLabel: "Remove", danger: true }))) return;
-      saved("Removed.")(await data.budgetApi({ action: "updateCategory", categoryId: c.id, ...(c.revision ? { expectedRevision: c.revision } : {}), changes: { budget: null, ...(c.planned ? { planned: false } : {}) } }));
-    }
+    } else exp.done("Removed")(await exp.removeDialog(r.record));
   }
 
   const pay = paymentActions({ data, currency, timezone, today, canManage: canSchedule, canPay: canSchedule && canPay, toast, getCtx: () => ({ categories: state.categories, suppliers: state.rows }), reload: () => load() });
-
-  // One Wedding Expense paid to this supplier. Full = the balance not
-  // already scheduled (scheduled payments are paid from View payments).
-  function recordPayment(s, full) {
-    const balance = supplierBalance(s);
-    const scheduled = upcomingOf(s).reduce((sum, p) => sum + p.amount, 0);
-    const open = balance === null ? null : Math.max(0, balance - scheduled);
-    // One key per dialog: a double click or a retry records ONE expense.
-    const idempotencyKey = newKey();
-    return formDialog({
-      title: full ? `${s.name}: paid in full` : `${s.name}: record a payment`,
-      fields: [
-        { name: "amount", label: "Amount paid (₱)", value: full && open ? (open / 100).toFixed(2) : "", inputmode: "decimal", required: true, hint: balance === null ? "" : `Still due: ${money(balance)}` },
-        { name: "date", label: "Date paid", type: "date", value: today(), max: today(), required: true },
-        { ...categoryField(state.categories, { value: categoryNameOf(state.categories, s.categoryId) }), more: true },
-        { name: "method", label: "Payment method", type: "select", options: METHOD_OPTIONS, value: "bank_transfer", more: true, default: true },
-        { name: "reference", label: "Reference (OR no., invoice, transfer ref)", value: "", more: true },
-        proofField(),
-      ],
-      moreLabel: "More options",
-      submitLabel: "Record payment",
-      onSubmit: async (v) => {
-        const amount = parseCentavos(v.amount);
-        if (!(amount > 0)) throw new Error("Enter an amount more than ₱0");
-        const category = await categoryFor(v.category);
-        const r = await data.expensesApi({ action: "create", idempotencyKey, expense: { date: v.date, category, amount, supplierId: s.id, method: v.method, ...(v.reference.trim() ? { reference: v.reference.trim() } : {}) } });
-        await exp.attachAfter(r, v.proof);
-        return r;
-      },
-    });
-  }
-
-  // Add supplier payment / Add upcoming payment from + Add: choose a
-  // supplier, or + New supplier right in the same form (never leave the flow).
-  const NEW_SUPPLIER = "__new";
-  const supplierPick = () => ({
-    name: "supplierId",
-    label: "Supplier",
-    type: "select",
-    options: [...state.rows.map((s) => ({ value: s.id, label: s.name })), ...(canManage ? [{ value: NEW_SUPPLIER, label: "+ New supplier" }] : [])],
-    value: state.rows[0]?.id ?? NEW_SUPPLIER,
-  });
-  const newSupplierName = { name: "newSupplier", label: "New supplier's name", value: "", placeholder: "e.g. Nice Print Photography", hint: "Only for + New supplier." };
-  async function supplierFrom(v) {
-    if (v.supplierId !== NEW_SUPPLIER) {
-      const s = state.rows.find((x) => x.id === v.supplierId);
-      if (!s) throw new Error("Choose a supplier");
-      return s;
-    }
-    const name = (v.newSupplier || "").trim();
-    if (!name) throw new Error("Enter the new supplier's name");
-    if (!v.category) throw new Error("Choose a category for the new supplier");
-    const input = toSupplierInput(await withCategory({ name, category: v.category, agreedAmount: "", service: "" }));
-    const r = await data.suppliersApi({ action: "create", supplier: input });
-    return { id: r.supplierId, name, categoryId: input.categoryId };
-  }
-  function supplierPaymentDialog() {
-    const idempotencyKey = newKey();
-    return formDialog({
-      title: "Add supplier payment",
-      fields: [
-        supplierPick(),
-        ...(canManage ? [newSupplierName] : []),
-        { name: "amount", label: "Amount paid (₱)", value: "", inputmode: "decimal", required: true },
-        { name: "date", label: "Date paid", type: "date", value: today(), max: today(), required: true },
-        { ...categoryField(state.categories), label: "Category", hint: "Leave blank to use the supplier's category (needed for a new supplier).", required: false },
-        { name: "method", label: "Payment method", type: "select", options: METHOD_OPTIONS, value: "bank_transfer", more: true, default: true },
-        { name: "reference", label: "Reference (OR no., invoice, transfer ref)", value: "", more: true },
-        proofField(),
-      ],
-      moreLabel: "More options",
-      submitLabel: "Record payment",
-      onSubmit: async (v) => {
-        const amount = parseCentavos(v.amount);
-        if (!(amount > 0)) throw new Error("Enter an amount more than ₱0");
-        const s = await supplierFrom(v);
-        const category = v.category ? await categoryFor(v.category) : s.categoryId;
-        if (!category) throw new Error("Choose a category");
-        const r = await data.expensesApi({ action: "create", idempotencyKey, expense: { date: v.date, category, amount, supplierId: s.id, method: v.method, ...(v.reference.trim() ? { reference: v.reference.trim() } : {}) } });
-        await exp.attachAfter(r, v.proof);
-        return r;
-      },
-    });
-  }
-  const upcomingDialog = () =>
-    formDialog({
-      title: "Add upcoming payment",
-      intro: "Not spent yet: it shows under To pay until you mark it paid.",
-      fields: [
-        supplierPick(),
-        ...(canManage ? [newSupplierName] : []),
-        { name: "description", label: "Description", value: "", required: true, placeholder: "e.g. Second payment" },
-        { name: "amount", label: "Amount (₱)", value: "", inputmode: "decimal", required: true },
-        { name: "dueDate", label: "Due date", type: "date", value: "", required: true },
-        { ...categoryField(state.categories), label: "Category", hint: "Leave blank to use the supplier's category (needed for a new supplier).", required: false, more: true },
-        { name: "notes", label: "Notes", type: "textarea", value: "", more: true },
-      ],
-      moreLabel: "More options",
-      submitLabel: "Add payment",
-      onSubmit: async (v) => {
-        const s = await supplierFrom(v);
-        const category = v.category ? await categoryFor(v.category) : s.categoryId;
-        const p = parseSupplierPayment({ description: v.description, amount: v.amount, dueDate: v.dueDate, notes: v.notes, category, supplierId: s.id }, [s]);
-        if (p.notes === null) delete p.notes;
-        return data.paymentsApi({ action: "create", payment: p });
-      },
-    });
-
   const exp = expenseActions({ data, currency, timezone, can, toast, getCtx: () => ({ today: today(), categories: state.categories, suppliers: state.rows }), reload: () => load(), ...(prepareProof ? { prepareProof } : {}) });
 
-  const recorded = (r) => {
-    if (r) {
-      toast(r.alreadyRecorded ? "Already recorded: no second payment was added." : "Payment recorded.", "success");
-      load();
-    }
-    return r;
+  // Paid now / Pay later (Schedule for later): which fields show.
+  //   now    Payment date + method / reference / proof
+  //   later  Due date (today or later); payment details wait for the payment
+  const show = (form, name, on) => {
+    const el = form.elements[name];
+    const box = el && (el.closest ? el.closest(".field") : el[0]?.closest(".field"));
+    if (box) box.hidden = !on;
   };
-  const budgetItemDialog = (c = null) =>
-    formDialog({
-      title: c ? `${c.name}: budget` : "Add budget item",
-      fields: [...(c ? [] : [{ ...categoryField(state.categories), label: "Item / category", placeholder: "e.g. Wedding gown" }]), { name: "budget", label: "Amount (₱)", value: c && Number.isSafeInteger(c.budget) ? String(c.budget / 100) : "", inputmode: "decimal", required: true }],
-      submitLabel: c ? "Save" : "Add",
+  function timing(form, { forceNow = false } = {}) {
+    const later = !forceNow && form.elements.when?.value === "later";
+    show(form, "when", !forceNow);
+    show(form, "date", !later);
+    show(form, "dueDate", later);
+    for (const n of ["method", "reference", "proof"]) show(form, n, !later);
+    return later;
+  }
+  const whenField = (laterLabel, value) => {
+    const options = [...(canPay ? [{ value: "now", label: "Paid now" }] : []), ...(canSchedule ? [{ value: "later", label: laterLabel }] : [])];
+    return { name: "when", label: "Payment timing", type: "radio", options, value: options.some((o) => o.value === value) ? value : options[0]?.value };
+  };
+  const paymentFields = () => [
+    { name: "date", label: "Payment date", type: "date", value: today(), max: today() },
+    { name: "dueDate", label: "Due date", type: "date", value: "" },
+    { name: "method", label: "Payment method", type: "select", options: METHOD_OPTIONS, value: "bank_transfer", more: true, default: true },
+    { name: "reference", label: "Reference (OR no., invoice, transfer ref)", value: "", more: true },
+    proofField(),
+  ];
+  // ONE payment to supplier s: now -> a Wedding Expense (one per dialog,
+  // even on a retry); later -> a scheduled payment (not spent yet).
+  async function recordFor(s, { amount, later, v, idempotencyKey, description = "Payment" }) {
+    const category = s.categoryId || (await categoryFor(""));
+    if (later) {
+      if (!canSchedule) throw new Error("You can't schedule payments");
+      if (!v.dueDate) throw new Error("Choose the due date");
+      if (v.dueDate < today()) throw new Error("Choose today or a later due date");
+      return data.paymentsApi({ action: "create", payment: { description, amount, dueDate: v.dueDate, category, supplierId: s.id } });
+    }
+    if (!canPay) throw new Error("You can't record payments. Choose to pay later");
+    if (!v.date) throw new Error("Choose the payment date");
+    const r = await data.expensesApi({ action: "create", idempotencyKey, expense: { date: v.date, category, amount, supplierId: s.id, method: v.method, ...(v.reference.trim() ? { reference: v.reference.trim() } : {}) } });
+    await exp.attachAfter(r, v.proof);
+    return r;
+  }
+  // Friendly overpayment check (the server checks again): paid + scheduled
+  // never above the total contract.
+  const overCheck = (open, amount) => {
+    if (open !== null && amount > open) throw new Error(open > 0 ? `That's more than the ${whole(open)} still to pay on this contract. Change the total contract first if it went up.` : "Everything on this contract is already paid or scheduled. Change the total contract first if it went up.");
+  };
+
+  // Pay (on the row and in Edit): Amount, Paid now / Schedule for later,
+  // Payment date or Due date. A scheduled payment can be paid here too: it
+  // is marked paid (one expense), never paid twice.
+  function paySheet(s) {
+    const plan = canSchedule && canPay ? upcomingOf(s) : [];
+    const open = openOf(s);
+    const balance = supplierBalance(s);
+    const idempotencyKey = newKey();
+    const amountFor = (which) => {
+      const p = plan.find((x) => x.id === which);
+      return p ? (p.amount / 100).toFixed(2) : open ? (open / 100).toFixed(2) : "";
+    };
+    const first = plan.length ? plan[0].id : NEW;
+    let lastWhich = first;
+    return formDialog({
+      title: `Pay ${s.name}`,
+      intro: balance === null ? `${whole(s.paid ?? 0)} paid so far` : `${whole(s.paid ?? 0)} paid · ${whole(Math.max(0, balance))} remaining`,
+      fields: [
+        ...(plan.length ? [{ name: "which", label: "Payment", type: "select", options: [...plan.map((p) => ({ value: p.id, label: `${whole(p.amount)} due ${short(p.dueDate)}${p.description && p.description !== "Payment" ? ` · ${p.description}` : ""}` })), { value: NEW, label: "A new payment" }], value: first }] : []),
+        { name: "amount", label: "Amount (₱)", value: amountFor(first), inputmode: "decimal", required: true },
+        whenField("Schedule for later", "now"),
+        ...paymentFields(),
+        { name: "description", label: "What it's for", value: "", placeholder: "e.g. Second payment", more: true },
+      ],
+      moreLabel: "More options",
+      submitLabel: "Save",
+      onFormChange: (form) => {
+        const which = form.elements.which?.value ?? NEW;
+        if (which !== lastWhich) {
+          form.elements.amount.value = amountFor(which);
+          lastWhich = which;
+        }
+        timing(form, { forceNow: which !== NEW });
+      },
       onSubmit: async (v) => {
-        const amount = parseBudget(v.budget, "amount");
+        const amount = pesos(v.amount, "amount");
         if (!(amount > 0)) throw new Error("Enter an amount more than ₱0");
-        const id = c ? c.id : await categoryFor(v.category);
-        const cat = state.categories.find((x) => x.id === id);
-        return data.budgetApi({ action: "updateCategory", categoryId: id, ...(cat?.revision ? { expectedRevision: cat.revision } : {}), changes: { budget: amount } });
+        const p = plan.find((x) => x.id === v.which);
+        if (p) {
+          if (!v.date) throw new Error("Choose the payment date");
+          overCheck(open === null ? null : open + p.amount, amount);
+          const r = await data.paymentsApi({ action: "markPaid", paymentId: p.id, payment: { paidDate: v.date, method: v.method, ...(amount !== p.amount ? { amount } : {}), ...(v.reference.trim() ? { reference: v.reference.trim() } : {}) } });
+          await exp.attachAfter(r, v.proof);
+          return r;
+        }
+        overCheck(open, amount);
+        return recordFor(s, { amount, later: v.when === "later", v, idempotencyKey, description: (v.description || "").trim() || "Payment" });
       },
     });
-  const saved = (message) => (r) => {
-    if (r && !r.unchanged) toast(message, "success");
-    if (r) load();
+  }
+
+  // + Add Expense: the one smart form for wedding money.
+  //   Category   [Select category] / + Add category (typed right here)
+  //   Supplier   [Select supplier] / + Add supplier / No supplier (one-off)
+  //   Total contract, Record payment (blank = nothing paid yet)
+  //   Paid now / Pay later (+ Due date)
+  // Never leaves the form: a new category / supplier is created on Save.
+  function addExpenseDialog() {
+    const cats = state.categories.filter((c) => c.status === "active");
+    const suppliers = state.rows;
+    const idempotencyKey = newKey();
+    const made = { supplier: null, key: "" }; // a supplier created by an earlier try of this form
+    let lastSupplier = "";
+    return formDialog({
+      title: "Add Expense",
+      fields: [
+        { name: "category", label: "Category", type: "select", options: [{ value: "", label: "Select category" }, ...cats.map((c) => ({ value: c.id, label: c.name })), ...(canCategory ? [{ value: NEW, label: "+ Add category" }] : [])], value: cats.length || !canCategory ? "" : NEW },
+        ...(canCategory ? [{ ...categoryField(state.categories), name: "newCategory", label: "New category" }] : []),
+        { name: "supplierId", label: "Supplier", type: "select", options: [{ value: "", label: "Select supplier" }, ...suppliers.map((x) => ({ value: x.id, label: x.name })), ...(canManage ? [{ value: NEW, label: "+ Add supplier" }] : []), ...(canPay ? [{ value: NONE, label: "No supplier (one-off expense)" }] : [])], value: suppliers.length || !canManage ? "" : NEW },
+        ...(canManage ? [{ name: "newSupplier", label: "Supplier name", value: "", placeholder: "e.g. ABC Photo & Films" }] : []),
+        { name: "payee", label: "Paid to / what for", value: "", placeholder: "e.g. Van rental" },
+        { name: "agreedAmount", label: "Total contract (₱)", value: "", inputmode: "decimal", hint: "Optional. Luna works out what's left." },
+        // Without the right to pay or schedule: the contract only.
+        ...(mayPay ? [{ name: "amount", label: "Record payment (₱)", value: "", inputmode: "decimal", hint: "Leave blank if nothing is paid yet." }, whenField("Pay later", "now"), ...paymentFields()] : []),
+      ],
+      moreLabel: "More options",
+      submitLabel: "Save",
+      onFormChange: (form) => {
+        const el = form.elements;
+        const who = el.supplierId.value;
+        // A saved supplier brings its category and total contract.
+        if (who !== lastSupplier) {
+          const x = suppliers.find((y) => y.id === who);
+          if (x) {
+            if (x.categoryId && cats.some((c) => c.id === x.categoryId)) el.category.value = x.categoryId;
+            el.agreedAmount.value = pesosText(x.agreedAmount);
+          } else if (suppliers.some((y) => y.id === lastSupplier)) el.agreedAmount.value = "";
+          lastSupplier = who;
+        }
+        show(form, "newCategory", el.category.value === NEW);
+        show(form, "newSupplier", who === NEW);
+        show(form, "payee", who === NONE);
+        show(form, "agreedAmount", who !== NONE);
+        if (mayPay) timing(form, { forceNow: who === NONE });
+      },
+      onSubmit: async (v) => {
+        const amount = mayPay ? pesos(v.amount, "payment") ?? 0 : 0;
+        if (!v.supplierId) throw new Error("Select a supplier, + Add supplier, or No supplier");
+        const existing = suppliers.find((x) => x.id === v.supplierId) || null;
+        if (v.category === NEW && !(v.newCategory || "").trim()) throw new Error("Type the new category's name");
+        if (!v.category && !existing?.categoryId) throw new Error("Select a category");
+
+        if (v.supplierId === NONE) {
+          if (!(amount > 0)) throw new Error("Enter what was paid");
+          if (!v.date) throw new Error("Choose the payment date");
+          const category = v.category === NEW ? await categoryFor(v.newCategory) : v.category;
+          const payee = (v.payee || "").trim();
+          const r = await data.expensesApi({ action: "create", idempotencyKey, expense: { date: v.date, category, amount, method: v.method, ...(payee ? { payee } : {}), ...(v.reference.trim() ? { reference: v.reference.trim() } : {}) } });
+          await exp.attachAfter(r, v.proof);
+          return { ...r, saved: "Expense saved." };
+        }
+
+        const total = pesos(v.agreedAmount, "total contract");
+        const later = v.when === "later";
+        let s = existing;
+        if (v.supplierId === NEW) {
+          const name = (v.newSupplier || "").trim();
+          if (!name) throw new Error("Type the supplier's name");
+          if (total !== null && amount > total) throw new Error(`The payment is more than the ${whole(total)} total contract`);
+          const categoryId = v.category === NEW ? await categoryFor(v.newCategory) : v.category;
+          const key = `${name}|${categoryId}|${total}`;
+          if (made.supplier && made.key === key) s = made.supplier;
+          else {
+            const input = toSupplierInput({ name, agreedAmount: v.agreedAmount, categoryId, service: guessService(categoryNameOf(state.categories, categoryId)) });
+            const r = await data.suppliersApi({ action: "create", supplier: input });
+            s = { id: r.supplierId, name, categoryId, agreedAmount: input.agreedAmount, paid: 0 };
+            made.supplier = s;
+            made.key = key;
+          }
+          if (!(amount > 0)) return { supplierId: s.id, saved: `${name} added.` };
+        } else {
+          const changed = (s.agreedAmount ?? null) !== total;
+          if (!changed && !(amount > 0)) throw new Error("Enter a payment, or change the total contract");
+          if (changed) {
+            if (!canManage) throw new Error("Only the Owner can change the total contract");
+            await data.suppliersApi({ action: "update", supplierId: s.id, expectedRevision: s.revision, changes: { agreedAmount: total } });
+            s = { ...s, agreedAmount: total, revision: (s.revision ?? 0) + 1 };
+            if (!(amount > 0)) return { supplierId: s.id, saved: "Total contract saved." };
+          }
+          const committed = (s.paid ?? 0) + upcomingOf(s).reduce((n, p) => n + p.amount, 0);
+          overCheck(total === null ? null : Math.max(0, total - committed), amount);
+          // The chosen category (when it differs) goes on this payment only.
+          if (v.category && v.category !== NEW && v.category !== s.categoryId) s = { ...s, categoryId: v.category };
+          else if (v.category === NEW) s = { ...s, categoryId: await categoryFor(v.newCategory) };
+        }
+        const r = await recordFor(s, { amount, later, v, idempotencyKey });
+        return { ...r, saved: later ? "Payment scheduled." : "Payment recorded." };
+      },
+    });
+  }
+
+  // After Pay / + Add Expense: a toast and a fresh list.
+  const paid_ = (r) => {
+    if (r) {
+      toast(r.alreadyRecorded || r.alreadyPaid ? "Already recorded: no second payment was added." : r.saved || (r.paymentId && !r.expenseId ? "Payment scheduled." : "Payment recorded."), "success");
+      load();
+    }
     return r;
   };
   async function openRow(kind, id) {
     const r = findRow(kind, id);
     if (!r) return;
     if (kind === "supplier") await openView(r.record);
-    else if (kind === "expense") exp.openView(r.record, { readOnly: true });
-    else if (canCategory) saved("Saved.")(await plannedEdit(r.record));
-    else plannedView(r);
+    else exp.openView(r.record, { readOnly: true });
   }
 
-  // Sample Budget + Add: a normal Planned line (category = the item, no
-  // supplier, no amount yet). An existing category of that name is reused
-  // (brought back if archived) and put on the plan.
-  async function addSampleLine(name) {
-    const c = state.categories.find((x) => sampleKey(x.name) === sampleKey(name));
-    if (!c) await data.budgetApi({ action: "createCategory", category: { name, budget: null, planned: true } });
-    else {
-      if (c.status !== "active") await data.budgetApi({ action: "setCategoryStatus", categoryId: c.id, status: "active" });
-      await data.budgetApi({ action: "updateCategory", categoryId: c.id, changes: { planned: true } });
-    }
-    toast(`Added to Expenses: ${name} (Planned)`, "success");
-    load();
-  }
   const onClick = async (event) => {
     const el = event.target.closest("[data-act]");
     if (!el || !container.contains(el)) return;
     const a = el.dataset.act;
     el.closest("details.line-menu")?.removeAttribute("open");
     try {
-      if (a === "add") {
-        const x = el.dataset.x;
-        if (x === "supplier") saved("Supplier added.")(await addSupplierDialog());
-        else if (x === "payment") recorded(await supplierPaymentDialog());
-        else if (x === "upcoming") saved("Upcoming payment added.")(await upcomingDialog());
-        else if (x === "expense") exp.done("Expense added")(await exp.addDialog());
-        else if (x === "budget") saved("Budget item added.")(await budgetItemDialog());
-        else if (x === "sample") {
-          state.view = "sample";
-          draw();
-        }
-        return;
-      }
-      if (a === "sample-back") {
-        state.view = "mine";
-        draw();
-        return;
-      }
+      if (a === "add-expense") return paid_(await addExpenseDialog());
       if (a === "open") return await openRow(el.dataset.kind, el.dataset.id);
       // Pay, right on the supplier's row (no menu, no sheet first).
       if (a === "pay") {
         const s = state.rows.find((x) => x.id === el.dataset.id);
-        return s ? recorded(await recordPayment(s, false)) : undefined;
-      }
-      if (a === "seg") {
-        state.view = el.dataset.value === "sample" ? "sample" : "mine";
-        draw();
-        return;
-      }
-      if (a === "sample-add") {
-        const pick = sampleItem(SAMPLE_BUDGET, el);
-        if (!pick) return;
-        el.disabled = true;
-        await addSampleLine(pick.item.title);
-        return;
+        return s ? paid_(await paySheet(s)) : undefined;
       }
       if (a !== "menu") return;
       const r = findRow(el.dataset.kind, el.dataset.id);
@@ -702,40 +646,16 @@ export function mount(container, session, { data = defaultData, toast = defaultT
           toast("Brought back.", "success");
           load();
         }
-      } else if (r.kind === "expense") {
-        const e = r.record;
-        if (x === "view") exp.openView(e, { readOnly: true });
-        else if (x === "edit") exp.done("Expense updated")(await exp.editDialog(e));
-      } else if (x === "edit") saved("Saved.")(await plannedEdit(r.record));
-      else if (x === "view") plannedView(r);
+      } else if (x === "view") exp.openView(r.record, { readOnly: true });
+      else if (x === "edit") exp.done("Expense updated")(await exp.editDialog(r.record));
     } catch (err) {
       toast(err.message || "Something went wrong", "danger");
     }
   };
-  const onChange = (event) => {
-    if (event.target.dataset?.role !== "filter") return;
-    state.filter = event.target.value;
-    draw();
-  };
-  const onInput = (event) => {
-    if (event.target.dataset?.role !== "search") return;
-    state.search = event.target.value.trim();
-    const pos = event.target.selectionStart;
-    draw();
-    const box = container.querySelector('[data-role="search"]');
-    if (box) {
-      box.focus();
-      box.setSelectionRange(pos, pos);
-    }
-  };
   container.addEventListener("click", onClick);
-  container.addEventListener("change", onChange);
-  container.addEventListener("input", onInput);
   load();
   return () => {
     alive = false;
     container.removeEventListener("click", onClick);
-    container.removeEventListener("change", onChange);
-    container.removeEventListener("input", onInput);
   };
 }

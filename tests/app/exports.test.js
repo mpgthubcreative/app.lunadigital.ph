@@ -93,7 +93,7 @@ describe("More → Download Excel (every workspace)", () => {
     const download = vi.fn(async () => ({ blob: new Blob(["x"]), fileName: "Luna-Bridal-Carlo-Yanie.xlsx", rows: 9 }));
     mountExportPage(container, sessionFixture({ workspaceTemplateId: "bridal-expense" }), { toast: () => {}, download, save: vi.fn(), now: NOW });
     expect(container.querySelector('[data-seg="range"]')).toBeNull();
-    expect(container.querySelector('[data-role="contents"]').textContent).toMatch(/Money, Payments, Tasks, Guests, Party Members, Seating, Roles, Crew Meals, Music & Program and Wedding Setup/);
+    expect(container.querySelector('[data-role="contents"]').textContent).toMatch(/Expenses, Payments, Tasks, Guests, Party Members, Seating, Roles, Crew Meals, Music & Program and Wedding Setup/);
     container.querySelector('[data-act="download"]').click();
     await flush();
     expect(download).toHaveBeenCalledWith("workbook", {});

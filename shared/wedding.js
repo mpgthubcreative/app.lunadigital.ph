@@ -127,7 +127,7 @@ export function validateSupplierInput(input, { partial = false } = {}) {
   if (has("location")) out.location = text(input.location, { field: "Address / location", max: 160 });
   if (has("agreedAmount")) out.agreedAmount = agreed(input.agreedAmount);
   if (has("categoryId")) {
-    if (input.categoryId !== null && input.categoryId !== undefined && !isValidRecordId(input.categoryId)) throw new WeddingError("invalid-input", "Choose a budget category");
+    if (input.categoryId !== null && input.categoryId !== undefined && !isValidRecordId(input.categoryId)) throw new WeddingError("invalid-input", "Choose a category");
     out.categoryId = input.categoryId ?? null;
   }
   if (has("notes")) out.notes = text(input.notes, { field: "Notes", max: 500 });
@@ -159,7 +159,7 @@ export function validateSupplierPaymentInput(input, { partial = false } = {}) {
   }
   if (has("description")) out.description = text(input.description, { field: "Description", max: 100, required: true });
   if (has("category")) {
-    if (!isValidRecordId(input.category)) throw new WeddingError("invalid-input", "Choose a budget category");
+    if (!isValidRecordId(input.category)) throw new WeddingError("invalid-input", "Choose a category");
     out.category = input.category;
   }
   if (has("amount")) {

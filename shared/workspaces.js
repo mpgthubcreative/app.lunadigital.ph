@@ -22,6 +22,9 @@
 //                  hides the Dashboard
 //   home           (Owner-pilot UX) the module "/" opens when the Dashboard
 //                  is hidden (Household: payroll)
+//   redirects      (2026-10-21) { menuHidden module: visible module }: the
+//                  retired page's address opens the other page (Bridal:
+//                  Budget -> Expenses). The module itself stays enabled.
 //   menuHidden     (Owner-pilot Bridal UX) navigation modules that keep
 //                  their route but get no menu entry: reached from another
 //                  page (Bridal: Wedding Expenses and Supplier Payments open
@@ -189,7 +192,7 @@ const TEMPLATES = [
     // was recomputed.)
     version: 2,
     name: "Bridal / Wedding Management Tracker",
-    description: "A compact wedding command center: budget, suppliers, payments, tasks and guests.",
+    description: "A compact wedding command center: expenses, suppliers, payments, tasks and guests.",
     status: "live",
     modules: [...CORE, "expenses", "budget", "vendors", "vendorpayments", "tasks", "guests"],
     // Owner-pilot Bridal UX: no Dashboard. Money (budget, suppliers, other
@@ -200,15 +203,18 @@ const TEMPLATES = [
     // Money / old links); More holds Wedding Setup, Music & Program, Export
     // & Backup, Users, Subscription, Settings. The dashboard
     // module itself stays (core) so it can come back.
+    // 2026-10-21: Bridal has no Budget at all. The budget module stays on
+    // (categories live in it) but its page sends old links to Expenses.
     navigation: ["vendors", "tasks", "guests", "budget", "expenses", "vendorpayments", "users", "settings"],
     mobileTabs: ["vendors", "tasks", "guests"],
     navHidden: ["dashboard"],
     menuHidden: ["budget", "expenses", "vendorpayments"],
+    redirects: { budget: "vendors" },
     home: "vendors",
     dashboard: {
       // Selected period (spending, payments made), then the current state (as of now).
       widgets: ["weddingSpent", "weddingSupplierPaid", "weddingExpenseCount", "weddingBudgetTotal", "weddingSpentNow", "weddingRemaining", "weddingSupplierBalance", "weddingUpcoming", "weddingOpenTasks", "weddingOverdueTasks", "weddingConfirmedGuests", "weddingAwaitingRsvp", "upcomingSupplierPayments", "tasksDueSoon", "recentWeddingExpenses", "rsvpSummary", "supplierSummary"],
-      empty: { title: "Your wedding workspace is ready", body: "Set your budget, add suppliers, tasks and guests to get started." },
+      empty: { title: "Your wedding workspace is ready", body: "Add expenses, suppliers, tasks and guests to get started." },
       sectionLabels: { period: "Spending in the selected period", current: "Wedding plan" },
     },
     labels: { modules: { dashboard: "Wedding Dashboard", budget: "Budget", expenses: "Wedding Expenses", vendors: "Expenses", vendorpayments: "Supplier Payments", tasks: "Tasks", guests: "Guests" } },
@@ -280,7 +286,7 @@ export function validateWorkspaceTemplate(t, { moduleIds, coreModuleIds, availab
   const problems = [];
   const isObj = (v) => Boolean(v) && typeof v === "object" && !Array.isArray(v);
   if (!isObj(t)) return ["template must be an object"];
-  const allowedKeys = ["id", "version", "upgradingFrom", "name", "description", "status", "modules", "navigation", "mobileTabs", "navHidden", "menuHidden", "home", "dashboard", "labels", "settings", "plannedModules"];
+  const allowedKeys = ["id", "version", "upgradingFrom", "name", "description", "status", "modules", "navigation", "mobileTabs", "navHidden", "menuHidden", "redirects", "home", "dashboard", "labels", "settings", "plannedModules"];
   for (const k of Object.keys(t)) if (!allowedKeys.includes(k)) problems.push(`unknown key ${k}`);
   if (typeof t.id !== "string" || !WORKSPACE_TEMPLATE_ID_PATTERN.test(t.id)) problems.push("invalid id");
   if (!Number.isSafeInteger(t.version) || t.version < 1) problems.push("version must be a positive integer");
@@ -307,6 +313,9 @@ export function validateWorkspaceTemplate(t, { moduleIds, coreModuleIds, availab
   const menuHidden = t.menuHidden === undefined ? [] : Array.isArray(t.menuHidden) ? t.menuHidden : null;
   if (!menuHidden || new Set(menuHidden).size !== menuHidden.length) problems.push("menuHidden must be a list without duplicates");
   for (const m of menuHidden || []) if (!nav.includes(m) || m === t.home || (t.mobileTabs || []).includes(m)) problems.push(`menuHidden ${m} must be a navigation module that isn't home or a phone tab`);
+  const redirects = t.redirects === undefined ? {} : t.redirects && typeof t.redirects === "object" && !Array.isArray(t.redirects) ? t.redirects : null;
+  if (!redirects) problems.push("redirects must be an object");
+  for (const [from, to] of Object.entries(redirects || {})) if (!(menuHidden || []).includes(from) || !nav.includes(to) || (menuHidden || []).includes(to)) problems.push(`redirects ${from} must be a menuHidden module sent to a visible navigation module`);
   if (t.home === undefined && !nav.includes("dashboard")) problems.push("a template without the Dashboard in its navigation needs a home module");
   // Phase 18.5: up to three phone tabs (after Dashboard), from the navigation;
   // four when there's no Dashboard tab.

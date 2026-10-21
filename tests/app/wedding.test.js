@@ -77,9 +77,12 @@ function fakeData(extra = {}) {
 }
 
 describe("navigation and loaders", () => {
-  it("Bridal owner (Owner-pilot UX): Money is home, no Dashboard route; Expenses / Payments / Budget still open; Staff: the dashboard only", () => {
+  it("Bridal owner (Owner-pilot UX): Expenses is home, no Dashboard route; Wedding Expenses / Payments still open; Budget is gone (old links open Expenses); Staff: the dashboard only", () => {
     const routes = buildRoutes(wedding());
-    expect(routes.map((r) => r.label)).toEqual(expect.arrayContaining(["Expenses", "Tasks", "Guests", "Budget", "Wedding Expenses", "Supplier Payments"]));
+    expect(routes.map((r) => r.label)).toEqual(expect.arrayContaining(["Expenses", "Tasks", "Guests", "Wedding Expenses", "Supplier Payments"]));
+    expect(routes.map((r) => r.label)).not.toContain("Budget");
+    expect(routes.find((r) => r.path === "/budget")).toMatchObject({ redirect: "/wedding-suppliers", moduleId: "vendors" });
+    expect(buildRoutes(sessionFixture({ workspaceTemplateId: "baby-expense" })).find((r) => r.path === "/budget")).toMatchObject({ moduleId: "budget" });
     expect(routes.find((r) => r.path === "/")).toMatchObject({ redirect: "/wedding-suppliers", moduleId: "vendors" });
     expect(routes.some((r) => r.moduleId === "dashboard")).toBe(false);
     for (const p of buildRoutes(wedding("staff")).map((r) => r.path)) expect(["/", "/notifications"]).toContain(p);
@@ -136,74 +139,189 @@ describe("Money (Owner-pilot Bridal): ONE list of everything the wedding costs",
     return data;
   };
 
-  it("Expenses (2026-10-21): Next payment line; an owing supplier's row shows Pay (records a payment to THAT supplier, no menu); + Add → supplier payment / upcoming payment, with an existing supplier or + New supplier in the same form", async () => {
-    const data = await mountMoney(money({ suppliersApi: vi.fn(async () => ({ supplierId: "supNewBloom01" })) }));
-    expect(container.querySelector(".page-header h1").textContent).toBe("Expenses");
-    expect(container.querySelector('[data-role="next-payment"]').textContent.replace(/\s+/g, " ").trim()).toBe("Next payment: Dec 1 · ABC Photo Studio ₱30k");
-    // Pay, visible on the row, under what's left.
-    const pay = container.querySelector('[data-supplier="supABCphoto01"] [data-act="pay"]');
-    expect(pay.textContent).toBe("Pay");
-    expect(pay.closest(".wl-owe-col").querySelector('[data-role="left"]').textContent).toBe("₱60k left");
-    pay.click();
-    await flush();
-    expect(lastForm().closest(".modal").querySelector("h2").textContent).toBe("ABC Photo Studio: record a payment");
-    lastForm().elements.amount.value = "5000";
-    submit(lastForm());
-    await flush();
-    expect(data.expensesApi).toHaveBeenLastCalledWith(expect.objectContaining({ action: "create", expense: expect.objectContaining({ supplierId: SUP.id, amount: 500000 }) }));
-    // + Add → Add supplier payment with + New supplier (created in the same form).
-    container.querySelector('[data-role="add"] [data-x="payment"]').click();
-    await flush();
-    const f = lastForm();
-    expect([...f.elements.supplierId.options].map((o) => o.textContent)).toEqual(["ABC Photo Studio", "+ New supplier"]);
-    f.elements.supplierId.value = "__new";
-    f.elements.newSupplier.value = "Bloom Flowers";
-    f.elements.category.value = "Photo / Video";
-    f.elements.amount.value = "1000";
-    submit(f);
-    await flush();
-    expect(data.suppliersApi).toHaveBeenCalledWith(expect.objectContaining({ action: "create", supplier: expect.objectContaining({ name: "Bloom Flowers", categoryId: "catPhotoVid01" }) }));
-    expect(data.expensesApi).toHaveBeenLastCalledWith(expect.objectContaining({ action: "create", expense: expect.objectContaining({ supplierId: "supNewBloom01", amount: 100000, category: "catPhotoVid01" }) }));
-    // + Add → Add upcoming payment for an existing supplier (its category by default).
-    container.querySelector('[data-role="add"] [data-x="upcoming"]').click();
-    await flush();
-    const u = lastForm();
-    u.elements.supplierId.value = SUP.id;
-    u.elements.description.value = "Balance";
-    u.elements.amount.value = "30000";
-    u.elements.dueDate.value = "2027-01-10";
-    submit(u);
-    await flush();
-    expect(data.paymentsApi).toHaveBeenLastCalledWith({ action: "create", payment: { supplierId: SUP.id, description: "Balance", amount: 3000000, dueDate: "2027-01-10", category: "catPhotoVid01" } });
-  });
+  const change = (el) => el.dispatchEvent(new Event("change", { bubbles: true }));
+  const shown = (f) => [...f.querySelectorAll(".field")].filter((x) => !x.hidden && !x.closest(".form-more")).map((x) => x.querySelector("input,select,textarea").name);
+  const later = (f) => {
+    f.querySelector('[name="when"][value="later"]').checked = true;
+    change(f.querySelector('[name="when"][value="later"]'));
+  };
 
-  it("top: two boxes, Spent ₱20k and To pay ₱60k (no double counting), the budget a quiet line; one + Add (Expense / Supplier / Budget item / From sample budget); no tabs, no Download", async () => {
+  it("Expenses (final Bridal UX): ONE + Add Expense (no Add menu); Spent / To pay; Next payment; nothing about a budget", async () => {
     await mountMoney();
+    expect(container.querySelector(".page-header h1").textContent).toBe("Expenses");
+    expect([...container.querySelectorAll(".page-header .btn")].map((b) => b.textContent)).toEqual(["+ Add Expense"]);
+    expect(container.querySelector('[data-role="add"]')).toBeNull();
     const k = (x) => container.querySelector(`[data-role="money-summary"] [data-k="${x}"]`);
     expect(["spent", "still"].map((x) => k(x).textContent.replace(/\s+/g, " ").trim())).toEqual(["Spent₱20k", "To pay₱60k"]);
     expect(k("still").title).toBe("₱60,000.00");
-    expect(container.querySelector('[data-role="budget-line"]').textContent).toBe("Budget ₱500k · ₱420k left");
-    expect([shortPeso(15250000), shortPeso(120000000), shortPeso(85000)]).toEqual(["₱152.5k", "₱1.2M", "₱850"]);
-    expect([...container.querySelectorAll('[data-role="add"] .menu-item')].map((b) => b.textContent)).toEqual(["Add expense", "Add supplier", "Add supplier payment", "Add upcoming payment", "Budget item", "From sample budget"]);
-    expect(container.querySelector('[data-role="seg-view"]')).toBeNull(); // no My Money | Sample Budget tabs
-    expect(container.querySelectorAll(".page-header .btn-primary")).toHaveLength(1);
+    expect(container.querySelector('[data-role="next-payment"]').textContent.replace(/\s+/g, " ").trim()).toBe("Next payment: Dec 1 · ABC Photo Studio ₱30k");
+    expect(container.querySelector('[data-role="budget-line"]')).toBeNull();
+    expect(container.textContent).not.toMatch(/budget|planned|sample/i);
+    expect(container.querySelector('[data-role="filter"]')).toBeNull();
     expect(container.querySelector('[data-act="export"]')).toBeNull();
-    expect(moneySummary(BUDGET, [SUP, NOAGREE])).toEqual({ budget: 50000000, spent: 2000000, stillToPay: 6500000, remaining: 41500000 });
+    expect([shortPeso(15250000), shortPeso(120000000), shortPeso(85000)]).toEqual(["₱152.5k", "₱1.2M", "₱850"]);
+    expect(moneySummary(BUDGET, [SUP, NOAGREE])).toEqual({ spent: 2000000, stillToPay: 6500000 });
   });
 
-  it("grouped by category (budget-category order): the supplier / payee / description is the row, the status and what's left quiet under it; the category isn't repeated", async () => {
+  it("rows by category: name, then '₱80k total · ₱20k paid · ₱60k left' (each figure kept with its word), then 'Next: Dec 1'; Pay on open contracts; an old budget line makes no row", async () => {
     await mountMoney();
-    const groups = [...container.querySelectorAll(".hx-group")].map((g) => [g.querySelector(".wl-group-title").textContent, [...g.querySelectorAll(".wl-money-row")].map((r) => [r.dataset.kind, r.querySelector(".wl-name").textContent, r.querySelector('[data-role="status"]').textContent.replace(/\s+/g, " ").trim(), r.querySelector('[data-role="left"]').textContent])]);
-    // What is still owed is the figure on the right; paid / planned lines are quiet.
+    const groups = [...container.querySelectorAll(".hx-group")].map((g) => [g.querySelector(".wl-group-title").textContent, [...g.querySelectorAll(".wl-money-row")].map((r) => [r.dataset.kind, r.querySelector(".wl-name").textContent, r.querySelector('[data-role="status"]').textContent.replace(/\s+/g, " ").trim(), r.querySelector('[data-role="next"]')?.textContent.trim() ?? ""])]);
     expect(groups).toEqual([
-      ["Photo / Video", [["supplier", "ABC Photo Studio", "₱80k total · ₱20k paid · Next Dec 1", "₱60k left"]]],
-      ["Venue", [["planned", "No supplier yet", "₱150k planned", ""], ["expense", "Grab to venue", "Paid · ₱1.5k", ""]]],
+      ["Photo / Video", [["supplier", "ABC Photo Studio", "₱80k total · ₱20k paid · ₱60k left", "Next: Dec 1"]]],
+      ["Venue", [["expense", "Grab to venue", "₱1.5k · Paid", ""]]],
     ]);
+    expect([...rowOf('[data-supplier="supABCphoto01"] [data-role="status"]').querySelectorAll(".wl-nobr")].map((x) => x.textContent)).toEqual(["₱80k total", "₱20k paid", "₱60k left"]);
+    expect(rowOf('[data-supplier="supABCphoto01"] [data-act="pay"]').textContent).toBe("Pay");
+    expect(rowOf(`[data-expense="${OTHER.id}"] [data-act="pay"]`)).toBeNull();
     expect(moneyGroups([{ categoryId: null, category: "", name: "x" }])).toEqual([{ key: "none", name: "Other", rows: [{ categoryId: null, category: "", name: "x" }] }]);
     expect(moneyLabel({ kind: "expense", name: null, record: { notes: "Bridal car fuel" } })).toBe("Bridal car fuel");
-    // Adding a supplier in Venue replaces the planned line (no duplicate).
-    const after = moneyRows({ suppliers: [SUP, { ...SUP, id: "supVenue00001", name: "Palazzo", categoryId: "catVenue00001", agreedAmount: 12000000, paid: 0 }], categories: CATS, budget: BUDGET, expenses: [] });
-    expect(after.map((r) => [r.kind, r.name])).toEqual([["supplier", "ABC Photo Studio"], ["supplier", "Palazzo"]]);
+    // Old Bridal data: a category's budget amount or "planned" flag stays stored, never a row.
+    expect(moneyRows({ suppliers: [], categories: [{ ...CATS[1], planned: true }], expenses: [] })).toEqual([]);
+  });
+
+  it("+ Add Expense: Category (+ Add category), Supplier (+ Add supplier / No supplier), Total contract, Record payment, Paid now / Pay later; a new contract with no payment yet", async () => {
+    const data = await mountMoney(money({ budgetApi: vi.fn(async () => ({ categoryId: "catFlowers001" })), suppliersApi: vi.fn(async () => ({ supplierId: "supBloom00001" })) }));
+    container.querySelector('[data-act="add-expense"]').click();
+    const f = lastForm();
+    expect(f.closest(".modal-backdrop").querySelector("h2").textContent).toBe("Add Expense");
+    expect([...f.elements.category.options].map((o) => o.textContent)).toEqual(["Select category", "Photo / Video", "Venue", "+ Add category"]);
+    expect([...f.elements.supplierId.options].map((o) => o.textContent)).toEqual(["Select supplier", "ABC Photo Studio", "+ Add supplier", "No supplier (one-off expense)"]);
+    expect(shown(f)).toEqual(["category", "supplierId", "agreedAmount", "amount", "when", "date"]);
+    expect([...f.querySelectorAll('[name="when"]')].map((r) => r.closest("label").textContent.trim())).toEqual(["Paid now", "Pay later"]);
+    f.elements.category.value = "__new";
+    change(f.elements.category);
+    f.elements.supplierId.value = "__new";
+    change(f.elements.supplierId);
+    expect(shown(f)).toEqual(["category", "newCategory", "supplierId", "newSupplier", "agreedAmount", "amount", "when", "date"]);
+    f.elements.newCategory.value = "Flowers";
+    f.elements.newSupplier.value = "Bloom Flowers";
+    f.elements.agreedAmount.value = "45000";
+    submit(f);
+    await flush();
+    expect(data.budgetApi).toHaveBeenCalledWith({ action: "createCategory", category: { name: "Flowers", budget: null } });
+    expect(data.suppliersApi).toHaveBeenCalledWith({ action: "create", supplier: expect.objectContaining({ name: "Bloom Flowers", categoryId: "catFlowers001", agreedAmount: 4500000, service: "styling" }) });
+    expect(data.expensesApi).not.toHaveBeenCalled();
+    expect(data.paymentsApi).not.toHaveBeenCalled();
+    expect(lastForm()).toBeUndefined();
+    expect([guessService("Photo & Video"), guessService("Souvenirs")]).toEqual(["photo_video", "other"]);
+  });
+
+  it("+ Add Expense, new supplier with a first payment: supplier, then ONE expense; a retry after a failed payment doesn't add the supplier twice", async () => {
+    let fail = true;
+    const data = await mountMoney(money({ suppliersApi: vi.fn(async () => ({ supplierId: "supBloom00001" })), expensesApi: vi.fn(async () => { if (fail) throw new Error("Network down"); return { expenseId: "e9" }; }) }));
+    container.querySelector('[data-act="add-expense"]').click();
+    const f = lastForm();
+    f.elements.category.value = "catPhotoVid01";
+    f.elements.supplierId.value = "__new";
+    change(f.elements.supplierId);
+    f.elements.newSupplier.value = "Bloom Flowers";
+    f.elements.agreedAmount.value = "45000";
+    f.elements.amount.value = "50000";
+    submit(f);
+    await flush();
+    expect(f.querySelector('[data-role="error"]').textContent).toBe("The payment is more than the ₱45,000 total contract");
+    expect(data.suppliersApi).not.toHaveBeenCalled();
+    f.elements.amount.value = "20000";
+    submit(f);
+    await flush();
+    expect(f.querySelector('[data-role="error"]').textContent).toBe("Network down");
+    fail = false;
+    submit(f);
+    await flush();
+    expect(data.suppliersApi).toHaveBeenCalledTimes(1);
+    expect(data.expensesApi).toHaveBeenCalledTimes(2);
+    expect(data.expensesApi.mock.calls[0][0].idempotencyKey).toBe(data.expensesApi.mock.calls[1][0].idempotencyKey);
+    expect(data.expensesApi).toHaveBeenLastCalledWith({ action: "create", idempotencyKey: expect.stringMatching(/^[A-Za-z0-9_-]{16,64}$/), expense: { date: "2026-10-16", category: "catPhotoVid01", amount: 2000000, supplierId: "supBloom00001", method: "bank_transfer" } });
+  });
+
+  it("+ Add Expense for a saved supplier: its category and total fill in; more than what's left is refused before anything is sent; a payment is ONE expense", async () => {
+    const data = await mountMoney(money({ expensesApi: vi.fn(async () => ({ expenseId: "e9" })) }));
+    container.querySelector('[data-act="add-expense"]').click();
+    const f = lastForm();
+    f.elements.supplierId.value = SUP.id;
+    change(f.elements.supplierId);
+    expect([f.elements.category.value, f.elements.agreedAmount.value]).toEqual(["catPhotoVid01", "80000"]);
+    f.elements.amount.value = "40000"; // ₱80k − ₱20k paid − ₱30k scheduled = ₱30k open
+    submit(f);
+    await flush();
+    expect(f.querySelector('[data-role="error"]').textContent).toBe("That's more than the ₱30,000 still to pay on this contract. Change the total contract first if it went up.");
+    expect(data.expensesApi).not.toHaveBeenCalled();
+    f.elements.amount.value = "10000";
+    submit(f);
+    await flush();
+    expect(data.expensesApi).toHaveBeenCalledTimes(1);
+    expect(data.expensesApi).toHaveBeenCalledWith({ action: "create", idempotencyKey: expect.stringMatching(/^[A-Za-z0-9_-]{16,64}$/), expense: { date: "2026-10-16", category: "catPhotoVid01", amount: 1000000, supplierId: SUP.id, method: "bank_transfer" } });
+    expect(data.suppliersApi).not.toHaveBeenCalled();
+  });
+
+  it("+ Add Expense → Pay later: Due date replaces Payment date and a scheduled payment is created (not spent); No supplier: a one-off paid expense", async () => {
+    const data = await mountMoney(money());
+    container.querySelector('[data-act="add-expense"]').click();
+    let f = lastForm();
+    f.elements.supplierId.value = SUP.id;
+    change(f.elements.supplierId);
+    f.elements.amount.value = "20000";
+    later(f);
+    expect(shown(f)).toEqual(["category", "supplierId", "agreedAmount", "amount", "when", "dueDate"]);
+    f.elements.dueDate.value = "2027-01-10";
+    submit(f);
+    await flush();
+    expect(data.paymentsApi).toHaveBeenCalledWith({ action: "create", payment: { description: "Payment", amount: 2000000, dueDate: "2027-01-10", category: "catPhotoVid01", supplierId: SUP.id } });
+    expect(data.expensesApi).not.toHaveBeenCalled();
+    container.querySelector('[data-act="add-expense"]').click();
+    f = lastForm();
+    f.elements.category.value = "catVenue00001";
+    f.elements.supplierId.value = "__none";
+    change(f.elements.supplierId);
+    expect(shown(f)).toEqual(["category", "supplierId", "payee", "amount", "date"]);
+    f.elements.payee.value = "Van rental";
+    f.elements.amount.value = "3500";
+    submit(f);
+    await flush();
+    expect(data.expensesApi).toHaveBeenCalledWith({ action: "create", idempotencyKey: expect.any(String), expense: { date: "2026-10-16", category: "catVenue00001", amount: 350000, method: "bank_transfer", payee: "Van rental" } });
+  });
+
+  it("Pay on the row: the next scheduled payment comes first (marked paid: one expense); a new payment is Paid now or Scheduled for later; never above what's left", async () => {
+    const data = await mountMoney(money({ expensesApi: vi.fn(async () => ({ expenseId: "e9" })) }));
+    const open = async () => {
+      rowOf('[data-supplier="supABCphoto01"] [data-act="pay"]').click();
+      await flush();
+      return lastForm();
+    };
+    let f = await open();
+    expect(f.closest(".modal-backdrop").querySelector("h2").textContent).toBe("Pay ABC Photo Studio");
+    expect([...f.elements.which.options].map((o) => o.textContent)).toEqual(["₱30,000 due Dec 1 · Second payment", "A new payment"]);
+    expect(f.elements.amount.value).toBe("30000.00");
+    expect(f.querySelector('[data-field="when"]').hidden).toBe(true); // paying a scheduled one is paying now
+    submit(f);
+    await flush();
+    expect(data.paymentsApi).toHaveBeenCalledWith({ action: "markPaid", paymentId: PAY.id, payment: { paidDate: "2026-10-16", method: "bank_transfer" } });
+    expect(data.expensesApi).not.toHaveBeenCalled();
+    // A new payment, paid now.
+    f = await open();
+    f.elements.which.value = "__new";
+    change(f.elements.which);
+    expect(f.querySelector('[data-field="when"]').hidden).toBe(false);
+    f.elements.amount.value = "40000";
+    submit(f);
+    await flush();
+    expect(f.querySelector('[data-role="error"]').textContent).toMatch(/^That's more than the ₱30,000 still to pay/);
+    f.elements.amount.value = "5000";
+    submit(f);
+    await flush();
+    expect(data.expensesApi).toHaveBeenLastCalledWith({ action: "create", idempotencyKey: expect.any(String), expense: { date: "2026-10-16", category: "catPhotoVid01", amount: 500000, supplierId: SUP.id, method: "bank_transfer" } });
+    // A new payment, scheduled for later.
+    f = await open();
+    f.elements.which.value = "__new";
+    change(f.elements.which);
+    later(f);
+    expect(shown(f)).toEqual(["which", "amount", "when", "dueDate"]);
+    f.elements.amount.value = "10000";
+    f.elements.dueDate.value = "2027-02-01";
+    f.elements.description.value = "Balance";
+    submit(f);
+    await flush();
+    expect(data.paymentsApi).toHaveBeenLastCalledWith({ action: "create", payment: { description: "Balance", amount: 1000000, dueDate: "2027-02-01", category: "catPhotoVid01", supplierId: SUP.id } });
   });
 
   // Owner-pilot Bridal: ⋯ is just Edit / Details / Remove.
@@ -212,17 +330,14 @@ describe("Money (Owner-pilot Bridal): ONE list of everything the wedding costs",
   const sheet = () => document.querySelector('[data-role="money-edit"]');
   const menuOf = (sel) => [...rowOf(sel).querySelectorAll('[data-act="menu"]')].map((b) => b.textContent);
 
-  it("every Money line's ⋯ is just Edit / Details / Remove (supplier, other expense, planned)", async () => {
+  it("every Expenses line's ⋯ is just Edit / Details / Remove (supplier, other expense)", async () => {
     await mountMoney();
     expect(menuOf('[data-supplier="supABCphoto01"]')).toEqual(["Edit", "Details", "Remove"]);
     expect(menuOf(`[data-expense="${OTHER.id}"]`)).toEqual(["Edit", "Details", "Remove"]);
-    expect(menuOf('[data-planned="catVenue00001"]')).toEqual(["Edit", "Details", "Remove"]);
-    // The status reads quietly under the supplier; what's left stands out.
-    expect(rowOf('[data-supplier="supABCphoto01"] [data-role="status"]').textContent.replace(/\s+/g, " ").trim()).toBe("₱80k total · ₱20k paid · Next Dec 1");
     expect(rowOf('[data-supplier="supABCphoto01"] [data-role="left"]').textContent).toBe("₱60k left");
   });
 
-  it("supplier Edit: one sheet — Category, Supplier, Total; Payments (paid · remaining · status, proofs, Record payment); Payment schedule; Save changes", async () => {
+  it("supplier Edit: one sheet — Category, Supplier, Total contract; Payments (paid · remaining · status, proofs, Pay); Payment schedule; Save changes", async () => {
     const data = await mountMoney(paidMoney({ budgetApi: vi.fn(async () => ({ categoryId: "catVideo00001" })), suppliersApi: vi.fn(async () => ({})) }));
     rowOf('[data-supplier="supABCphoto01"] [data-x="edit"]').click();
     await flush();
@@ -231,7 +346,7 @@ describe("Money (Owner-pilot Bridal): ONE list of everything the wedding costs",
     expect(sheet().querySelector('[data-role="me-paid"]').textContent.replace(/\s+/g, " ")).toBe("₱20,000 paid · ₱60,000 remaining · Partial");
     expect([...sheet().querySelectorAll('[data-role="paid-list"] .slip-act')].map((x) => x.textContent.trim())).toEqual(["View proof", "Add proof"]);
     expect(sheet().querySelector('[data-role="scheduled-list"] .wl-name').textContent).toBe("Dec 1 · ₱30,000");
-    expect([...sheet().querySelectorAll('[data-x="record"], [data-x="schedule"], [data-x="save"]')].map((b) => b.textContent)).toEqual(["Record payment", "Add to schedule", "Save changes"]);
+    expect([...sheet().querySelectorAll('[data-x="record"], [data-x="schedule"], [data-x="save"]')].map((b) => b.textContent)).toEqual(["Pay", "Save changes"]);
     // Change category (a new name is created) + total, in one Save.
     f.category.value = "Video only";
     f.agreedAmount.value = "90000";
@@ -243,30 +358,21 @@ describe("Money (Owner-pilot Bridal): ONE list of everything the wedding costs",
     expect(sheet()).toBeNull();
   });
 
-  it("supplier Edit → Record payment records ONE expense (proof optional); Add to schedule schedules for THIS supplier", async () => {
+  it("supplier Edit → Pay (a new payment) records ONE expense; the sheet comes back with fresh figures", async () => {
     const data = await mountMoney(paidMoney({ expensesApi: vi.fn(async () => ({ expenseId: "e3aaaaaaaa" })) }));
-
     rowOf('[data-supplier="supABCphoto01"] [data-x="edit"]').click();
     await flush();
     sheet().querySelector('[data-x="record"]').click();
     await flush();
+    lastForm().elements.which.value = "__new";
+    lastForm().elements.which.dispatchEvent(new Event("change", { bubbles: true }));
     lastForm().elements.amount.value = "15000";
     submit(lastForm());
     await flush();
     expect(data.expensesApi).toHaveBeenCalledTimes(1);
     expect(data.expensesApi).toHaveBeenCalledWith({ action: "create", idempotencyKey: expect.stringMatching(/^[A-Za-z0-9_-]{16,64}$/), expense: { date: "2026-10-16", category: "catPhotoVid01", amount: 1500000, supplierId: SUP.id, method: "bank_transfer" } });
     await flush();
-    expect(sheet()).not.toBeNull(); // the sheet comes back with fresh figures
-    sheet().querySelector('[data-x="schedule"]').click();
-    await flush();
-    const form = lastForm();
-    expect(form.elements.supplierId).toBeUndefined();
-    form.elements.description.value = "Balance";
-    form.elements.amount.value = "10000";
-    form.elements.dueDate.value = "2027-01-10";
-    submit(form);
-    await flush();
-    expect(data.paymentsApi).toHaveBeenCalledWith({ action: "create", payment: expect.objectContaining({ supplierId: SUP.id, amount: 1000000, dueDate: "2027-01-10", category: "catPhotoVid01" }) });
+    expect(sheet()).not.toBeNull();
   });
 
   it("supplier Edit: Add proof on a paid line uploads to THAT expense; a failed upload after Record payment keeps the payment and says how to add it later", async () => {
@@ -327,11 +433,11 @@ describe("Money (Owner-pilot Bridal): ONE list of everything the wedding costs",
     await flush();
     container.querySelector('[data-supplier="supFreshOne01"] [data-x="remove"]').click();
     await flush();
-    expect(asked[0]).toMatchObject({ title: "Remove this money item?", body: "It will no longer appear in your active wedding money list." });
+    expect(asked[0]).toMatchObject({ title: "Remove New Florist?", body: "It will no longer appear in your Expenses list." });
     expect(data.suppliersApi).toHaveBeenCalledWith({ action: "delete", supplierId: "supFreshOne01" });
     container.querySelector('[data-supplier="supABCphoto01"] [data-x="remove"]').click();
     await flush();
-    expect(asked[1].body).toBe("It will no longer appear in your active wedding money list. Its ₱20,000 in payments and scheduled payments stay in your records and history.");
+    expect(asked[1].body).toBe("It will no longer appear in your Expenses list. Its ₱20,000 in payments and scheduled payments stay in your records and history.");
     expect(data.suppliersApi).toHaveBeenCalledWith({ action: "setStatus", supplierId: SUP.id, status: "inactive" });
     expect(data.suppliersApi).not.toHaveBeenCalledWith({ action: "delete", supplierId: SUP.id });
     expect(container.querySelector(".wl-fold summary").textContent).toBe("Removed from the list (1)");
@@ -369,106 +475,16 @@ describe("Money (Owner-pilot Bridal): ONE list of everything the wedding costs",
     expect(data.expensesApi).toHaveBeenCalledWith({ action: "remove", expenseId: OTHER.id, reason: "Entered twice" });
   });
 
-  it("+ Add → Budget item; a planned line's Edit sets category / amount and can add its supplier; Details read-only; Remove takes it off the plan", async () => {
-    const planned = { id: "catLights001", name: "Lights & sounds", budget: null, planned: true, status: "active", order: 60, revision: 2, history: [] };
-    const data = await mountMoney(money({ listCategories: vi.fn(async () => [...CATS, planned]), budgetApi: vi.fn(async () => ({ categoryId: "catGown000001" })), suppliersApi: vi.fn(async () => ({})) }));
-    container.querySelector('[data-act="add"][data-x="budget"]').click();
-    lastForm().elements.category.value = "Wedding gown";
-    lastForm().elements.budget.value = "80000";
-    submit(lastForm());
-    await flush();
-    expect(data.budgetApi).toHaveBeenCalledWith({ action: "createCategory", category: { name: "Wedding gown", budget: null } });
-    expect(data.budgetApi).toHaveBeenCalledWith({ action: "updateCategory", categoryId: "catGown000001", changes: { budget: 8000000 } });
-    const row = rowOf('[data-planned="catLights001"]');
-    expect([row.querySelector('[data-role="left"]').textContent, row.querySelector('[data-role="status"]').textContent.replace(/\s+/g, " ").trim()]).toEqual(["", "Planned · amount not set"]);
-    row.querySelector('[data-x="edit"]').click();
-    await flush();
-    const f = lastForm();
-    expect([f.elements.name.value, f.elements.budget.value, f.elements.supplier.value]).toEqual(["Lights & sounds", "", ""]);
-    f.elements.budget.value = "25000";
-    f.elements.supplier.value = "Bright Sounds";
-    submit(f);
-    await flush();
-    expect(data.budgetApi).toHaveBeenCalledWith({ action: "updateCategory", categoryId: "catLights001", expectedRevision: 2, changes: { budget: 2500000 } });
-    expect(data.suppliersApi).toHaveBeenCalledWith({ action: "create", supplier: expect.objectContaining({ name: "Bright Sounds", categoryId: "catLights001", agreedAmount: 2500000 }) });
-    rowOf('[data-planned="catLights001"] [data-x="view"]').click();
-    await flush();
-    expect([...document.querySelectorAll('[data-role="details"] .modal-footer button')].map((b) => b.textContent)).toEqual(["Close"]);
-    document.querySelector('[data-role="details"] [data-act="close"]').click();
-    rowOf('[data-planned="catLights001"] [data-x="remove"]').click();
-    await flush();
-    expect(data.budgetApi).toHaveBeenCalledWith({ action: "updateCategory", categoryId: "catLights001", expectedRevision: 2, changes: { budget: null, planned: false } });
-  });
-
-  it("no filter or search above the list (the categories are the list); the sample budget opens from + Add and ‹ Money goes back", async () => {
-    await mountMoney();
-    expect(container.querySelector('[data-role="filter"]')).toBeNull();
-    expect(container.querySelector('[data-role="search"]')).toBeNull();
-    container.querySelector('[data-act="add"][data-x="sample"]').click();
-    await flush();
-    expect(container.querySelectorAll(".wl-sample").length).toBeGreaterThan(20);
-    expect(container.querySelector('[data-role="money-summary"]')).toBeNull(); // the sample isn't in the totals
-    container.querySelector('[data-act="sample-back"]').click();
-    expect(container.querySelector('[data-role="money-summary"]')).toBeTruthy();
-  });
-
-  it("+ Add → Expense: Amount, Supplier / Payee, Category, Date (rest under More options); a NEW category is created on the spot, no budget needed", async () => {
-    const data = await mountMoney(money({ budgetApi: vi.fn(async () => ({ categoryId: "catNewFlower1" })) }));
-    container.querySelector('[data-act="add"][data-x="expense"]').click();
-    const form = lastForm();
-    const main = [...form.querySelectorAll(".field")].filter((f) => !f.closest(".form-more")).map((f) => f.querySelector("input,select,textarea").name);
-    expect(main).toEqual(["amount", "payee", "category", "date"]);
-    expect(form.querySelector(".form-more summary").textContent).toBe("More options");
-    form.elements.amount.value = "1200";
-    form.elements.payee.value = "Petal Shop";
-    form.elements.category.value = "Flowers";
-    submit(form);
-    await flush();
-    expect(data.budgetApi).toHaveBeenCalledWith({ action: "createCategory", category: { name: "Flowers", budget: null } });
-    expect(data.expensesApi).toHaveBeenCalledWith({ action: "create", expense: { date: "2026-10-16", category: "catNewFlower1", amount: 120000, method: "cash", payee: "Petal Shop" } });
-  });
-
-  it("an existing category (any case) is reused; a saved supplier's name links the expense to it; a blank category is Miscellaneous", async () => {
-    const data = await mountMoney(money({ budgetApi: vi.fn(async () => ({ categoryId: "catMisc000001" })) }));
-    container.querySelector('[data-act="add"][data-x="expense"]').click();
-    let form = lastForm();
-    form.elements.amount.value = "500";
-    form.elements.payee.value = "abc photo studio";
-    form.elements.category.value = "photo / video";
-    submit(form);
-    await flush();
-    expect(data.budgetApi).not.toHaveBeenCalled();
-    expect(data.expensesApi).toHaveBeenLastCalledWith({ action: "create", expense: { date: "2026-10-16", category: "catPhotoVid01", amount: 50000, method: "cash", supplierId: SUP.id } });
-    container.querySelector('[data-act="add"][data-x="expense"]').click();
-    form = lastForm();
-    form.elements.amount.value = "80";
-    submit(form);
-    await flush();
-    expect(data.budgetApi).toHaveBeenCalledWith({ action: "createCategory", category: { name: "Miscellaneous", budget: null } });
-  });
-
-  it("+ Add → Supplier: name, category, total; the category is created if new and the service follows it", async () => {
-    const data = await mountMoney(money({ budgetApi: vi.fn(async () => ({ categoryId: "catHmua000001" })), suppliersApi: vi.fn(async () => ({ supplierId: "x" })) }));
-    container.querySelector('[data-act="add"][data-x="supplier"]').click();
-    const form = lastForm();
-    expect([...form.querySelectorAll(".field")].filter((f) => !f.closest(".form-more")).map((f) => f.querySelector("input,select,textarea").name)).toEqual(["name", "category", "agreedAmount"]);
-    form.elements.name.value = "Glam by Jo";
-    form.elements.category.value = "HMUA";
-    form.elements.agreedAmount.value = "15000";
-    submit(form);
-    await flush();
-    expect(data.suppliersApi).toHaveBeenCalledWith({ action: "create", supplier: { name: "Glam by Jo", service: "hair_makeup", agreedAmount: 1500000, categoryId: "catHmua000001", contactPerson: null, phone: null, email: null, location: null, notes: null } });
-    expect([guessService("Photo & Video"), guessService("Souvenirs")]).toEqual(["photo_video", "other"]);
-  });
-
-  it("permissions: no record / schedule / add expense without the right; no hidden action is offered", async () => {
+  it("permissions: without expenses.create / vendorpayments.manage there is no Pay, and + Add Expense records only the contract", async () => {
     const s = wedding("manager");
     delete s.member.permissions["expenses.create"];
     delete s.member.permissions["vendorpayments.manage"];
     await mountMoney(money(), s);
-    expect(container.querySelector('[data-x="record"]')).toBeNull();
-    expect(container.querySelector('[data-x="schedule"]')).toBeNull();
-    expect(container.querySelector('[data-act="add"][data-x="expense"]')).toBeNull();
+    expect(container.querySelector('[data-act="pay"]')).toBeNull();
+    container.querySelector('[data-act="add-expense"]').click();
+    const f = lastForm();
+    expect([f.elements.amount, f.elements.when, f.elements.dueDate]).toEqual([undefined, undefined, undefined]);
+    expect([...f.elements.supplierId.options].map((o) => o.value)).not.toContain("__none");
   });
 
   it("paidState and toSupplierInput keep their rules", () => {
@@ -1081,7 +1097,7 @@ it("Wedding link / hashtag: suggested from the couple names, cleaned as typed (#
   });
 });
 
-describe("Owner-pilot Bridal: Sample Checklist (Tasks) and Sample Budget (Money)", () => {
+describe("Owner-pilot Bridal: Sample Checklist (Tasks)", () => {
   it("Tasks: My Tasks | Sample Checklist; read-only groups (church + civil requirements with their notes); optional / Bride & Groom marked; already-added shown; + Add makes ONE normal task", async () => {
     const data = fakeData({ listTasks: vi.fn(async () => ({ rows: [{ ...TASKS[0], title: "CENOMAR (Certificate of No Marriage)" }], hasMore: false })), tasksApi: vi.fn(async () => ({ taskId: "t9" })) });
     mountTasks(container, wedding(), { data, now: NOW, toast: () => {}, confirm: async () => true });
@@ -1143,28 +1159,6 @@ describe("Owner-pilot Bridal: Sample Checklist (Tasks) and Sample Budget (Money)
     await flush();
     expect(container.querySelectorAll(".wl-sample").length).toBeGreaterThan(50);
     expect(container.querySelector('[data-act="sample-add"]')).toBeNull();
-  });
-
-  it("Money: the sample budget (from + Add) doesn't touch totals; + Add makes a Planned line (no supplier, no amount); an existing / archived category is reused", async () => {
-    const cats = [...CATS, { id: "catCater0001", name: "catering", budget: null, status: "inactive", order: 90, revision: 3 }];
-    const data = fakeData({ listCategories: vi.fn(async () => cats), listSuppliers: vi.fn(async (_b, f) => ({ rows: f.status === "inactive" ? [] : [SUP], hasMore: false })), budgetApi: vi.fn(async () => ({ categoryId: "catNew000001" })) });
-    mountSuppliers(container, wedding(), { data, now: NOW, toast: () => {}, confirm: async () => true });
-    await flush();
-    expect(container.querySelector('[data-role="seg-view"]')).toBeNull();
-    container.querySelector('[data-act="add"][data-x="sample"]').click();
-    await flush();
-    expect(container.querySelector('[data-role="money-summary"]')).toBeNull();
-    expect([...container.querySelectorAll(".wl-sample-group .wl-group-title")].map((h) => h.textContent)).toEqual(["Venue & Ceremony", "Food & Drinks", "Photo & Video", "Attire & HMUA", "Flowers & Styling", "Entertainment", "Rings & Essentials", "Guests", "Transportation", "Other"]);
-    const add = (title) => [...container.querySelectorAll(".wl-sample")].find((li) => li.querySelector(".wl-name").textContent === title).querySelector('[data-act="sample-add"]');
-    expect(data.budgetApi).not.toHaveBeenCalled();
-    add("Lights & sounds").click();
-    await flush();
-    expect(data.budgetApi).toHaveBeenCalledWith({ action: "createCategory", category: { name: "Lights & sounds", budget: null, planned: true } });
-    await flush();
-    add("Catering").click();
-    await flush();
-    expect(data.budgetApi).toHaveBeenCalledWith({ action: "setCategoryStatus", categoryId: "catCater0001", status: "active" });
-    expect(data.budgetApi).toHaveBeenCalledWith({ action: "updateCategory", categoryId: "catCater0001", changes: { planned: true } });
   });
 
 });

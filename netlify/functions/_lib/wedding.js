@@ -63,18 +63,18 @@ async function loadBudget(tx, tenant) {
 }
 async function activeCategory(tx, tenant, id, { allowInactive = false } = {}) {
   const snap = await tx.get(ref(tenant, "expenseCategories", id, "category"));
-  if (!snap.exists || (snap.data().status !== "active" && !allowInactive)) throw new WeddingError("invalid-category", "Choose an active budget category");
+  if (!snap.exists || (snap.data().status !== "active" && !allowInactive)) throw new WeddingError("invalid-category", "Choose an active category");
   return snap;
 }
 
 // ---------- Suppliers ----------
 
-const SUPPLIER_NAMES = { name: "Name", service: "Service", contactPerson: "Contact person", phone: "Phone", email: "Email", location: "Address", agreedAmount: "Agreed amount", categoryId: "Budget category" };
+const SUPPLIER_NAMES = { name: "Name", service: "Service", contactPerson: "Contact person", phone: "Phone", email: "Email", location: "Address", agreedAmount: "Agreed amount", categoryId: "Category" };
 function supplierLabels(before, diff) {
   return Object.keys(diff)
     .map((k) => {
       if (k === "notes") return "Notes updated";
-      if (k === "categoryId") return "Budget category changed";
+      if (k === "categoryId") return "Category changed";
       const show = (v) => (k === "agreedAmount" ? (v === null || v === undefined ? "no agreement" : peso(v)) : k === "service" ? label(SUPPLIER_SERVICES, v) : v || "—");
       return `${SUPPLIER_NAMES[k]} changed ${show(before[k])} → ${show(diff[k])}`;
     })

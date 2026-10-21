@@ -26,7 +26,7 @@ export async function resolveCategory(text, { categories, data, canCreate }) {
   const name = (text || "").trim().replace(/\s+/g, " ") || DEFAULT_CATEGORY;
   const found = categories.find((c) => key(c.name) === key(name));
   if (found && found.status === "active") return found.id;
-  if (!canCreate) throw new Error(found ? `${found.name} is switched off. Ask the Owner to turn it back on under Budget.` : `There's no category "${name}" yet. Pick one from the list, or ask the Owner to add it.`);
+  if (!canCreate) throw new Error(found ? `${found.name} is switched off. Ask the Owner to add it again from + Add Expense.` : `There's no category "${name}" yet. Pick one from the list, or ask the Owner to add it.`);
   if (found) {
     await data.budgetApi({ action: "setCategoryStatus", categoryId: found.id, status: "active" });
     found.status = "active";

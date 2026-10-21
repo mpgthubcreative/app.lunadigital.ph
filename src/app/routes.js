@@ -52,8 +52,15 @@ export function buildRoutes(session) {
   if (canSeeCrewMeals(session)) routes.push({ ...CREW_ROUTE });
   // Owner-pilot UX: a workspace whose home isn't the Dashboard (Household:
   // Payroll) sends "/" (sign-in, old links) there.
-  const home = getWorkspaceTemplate(snapshotWorkspaceTemplateId(session.entitlements))?.home;
-  const target = home && routes.find((r) => r.moduleId === home);
+  const template = getWorkspaceTemplate(snapshotWorkspaceTemplateId(session.entitlements));
+  // A page the template retired (Bridal: Budget) sends old links to its replacement.
+  for (const [from, to] of Object.entries(template?.redirects || {})) {
+    const i = routes.findIndex((r) => r.moduleId === from && !r.redirect);
+    const dest = routes.find((r) => r.moduleId === to && !r.redirect);
+    if (i >= 0 && dest) routes[i] = { path: routes[i].path, redirect: dest.path, label: dest.label, moduleId: dest.moduleId };
+  }
+  const home = template?.home;
+  const target = home && routes.find((r) => r.moduleId === home && !r.redirect);
   if (target && !routes.some((r) => r.path === "/")) routes.push({ path: "/", redirect: target.path, label: target.label, moduleId: target.moduleId });
   return routes;
 }

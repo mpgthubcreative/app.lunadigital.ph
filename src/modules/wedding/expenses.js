@@ -1,7 +1,7 @@
 // Wedding Expenses (Phase 16): the Expenses Core with the Bridal profile,
 // one compact row per expense.
 //   Date | Category | Supplier / Payee | Method | Reference | Amount | View details
-// Categories are the couple's own (Wedding Budget); an expense may be paid
+// Categories are the couple's own; an expense may be paid
 // to a saved supplier (its name is kept on the expense, and it counts as
 // paid to that supplier). Completed spending only: future dates are
 // refused (money still to be paid belongs in Supplier Payments).
@@ -53,7 +53,7 @@ function fields(e, { today, categories, suppliers }) {
 export function parseWeddingExpense(v, current = null) {
   const amount = parseCentavos(v.amount);
   if (!(amount > 0)) throw new Error("Enter an amount more than ₱0");
-  if (!v.category) throw new Error("Choose a category (add categories on the Wedding Budget screen)");
+  if (!v.category) throw new Error("Choose a category");
   // A disabled select isn't submitted: keep the current supplier.
   const supplierId = v.supplierId === undefined ? current?.supplierId ?? null : v.supplierId || null;
   return { date: v.date, category: v.category, amount, supplierId, payee: supplierId ? undefined : (v.payee || "").trim() || null, method: v.method, reference: (v.reference || "").trim() || null, notes: (v.notes || "").trim() || null, recurring: v.recurring === "yes" };
@@ -120,7 +120,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
             : state.loading
               ? skeleton(5)
               : !state.rows.length
-                ? emptyState({ iconName: "budget", title: "No expenses", body: state.categories.length ? "Expenses you add count against your wedding budget right away." : "Add your wedding budget categories first." })
+                ? emptyState({ iconName: "budget", title: "No expenses", body: "Add expenses from the Expenses screen (+ Add Expense)." })
                 : html`<div class="table-wrap"><table class="table table-compact rows" data-role="expenses">
                     <thead><tr><th class="m-only"></th><th>Date</th><th>Category</th><th>Supplier / Payee</th><th class="col-secondary">Method</th><th class="col-secondary">Reference</th><th class="num">Amount</th><th></th></tr></thead>
                     <tbody>${state.rows.map(

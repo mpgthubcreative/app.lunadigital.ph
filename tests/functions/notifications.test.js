@@ -352,6 +352,8 @@ describe("isolation, workspaces, permissions", () => {
       for (const type of ["payment.awaiting_verification", "inventory.low_stock", "order.ready"]) expect(isEligibleRecipient(type, { entitlements, member }), `${tpl}/${type}`).toBe(false);
       // Phase 14: payroll notifications exist only where Payroll does.
       expect(isEligibleRecipient("payroll.receipt_confirmed", { entitlements, member }), tpl).toBe(tpl === "household-payroll");
+      // 2026-10-21: Bridal has no Budget, so no budget alerts.
+      if (tpl !== "household-payroll") expect(isEligibleRecipient("budget.threshold", { entitlements, member }), tpl).toBe(tpl === "baby-expense");
     }
     const distributor = docAt("businesses/biz-a").entitlements;
     expect(isEligibleRecipient("payroll.receipt_confirmed", { entitlements: distributor, member: { status: "active", permissions: resolvePermissions("owner") } })).toBe(false);

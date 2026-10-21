@@ -1,7 +1,7 @@
 // Luna Bridal: the Download Excel sheets (shared/workbook.js). The whole
 // wedding, as it is now; readable text only (no ids, no JSON). Never an
 // invitation link or token (those live server-only and are never read here).
-//   Money            the Money screen's rows (shared/wedding-money.js)
+//   Expenses         the Expenses screen's rows (shared/wedding-money.js)
 //   Payments         every payment recorded (active Wedding Expenses)
 //   Tasks            Bride / Groom marks for "Bride & Groom" tasks
 //   Guests           one row per party
@@ -15,7 +15,7 @@
 // Each sheet only with the permission of the screen it comes from.
 
 import { categoriesQuery, weddingSuppliersQuery, supplierPaymentsQuery, expensesQuery, weddingTasksQuery, guestsQuery } from "../../../../shared/list-queries.js";
-import { BUDGET_DOC_ID, sortCategories } from "../../../../shared/baby.js";
+import { sortCategories } from "../../../../shared/baby.js";
 import { EXPENSE_METHODS } from "../../../../shared/expenses.js";
 import { TASK_STATUSES, RSVP_STATUSES, GUEST_CATEGORIES, SEATING_DOC_ID } from "../../../../shared/wedding.js";
 import { seatingPlan } from "../../../../shared/wedding-seating.js";
@@ -125,13 +125,12 @@ export async function bridalSheets(x) {
   const catName = new Map(cats.map((c) => [c.id, c.name]));
 
   if (x.can("vendors", "vendors.view")) {
-    const seesBudget = x.can("budget", "budget.view");
-    const [suppliers, upcoming, budgets] = await Promise.all([
+    // Bridal has no Budget (2026-10-21): no budget figures in the file.
+    const [suppliers, upcoming] = await Promise.all([
       x.readRows("weddingSuppliers", weddingSuppliersQuery({ status: "active" })),
       x.can("vendorpayments", "vendorpayments.view") ? x.readRows("supplierPayments", supplierPaymentsQuery({ status: "upcoming" })) : [],
-      seesBudget ? x.readByIds("budgets", [BUDGET_DOC_ID]) : new Map(),
     ]);
-    const rows = moneyRows({ suppliers, categories: seesBudget ? cats : cats.map((c) => ({ ...c, budget: null, planned: false })), budget: budgets.get(BUDGET_DOC_ID) ?? null, expenses, upcoming });
+    const rows = moneyRows({ suppliers, categories: cats, expenses, upcoming });
     for (const r of rows) {
       if (r.kind !== "supplier") continue;
       const dues = upcoming.filter((p) => p.supplierId === r.id).map((p) => p.dueDate).sort();

@@ -26,7 +26,7 @@ function paymentFields(p, { categories, suppliers }, supplier = null) {
   if (!p && !supplier) fields.push({ name: "supplierId", label: "Supplier", type: "select", options: optionsOf(suppliers), value: suppliers[0]?.id ?? "" });
   fields.push(
     { name: "description", label: "Description", value: p?.description ?? "", required: true, hint: "e.g. Reservation fee, Second payment, Balance" },
-    { name: "category", label: "Budget category", type: "select", options: optionsOf(active, { blank: p ? null : "— The supplier's category —", include: p ? { value: p.category, label: `${p.categoryName ?? "Category"} (inactive)` } : null }), value: p?.category ?? "" },
+    { name: "category", label: "Category", type: "select", options: optionsOf(active, { blank: p ? null : "— The supplier's category —", include: p ? { value: p.category, label: `${p.categoryName ?? "Category"} (inactive)` } : null }), value: p?.category ?? "" },
     { name: "amount", label: "Amount (PHP)", value: p ? (p.amount / 100).toFixed(2) : "", inputmode: "decimal", required: true },
     { name: "dueDate", label: "Due date", type: "date", value: p?.dueDate ?? "", required: true },
     { name: "notes", label: "Notes", type: "textarea", value: p?.notes ?? "" }
@@ -44,7 +44,7 @@ export function parseSupplierPayment(v, suppliers = []) {
     out.supplierId = v.supplierId;
   }
   const category = v.category || suppliers.find((s) => s.id === v.supplierId)?.categoryId || "";
-  if (!category) throw new Error("Choose a budget category");
+  if (!category) throw new Error("Choose a category");
   out.category = category;
   return out;
 }

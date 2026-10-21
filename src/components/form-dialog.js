@@ -52,7 +52,9 @@ export function formDialog({ title, intro = "", fields, submitLabel = "Save", ca
     const backdrop = document.createElement("div");
     backdrop.className = "modal-backdrop";
     const fieldBlock = (f) =>
-      f.type === "checkbox"
+      f.type === "radio"
+        ? html`<fieldset class="field field-radio" data-field="${f.name}"><legend>${f.label}</legend><div class="radio-row">${f.options.map((o, i) => html`<label class="check" for="fd-${uid}-${f.name}-${i}"><input type="radio" id="fd-${uid}-${f.name}-${i}" name="${f.name}" value="${o.value}" ${String(o.value) === String(f.value ?? "") ? "checked" : ""} /><span>${o.label}</span></label>`)}</div>${f.hint ? html`<div class="stat-hint">${f.hint}</div>` : ""}</fieldset>`
+        : f.type === "checkbox"
         ? html`<div class="field field-check"><label class="check" for="fd-${uid}-${f.name}">${fieldMarkup(f, `fd-${uid}-${f.name}`)}<span>${f.label}</span></label>${f.hint ? html`<div class="stat-hint">${f.hint}</div>` : ""}</div>`
         : html`<div class="field">
                 <label for="fd-${uid}-${f.name}">${f.label}${f.required ? " *" : ""}</label>

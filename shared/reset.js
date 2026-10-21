@@ -30,7 +30,7 @@ export const RESET_PLAN = Object.freeze({
   "bridal-expense": {
     label: "Luna Bridal",
     removes: ["guests", "guestTotals", "guestInvites", "weddingSuppliers", "supplierPayments", "weddingTasks", "taskTotals", "weddingProgram", "weddingCrewMeals", "crewMealSettings", "weddingGallery", "expenses", "expenseCategories", "budgets", "providers", ...DERIVED],
-    summary: ["Guests, RSVPs, tables, wedding roles and guest invitation links", "Suppliers and supplier payments", "Tasks", "Budget and expenses", "Music & Program and Crew Meals", "Photo gallery", "Uploaded files"],
+    summary: ["Guests, RSVPs, tables, wedding roles and guest invitation links", "Suppliers and supplier payments", "Tasks", "Expenses and categories", "Music & Program and Crew Meals", "Photo gallery", "Uploaded files"],
     keeps: ["Wedding Setup (couple, date, venue, story)", "The invitation design and template (draft and published)"],
   },
   "baby-expense": {

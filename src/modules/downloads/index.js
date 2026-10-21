@@ -16,7 +16,7 @@ import { businessDate } from "@shared/index.js";
 
 const CONTENTS = {
   household: "Expenses, Payroll, Payroll Breakdown, Attendance, Advances and Grocery List",
-  bridal: "Money, Payments, Tasks, Guests, Party Members, Seating, Roles, Crew Meals, Music & Program and Wedding Setup",
+  bridal: "Expenses, Payments, Tasks, Guests, Party Members, Seating, Roles, Crew Meals, Music & Program and Wedding Setup",
   business: "Orders, Payments, Users, Inventory, Customers, Operating Expenses and COGS",
   baby: "your expenses, budget, providers and payment schedule",
 };

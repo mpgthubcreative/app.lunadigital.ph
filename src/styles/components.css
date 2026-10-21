@@ -4391,3 +4391,15 @@ button.wl-person-name:hover .wl-edit, button.wl-person-name:focus-visible .wl-ed
   overflow: visible;
   text-overflow: clip;
 }
+.wl-money-row .wl-nobr {
+  white-space: nowrap;
+}
+/* Bridal Expenses (2026-10-21): "Next: Nov 10" under the figures, quiet. */
+.wl-money-row .wl-next { color: var(--text-muted); }
+/* Radio choices in a form (Paid now / Pay later): one row, 44px targets. */
+.field-radio { border: 0; padding: 0; margin: 0; min-width: 0; }
+.field-radio legend { padding: 0; font-weight: 600; font-size: var(--text-sm); }
+.field-radio .radio-row { display: flex; flex-wrap: wrap; gap: var(--space-1) var(--space-4); }
+.field-radio label.check { min-height: 44px; align-items: center; font-weight: 400; margin-bottom: 0; }
+.field-radio input[type="radio"] { flex: none; width: 18px; height: 18px; margin: 0; }
+.field[hidden] { display: none; }

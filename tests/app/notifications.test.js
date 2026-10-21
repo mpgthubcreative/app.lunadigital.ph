@@ -61,7 +61,7 @@ describe("view helpers", () => {
   it("categories follow what the user can receive", () => {
     expect(myCategories(session("owner")).sort()).toEqual(["billing", "inventory", "orders", "payments", "store", "usage"]);
     expect(myCategories(session("staff")).sort()).toEqual(["orders", "store"]);
-    expect(myCategories(session("owner", null, { workspaceTemplateId: "bridal-expense", planId: "pro" })).sort()).toEqual(["billing", "budget", "guests", "usage", "wedding"]);
+    expect(myCategories(session("owner", null, { workspaceTemplateId: "bridal-expense", planId: "pro" })).sort()).toEqual(["billing", "guests", "usage", "wedding"]); // no Budget in Bridal
   });
 });
 

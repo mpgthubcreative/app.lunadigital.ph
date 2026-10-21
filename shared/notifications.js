@@ -135,6 +135,8 @@ export const NOTIFICATION_TYPES = Object.freeze({
     permissions: ["budget.view"],
     excludeActor: false,
     action: { label: "View budget", route: "/budget" },
+    // Bridal has no Budget (2026-10-21): no budget alerts, no preference.
+    notTemplates: ["bridal-expense"],
   },
   // Phase 16: a supplier payment was marked Paid (its Wedding Expense was
   // recorded). Goes to the OTHER members who follow supplier payments.
@@ -210,6 +212,7 @@ export function isEligibleRecipient(type, { entitlements, member }) {
   if (!perms || typeof perms !== "object") return false;
   if (!canUseNotifications({ entitlements, permissions: perms })) return false;
   if (!isModuleEnabled(entitlements, rule.module)) return false;
+  if (rule.notTemplates?.includes(entitlements?.workspaceTemplateId)) return false;
   if (!rule.permissions.every((p) => perms[p] === true)) return false;
   return wantsChannel(member.notificationPreferences, rule.category, "inApp");
 }
