@@ -7,6 +7,7 @@
 import { randomBytes } from "node:crypto";
 import { WeddingError, keyOf } from "../../../shared/wedding.js";
 import { validateRole, roleKey, roleLabel, MAX_ROLES_PER_PERSON, PRIMARY, partyRoleKeys, membersOf } from "../../../shared/wedding-roles.js";
+import { reconcileSeats, seatsOf, UNNAMED_SEAT } from "../../../shared/wedding-seating.js";
 
 const TX_OPTIONS = { maxAttempts: 10 };
 const GUEST_ID = /^[A-Za-z0-9]{1,40}$/;
@@ -116,6 +117,21 @@ export async function moveRole({ db, tenant, FieldValue, fromGuestId, fromMember
 }
 
 // ---------- Party members (named companions) ----------
+// Seats follow the people (shared/wedding-seating.js): naming someone gives
+// them the first unnamed seat (its table stays with them); removing a named
+// member, or changing who's marked attending, frees seats that no longer
+// belong to a confirmed person (named in the history).
+
+// u1 → the new member, u2 → u1, u3 → u2 … (the unnamed seats shift down).
+function namingShift(g, memberId) {
+  const rename = { u1: memberId };
+  for (const k of Object.keys(seatsOf(g))) {
+    const n = UNNAMED_SEAT.exec(k)?.[1];
+    if (n && Number(n) > 1) rename[k] = `u${Number(n) - 1}`;
+  }
+  return rename;
+}
+const freedText = (released) => (released.length ? ` · seat freed: ${released.map((r) => r.name).join(", ")}` : "");
 
 export async function addMember({ db, tenant, FieldValue, guestId, name, actor, now = new Date() }) {
   const n = cleanName(name);
@@ -130,7 +146,9 @@ export async function addMember({ db, tenant, FieldValue, guestId, name, actor, 
     const lowered = keyOf(n);
     if ([g.name, ...members.map((m) => m.name)].some((x) => keyOf(x) === lowered)) throw new WeddingError("invalid-input", `${n} is already in this party`);
     const m = { id: newMemberId(), name: n, roles: [] };
-    tx.update(ref, { members: [...members, m], history: append(g.history, { at: now, actor: who(actor), label: `Party member added: ${n}` }), updatedBy: who(actor), updatedAt: FieldValue.serverTimestamp() });
+    const next = { ...g, members: [...members, m] };
+    const seating = reconcileSeats(g, next, { rename: namingShift(g, m.id) });
+    tx.update(ref, { members: next.members, ...seating.fields, history: append(g.history, { at: now, actor: who(actor), label: `Party member added: ${n}${freedText(seating.released)}` }), updatedBy: who(actor), updatedAt: FieldValue.serverTimestamp() });
     return { guestId: ref.id, memberId: m.id };
   }, TX_OPTIONS);
 }
@@ -170,7 +188,8 @@ export async function removeMember({ db, tenant, FieldValue, guestId, memberId, 
     const links = [...list(m.roles).map((r) => roleLabel(r)), ...(m.attending === true ? ["marked attending"] : [])];
     if (links.length && force !== true) throw new WeddingError("member-linked", `${m.name} is ${links.join(", ")}. Remove them from this party anyway?`);
     const next = members.filter((x) => x.id !== mid);
-    tx.update(ref, { ...withKeys(g, { members: next }), history: append(g.history, { at: now, actor: who(actor), label: `Party member removed: ${m.name}${links.length ? ` (was ${links.join(", ")})` : ""}` }), updatedBy: who(actor), updatedAt: FieldValue.serverTimestamp() });
+    const seating = reconcileSeats(g, { ...g, members: next });
+    tx.update(ref, { ...withKeys(g, { members: next }), ...seating.fields, history: append(g.history, { at: now, actor: who(actor), label: `Party member removed: ${m.name}${links.length ? ` (was ${links.join(", ")})` : ""}${freedText(seating.released)}` }), updatedBy: who(actor), updatedAt: FieldValue.serverTimestamp() });
     return { guestId: ref.id, removed: true };
   }, TX_OPTIONS);
 }
@@ -194,7 +213,8 @@ export async function setMemberAttending({ db, tenant, FieldValue, guestId, memb
     if (attending && marked + 1 > (g.confirmed || 0)) throw new WeddingError("invalid-input", `Only ${g.confirmed} are attending. Raise the number attending first.`);
     const name = mid ? target.name : g.name;
     const patch = mid ? { members: members.map((x) => (x.id === mid ? { ...x, attending } : x)) } : { attending };
-    tx.update(ref, { ...patch, history: append(g.history, { at: now, actor: who(actor), label: `${name}: ${attending ? "attending" : "not marked attending"}` }), updatedBy: who(actor), updatedAt: FieldValue.serverTimestamp() });
+    const seating = reconcileSeats(g, { ...g, ...patch });
+    tx.update(ref, { ...patch, ...seating.fields, history: append(g.history, { at: now, actor: who(actor), label: `${name}: ${attending ? "attending" : "not marked attending"}${freedText(seating.released)}` }), updatedBy: who(actor), updatedAt: FieldValue.serverTimestamp() });
     return { guestId: ref.id, attending };
   }, TX_OPTIONS);
 }

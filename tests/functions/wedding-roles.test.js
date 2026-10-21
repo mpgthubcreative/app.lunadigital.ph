@@ -11,7 +11,8 @@ import { createWeddingSetupHandler } from "../../netlify/functions/wedding-setup
 import { createBusiness, addMember, ensureAuthUser } from "../../netlify/functions/_lib/provisioning.js";
 import { buildWorld, request, asOperator, roomForTeam } from "../helpers/tenants.js";
 import { validateRole, roleKey, rolesPlan, categoryForRole, peopleOf, peopleWithoutRole, attendingNames } from "../../shared/wedding-roles.js";
-import { seatingPlan, SEATING_DOC_ID } from "../../shared/wedding.js";
+import { SEATING_DOC_ID } from "../../shared/wedding.js";
+import { seatingPlan } from "../../shared/wedding-seating.js";
 import { readXlsx } from "../../shared/xlsx.js";
 
 const NOW = new Date("2026-10-16T04:00:00Z");

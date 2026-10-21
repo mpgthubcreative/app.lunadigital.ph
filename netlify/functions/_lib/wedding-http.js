@@ -30,6 +30,7 @@ export const WEDDING_STATUS = {
   "slug-taken": 409,
   "role-taken": 409,
   "member-linked": 409,
+  "table-full": 409,
 };
 
 const FORBIDDEN = () => new RequestError("forbidden", "This feature isn't available for your account.", 403);

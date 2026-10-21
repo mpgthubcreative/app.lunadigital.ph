@@ -19,17 +19,18 @@
 // link stops working at once. Every bad / revoked link gets the same answer.
 
 import { createHash, randomBytes } from "node:crypto";
-import { WeddingError, WEDDING_SCHEMA_VERSION, TOTALS_DOC_ID, RSVP_STATUSES, validateRsvp, validateWeddingSetup, rsvpOpen, setupMissing, isWeddingSlug, suggestWeddingSlug, invitePath, WEDDING_SLUG_MIN, WEDDING_SLUG_MAX } from "../../../shared/wedding.js";
+import { WeddingError, WEDDING_SCHEMA_VERSION, TOTALS_DOC_ID, SEATING_DOC_ID, RSVP_STATUSES, validateRsvp, validateWeddingSetup, rsvpOpen, setupMissing, isWeddingSlug, suggestWeddingSlug, invitePath, WEDDING_SLUG_MIN, WEDDING_SLUG_MAX } from "../../../shared/wedding.js";
 import { businessDate, isDayId } from "../../../shared/metrics.js";
 import { prepareNotifications } from "./notifications.js";
 import { tenantDb } from "./tenant-db.js";
-import { guestTotalsWrite } from "./wedding.js";
+import { guestTotalsWrite, releasedText } from "./wedding.js";
 import { roleLabel } from "../../../shared/wedding-roles.js";
 import { accessPolicy } from "../../../shared/subscription.js";
 import { attendingMarksFor } from "./wedding-roles.js";
 import { liveDesignFor, ownerInvitationStatus, previewDesign, TRIAL_PREVIEW_MESSAGE } from "./invitation-design.js";
 import { trialOpen } from "../../../shared/trial.js";
 import { invitationData } from "../../../shared/invitation-design.js";
+import { reconcileSeats } from "../../../shared/wedding-seating.js";
 import { dataUrlImageType } from "../../../shared/image-type.js";
 
 const TX_OPTIONS = { maxAttempts: 10 };
@@ -252,6 +253,7 @@ export async function respondInvite({ db, FieldValue, token, rsvp, now = new Dat
   return db.runTransaction(async (tx) => {
     const [link, snap, setupSnap] = [await tx.get(r.linkRef), await tx.get(gRef), await tx.get(sRef)];
     await tx.get(totalsRef(tenant));
+    const seatingSnap = await tx.get(tenant.doc("guestTotals", SEATING_DOC_ID));
     if (!link.exists || !snap.exists) throw BAD_LINK();
     const setup = setupSnap.exists ? setupSnap.data() : {};
     const today = businessDate(r.business.timezone || "Asia/Manila", now);
@@ -261,15 +263,19 @@ export async function respondInvite({ db, FieldValue, token, rsvp, now = new Dat
     if (!["attending", "declined"].includes(status)) throw new WeddingError("invalid-input", "Choose Accept or Decline");
     const v = validateRsvp(status === "attending" ? { status, confirmed: Number(rsvp.confirmed) } : { status }, g.partySize);
     if (v.status === g.rsvp && v.confirmed === int(g.confirmed)) return { rsvp: v.status, confirmed: v.confirmed, unchanged: true, name: g.name };
-    const next = { ...g, rsvp: v.status, confirmed: v.confirmed };
-    const unseat = v.status !== "attending" && Boolean(g.tableId);
-    const label = `${guestRsvpLabel({ rsvp: g.rsvp, confirmed: int(g.confirmed) }, v, int(g.partySize))}${unseat ? " · removed from their table" : ""}`;
+    const marks = attendingMarksFor(g, v);
+    const next = { ...g, rsvp: v.status, confirmed: v.confirmed, ...marks };
+    // Seats follow the confirmed people (shared/wedding-seating.js): fewer
+    // frees the last people's seats, named in the history.
+    const seating = reconcileSeats(g, next);
+    const tables = seatingSnap.exists && seatingSnap.data().tables ? seatingSnap.data().tables : {};
+    const label = `${guestRsvpLabel({ rsvp: g.rsvp, confirmed: int(g.confirmed) }, v, int(g.partySize))}${releasedText(seating.released, tables)}`;
     const notes = await prepareNotifications(tx, {
       tenant,
       events: [{ type: "guest.rsvp", key: `${r.guestId}-${now.getTime()}`, title: `${g.name} RSVP'd ${rsvpWords(v.status, v.confirmed).replace(/ (\d+)$/, " · $1")}`, message: `${g.name} answered their invitation: ${rsvpWords(v.status, v.confirmed).replace(/ (\d+)$/, " · $1")}.`, recordType: "guest", recordId: r.guestId }],
     });
     const stamp = FieldValue.serverTimestamp();
-    tx.update(gRef, { rsvp: v.status, confirmed: v.confirmed, rsvpDate: today, rsvpSource: "guest", ...(unseat ? { tableId: null } : {}), ...attendingMarksFor(g, v), history: append(g.history, { at: now, actor: null, label, source: "guest", from: { rsvp: g.rsvp, confirmed: int(g.confirmed) }, to: v }), revision: int(g.revision) + 1, updatedBy: { uid: null, name: `${g.name} (invitation)` }, updatedAt: stamp });
+    tx.update(gRef, { rsvp: v.status, confirmed: v.confirmed, rsvpDate: today, rsvpSource: "guest", ...seating.fields, ...marks, history: append(g.history, { at: now, actor: null, label, source: "guest", from: { rsvp: g.rsvp, confirmed: int(g.confirmed) }, to: v }), revision: int(g.revision) + 1, updatedBy: { uid: null, name: `${g.name} (invitation)` }, updatedAt: stamp });
     tx.set(totalsRef(tenant), { schemaVersion: WEDDING_SCHEMA_VERSION, ...guestTotalsWrite(FieldValue, g, next), updatedAt: stamp }, { merge: true });
     notes.commit({ FieldValue });
     return { rsvp: v.status, confirmed: v.confirmed, name: g.name };

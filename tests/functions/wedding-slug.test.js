@@ -10,7 +10,8 @@ import { createWeddingSetupHandler } from "../../netlify/functions/wedding-setup
 import { createInviteHandler } from "../../netlify/functions/invite.js";
 import { createBusiness, addMember, ensureAuthUser } from "../../netlify/functions/_lib/provisioning.js";
 import { buildWorld, request, roomForTeam } from "../helpers/tenants.js";
-import { slugify, suggestWeddingSlug, isWeddingSlug, invitePath, validateWeddingSetup, rsvpSummary, rsvpByCategory, seatingPlan, TOTALS_DOC_ID, SEATING_DOC_ID } from "../../shared/wedding.js";
+import { slugify, suggestWeddingSlug, isWeddingSlug, invitePath, validateWeddingSetup, rsvpSummary, rsvpByCategory, TOTALS_DOC_ID, SEATING_DOC_ID } from "../../shared/wedding.js";
+import { seatingPlan } from "../../shared/wedding-seating.js";
 import { guestRsvpLabel } from "../../netlify/functions/_lib/invitations.js";
 
 const NOW = new Date("2026-10-16T04:00:00Z");
@@ -167,7 +168,7 @@ describe("reserved seats vs actually attending", () => {
     expect(guestRsvpLabel({ rsvp: "awaiting", confirmed: 0 }, { status: "declined", confirmed: 0 }, 2)).toBe("Guest responded: Declined");
   });
 
-  it("Seating uses confirmed attendees: a 2-seat party with 1 coming takes 1 seat; 1 → 2 updates the table and flags it when full", async () => {
+  it("Seating is per confirmed person: a 2-seat party with 1 coming takes 1 seat; 1 → 2 adds an unseated person (a full table never overflows); 2 → 1 frees the extra seat", async () => {
     ok(await save(SETUP));
     const { g, token } = await party();
     const t = ok(await api("guests", u.carlo, { action: "createTable", table: { name: "Table 1", capacity: 2 } }), 201).tableId;
@@ -180,8 +181,15 @@ describe("reserved seats vs actually attending", () => {
     expect(plan().tables[0]).toMatchObject({ capacity: 2, used: 2 });
     expect(plan().attendingSeats).toBe(2);
     ok(await guest({ action: "respond", token, rsvp: { status: "attending", confirmed: 2 } }));
-    expect(docAt(`guests/${g}`).tableId).toBe(t); // still seated
-    expect(plan().tables[0].used).toBe(3); // 3 of 2 → shown "over by 1" on Seating
+    expect(docAt(`guests/${g}`).seats).toEqual({ primary: t }); // the first person stays seated
+    expect(plan()).toMatchObject({ attendingSeats: 3, seatedSeats: 2, unassignedSeats: 1 });
+    expect(plan().tables[0].used).toBe(2); // never over
+    expect(plan().unassigned[0].people.map((p) => p.name)).toEqual(["Member 2"]);
+    // The table is full: seating the new person there is refused.
+    expect((await api("guests", u.carlo, { action: "seatPerson", guestId: g, seatKey: "u1", tableId: t })).body.error).toBe("table-full");
+    // Back to 1: nothing extra was seated, so nothing is freed.
+    ok(await guest({ action: "respond", token, rsvp: { status: "attending", confirmed: 1 } }));
+    expect(docAt(`guests/${g}`).seats).toEqual({ primary: t });
   });
 });
 

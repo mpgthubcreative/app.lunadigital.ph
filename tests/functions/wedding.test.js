@@ -386,22 +386,25 @@ describe("Seating (Owner-pilot Bridal UX): tables in guestTotals/seating, a gues
     ok(await api("guests", u.camille, { action: "setRsvp", guestId: g, rsvp: { status: "attending", confirmed: 3 } }));
     ok(await api("guests", u.camille, { action: "seat", guestId: g, tableId: t1 }));
     ok(await api("guests", u.mon, { action: "seat", guestId: g, tableId: t2 }));
-    expect(docAt(`guests/${g}`).tableId).toBe(t2);
-    expect(docAt(`guests/${g}`).history.slice(-2).map((h) => h.label)).toEqual(["Seated at Table 1", "Moved from Table 1 to Table 2"]);
+    // Per person (2026-10-21): the whole party's 3 confirmed people, each with a seat.
+    expect(docAt(`guests/${g}`)).toMatchObject({ seats: { primary: t2, u1: t2, u2: t2 }, tableIds: [t2], tableId: null });
+    expect(docAt(`guests/${g}`).history.slice(-2).map((h) => h.label)).toEqual(["Party seated at Table 1 (3)", "Party seated at Table 2 (3)"]);
     expect(ok(await api("guests", u.camille, { action: "seat", guestId: g, tableId: t2 })).unchanged).toBe(true);
     ok(await api("guests", u.camille, { action: "seat", guestId: g, tableId: null }));
-    expect(docAt(`guests/${g}`).tableId).toBe(null);
+    expect(docAt(`guests/${g}`)).toMatchObject({ seats: {}, tableIds: [] });
     ok(await api("guests", u.camille, { action: "seat", guestId: g, tableId: t1 }));
     ok(await api("guests", u.camille, { action: "setRsvp", guestId: g, rsvp: { status: "declined" } }));
-    expect(docAt(`guests/${g}`)).toMatchObject({ tableId: null, rsvp: "declined" });
-    expect(docAt(`guests/${g}`).history.at(-1).label).toBe("Owner changed: Attending 3 → Declined · removed from their table");
+    expect(docAt(`guests/${g}`)).toMatchObject({ seats: {}, rsvp: "declined" });
+    expect(docAt(`guests/${g}`).history.at(-1).label).toBe("Owner changed: Attending 3 → Declined · seats freed: Santos Family (Table 1), Member 2 (Table 1), Member 3 (Table 1)");
     ok(await api("guests", u.camille, { action: "setRsvp", guestId: g, rsvp: { status: "attending", confirmed: 2 } }));
     ok(await api("guests", u.camille, { action: "seat", guestId: g, tableId: t2 }));
+    // Fewer seats than the people seated there is refused; enough is fine.
+    expect((await api("guests", u.camille, { action: "updateTable", tableId: t2, changes: { capacity: 1 } })).body.error).toBe("table-full");
     ok(await api("guests", u.camille, { action: "updateTable", tableId: t2, changes: { name: "Sponsors", capacity: 6 } }));
     expect(seating()[t2]).toMatchObject({ name: "Sponsors", capacity: 6 });
-    expect(ok(await api("guests", u.camille, { action: "deleteTable", tableId: t2 })).unseated).toBe(1);
+    expect(ok(await api("guests", u.camille, { action: "deleteTable", tableId: t2 })).unseated).toBe(2);
     expect(Object.keys(seating())).toEqual([t1]);
-    expect(docAt(`guests/${g}`).tableId).toBe(null);
+    expect(docAt(`guests/${g}`)).toMatchObject({ seats: {}, tableIds: [] });
     // The RSVP totals never moved with the seating.
     expect(rsvpSummary(docAt("guestTotals/current"))).toMatchObject({ attending: 1, attendingSeats: 2 });
     // Staff can't seat or add tables; another wedding's table id is unknown here.

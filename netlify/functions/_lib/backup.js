@@ -19,7 +19,8 @@
 import { getWorkspaceTemplate } from "../../../shared/workspaces.js";
 import { getModule, isModuleEnabled } from "../../../shared/modules.js";
 import { writeXlsx } from "../../../shared/xlsx.js";
-import { rsvpByCategory, seatingPlan, SEATING_DOC_ID, TOTALS_DOC_ID } from "../../../shared/wedding.js";
+import { rsvpByCategory, SEATING_DOC_ID, TOTALS_DOC_ID } from "../../../shared/wedding.js";
+import { seatingPlan } from "../../../shared/wedding-seating.js";
 import { programSection, formatDuration, PROGRAM_SECTIONS } from "../../../shared/wedding-program.js";
 import { rolesPlan, membersOf, roleLabel } from "../../../shared/wedding-roles.js";
 import { crewTotals } from "../../../shared/wedding-crew.js";
@@ -141,7 +142,7 @@ export async function buildBackup({ db, tenant, business, entitlements, FieldPat
     add("RSVP History", rsvp);
     const seatingDoc = await tenant.doc("guestTotals", SEATING_DOC_ID).get();
     const plan = seatingPlan(guests.map((g) => ({ id: g.id, ...g.data })), seatingDoc.exists ? seatingDoc.data() : {});
-    add("Tables", [["Table id", "Table", "Seats", "Seats taken", "Guests"], ...plan.tables.map((t) => [t.id, t.name, t.capacity, t.used, t.guests.length])]);
+    add("Tables", [["Table id", "Table", "Seats", "Seats taken", "Parties"], ...plan.tables.map((t) => [t.id, t.name, t.capacity, t.used, new Set(t.people.map((p) => p.guestId)).size])]);
     const parties = guests.map((g) => ({ id: g.id, ...g.data }));
     // One row per named person (primary first); unnamed seats are a count.
     add("Party Members", [["Party (guest)", "Guest id", "Person", "Person key", "Primary", "Marked attending", "Roles", "Party seats", "Party attending", "Unnamed seats"], ...parties.flatMap((g) => {

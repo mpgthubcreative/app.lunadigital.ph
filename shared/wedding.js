@@ -27,8 +27,8 @@
 //   guestTotals/current      invitations / seats per RSVP status
 //   guestTotals/seating      (Owner-pilot Bridal UX) the reception tables:
 //                            { tables: { [id]: { name, capacity, order } } };
-//                            a guest's table is guests/{id}.tableId (only
-//                            while Attending)
+//                            each confirmed PERSON's table is in
+//                            guests/{id}.seats (shared/wedding-seating.js)
 //
 // Luna computes, nobody types:
 //   Supplier paid    = the supplier's active Wedding Expenses
@@ -399,27 +399,7 @@ export function validateTableInput(input, { partial = false } = {}) {
   if (partial && !Object.keys(out).length) throw new WeddingError("invalid-input", "Nothing to change");
   return out;
 }
-// Tables in order, each with its seated attending guests and seats used.
-// Seats = confirmed attendees (people). A guest whose table is gone (or who
-// isn't attending) counts as unassigned / not seated.
-export function seatingPlan(guests, seatingDoc) {
-  const raw = seatingDoc && typeof seatingDoc.tables === "object" && seatingDoc.tables ? seatingDoc.tables : {};
-  const tables = Object.entries(raw)
-    .map(([id, t]) => ({ id, name: t.name, capacity: int(t.capacity), order: int(t.order), guests: [], used: 0 }))
-    .sort((a, b) => a.order - b.order || a.name.localeCompare(b.name));
-  const byId = new Map(tables.map((t) => [t.id, t]));
-  const attending = (guests || []).filter((g) => g.rsvp === "attending");
-  const unassigned = [];
-  for (const g of attending) {
-    const t = g.tableId ? byId.get(g.tableId) : null;
-    if (t) {
-      t.guests.push(g);
-      t.used += int(g.confirmed);
-    } else unassigned.push(g);
-  }
-  const seats = (list) => list.reduce((s, g) => s + int(g.confirmed), 0);
-  return { tables, unassigned, attendingSeats: seats(attending), seatedSeats: tables.reduce((s, t) => s + t.used, 0), unassignedSeats: seats(unassigned) };
-}
+// Seating plan: shared/wedding-seating.js (per person, 2026-10-21).
 
 // ---------- Wedding Setup + invitations (Owner-pilot Bridal) ----------
 // One document per wedding (weddingSetup/current, written by the server,

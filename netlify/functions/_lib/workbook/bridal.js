@@ -17,7 +17,8 @@
 import { categoriesQuery, weddingSuppliersQuery, supplierPaymentsQuery, expensesQuery, weddingTasksQuery, guestsQuery } from "../../../../shared/list-queries.js";
 import { BUDGET_DOC_ID, sortCategories } from "../../../../shared/baby.js";
 import { EXPENSE_METHODS } from "../../../../shared/expenses.js";
-import { TASK_STATUSES, RSVP_STATUSES, GUEST_CATEGORIES, SEATING_DOC_ID, seatingPlan } from "../../../../shared/wedding.js";
+import { TASK_STATUSES, RSVP_STATUSES, GUEST_CATEGORIES, SEATING_DOC_ID } from "../../../../shared/wedding.js";
+import { seatingPlan } from "../../../../shared/wedding-seating.js";
 import { moneyRows, moneyLabel, MONEY_STATUS } from "../../../../shared/wedding-money.js";
 import { peopleOf, rolesPlan, roleLabel } from "../../../../shared/wedding-roles.js";
 import { programSection, formatDuration, PROGRAM_SECTIONS } from "../../../../shared/wedding-program.js";
@@ -77,11 +78,12 @@ const PARTY_COLUMNS = [
   { header: "Attending", format: "text", width: 11, value: attendingText },
   { header: "Role", format: "text", width: 34, value: (p) => p.roles.map((r) => roleLabel(r)).join(", ") },
 ];
+// One row per confirmed person (2026-10-21: seating is per person).
 const SEATING_COLUMNS = [
-  { header: "Guest / Party", format: "text", width: 30, value: (s) => s.guest.name },
-  { header: "Seats", format: "integer", width: 8, total: true, value: (s) => int(s.guest.confirmed) },
+  { header: "Person", format: "text", width: 26, value: (s) => s.person.name },
+  { header: "Party", format: "text", width: 28, value: (s) => s.person.party },
   { header: "Table", format: "text", width: 20, value: (s) => s.table },
-  { header: "RSVP Status", format: "text", width: 16, value: (s) => label(RSVP_STATUSES, s.guest.rsvp) },
+  { header: "RSVP Status", format: "text", width: 16, value: (s) => label(RSVP_STATUSES, s.person.guest.rsvp) },
 ];
 const ROLE_COLUMNS = [
   { header: "Person", format: "text", width: 26, value: (r) => r.person },
@@ -156,7 +158,7 @@ export async function bridalSheets(x) {
     sheets.push({ name: "Guests", columns: GUEST_COLUMNS, rows: guests });
     sheets.push({ name: "Party Members", columns: PARTY_COLUMNS, rows: peopleOf(guests) });
     const plan = seatingPlan(guests, seating.get(SEATING_DOC_ID) ?? {});
-    sheets.push({ name: "Seating", columns: SEATING_COLUMNS, rows: [...plan.tables.flatMap((t) => t.guests.map((guest) => ({ guest, table: t.name }))), ...plan.unassigned.map((guest) => ({ guest, table: "Not seated yet" }))] });
+    sheets.push({ name: "Seating", columns: SEATING_COLUMNS, rows: [...plan.tables.flatMap((t) => t.people.map((person) => ({ person, table: t.name }))), ...plan.unassigned.flatMap((u) => u.people.map((person) => ({ person, table: "Not seated yet" })))] });
     sheets.push({ name: "Roles", columns: ROLE_COLUMNS, rows: rolesPlan(guests).flatMap((gr) => gr.people.map((p) => ({ person: p.name, role: roleLabel(gr.role), party: p.party }))) });
   }
 

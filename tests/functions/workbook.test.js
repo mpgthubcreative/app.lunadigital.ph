@@ -283,7 +283,8 @@ describe("Luna Bridal workbook", () => {
     expect(dataOf(wb.bytes, "Tasks")).toEqual([["Get CENOMAR", "Yanie", serial("2026-11-01"), "Done", "Not done", "In Progress"]]);
     expect(dataOf(wb.bytes, "Guests")).toEqual([["Lim Family", "2", "0", "Awaiting RSVP", "Friends"], ["Santos Family", "3", "3", "Attending", "Family"]]);
     expect(dataOf(wb.bytes, "Party Members")).toEqual(expect.arrayContaining([["Santos Family", "Anna Santos", "Yes", "Maid / Matron of Honor, Bridesmaid"], ["Santos Family", "Santos Family", "", "Principal Sponsor"]]));
-    expect(dataOf(wb.bytes, "Seating")).toEqual([["Santos Family", "3", "Table 5", "Attending"]]);
+    // One row per confirmed person (marked attending first, unnamed people as Member n).
+    expect(dataOf(wb.bytes, "Seating")).toEqual([["Anna Santos", "Santos Family", "Table 5", "Attending"], ["Santos Family", "Santos Family", "Table 5", "Attending"], ["Member 3", "Santos Family", "Table 5", "Attending"]]);
     // Several roles per person, several people per role: one row each.
     expect(dataOf(wb.bytes, "Roles")).toEqual(expect.arrayContaining([["Anna Santos", "Maid / Matron of Honor", "Santos Family"], ["Anna Santos", "Bridesmaid", "Santos Family"], ["Santos Family", "Principal Sponsor", "Santos Family"]]));
     expect(dataOf(wb.bytes, "Roles").filter((r) => r[0] === "Anna Santos")).toHaveLength(2);

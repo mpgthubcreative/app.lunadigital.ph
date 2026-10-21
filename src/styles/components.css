@@ -3718,8 +3718,13 @@ tr.is-saving {
 [data-role="party-figures"] { margin-bottom: var(--space-3); }
 
 /* Wedding Setup → Invitation (Luna Bridal+ content). */
-.ws-faq { display: grid; gap: 6px; margin-bottom: 8px; }
-@media (min-width: 720px) { .ws-faq { grid-template-columns: 1fr 2fr; } }
+/* Wedding Setup → Frequently Asked Questions (2026-10-21): one card per FAQ. */
+.ws-faq-section { margin: var(--space-3) 0; }
+.ws-sub-title { margin: 0; font-size: var(--text-md); font-weight: 600; }
+.ws-faq { position: relative; margin: var(--space-2) 0; padding: var(--space-2) var(--space-3); border: 1px solid var(--border); border-radius: var(--radius); }
+.ws-faq legend { padding: 0 4px; font-size: var(--text-sm); font-weight: 600; color: var(--text-muted); }
+.ws-faq .field { margin: var(--space-1) 0; }
+.ws-faq-remove { margin-top: var(--space-1); }
 .ws-gallery { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin: 6px 0; }
 .ws-gallery-item { margin: 0; }
 .ws-gallery-item img { display: block; width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: var(--radius-sm); }
@@ -4256,4 +4261,32 @@ tr.is-saving {
   .rows td[data-m="info"] {
     order: 3;
   }
+}
+
+/* Bridal Guest Details + per-person Seating (2026-10-21). */
+.dl.wl-details {
+  grid-template-columns: 8.5rem minmax(0, 1fr);
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  margin-top: var(--space-3);
+}
+.wl-link-actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+.wl-party-group + .wl-party-group {
+  margin-top: var(--space-2);
+}
+.wl-party-label {
+  margin: var(--space-2) 0 var(--space-1);
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+}
+.wl-member [data-role="member-table"] {
+  margin-left: var(--space-1);
+}
+.wl-cat-counts.is-full {
+  color: var(--text-muted);
+  font-weight: 600;
 }

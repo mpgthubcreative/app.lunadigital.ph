@@ -18,7 +18,7 @@ import { photoDataUrl, PHOTO_ACCEPT } from "../../lib/image.js";
 import { pageHeader, skeleton } from "../../components/ui.js";
 import { toast as defaultToast } from "../../components/feedback.js";
 import { api as defaultApi } from "../../lib/api.js";
-import { isWeddingSlug, suggestWeddingSlug, rsvpOpen, businessDate } from "@shared/index.js";
+import { isWeddingSlug, suggestWeddingSlug, rsvpOpen, businessDate, MAX_FAQ } from "@shared/index.js";
 import { openInvitePreview, copyText } from "./invitation/preview.js";
 import { TEMPLATES, STANDARD_TEMPLATE_IDS, DEFAULT_TEMPLATE_ID, resolveDesign, invitationData } from "@shared/invitation-design.js";
 
@@ -55,6 +55,18 @@ export const cleanSlugInput = (v) =>
 // (../../lib/image.js).
 export const shrinkPhoto = (file) => photoDataUrl(file, { maxSide: 1200, quality: 0.8, maxChars: 400_000 });
 
+// Frequently Asked Questions (2026-10-21): what the guests' invitation shows
+// in its FAQ section. Optional: none by default, + Add FAQ adds one at a
+// time (up to MAX_FAQ); a pair missing its question or answer is skipped.
+// Stored as before: setup.faq = [{ q, a }].
+export const FAQ_EXAMPLE = Object.freeze({ q: "e.g. What time should we arrive?", a: "e.g. Please arrive 30 minutes before the ceremony." });
+const faqItem = (i, f, canEdit) => html`<fieldset class="ws-faq" data-faq="${i}"><legend>FAQ ${i + 1}</legend>
+    <div class="field"><label for="ws-faqQ${i}">Question</label><input class="input" id="ws-faqQ${i}" name="faqQ${i}" placeholder="${FAQ_EXAMPLE.q}" maxlength="150" value="${f?.q ?? ""}" ${canEdit ? "" : "disabled"}></div>
+    <div class="field"><label for="ws-faqA${i}">Answer</label><textarea class="input" id="ws-faqA${i}" name="faqA${i}" rows="2" placeholder="${FAQ_EXAMPLE.a}" maxlength="500" ${canEdit ? "" : "disabled"}>${f?.a ?? ""}</textarea></div>
+    ${canEdit ? html`<button type="button" class="btn btn-compact btn-ghost ws-faq-remove" data-act="faq-remove" data-i="${i}" aria-label="Remove FAQ ${i + 1}">Remove</button>` : ""}
+  </fieldset>`;
+export const faqListHtml = (list, canEdit) => html`${list.map((f, i) => faqItem(i, f, canEdit))}${canEdit && list.length < MAX_FAQ ? html`<button type="button" class="btn btn-compact" data-act="faq-add">+ Add FAQ</button>` : ""}`;
+
 // The form's values, as the API takes them (blank = null).
 export function readSetupForm(form) {
   const f = form.elements;
@@ -62,7 +74,7 @@ export function readSetupForm(form) {
   for (const n of VALUE_FIELDS) setup[n] = f[n].value.trim() || null;
   // Luna Bridal+ content (only on the form when the plan includes it).
   for (const n of ["story", "footerNote"]) if (f[n]) setup[n] = f[n].value.trim() || null;
-  if (f.faqQ0) {
+  if (f.faqOn || f.faqQ0) {
     const faq = [];
     for (let i = 0; i < 8 && f[`faqQ${i}`]; i++) {
       const q = f[`faqQ${i}`].value.trim();
@@ -125,8 +137,7 @@ export function mount(container, session, { api = defaultApi, toast = defaultToa
       <div class="ws-link-actions"><button type="button" class="btn btn-compact" data-act="preview">Preview${custom && inv.live !== "custom" ? " (live: Standard)" : ""}</button>${custom && inv.hasDraft ? html`<button type="button" class="btn btn-compact" data-act="preview-draft">Preview draft design</button>` : ""}</div>
       ${custom ? html`<details class="wl-fold" data-role="plus-content"><summary>More for your customized invitation</summary>
         <div class="field"><label for="ws-story">Our story</label><textarea class="input" id="ws-story" name="story" rows="4" maxlength="1500" ${canEdit ? "" : "disabled"}>${s.story ?? ""}</textarea></div>
-        <p class="stat-hint">Questions & answers (leave a pair blank to skip it):</p>
-        ${Array.from({ length: Math.min(8, Math.max(3, faq.length + 1)) }, (_, i) => html`<div class="ws-faq"><input class="input" name="faqQ${i}" aria-label="Question ${i + 1}" placeholder="Question" maxlength="150" value="${faq[i]?.q ?? ""}" ${canEdit ? "" : "disabled"}><input class="input" name="faqA${i}" aria-label="Answer ${i + 1}" placeholder="Answer" maxlength="500" value="${faq[i]?.a ?? ""}" ${canEdit ? "" : "disabled"}></div>`)}
+        ${faqSection(faq)}
         <div class="field"><label for="ws-footerNote">Closing line</label><input class="input" id="ws-footerNote" name="footerNote" maxlength="200" value="${s.footerNote ?? ""}" placeholder="e.g. With love, Carlo & Yanie" ${canEdit ? "" : "disabled"}></div>
         <p class="stat-hint">Gallery photos (up to 6)</p>
         <div class="ws-gallery" data-role="gallery">${state.gallery.map((g) => html`<figure class="ws-gallery-item"><img src="${g.dataUrl}" alt="Gallery photo">${canEdit ? html`<button type="button" class="btn btn-compact btn-ghost" data-act="gallery-remove" data-id="${g.id}" aria-label="Remove this photo">Remove</button>` : ""}</figure>`)}</div>
@@ -180,6 +191,18 @@ export function mount(container, session, { api = defaultApi, toast = defaultToa
       btn.disabled = state.saving;
       btn.textContent = state.saving ? "Saving…" : "Save";
     }
+  };
+
+  // The FAQ section of the form, kept as typed while FAQs are added / removed.
+  const faqSection = (faq) => html`<section class="ws-faq-section" data-role="faq"><input type="hidden" name="faqOn" value="1">
+      <h4 class="ws-sub-title">Frequently Asked Questions</h4>
+      <p class="stat-hint">Add helpful information for your guests (optional).</p>
+      <div data-role="faq-list">${faqListHtml(faq, canEdit)}</div>
+    </section>`;
+  const faqTyped = () => [...container.querySelectorAll('[data-role="faq-list"] .ws-faq')].map((fs) => ({ q: fs.querySelector("input").value, a: fs.querySelector("textarea").value }));
+  const drawFaq = (list) => {
+    const box = container.querySelector('[data-role="faq-list"]');
+    if (box) render(box, faqListHtml(list, canEdit));
   };
 
   function draw() {
@@ -322,6 +345,18 @@ export function mount(container, session, { api = defaultApi, toast = defaultToa
   };
   const onClick = async (event) => {
     const act = event.target.closest("[data-act]")?.dataset.act;
+    if (act === "faq-add" || act === "faq-remove") {
+      const list = faqTyped();
+      if (act === "faq-add") list.push({ q: "", a: "" });
+      else list.splice(Number(event.target.closest("[data-act]").dataset.i), 1);
+      drawFaq(list);
+      if (act === "faq-add") container.querySelector(`#ws-faqQ${list.length - 1}`)?.focus();
+      if (state.status?.state !== "dirty") {
+        state.status = { state: "dirty", text: "Not saved yet: press Save to keep these changes." };
+        drawStatus();
+      }
+      return;
+    }
     if (act === "copy-wedding-link") {
       const ok = await copyText(`${origin()}/w/${state.setup.weddingSlug}`);
       const box = container.querySelector('[data-role="copied"]');

@@ -28,6 +28,8 @@ import { EXPENSE_METHODS } from "../../../shared/expenses.js";
 import { businessDate, isDayId } from "../../../shared/metrics.js";
 import { prepareExpenseCreate } from "./expenses.js";
 import { attendingMarksFor } from "./wedding-roles.js";
+import { seatablePeople, seatsOf, reconcileSeats, seatFields, peopleAt, UNNAMED_SEAT } from "../../../shared/wedding-seating.js";
+import { PRIMARY } from "../../../shared/wedding-roles.js";
 import { prepareNotifications } from "./notifications.js";
 import { meterActivity } from "./metering.js";
 
@@ -546,20 +548,26 @@ export async function setRsvp({ db, tenant, FieldValue, business, guestId, rsvp,
     const g = snap.data();
     const v = validateRsvp(rsvp, g.partySize);
     if (v.status === g.rsvp && v.confirmed === int(g.confirmed)) return { guestId, unchanged: true };
-    // Owner-pilot Bridal UX: no longer Attending -> the table seat is freed.
-    const unseat = v.status !== "attending" && Boolean(g.tableId);
+    const tables = tablesOf(await tx.get(seatingRef(tenant)));
+    const marks = attendingMarksFor(g, v);
+    const next = { ...g, rsvp: v.status, confirmed: v.confirmed, ...marks };
+    // Seats follow the confirmed people: fewer (or Declined / Waiting) frees
+    // the last people's seats, named in the history; more adds unseated people.
+    const seating = reconcileSeats(g, next);
     // "Owner changed: Attending 2 → Attending 1" (a guest's own answer reads "Guest responded: …").
     const words = (s, n) => `${{ awaiting: "Waiting", attending: "Attending", declined: "Declined" }[s] ?? s}${s === "attending" ? ` ${n}` : ""}`;
-    const text = `Owner changed: ${words(g.rsvp, int(g.confirmed))} → ${words(v.status, v.confirmed)}${unseat ? " · removed from their table" : ""}`;
-    const next = { ...g, rsvp: v.status, confirmed: v.confirmed };
+    const text = `Owner changed: ${words(g.rsvp, int(g.confirmed))} → ${words(v.status, v.confirmed)}${releasedText(seating.released, tables)}`;
     const stamp = FieldValue.serverTimestamp();
     // source: who answered (the Owner side here; a future invitation link
     // records "guest"), kept on the guest and in each history line.
-    tx.update(gRef, { rsvp: v.status, confirmed: v.confirmed, rsvpDate: v.status === "awaiting" ? null : businessDate(business.timezone, now), rsvpSource: "owner", ...(unseat ? { tableId: null } : {}), ...attendingMarksFor(g, v), history: append(g.history, entry(actor, text, { from: { rsvp: g.rsvp, confirmed: int(g.confirmed) }, to: v, source: "owner" })), revision: g.revision + 1, updatedBy: who(actor), updatedAt: stamp });
+    tx.update(gRef, { rsvp: v.status, confirmed: v.confirmed, rsvpDate: v.status === "awaiting" ? null : businessDate(business.timezone, now), rsvpSource: "owner", ...seating.fields, ...marks, history: append(g.history, entry(actor, text, { from: { rsvp: g.rsvp, confirmed: int(g.confirmed) }, to: v, source: "owner" })), revision: g.revision + 1, updatedBy: who(actor), updatedAt: stamp });
     tx.set(guestTotalsRef(tenant), { schemaVersion: WEDDING_SCHEMA_VERSION, ...guestTotalsWrite(FieldValue, g, next), updatedAt: stamp }, { merge: true });
-    return { guestId, rsvp: v.status, confirmed: v.confirmed };
+    return { guestId, rsvp: v.status, confirmed: v.confirmed, ...(seating.released.length ? { unseated: seating.released.map((r) => r.name) } : {}) };
   }, TX_OPTIONS);
 }
+
+// " · seats freed: Mayet (Table 2), Member 5 (Table 1)" for a history line.
+export const releasedText = (released, tables) => (released.length ? ` · seats freed: ${released.map((r) => `${r.name} (${tables[r.tableId]?.name ?? "a table"})`).join(", ")}` : "");
 
 // A guest added by mistake: removed (no money is attached to a guest), with
 // an audit-log line; the totals drop its contribution.
@@ -596,11 +604,11 @@ export async function removeGuest({ db, tenant, FieldValue, guestId, actor }) {
   }, TX_OPTIONS);
 }
 
-// ---------- Seating (Owner-pilot Bridal UX) ----------
-// Tables live in one document (guestTotals/seating); a guest's table is
-// guests/{id}.tableId. Only Attending guests are seated; seats = confirmed
-// attendees. A table can be over capacity (shown, not refused: the couple
-// decides), but never seat a guest who isn't Attending.
+// ---------- Seating (per person, 2026-10-21) ----------
+// Tables live in one document (guestTotals/seating); each confirmed
+// PERSON's table is in guests/{id}.seats (shared/wedding-seating.js). Only
+// people of an Attending party, up to its confirmed count, are seated; a
+// person sits at one table; a table never takes more people than its seats.
 
 const seatingRef = (tenant) => tenant.doc("guestTotals", SEATING_DOC_ID);
 const tablesOf = (snap) => (snap.exists && snap.data().tables && typeof snap.data().tables === "object" ? snap.data().tables : {});
@@ -608,6 +616,15 @@ const tableIdOk = (id) => {
   if (typeof id !== "string" || !TABLE_ID.test(id)) throw new WeddingError("invalid-table", "Invalid table");
   return id;
 };
+// Everyone at a table (both kinds of record), read inside the transaction.
+async function partiesAt(tx, tenant, tableId) {
+  const [now, older] = [await tx.get(tenant.collection("guests").where("tableIds", "array-contains", tableId).limit(300)), await tx.get(tenant.collection("guests").where("tableId", "==", tableId).limit(300))];
+  const byId = new Map();
+  for (const d of [...now.docs, ...older.docs]) byId.set(d.id, { ref: d.ref, id: d.id, g: d.data() });
+  return [...byId.values()];
+}
+const usedAt = (parties, tableId, exceptGuestId = null) => parties.filter((p) => p.id !== exceptGuestId).reduce((n, p) => n + peopleAt(p.g, tableId), 0);
+const fullMessage = (t, free) => (free > 0 ? `${t.name} has only ${free} seat${free === 1 ? "" : "s"} left` : `${t.name} is full (${t.capacity} seats)`);
 
 export async function createTable({ db, tenant, FieldValue, input }) {
   const data = validateTableInput(input);
@@ -624,54 +641,100 @@ export async function createTable({ db, tenant, FieldValue, input }) {
   }, TX_OPTIONS);
 }
 
+// Fewer seats than the people already seated there is refused (move people first).
 export async function updateTable({ db, tenant, FieldValue, tableId, changes }) {
   tableIdOk(tableId);
   const data = validateTableInput(changes, { partial: true });
   return db.runTransaction(async (tx) => {
     const snap = await tx.get(seatingRef(tenant));
+    const parties = data.capacity !== undefined ? await partiesAt(tx, tenant, tableId) : [];
     const tables = tablesOf(snap);
     if (!tables[tableId]) throw new WeddingError("not-found", "Table not found");
     if (data.name && Object.entries(tables).some(([id, t]) => id !== tableId && lower(t.name) === lower(data.name))) throw new WeddingError("invalid-input", `There's already a table called ${data.name}`);
+    const used = usedAt(parties, tableId);
+    if (data.capacity !== undefined && data.capacity < used) throw new WeddingError("table-full", `${used} people are seated at ${tables[tableId].name}. Move some to another table first, or keep at least ${used} seats.`);
     tx.set(seatingRef(tenant), { schemaVersion: WEDDING_SCHEMA_VERSION, tables: { ...tables, [tableId]: { ...tables[tableId], ...data } }, updatedAt: FieldValue.serverTimestamp() });
     return { tableId };
   }, TX_OPTIONS);
 }
 
-// Deleting a table moves its guests back to Unassigned (nothing else changes).
+// Deleting a table moves its people back to Unassigned (nothing else changes).
 export async function deleteTable({ db, tenant, FieldValue, tableId, actor }) {
   tableIdOk(tableId);
   return db.runTransaction(async (tx) => {
     const snap = await tx.get(seatingRef(tenant));
-    const seated = await tx.get(tenant.collection("guests").where("tableId", "==", tableId).limit(200));
+    const parties = await partiesAt(tx, tenant, tableId);
     const tables = tablesOf(snap);
     if (!tables[tableId]) throw new WeddingError("not-found", "Table not found");
     const stamp = FieldValue.serverTimestamp();
     const { [tableId]: gone, ...rest } = tables;
-    for (const d of seated.docs) {
-      const g = d.data();
-      tx.update(d.ref, { tableId: null, history: append(g.history, entry(actor, `Table ${gone.name} deleted · unassigned`)), revision: g.revision + 1, updatedBy: who(actor), updatedAt: stamp });
+    let unseated = 0;
+    for (const { ref, g } of parties) {
+      const seats = Object.fromEntries(Object.entries(seatsOf(g)).filter(([, t]) => t !== tableId));
+      unseated += peopleAt(g, tableId);
+      tx.update(ref, { ...seatFields(seats), history: append(g.history, entry(actor, `Table ${gone.name} deleted · unassigned`)), revision: g.revision + 1, updatedBy: who(actor), updatedAt: stamp });
     }
     tx.set(seatingRef(tenant), { schemaVersion: WEDDING_SCHEMA_VERSION, tables: rest, updatedAt: stamp });
-    return { tableId, deleted: true, unseated: seated.docs.length };
+    return { tableId, deleted: true, unseated };
   }, TX_OPTIONS);
 }
 
-// Assign / move (tableId) or unassign (null) one Attending guest.
+// The whole party at once: every confirmed person to `tableId` (or all
+// unassigned with null). Kept for "Assign party"; one person: seatPerson.
 export async function seatGuest({ db, tenant, FieldValue, guestId, tableId, actor }) {
   const gRef = guestRef(tenant, guestId);
   if (tableId !== null) tableIdOk(tableId);
   return db.runTransaction(async (tx) => {
     const [snap, seating] = [await tx.get(gRef), await tx.get(seatingRef(tenant))];
+    const parties = tableId !== null ? await partiesAt(tx, tenant, tableId) : [];
     if (!snap.exists) throw new WeddingError("not-found", "Guest not found");
     const g = snap.data();
     const tables = tablesOf(seating);
     if (tableId !== null && !tables[tableId]) throw new WeddingError("not-found", "Table not found");
     if (tableId !== null && g.rsvp !== "attending") throw new WeddingError("invalid-input", "Only guests who are attending can be seated");
-    if ((g.tableId ?? null) === tableId) return { guestId, unchanged: true };
-    const from = g.tableId && tables[g.tableId] ? tables[g.tableId].name : null;
-    const text = tableId === null ? `Unassigned from ${from ?? "their table"}` : from ? `Moved from ${from} to ${tables[tableId].name}` : `Seated at ${tables[tableId].name}`;
-    tx.update(gRef, { tableId, history: append(g.history, entry(actor, text)), revision: g.revision + 1, updatedBy: who(actor), updatedAt: FieldValue.serverTimestamp() });
-    return { guestId, tableId };
+    const people = seatablePeople(g);
+    const seats = tableId === null ? {} : Object.fromEntries(people.map((p) => [p.key, tableId]));
+    const before = seatsOf(g);
+    if (JSON.stringify(Object.entries(before).sort()) === JSON.stringify(Object.entries(seats).sort()) && !g.tableId) return { guestId, unchanged: true };
+    if (tableId !== null) {
+      const free = tables[tableId].capacity - usedAt(parties, tableId, guestId);
+      if (people.length > free) throw new WeddingError("table-full", `${fullMessage(tables[tableId], free)}; ${g.name}'s party needs ${people.length}. Seat people one by one, or choose another table.`);
+    }
+    const text = tableId === null ? "Party unassigned from their tables" : `Party seated at ${tables[tableId].name} (${people.length})`;
+    tx.update(gRef, { ...seatFields(seats), history: append(g.history, entry(actor, text)), revision: g.revision + 1, updatedBy: who(actor), updatedAt: FieldValue.serverTimestamp() });
+    return { guestId, tableId, seated: tableId === null ? 0 : people.length };
+  }, TX_OPTIONS);
+}
+
+// One person: seat / move (tableId) or unassign (null). Only someone
+// confirmed in an Attending party; one table per person; never past the
+// table's seats. The rest of the party is untouched.
+export async function seatPerson({ db, tenant, FieldValue, guestId, seatKey, tableId, actor }) {
+  const gRef = guestRef(tenant, guestId);
+  if (typeof seatKey !== "string" || !(seatKey === PRIMARY || /^m[A-Za-z0-9]{6,20}$/.test(seatKey) || UNNAMED_SEAT.test(seatKey))) throw new WeddingError("invalid-input", "Choose a person");
+  if (tableId !== null) tableIdOk(tableId);
+  return db.runTransaction(async (tx) => {
+    const [snap, seating] = [await tx.get(gRef), await tx.get(seatingRef(tenant))];
+    const parties = tableId !== null ? await partiesAt(tx, tenant, tableId) : [];
+    if (!snap.exists) throw new WeddingError("not-found", "Guest not found");
+    const g = snap.data();
+    const tables = tablesOf(seating);
+    if (tableId !== null && !tables[tableId]) throw new WeddingError("not-found", "Table not found");
+    const person = seatablePeople(g).find((p) => p.key === seatKey);
+    if (!person) throw new WeddingError("invalid-input", g.rsvp !== "attending" ? "Only guests who are attending can be seated" : `Only the ${g.confirmed} confirmed people of ${g.name}'s party can be seated`);
+    const seats = { ...seatsOf(g) };
+    const from = seats[seatKey] ?? null;
+    if (from === tableId && !g.tableId) return { guestId, seatKey, unchanged: true };
+    if (tableId !== null && from !== tableId) {
+      const free = tables[tableId].capacity - usedAt(parties, tableId);
+      if (free < 1) throw new WeddingError("table-full", `${fullMessage(tables[tableId], free)}. Choose another table or add seats.`);
+    }
+    if (tableId === null) delete seats[seatKey];
+    else seats[seatKey] = tableId;
+    const fromName = from && tables[from] ? tables[from].name : null;
+    const text = tableId === null ? `${person.name} unassigned${fromName ? ` from ${fromName}` : ""}` : fromName && from !== tableId ? `${person.name} moved from ${fromName} to ${tables[tableId].name}` : `${person.name} seated at ${tables[tableId].name}`;
+    tx.update(gRef, { ...seatFields(seats), history: append(g.history, entry(actor, text)), revision: g.revision + 1, updatedBy: who(actor), updatedAt: FieldValue.serverTimestamp() });
+    return { guestId, seatKey, tableId };
   }, TX_OPTIONS);
 }
 

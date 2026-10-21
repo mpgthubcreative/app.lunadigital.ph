@@ -149,7 +149,7 @@ describe("guest RSVP updates the SAME guest record", () => {
     NOW = new Date("2026-10-17T04:00:00Z");
     ok(await guest({ action: "respond", token, rsvp: { status: "declined" } }));
     expect(docAt(`guests/${g}`)).toMatchObject({ rsvp: "declined", confirmed: 0, tableId: null });
-    expect(docAt(`guests/${g}`).history.at(-1).label).toBe("Guest changed RSVP: 2 of 2 → Declined · removed from their table");
+    expect(docAt(`guests/${g}`).history.at(-1).label).toBe("Guest changed RSVP: 2 of 2 → Declined · seats freed: Maria Santos (Table 1), Member 2 (Table 1)");
     const inbox = [...world.db.docs.entries()].filter(([k, v]) => k.startsWith(`businesses/${W}/members/${u.camille}/inbox/`) && v.type === "guest.rsvp").map(([, v]) => v.title);
     expect(inbox).toEqual(expect.arrayContaining(["Maria Santos RSVP'd Attending · 2", "Maria Santos RSVP'd Declined"]));
     expect([...world.db.docs.keys()].some((k) => k.startsWith(`businesses/${W}/members/${u.helper}/inbox/`))).toBe(false); // staff: no guests.view

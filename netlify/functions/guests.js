@@ -7,7 +7,8 @@
 //   { action: "createTable", table: { name, capacity } }
 //   { action: "updateTable", tableId, changes: { name?, capacity? } }
 //   { action: "deleteTable", tableId }      its guests go back to Unassigned
-//   { action: "seat", guestId, tableId }    assign / move; tableId null = unassign
+//   { action: "seat", guestId, tableId }    the whole party (every confirmed person); null = unassign all
+//   { action: "seatPerson", guestId, seatKey, tableId }   one person ("primary", a member id or "u1"…); null = unassign
 //   Invitations (Owner-pilot Bridal):
 //   { action: "inviteLink", guestId }       the guest's link (made on first use)
 //   { action: "regenerateInvite", guestId } a new link; the old one stops working
@@ -26,7 +27,7 @@
 
 import { getAdmin } from "./_lib/firebase-admin.js";
 import { weddingActionHandler } from "./_lib/wedding-http.js";
-import { createGuest, updateGuest, setRsvp, removeGuest, createTable, updateTable, deleteTable, seatGuest } from "./_lib/wedding.js";
+import { createGuest, updateGuest, setRsvp, removeGuest, createTable, updateTable, deleteTable, seatGuest, seatPerson } from "./_lib/wedding.js";
 import { inviteLink, issueInvite } from "./_lib/invitations.js";
 import { assignRole, unassignRole, moveRole, addMember, renameMember, removeMember, setMemberAttending } from "./_lib/wedding-roles.js";
 import { RequestError } from "./_lib/http.js";
@@ -58,6 +59,7 @@ export const createGuestsHandler = (deps) =>
       removeMember: { permission: M, fields: ["action", "guestId", "memberId", "force"], run: (c, b) => removeMember({ ...c, guestId: guestIdOf(b), memberId: b.memberId, force: b.force === true }) },
       setAttending: { permission: M, fields: ["action", "guestId", "memberId", "attending"], run: (c, b) => setMemberAttending({ ...c, guestId: guestIdOf(b), memberId: b.memberId ?? null, attending: b.attending }) },
       seat: { permission: M, fields: ["action", "guestId", "tableId"], run: (c, b) => seatGuest({ ...c, guestId: b.guestId, tableId: b.tableId ?? null }) },
+      seatPerson: { permission: M, fields: ["action", "guestId", "seatKey", "tableId"], run: (c, b) => seatPerson({ ...c, guestId: b.guestId, seatKey: b.seatKey, tableId: b.tableId ?? null }) },
     },
   });
 

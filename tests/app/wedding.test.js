@@ -8,7 +8,7 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import { mount as mountBudget } from "../../src/modules/wedding/budget.js";
 import { mount as mountExpenses, parseWeddingExpense } from "../../src/modules/wedding/expenses.js";
 import { mount as mountSuppliers, toSupplierInput, paidState, moneySummary, shortPeso, moneyRows, moneyGroups, moneyLabel } from "../../src/modules/wedding/suppliers.js";
-import { mount as mountSetup } from "../../src/modules/wedding/setup.js";
+import { mount as mountSetup, readSetupForm } from "../../src/modules/wedding/setup.js";
 import { mount as mountProgram } from "../../src/modules/wedding/program.js";
 import { mount as mountCrewMeals } from "../../src/modules/wedding/crew.js";
 import { openInvitePreview } from "../../src/modules/wedding/invite-preview.js";
@@ -19,7 +19,7 @@ import { mount as mountDownloads } from "../../src/modules/downloads/index.js";
 import { mount as mountPayments } from "../../src/modules/wedding/payments.js";
 import { mount as mountTasks, sortTasks } from "../../src/modules/wedding/tasks.js";
 import { toGuestInput, mount as mountGuests, parseRsvp, seatsText, groupGuests } from "../../src/modules/wedding/guests.js";
-import { seatingPlan } from "../../shared/wedding.js";
+import { seatingPlan } from "../../shared/wedding-seating.js";
 import { renderShell } from "../../src/app/shell.js";
 import { mountBell } from "../../src/app/notification-bell.js";
 import { mount as mountDashboard } from "../../src/modules/dashboard/index.js";
@@ -614,7 +614,7 @@ describe("Guests (Owner-pilot Bridal UX): RSVP | Seating", () => {
     expect(data.guestsApi).toHaveBeenLastCalledWith({ action: "setRsvp", guestId: GUEST.id, rsvp: { status: "attending", confirmed: 3 } });
   });
 
-  it("2 invited, 1 coming: the row reads 1/2; FAMILY counts 1 attending; Seating takes 1 seat; when they become 2 the full table is flagged", async () => {
+  it("2 invited, 1 coming: the row reads 1/2; FAMILY counts 1 attending; Seating takes 1 seat (full shown); an older whole-party record that grows is flagged over", async () => {
     const maria = { id: "guestMaria01", name: "Maria Santos", category: "family", side: "bride", partySize: 2, rsvp: "attending", confirmed: 1, tableId: "tA1b2c3d4", revision: 1, history: [] };
     const tan = { id: "guestTan0001", name: "Tan", category: "family", side: "groom", partySize: 1, rsvp: "attending", confirmed: 1, tableId: "tA1b2c3d4", revision: 1, history: [] };
     const show = async (rows) => {
@@ -629,7 +629,7 @@ describe("Guests (Owner-pilot Bridal UX): RSVP | Seating", () => {
     container.querySelector('[data-act="seg"][data-value="seating"]').click();
     await flush();
     const t1 = () => container.querySelector('[data-table="tA1b2c3d4"] [data-role="table-seats"]');
-    expect([t1().textContent.trim(), t1().classList.contains("is-over")]).toEqual(["· 2/2", false]);
+    expect([t1().textContent.trim(), t1().classList.contains("is-over")]).toEqual(["· 2/2 · full", false]);
     await show([{ ...maria, confirmed: 2 }, tan]);
     container.querySelector('[data-act="seg"][data-value="seating"]').click();
     await flush();
@@ -641,30 +641,40 @@ describe("Guests (Owner-pilot Bridal UX): RSVP | Seating", () => {
     await flush();
     switchTo("seating");
     expect(container.querySelector('[data-role="seating-summary"]').textContent).toBe("4 attending · 2 seated · 2 unassigned");
-    expect([...container.querySelectorAll('[data-role="unassigned"] [data-guest]')].map((r) => r.dataset.guest)).toEqual(["guestReyes001"]);
-    // Unassigned rows: Name | Seats | Assign (a visible button).
-    expect(container.querySelector('[data-role="unassigned"] [data-act="seat"]').textContent).toBe("Assign");
-    expect([...container.querySelectorAll("[data-table]")].map((s) => [s.querySelector(".wl-group-title").textContent, s.querySelector('[data-role="table-seats"]').textContent])).toEqual([["Table 1", "· 2/2"], ["Table 2", "· 0/10"]]);
+    // Unassigned: each PERSON (2026-10-21), grouped by party with a quiet party label.
+    expect([...container.querySelectorAll('[data-role="unassigned"] [data-person]')].map((r) => r.dataset.person)).toEqual(["guestReyes001|primary", "guestReyes001|u1"]);
+    expect([...container.querySelectorAll('[data-role="unassigned"] .wl-name')].map((n) => n.textContent)).toEqual(["Carlo Reyes", "Member 2"]);
+    expect(container.querySelector('[data-party="guestReyes001"] [data-role="party-label"]').textContent).toBe("Carlo Reyes's party");
+    expect(container.querySelector('[data-role="unassigned"] [data-act="seat-person"]').textContent).toBe("Assign");
+    // Tables list people.
+    expect([...container.querySelectorAll('[data-table="tA1b2c3d4"] [data-person] .wl-name')].map((n) => n.textContent)).toEqual(["Maria Santos", "Member 2"]);
+    expect([...container.querySelectorAll("[data-table]")].map((s) => [s.querySelector(".wl-group-title").textContent, s.querySelector('[data-role="table-seats"]').textContent])).toEqual([["Table 1", "· 2/2 · full"], ["Table 2", "· 0/10"]]);
     expect(container.querySelector('[data-act="new-table"]')).not.toBeNull();
     expect(container.querySelector('[data-role="search"]')).toBeNull();
   });
 
-  it("assign / move / unassign send one seat call each; + Add table creates one table", async () => {
+  it("assign / move / unassign one PERSON per call (the rest of the party untouched); full tables say so; + Add table creates one table", async () => {
     const data = guestsData();
     mountGuests(container, wedding(), { data, toast: () => {} });
     await flush();
     switchTo("seating");
-    container.querySelector('[data-guest="guestReyes001"] [data-act="seat"]').click();
+    container.querySelector('[data-person="guestReyes001|u1"] [data-act="seat-person"]').click();
     await flush();
-    // Table 1 is full (2/2): the free table is suggested.
+    // Table 1 is full (2/2): it says so, and the free table is suggested.
+    expect([...lastForm().elements.tableId.options].map((o) => o.textContent)).toEqual(["Table 1 · 2/2 · full", "Table 2 · 0/10"]);
     expect(lastForm().elements.tableId.value).toBe("tB1b2c3d4");
     submit(lastForm());
     await flush();
-    expect(data.guestsApi).toHaveBeenLastCalledWith({ action: "seat", guestId: "guestReyes001", tableId: "tB1b2c3d4" });
+    expect(data.guestsApi).toHaveBeenLastCalledWith({ action: "seatPerson", guestId: "guestReyes001", seatKey: "u1", tableId: "tB1b2c3d4" });
     switchTo("seating");
-    container.querySelector('[data-guest="guestSantos01"] [data-act="unseat"]').click();
+    container.querySelector('[data-person="guestSantos01|primary"] [data-act="unseat-person"]').click();
     await flush();
-    expect(data.guestsApi).toHaveBeenLastCalledWith({ action: "seat", guestId: "guestSantos01", tableId: null });
+    expect(data.guestsApi).toHaveBeenLastCalledWith({ action: "seatPerson", guestId: "guestSantos01", seatKey: "primary", tableId: null });
+    switchTo("seating");
+    container.querySelector('[data-person="guestSantos01|u1"] [data-act="seat-person"]').click();
+    await flush();
+    expect(lastForm().querySelector("h2, .modal-header").textContent).toMatch(/Move Member 2/);
+    expect([...lastForm().elements.tableId.options].map((o) => o.value)).toEqual(["tB1b2c3d4"]); // not the table they're at
     switchTo("seating");
     container.querySelector('[data-act="new-table"]').click();
     await flush();
@@ -675,12 +685,12 @@ describe("Guests (Owner-pilot Bridal UX): RSVP | Seating", () => {
     expect(data.guestsApi).toHaveBeenLastCalledWith({ action: "createTable", table: { name: "Table 3", capacity: 8 } });
   });
 
-  it("seatingPlan: only attending guests count; a missing table means unassigned; over capacity is shown", () => {
-    const plan = seatingPlan([...G, { id: "x", rsvp: "attending", confirmed: 3, tableId: "tA1b2c3d4" }, { id: "y", rsvp: "declined", confirmed: 0, tableId: "tB1b2c3d4" }, { id: "z", rsvp: "attending", confirmed: 1, tableId: "tGone12345" }], SEATING);
+  it("seatingPlan (per person): only attending people count; a missing table means unassigned; an older whole-party record reads as all its people; over capacity is shown", () => {
+    const plan = seatingPlan([...G, { id: "x", name: "X", rsvp: "attending", confirmed: 3, tableId: "tA1b2c3d4" }, { id: "y", name: "Y", rsvp: "declined", confirmed: 0, tableId: "tB1b2c3d4" }, { id: "z", name: "Z", rsvp: "attending", confirmed: 1, seats: { primary: "tGone12345" } }, { id: "w", name: "W", rsvp: "attending", confirmed: 2, partySize: 3, seats: { primary: "tB1b2c3d4" } }], SEATING);
     expect(plan.tables[0]).toMatchObject({ used: 5, capacity: 2 });
-    expect(plan.tables[1].used).toBe(0);
-    expect(plan.unassigned.map((g) => g.id)).toEqual(["guestReyes001", "z"]);
-    expect([plan.attendingSeats, plan.seatedSeats, plan.unassignedSeats]).toEqual([8, 5, 3]);
+    expect(plan.tables[1].people.map((p) => p.name)).toEqual(["W"]);
+    expect(plan.unassigned.map((u) => [u.guest.id, u.people.map((p) => p.key)])).toEqual([["guestReyes001", ["primary", "u1"]], ["z", ["primary"]], ["w", ["u1"]]]);
+    expect([plan.attendingSeats, plan.seatedSeats, plan.unassignedSeats]).toEqual([10, 6, 4]);
   });
 
   it("a new guest needs a category; parseRsvp: confirmed only for Attending, never above the party size", () => {
@@ -958,7 +968,7 @@ it("Wedding link / hashtag: suggested from the couple names, cleaned as typed (#
     const preview = vi.fn(async () => ({}));
     mountGuests(container, wedding(), { data, toast, confirm: async () => true, preview });
     await flush();
-    expect(guestMenuItems()).toEqual(["Edit", "View invitation", "Copy invitation link", "Share invitation", "Regenerate link", "Details & history", "Remove guest"]);
+    expect(guestMenuItems()).toEqual(["Edit", "View invitation", "Copy invitation link", "Share invitation", "Regenerate link", "Details", "View history", "Remove guest"]);
     container.querySelector('[data-guest="guestPrado001"] [data-act="invite-copy"]').click();
     await flush();
     expect(data.guestsApi).toHaveBeenCalledWith({ action: "inviteLink", guestId: GUEST.id });
@@ -1496,15 +1506,16 @@ describe("Owner-pilot Bridal: party members are real people (RSVP · Roles · Se
     return data;
   };
 
-  it("the main row stays compact (Sanrah 3/5 Attending ⋯, no companion names); Seating shows who's coming: 'Sanrah, Anna + 1 unnamed' in 3 seats", async () => {
+  const guestMenuItemsFor = (id) => [...container.querySelectorAll(`[data-guest="${id}"] .menu-item`)].map((b) => b.textContent);
+  it("the main row stays compact (Sanrah 3/5 Attending ⋯, no companion names); Seating lists each confirmed person (marked attending first, then named): Sanrah, Anna, Bea in 3 seats", async () => {
     await mountParty();
     const row = container.querySelector('[data-guest="gSanrah0001"]');
     expect(row.querySelector('[data-role="seats"]').textContent).toBe("3/5");
     expect(row.textContent).not.toMatch(/Anna|Bea/);
     container.querySelector('[data-act="seg"][data-value="seating"]').click();
     await flush();
-    const seat = container.querySelector('[data-table="tA1b2c3d4"] [data-guest="gSanrah0001"]');
-    expect(seat.querySelector('[data-role="seat-names"]').textContent).toBe("Sanrah, Anna + 1 unnamed");
+    expect([...container.querySelectorAll('[data-table="tA1b2c3d4"] [data-person] .wl-name')].map((n) => n.textContent)).toEqual(["Sanrah", "Anna", "Bea"]);
+    expect([...container.querySelectorAll('[data-table="tA1b2c3d4"] [data-person]')].map((r) => r.dataset.person)).toEqual(["gSanrah0001|primary", "gSanrah0001|mAnna000001", "gSanrah0001|mBea0000001"]);
     expect(container.querySelector('[data-table="tA1b2c3d4"] [data-role="table-seats"]').textContent.trim()).toBe("· 3/8");
   });
 
@@ -1514,7 +1525,8 @@ describe("Owner-pilot Bridal: party members are real people (RSVP · Roles · Se
     const d = document.querySelector('[data-role="details"]');
     expect(d.querySelector(".card-title").textContent).toBe("Sanrah's Party");
     expect([...d.querySelectorAll('[data-role="party-figures"] dd')].map((x) => x.textContent)).toEqual(["5", "3"]);
-    expect([...d.querySelectorAll('[data-role="members"] .wl-member-name')].map((x) => x.textContent.replace(/\s+/g, " ").trim())).toEqual(["Sanrah Primary Maid / Matron of Honor", "Anna Bridesmaid", "Bea"]);
+    // Each person shows the table they sit at (per-person seating).
+    expect([...d.querySelectorAll('[data-role="members"] .wl-member-name')].map((x) => x.textContent.replace(/\s+/g, " ").trim())).toEqual(["Sanrah Primary Maid / Matron of Honor Table 5", "Anna Bridesmaid Table 5", "Bea Table 5"]);
     expect([...d.querySelectorAll('[data-pa="add"]')].length).toBe(2);
     expect([...d.querySelectorAll('[data-pa="attend"]')].map((b) => b.textContent)).toEqual(["Attending ✓", "Attending ✓", "Mark attending"]);
     d.querySelector('[data-pa="add"]').click();
@@ -1523,7 +1535,7 @@ describe("Owner-pilot Bridal: party members are real people (RSVP · Roles · Se
     submit(lastForm());
     await flush();
     expect(data.guestsApi).toHaveBeenCalledWith({ action: "addMember", guestId: "gSanrah0001", name: "Carla" });
-    document.querySelector('[data-role="details"] [data-pa="rename"][data-mid="mAnna000001"]').click();
+    document.querySelector('[data-role="details"] [data-act="member-rename"][data-id="mAnna000001"]').click();
     await flush();
     lastForm().elements.name.value = "Annabelle";
     submit(lastForm());
@@ -1534,6 +1546,26 @@ describe("Owner-pilot Bridal: party members are real people (RSVP · Roles · Se
     expect(data.guestsApi).toHaveBeenCalledWith({ action: "setAttending", guestId: "gSanrah0001", memberId: "mBea0000001", attending: true });
   });
 
+  it("Details is task-focused: Category, Role, RSVP date, Side, Invitation sent, Invitation link [View] [Copy]; no Activity; exactly one Remove guest; history behind ⋯ → View history", async () => {
+    const data = await mountParty({ listGuests: vi.fn(async () => ({ rows: [{ ...SANRAH, invitation: { status: "active" } }, MIGUEL], hasMore: false })), getWeddingSetup: vi.fn(async () => ({ setup: FULL })) });
+    container.querySelector('[data-guest="gSanrah0001"] .wl-main').click();
+    const d = document.querySelector('[data-role="details"]');
+    expect([...d.querySelectorAll('[data-role="fields"] dt')].map((x) => x.textContent)).toEqual(["Category", "Role", "RSVP date", "Side", "Invitation sent", "Invitation link"]);
+    expect(d.querySelector('[data-role="activity"]')).toBeNull();
+    expect(d.textContent).not.toMatch(/Activity|⋯ → View/);
+    expect([...d.querySelectorAll("button")].filter((b) => /^Remove guest$/.test(b.textContent.trim()))).toHaveLength(1);
+    expect([...d.querySelectorAll("button")].filter((b) => /^Remove$/.test(b.textContent.trim()))).toHaveLength(0); // member removal is "Remove from party", in the member's ⋯
+    expect(d.querySelector('[data-role="details-rsvp"]').textContent).toBe("Attending");
+    const link = d.querySelector('[data-role="link-actions"]');
+    expect([...link.querySelectorAll("button")].map((b) => b.textContent)).toEqual(["View", "Copy"]);
+    // History: a secondary action on the row.
+    d.querySelector('[data-act="close"]').click();
+    expect(guestMenuItemsFor("gSanrah0001")).toContain("View history");
+    container.querySelector('[data-guest="gSanrah0001"] [data-act="history"]').click();
+    expect(document.querySelector('[data-role="details"] .card-title').textContent).toBe("Sanrah: history");
+    void data;
+  });
+
   it("removing a companion with a role warns with the reason first, then removes with force; without a link it just removes", async () => {
     const asked = [];
     const guestsApi = vi.fn(async (b) => {
@@ -1542,11 +1574,11 @@ describe("Owner-pilot Bridal: party members are real people (RSVP · Roles · Se
     });
     await mountParty({ guestsApi }, async (c) => (asked.push(c), true));
     container.querySelector('[data-guest="gSanrah0001"] .wl-main').click();
-    document.querySelector('[data-role="details"] [data-pa="remove"][data-mid="mAnna000001"]').click();
+    document.querySelector('[data-role="details"] [data-act="member-remove"][data-id="mAnna000001"]').click();
     await flush();
     expect(asked[0]).toMatchObject({ title: "Remove Anna?", body: "Anna is Bridesmaid, marked attending. Remove them from this party anyway?" });
     expect(guestsApi).toHaveBeenCalledWith({ action: "removeMember", guestId: "gSanrah0001", memberId: "mAnna000001", force: true });
-    document.querySelector('[data-role="details"] [data-pa="remove"][data-mid="mBea0000001"]').click();
+    document.querySelector('[data-role="details"] [data-act="member-remove"][data-id="mBea0000001"]').click();
     await flush();
     expect(asked.length).toBe(1);
     expect(guestsApi).toHaveBeenCalledWith({ action: "removeMember", guestId: "gSanrah0001", memberId: "mBea0000001" });
@@ -1650,6 +1682,44 @@ describe("Luna Bridal / Luna Bridal+ invitations (one engine, per-wedding design
     // Only content fields for the couple: no design controls.
     expect(container.querySelector('[name="story"]')).not.toBeNull();
     expect(container.querySelector('[name="templateId"], [type="color"]')).toBeNull();
+  });
+
+  it("Frequently Asked Questions: a clear section; saved FAQs load as FAQ 1 / FAQ 2; no empty pairs; + Add FAQ adds one with examples; Remove renumbers; saving keeps complete pairs; removing all clears", async () => {
+    const mountFaq = async (faq) => {
+      document.body.innerHTML = '<main id="content"></main>';
+      container = document.getElementById("content");
+      const api = vi.fn(async (_p, { body }) => (body.action === "get" ? { setup: { coupleNames: "Carlo & Yanie", faq }, hasHero: false, gallery: [], invitation: { level: "custom", live: "standard" } } : body.action === "save" ? { setup: body.setup } : { design: null }));
+      mountSetup(container, wedding(), { api, toast: () => {}, preview: vi.fn(async () => ({})) });
+      await flush();
+      return api;
+    };
+    // Nothing saved yet: the section explains itself and offers + Add FAQ; no blank pairs.
+    await mountFaq([]);
+    const sec = () => container.querySelector('[data-role="faq"]');
+    expect(sec().querySelector(".ws-sub-title").textContent).toBe("Frequently Asked Questions");
+    expect(sec().textContent).toContain("Add helpful information for your guests");
+    expect(sec().querySelectorAll(".ws-faq")).toHaveLength(0);
+    sec().querySelector('[data-act="faq-add"]').click();
+    expect([...sec().querySelectorAll(".ws-faq legend")].map((l) => l.textContent)).toEqual(["FAQ 1"]);
+    expect(sec().querySelector('[name="faqQ0"]').placeholder).toBe("e.g. What time should we arrive?");
+    expect(sec().querySelector('[name="faqA0"]').placeholder).toBe("e.g. Please arrive 30 minutes before the ceremony.");
+    expect([...sec().querySelectorAll("label")].map((l) => l.textContent)).toEqual(["Question", "Answer"]);
+    // Saved FAQs (older weddings too) load as they were.
+    const api = await mountFaq([{ q: "Parking?", a: "Yes, beside the church." }, { q: "Kids?", a: "Adults only." }]);
+    expect([...sec().querySelectorAll(".ws-faq legend")].map((l) => l.textContent)).toEqual(["FAQ 1", "FAQ 2"]);
+    expect([sec().querySelector('[name="faqQ1"]').value, sec().querySelector('[name="faqA1"]').value]).toEqual(["Kids?", "Adults only."]);
+    // Typed values survive adding another; Remove renumbers.
+    sec().querySelector('[name="faqA1"]').value = "Adults only, please.";
+    sec().querySelector('[data-act="faq-add"]').click();
+    expect(sec().querySelector('[name="faqA1"]').value).toBe("Adults only, please.");
+    sec().querySelector('[data-act="faq-remove"][data-i="0"]').click();
+    expect([...sec().querySelectorAll(".ws-faq legend")].map((l) => l.textContent)).toEqual(["FAQ 1", "FAQ 2"]);
+    expect(sec().querySelector('[name="faqQ0"]').value).toBe("Kids?");
+    expect(readSetupForm(container.querySelector('[data-role="setup"]')).faq).toEqual([{ q: "Kids?", a: "Adults only, please." }]); // the empty FAQ 2 is skipped
+    // Removing every FAQ clears them when saved.
+    for (let i = 0; i < 2; i++) sec().querySelector('[data-act="faq-remove"]').click();
+    expect(readSetupForm(container.querySelector('[data-role="setup"]')).faq).toEqual([]);
+    void api;
   });
 
   it("Wedding Setup opened again on the same screen (Custom): Story / FAQ / closing line stay as saved, and Preview gets them with the saved photos", async () => {

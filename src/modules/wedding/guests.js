@@ -27,7 +27,7 @@ import { pageHeader, emptyState, skeleton, segmented } from "../../components/ui
 import { formDialog } from "../../components/form-dialog.js";
 import { confirmDialog, toast as defaultToast } from "../../components/feedback.js";
 import { formatDayId } from "../../lib/format.js";
-import { RSVP_STATUSES, GUEST_SIDES, GUEST_CATEGORIES, GUEST_CATEGORY_IDS, rsvpSummary, seatingPlan, MAX_TABLE_CAPACITY, setupMissing } from "@shared/index.js";
+import { RSVP_STATUSES, GUEST_SIDES, GUEST_CATEGORIES, GUEST_CATEGORY_IDS, rsvpSummary, seatingPlan, seatablePeople, seatsOf, MAX_TABLE_CAPACITY, setupMissing } from "@shared/index.js";
 import { activityLines, detailsDialog } from "../baby/common.js";
 import * as defaultData from "./data.js";
 import { openInvitePreview, copyText, canShare } from "./invitation/preview.js";
@@ -138,7 +138,8 @@ export function mount(container, session, { data = defaultData, toast = defaultT
       ...(canManage && g.rsvp === "attending" && g.partySize > 1 ? [{ act: "count", id: g.id, label: "Change number attending" }] : []),
       ...(canManage ? [{ act: "edit", id: g.id, label: "Edit" }] : []),
       ...(canManage ? inviteItems(g) : []),
-      { act: "view", id: g.id, label: "Details & history" },
+      { act: "view", id: g.id, label: "Details" },
+      { act: "history", id: g.id, label: "View history" },
       ...(canManage ? [{ act: "remove", id: g.id, label: "Remove guest", danger: true, sep: true }] : []),
     ]);
   const rsvpRow = (g) => html`<li class="wl-row wl-guest" data-guest="${g.id}"><button type="button" class="wl-main" data-act="view" data-id="${g.id}"><span class="wl-name">${g.name}</span></button>${seats(g)}${rsvpControl(g)}${guestMenu(g)}</li>`;
@@ -165,21 +166,31 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     );
   }
 
+  // Seating (2026-10-21): one row per confirmed PERSON. Unassigned people
+  // are grouped by party (the party name quiet); each table lists its people.
+  // Counts are people, never parties.
+  const personId = (p) => `${p.guestId}|${p.key}`;
+  const partyNote = (p) => (p.primary && p.guest.partySize <= 1 ? "" : `${p.party}'s party`);
   function seatingView() {
     const plan = seatingPlan(state.rows, state.seating);
-    const names = (g) => attendingNames(g);
-    const seatRow = (g, table) =>
-      html`<li class="wl-row wl-guest" data-guest="${g.id}"><button type="button" class="wl-main" data-act="view" data-id="${g.id}"><span class="wl-name">${g.name}</span>${names(g).length ? html`<span class="wl-sub" data-role="seat-names">${names(g).join(", ")}${g.confirmed > names(g).length ? ` + ${g.confirmed - names(g).length} unnamed` : ""}</span>` : ""}</button>${seats(g, String(g.confirmed))}${!table && canManage ? html`<button type="button" class="btn btn-compact" data-act="seat" data-id="${g.id}">Assign</button>` : menu(`Seating for ${g.name}`, canManage ? [{ act: "seat", id: g.id, label: "Move to another table" }, { act: "unseat", id: g.id, label: "Unassign" }] : [{ act: "view", id: g.id, label: "Details & history" }])}</li>`;
+    const personRow = (p, table) =>
+      html`<li class="wl-row wl-guest wl-seat" data-person="${personId(p)}"><button type="button" class="wl-main" data-act="view" data-id="${p.guestId}"><span class="wl-name">${p.name}</span>${table && partyNote(p) ? html`<span class="wl-sub" data-role="party">${partyNote(p)}</span>` : ""}</button>${!canManage
+        ? ""
+        : table
+          ? menu(`Seating for ${p.name}`, [{ act: "seat-person", id: personId(p), label: "Move to another table" }, { act: "unseat-person", id: personId(p), label: "Unassign" }])
+          : html`<button type="button" class="btn btn-compact" data-act="seat-person" data-id="${personId(p)}">Assign</button>`}</li>`;
     return html`
       <section class="wl-section" data-group="unassigned">
         <h2 class="wl-cat-head"><span class="wl-group-title">Unassigned</span><span class="wl-cat-counts">· ${fmt(plan.unassignedSeats)}</span></h2>
-        ${plan.unassigned.length ? html`<ul class="wl-list wl-scroll" data-role="unassigned">${plan.unassigned.map((g) => seatRow(g, null))}</ul>` : html`<p class="stat-hint wl-none">${plan.attendingSeats ? "Everyone attending has a table." : "Guests appear here once they're attending."}</p>`}
+        ${plan.unassigned.length
+          ? plan.unassigned.map((u) => html`<div class="wl-party-group" data-party="${u.guest.id}"><p class="wl-party-label" data-role="party-label">${u.guest.name}'s party</p><ul class="wl-list" data-role="unassigned">${u.people.map((p) => personRow(p, null))}</ul></div>`)
+          : html`<p class="stat-hint wl-none">${plan.attendingSeats ? "Everyone attending has a table." : "Guests appear here once they're attending."}</p>`}
       </section>
       ${plan.tables.length
         ? plan.tables.map(
             (t) => html`<section class="wl-section" data-table="${t.id}">
-              <div class="wl-head"><h2 class="wl-cat-head"><span class="wl-group-title">${t.name}</span><span class="wl-cat-counts ${t.used > t.capacity ? "is-over" : ""}" data-role="table-seats" title="seats taken / seats">· ${t.used}/${t.capacity}${t.used > t.capacity ? ` · over by ${t.used - t.capacity}` : ""}</span></h2>${canManage ? menu(`Table ${t.name}`, [{ act: "table-edit", id: t.id, label: "Rename / change seats" }, { act: "table-delete", id: t.id, label: "Delete table", danger: true, sep: true }]) : ""}</div>
-              ${t.guests.length ? html`<ul class="wl-list wl-scroll" data-role="table-guests">${t.guests.map((g) => seatRow(g, t))}</ul>` : html`<p class="stat-hint wl-none">No one yet.</p>`}
+              <div class="wl-head"><h2 class="wl-cat-head"><span class="wl-group-title">${t.name}</span><span class="wl-cat-counts ${t.used > t.capacity ? "is-over" : t.used === t.capacity ? "is-full" : ""}" data-role="table-seats" title="people seated / seats">· ${t.used}/${t.capacity}${t.used > t.capacity ? ` · over by ${t.used - t.capacity}` : t.used === t.capacity ? " · full" : ""}</span></h2>${canManage ? menu(`Table ${t.name}`, [{ act: "table-edit", id: t.id, label: "Rename / change seats" }, { act: "table-delete", id: t.id, label: "Delete table", danger: true, sep: true }]) : ""}</div>
+              ${t.people.length ? html`<ul class="wl-list" data-role="table-guests">${t.people.map((p) => personRow(p, t))}</ul>` : html`<p class="stat-hint wl-none">No one yet.</p>`}
             </section>`
           )
         : html`<p class="stat-hint wl-none" data-role="no-tables">No tables yet.${canManage ? " Add your reception tables, then assign guests." : ""}</p>`}`;
@@ -308,17 +319,26 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     return true;
   }
   const tables = () => seatingPlan(state.rows, state.seating).tables;
-  const seatDialog = (g) => {
-    const list = tables().filter((t) => t.id !== g.tableId);
+  // The person behind a Seating row ("guestId|seatKey") and their table now.
+  const personOf = (id) => {
+    const [guestId, key] = String(id || "").split("|");
+    const g = state.rows.find((r) => r.id === guestId);
+    const p = g ? seatablePeople(g).find((x) => x.key === key) : null;
+    return p ? { ...p, guestId, guest: g, tableId: seatsOf(g)[key] ?? null } : null;
+  };
+  const seatPersonDialog = (p) => {
+    const list = tables().filter((t) => t.id !== p.tableId);
     if (!list.length) {
       toast(tables().length ? "There's no other table yet." : "Add a table first (+ Add table).", "danger");
       return null;
     }
+    const room = (t) => t.capacity - t.used;
     return formDialog({
-      title: `Seat ${g.name} (${g.confirmed})`,
-      fields: [{ name: "tableId", label: "Table", type: "select", options: list.map((t) => ({ value: t.id, label: `${t.name} · ${t.used}/${t.capacity}${t.used + g.confirmed > t.capacity ? " (over)" : ""}` })), value: list.find((t) => t.used + g.confirmed <= t.capacity)?.id ?? list[0].id }],
-      submitLabel: g.tableId ? "Move" : "Assign",
-      onSubmit: (v) => data.guestsApi({ action: "seat", guestId: g.id, tableId: v.tableId }),
+      title: `${p.tableId ? "Move" : "Seat"} ${p.name}`,
+      intro: p.primary && p.guest.partySize <= 1 ? "" : `${p.guest.name}'s party`,
+      fields: [{ name: "tableId", label: "Table", type: "select", options: list.map((t) => ({ value: t.id, label: `${t.name} · ${t.used}/${t.capacity}${room(t) < 1 ? " · full" : ""}` })), value: list.find((t) => room(t) > 0)?.id ?? list[0].id }],
+      submitLabel: p.tableId ? "Move" : "Assign",
+      onSubmit: (v) => data.guestsApi({ action: "seatPerson", guestId: p.guestId, seatKey: p.key, tableId: v.tableId }),
     });
   };
   const capacity = (v) => {
@@ -342,10 +362,17 @@ export function mount(container, session, { data = defaultData, toast = defaultT
       },
     });
 
-  // Details = the party sheet: "Sanrah's Party", invited / attending, the
-  // named people (primary first; + Add name for each unnamed seat; rename,
-  // remove with a warning when linked, mark who's attending), then the
-  // guest's details and history. Read-only without guests.manage.
+  // The guest's history (every change, kept): behind ⋯ → View history, not
+  // in the Details sheet.
+  function openHistory(g) {
+    detailsDialog({ title: `${g.name}: history`, rows: [], sections: [{ key: "history", title: "History", lines: activityLines(g.history || [], timezone), empty: "No changes recorded yet." }] });
+  }
+
+  // Details = the party sheet (2026-10-21, decluttered): name + RSVP on top,
+  // invited / attending, the people (each with their table; rename / remove
+  // behind a small ⋯; mark who's attending), then Category, Role, RSVP date,
+  // Side, Invitation sent and the invitation link with direct View / Copy.
+  // History: ⋯ → View history. Read-only without guests.manage.
   function openView(g0) {
     const backdrop = document.createElement("div");
     backdrop.className = "modal-backdrop is-panel";
@@ -353,29 +380,39 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     const close = () => backdrop.remove();
     let g = g0;
     const paint = () => {
-      const table = g.tableId ? tables().find((t) => t.id === g.tableId) : null;
       const members = membersOf(g);
       const seats = g.partySize || 1;
       const unnamed = Math.max(0, seats - 1 - members.length);
       const attendingOn = canManage && g.rsvp === "attending";
       const rolesTxt = (roles) => (Array.isArray(roles) && roles.length ? roles.map((r) => roleLabel(r)).join(", ") : "");
       const markBtn = (mid, on) => (attendingOn ? html`<button type="button" class="btn btn-compact btn-ghost wl-mark${on ? " is-on" : ""}" data-pa="attend" data-mid="${mid}" aria-pressed="${on ? "true" : "false"}">${on ? "Attending ✓" : "Mark attending"}</button>` : on && g.rsvp === "attending" ? html`<span class="wl-chip" data-tone="success">Attending</span>` : "");
-      const rows = [["Category", GUEST_CATEGORIES[g.category]?.label ?? "Not set"], ...(g.group ? [["Group (earlier note)", g.group]] : []), ["Role", rolesTxt(g.roles) || null], ["Table", table ? table.name : null], ["RSVP date", g.rsvpDate ? formatDayId(g.rsvpDate) : null], ["Side", GUEST_SIDES[g.side]?.label], ["Invitation sent", g.invitationSent ? formatDayId(g.invitationSent) : "Not sent"], ["Invitation link", g.invitation?.status === "active" ? "Created (⋯ → View / Copy invitation link)" : "Not created yet (⋯ → Create invitation link)"], ["Contact", g.contact], ["Notes", g.notes]].filter(([, v]) => v !== null && v !== undefined && v !== "");
+      // Where each person sits (per person).
+      const tableNames = new Map(tables().map((t) => [t.id, t.name]));
+      const where = seatsOf(g);
+      const tableChip = (key) => (where[key] && tableNames.has(where[key]) ? html` <small class="wl-opt" data-role="member-table">${tableNames.get(where[key])}</small>` : "");
+      const memberMenu = (m) => (canManage ? menu(`More for ${m.name}`, [{ act: "", id: m.id, label: "Rename", pa: "rename" }, { act: "", id: m.id, label: "Remove from party", pa: "remove", danger: true }].map((x) => ({ ...x, act: `member-${x.pa}` }))) : "");
+      const linkCell = () => {
+        if (!canManage) return g.invitation?.status === "active" ? "Created" : "Not created yet";
+        if (trial) return html`<a class="btn btn-compact btn-ghost" href="/wedding-setup" data-link data-act="close">Preview in Wedding Setup (free trial)</a>`;
+        if (state.setupMissing?.length) return html`<a class="btn btn-compact btn-ghost" href="/wedding-setup" data-link data-act="close">Complete Wedding Setup first</a>`;
+        if (g.invitation?.status !== "active") return html`<button type="button" class="btn btn-compact" data-act="invite-create">Create link</button>`;
+        return html`<span class="wl-link-actions" data-role="link-actions"><button type="button" class="btn btn-compact" data-act="invite-view">View</button><button type="button" class="btn btn-compact" data-act="invite-copy">Copy</button></span>`;
+      };
+      const rows = [["Category", GUEST_CATEGORIES[g.category]?.label ?? "Not set"], ["Role", rolesTxt(g.roles) || "—"], ["RSVP date", g.rsvpDate ? formatDayId(g.rsvpDate) : "—"], ["Side", GUEST_SIDES[g.side]?.label ?? "—"], ["Invitation sent", g.invitationSent ? formatDayId(g.invitationSent) : "Not sent"], ["Invitation link", linkCell()]];
       render(
         backdrop,
         html`<div class="modal modal-wide" role="dialog" aria-modal="true" aria-label="${g.name}" data-role="details">
-          <div class="modal-header"><h2 class="card-title">${seats > 1 ? `${g.name}'s Party` : g.name}</h2><div class="page-actions"><span class="wl-chip" data-tone="${RSVP_TONE[g.rsvp] || ""}">${RSVP_WORDS[g.rsvp] ?? g.rsvp}</span></div></div>
+          <div class="modal-header"><h2 class="card-title">${seats > 1 ? `${g.name}'s Party` : g.name}</h2><div class="page-actions"><span class="wl-chip" data-tone="${RSVP_TONE[g.rsvp] || ""}" data-role="details-rsvp">${RSVP_WORDS[g.rsvp] ?? g.rsvp}</span></div></div>
           <div class="modal-body">
             <dl class="dl dl-compact" data-role="party-figures"><dt>Invited</dt><dd>${seats}</dd><dt>Attending</dt><dd>${g.rsvp === "attending" ? String(g.confirmed) : g.rsvp === "declined" ? "0" : "Waiting"}</dd></dl>
             <h3 class="section-title">${seats > 1 ? "Members" : "Guest"}</h3>
             <ul class="list wl-party" data-role="members">
-              <li class="wl-member" data-member="primary"><span class="wl-member-name">${g.name} <small class="wl-opt">Primary</small>${rolesTxt(g.roles) ? html` <small class="wl-opt" data-role="member-roles">${rolesTxt(g.roles)}</small>` : ""}</span>${markBtn("primary", g.attending === true)}</li>
-              ${members.map((m) => html`<li class="wl-member" data-member="${m.id}"><span class="wl-member-name">${m.name}${rolesTxt(m.roles) ? html` <small class="wl-opt" data-role="member-roles">${rolesTxt(m.roles)}</small>` : ""}</span>${markBtn(m.id, m.attending === true)}${canManage ? html`<button type="button" class="btn btn-compact btn-ghost" data-pa="rename" data-mid="${m.id}" aria-label="Rename ${m.name}">Rename</button><button type="button" class="btn btn-compact btn-ghost menu-danger" data-pa="remove" data-mid="${m.id}" aria-label="Remove ${m.name}">Remove</button>` : ""}</li>`)}
+              <li class="wl-member" data-member="primary"><span class="wl-member-name">${g.name} <small class="wl-opt">Primary</small>${rolesTxt(g.roles) ? html` <small class="wl-opt" data-role="member-roles">${rolesTxt(g.roles)}</small>` : ""}${tableChip("primary")}</span>${markBtn("primary", g.attending === true)}</li>
+              ${members.map((m) => html`<li class="wl-member" data-member="${m.id}"><span class="wl-member-name">${m.name}${rolesTxt(m.roles) ? html` <small class="wl-opt" data-role="member-roles">${rolesTxt(m.roles)}</small>` : ""}${tableChip(m.id)}</span>${markBtn(m.id, m.attending === true)}${memberMenu(m)}</li>`)}
               ${canManage ? Array.from({ length: Math.min(unnamed, 12) }, () => html`<li class="wl-member"><button type="button" class="btn btn-compact btn-ghost" data-pa="add">+ Add name</button></li>`) : unnamed ? html`<li class="wl-member stat-hint">${unnamed} more invited (no names yet)</li>` : ""}
             </ul>
             ${unnamed && canManage ? html`<p class="stat-hint">Names are optional: the RSVP works by seat count, and names can be added later.</p>` : ""}
-            <dl class="dl dl-compact" data-role="fields">${rows.map(([k, v]) => html`<dt>${k}</dt><dd>${v}</dd>`)}</dl>
-            ${(g.history || []).length ? html`<h3 class="section-title">Activity</h3><ul class="list activity" data-role="activity">${activityLines(g.history, timezone).map((l) => html`<li>${l}</li>`)}</ul>` : ""}
+            <dl class="dl dl-compact wl-details" data-role="fields">${rows.map(([k, v]) => html`<dt>${k}</dt><dd>${v}</dd>`)}</dl>
           </div>
           <div class="modal-footer">${canManage ? html`<button type="button" class="btn btn-danger" data-act="remove">Remove guest</button><button type="button" class="btn" data-act="edit">Edit</button>` : ""}<button type="button" class="btn" data-act="close">Close</button></div>
         </div>`
@@ -389,10 +426,19 @@ export function mount(container, session, { data = defaultData, toast = defaultT
       return paint();
     };
     backdrop.addEventListener("click", async (ev) => {
-      const act = ev.target.closest("[data-act]")?.dataset.act;
-      const pa = ev.target.closest("[data-pa]");
+      const actEl = ev.target.closest("[data-act]");
+      const act = actEl?.dataset.act;
+      const memberAct = act === "member-rename" ? "rename" : act === "member-remove" ? "remove" : null;
+      const pa = memberAct ? { dataset: { pa: memberAct, mid: actEl.dataset.id } } : ev.target.closest("[data-pa]");
       if (ev.target === backdrop || act === "close") return close();
       try {
+        if (act === "invite-view") return viewInvite(g);
+        if (act === "invite-copy") return copyLink(await linkOf(g), g.name);
+        if (act === "invite-create") {
+          const r = await data.guestsApi({ action: "inviteLink", guestId: g.id });
+          await copyLink(`${location.origin}${r.path}`, g.name, false, true);
+          return refresh();
+        }
         if (act === "edit") {
           close();
           return after("Saved.")(await editDialog(g));
@@ -499,6 +545,17 @@ export function mount(container, session, { data = defaultData, toast = defaultT
       return;
     }
     el.closest("details.line-menu")?.removeAttribute("open");
+    if (a === "seat-person" || a === "unseat-person") {
+      const p = personOf(el.dataset.id);
+      if (!p) return;
+      try {
+        if (a === "unseat-person") after(`${p.name} unassigned.`)(await data.guestsApi({ action: "seatPerson", guestId: p.guestId, seatKey: p.key, tableId: null }));
+        else after(p.tableId ? `${p.name} moved.` : `${p.name} seated.`)(await seatPersonDialog(p));
+      } catch (err) {
+        toast(err.message || "Something went wrong", "danger");
+      }
+      return;
+    }
     const g = state.rows.find((r) => r.id === el.dataset.id);
     const t = state.seating?.tables?.[el.dataset.id] ? { id: el.dataset.id, ...state.seating.tables[el.dataset.id] } : null;
     try {
@@ -512,9 +569,11 @@ export function mount(container, session, { data = defaultData, toast = defaultT
       else if (a === "view") openView(g);
       else if (a === "edit") after("Saved.")(await editDialog(g));
       else if (a === "remove") await removeGuest(g);
-      else if (a === "count") after("RSVP saved.")(await rsvpDialog(g));
-      else if (a === "seat") after(g.tableId ? "Moved." : "Seated.")(await seatDialog(g));
-      else if (a === "unseat") after("Unassigned.")(await data.guestsApi({ action: "seat", guestId: g.id, tableId: null }));
+      else if (a === "count") {
+        const r = await rsvpDialog(g);
+        after(r?.unseated?.length ? `RSVP saved. Seats freed: ${r.unseated.join(", ")}.` : "RSVP saved.")(r);
+      }
+      else if (a === "history") openHistory(g);
       else if (a === "invite-create") {
         const r = await data.guestsApi({ action: "inviteLink", guestId: g.id });
         await copyLink(`${location.origin}${r.path}`, g.name, false, true);
@@ -546,12 +605,13 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     try {
       if (status === "attending" && g.partySize > 1) {
         el.value = g.rsvp;
-        after("RSVP saved.")(await rsvpDialog(g));
+        const r = await rsvpDialog(g);
+        after(r?.unseated?.length ? `RSVP saved. Seats freed: ${r.unseated.join(", ")}.` : "RSVP saved.")(r);
         return;
       }
       el.disabled = true;
       const r = await data.guestsApi({ action: "setRsvp", guestId: g.id, rsvp: status === "attending" ? { status, confirmed: g.partySize } : { status } });
-      after(g.tableId && status !== "attending" ? "RSVP saved. Their table seat was freed." : "RSVP saved.")(r || {});
+      after(r?.unseated?.length ? `RSVP saved. Seats freed: ${r.unseated.join(", ")}.` : "RSVP saved.")(r || {});
     } catch (err) {
       el.value = g.rsvp;
       el.disabled = false;
