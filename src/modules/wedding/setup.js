@@ -84,7 +84,10 @@ export function mount(container, session, { api = defaultApi, toast = defaultToa
   let alive = true;
   const field = (name, label, placeholder, value, type = "text") =>
     html`<div class="field"><label for="ws-${name}">${label}</label><input class="input" id="ws-${name}" name="${name}" type="${type}" value="${value ?? ""}" ${placeholder ? html`placeholder="${placeholder}"` : ""} ${canEdit ? "" : "disabled"}></div>`;
-  const form = () => container.querySelector('[data-role="setup"]');
+  // Only a form this screen drew (opening Wedding Setup again replaces the
+  // old screen: its form isn't this one's draft).
+  let drawn = false;
+  const form = () => (drawn ? container.querySelector('[data-role="setup"]') : null);
   // "Wedding link / hashtag": the friendly part of every guest's link
   // (/w/{slug}/invite/{private code}). Blank = made from the couple's names.
   const host = () => globalThis.location?.host || "app.lunadigital.ph";
@@ -181,9 +184,11 @@ export function mount(container, session, { api = defaultApi, toast = defaultToa
 
   function draw() {
     if (!alive) return;
-    // Whatever is typed survives a redraw.
+    // Whatever is typed survives a redraw. The draft holds only the fields
+    // on the form; the rest (e.g. Luna Bridal Custom's Story / FAQ / closing
+    // line before the plan is known) stay as saved, never blanked.
     if (form() && canEdit) state.draft = readSetupForm(form());
-    const s = state.draft || state.setup;
+    const s = state.draft ? { ...(state.setup || {}), ...state.draft } : state.setup;
     render(
       container,
       html`
@@ -212,6 +217,7 @@ export function mount(container, session, { api = defaultApi, toast = defaultToa
                 ${canEdit ? html`<div class="page-actions"><button type="submit" class="btn btn-primary" ${state.saving ? "disabled" : ""}>${state.saving ? "Saving…" : "Save"}</button></div><div data-role="save-box">${statusLine()}</div>` : ""}
               </form>`}`
     );
+    drawn = true;
   }
 
   async function load() {

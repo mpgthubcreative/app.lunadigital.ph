@@ -1651,4 +1651,27 @@ describe("Luna Bridal / Luna Bridal+ invitations (one engine, per-wedding design
     expect(container.querySelector('[name="story"]')).not.toBeNull();
     expect(container.querySelector('[name="templateId"], [type="color"]')).toBeNull();
   });
+
+  it("Wedding Setup opened again on the same screen (Custom): Story / FAQ / closing line stay as saved, and Preview gets them with the saved photos", async () => {
+    document.body.innerHTML = '<main id="content"></main>';
+    container = document.getElementById("content");
+    const saved = { coupleNames: "Carlo & Yanie", story: "We met at a wedding.", faq: [{ q: "Parking?", a: "Yes" }], footerNote: "With love" };
+    const gallery = ["data:image/jpeg;base64,/9j/4AAQ", "data:image/jpeg;base64,/9j/4BBB"];
+    const api = vi.fn(async (_p, { body }) => (body.action === "get" ? { setup: saved, hasHero: false, gallery: gallery.map((dataUrl, i) => ({ id: `p${i}`, dataUrl })), invitation: { level: "custom", live: "standard" } } : { design: null, gallery }));
+    const preview = vi.fn(async () => ({}));
+    const first = mountSetup(container, wedding(), { api, toast: () => {}, preview });
+    await flush();
+    if (typeof first === "function") first();
+    // The same page again: the old screen's form is still there until this one draws.
+    mountSetup(container, wedding(), { api, toast: () => {}, preview });
+    await flush();
+    const f = container.querySelector('[data-role="setup"]').elements;
+    expect([f.story.value, f.footerNote.value, f.faqQ0.value, f.faqA0.value]).toEqual(["We met at a wedding.", "With love", "Parking?", "Yes"]);
+    container.querySelector('[data-act="preview"]').click();
+    await flush();
+    const inv = await (await preview.mock.calls[0][0].fetchImpl()).json();
+    expect(inv.invitation.wedding).toMatchObject({ story: "We met at a wedding.", footerNote: "With love", faq: [{ q: "Parking?", a: "Yes" }] });
+    expect(inv.invitation.gallery).toEqual(gallery);
+    expect(api).toHaveBeenCalledWith("wedding-setup", expect.objectContaining({ body: { action: "preview", which: "live" } }));
+  });
 });
