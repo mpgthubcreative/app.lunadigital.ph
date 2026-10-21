@@ -1366,10 +1366,30 @@ c6e6ffd was NOT the final baseline: the owner's final spec for Reports and the H
   - Staging (temporary `st-wed-tmp`, removed afterwards): 24/24 at 390 and 1280.
   - Regression: Preview / frame 113/113, trial 72/72, Bridal menus 37/37, guest links 5/5 (snapshot re-saved after the owner edited veah-bridal's Wedding Setup at 06:53 UTC).
 
-### Production migration baseline (2026-10-21, fifth)
+### 2026-10-21 · Bridal UX simplification (e34d33d, 2ce6f4a, 0982fda, c95589b)
 
-- **Baseline = the commit that adds this entry.** Its code is identical to 2461c8d (CI passing).
-- It supersedes the earlier 2026-10-21 baselines (code 3d16e7b, e5b6050, 7a8edf8, 6f7aec7) and every earlier one.
+- **Navigation:** Expenses (was Money) · Tasks · Guests · More. The Budget, Wedding Expenses and Supplier Payments pages are no longer destinations (old links still open, with ‹ Expenses). The bell's to-do group and the workbook sheet say Expenses.
+- **Expenses**, one place for wedding money (budget lines and Sample Budget stay inside):
+  - One + Add: Add expense, Add supplier, Add supplier payment, Add upcoming payment, Budget item, From sample budget.
+  - Supplier payment and upcoming payment pick an existing supplier or + New supplier in the same form.
+  - Supplier rows read total · paid · next payment, with a visible Pay under what's left.
+  - A quiet "Next payment" line under Spent / To pay.
+  - The agreed-amount rule is unchanged (an upcoming payment past it is refused with the reason).
+- **Guests**, one hub:
+  - Summary: invited · attending · seated (people). [All Guests] [Seating] [Roles] are views of the same data. Rows add "N seated · side".
+  - Guest Details is where a party is managed: RSVP status / "N of M · Change" on top; per person the name (edit in place), role chips (+ Role, tap to remove) and a table picker (full tables disabled).
+  - Header ⋯: View history, Remove guest. Footer: Edit, Close. Member ⋯: Remove from party.
+  - Naming "Member n" keeps that person's table (`addMember` seatKey).
+- **Wedding Setup:** Couple & Date, Ceremony & Reception, Invitation (template, preview, welcome message), Story (+ Add story / + Add closing line), Frequently Asked Questions, Photos (cover + gallery), RSVP. Field names and saved data are unchanged.
+- **Tests:**
+  - Unit: 1849 pass (119 files).
+  - Emulator: CI green on every commit (no rules or data change; server: the to-do label, the workbook sheet name and addMember seatKey).
+  - Staging (temporary weddings / operator, removed afterwards): Bridal UX 31/31 at 390 and 1280; Guest Details names 20/20; seating 24/24; Bridal menus 37/37; phone frame + Preview 113/113; trial 72/72; guest links 5/5.
+
+### Production migration baseline (2026-10-21, sixth)
+
+- **Baseline = the commit that adds this entry.** Its code is identical to c95589b (CI passing).
+- It supersedes the earlier 2026-10-21 baselines (code 2461c8d, 3d16e7b, e5b6050, 7a8edf8, 6f7aec7) and every earlier one.
 - Production (Singapore Firebase, Netlify production, the domains) is set up only on the owner's go-ahead, after the owner's own iPhone check.
 
 ## Plan (decisions made from the brief)
