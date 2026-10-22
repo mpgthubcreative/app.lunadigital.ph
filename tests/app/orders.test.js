@@ -89,17 +89,73 @@ async function composeOrder() {
 }
 
 describe("new order flow", () => {
-  it("lists every active product in a dropdown; one already added is disabled", async () => {
+  it("lists every active product in the quick pick; picking one already on the order adds to its quantity (one line per product)", async () => {
     await show(session("staff"));
     const { form } = await composeOrder();
     const opts = [...form.elements.product.options].filter((o) => o.value);
     expect(opts.map((o) => o.value)).toEqual([wings.id, fries.id]); // inactive OLD-1 not offered
-    // Choosing an added SKU again (e.g. keyboard) adds no second line.
+    expect(opts[0].textContent).toContain(wings.sku);
     form.elements.product.value = wings.id;
     form.elements.product.dispatchEvent(new Event("change", { bubbles: true }));
     expect(modal().querySelectorAll("[data-line]")).toHaveLength(2);
-    expect(opts.every((o) => o.disabled)).toBe(true);
-    expect(opts[0].textContent).toContain(wings.sku);
+    expect(form.elements["qty-0"].value).toBe("3.5"); // 2.5 + 1
+    expect(modal().querySelector('[data-role="items-hint"]').textContent).toBe("Chicken Wings is already on this order: its quantity is now 3.5.");
+  });
+
+  it("items (2026-10-22): + Add Item adds a row with its own product ▾; each row shows qty, × unit price and its total; totals follow every change; ONE order with every item", async () => {
+    const d = await show(session("staff"));
+    container.querySelector('[data-act="new"]').click();
+    await flush();
+    const form = modal().querySelector("form");
+    const type = (name, value) => {
+      form.elements[name].value = value;
+      form.elements[name].dispatchEvent(new Event("input", { bubbles: true }));
+    };
+    const choose = (name, value) => {
+      form.elements[name].value = value;
+      form.elements[name].dispatchEvent(new Event("change", { bubbles: true }));
+    };
+    const rows = () => [...modal().querySelectorAll(".oe-item")].map((r) => [r.querySelector("select").value, r.querySelector('[name^="qty-"]').value, r.querySelector('[data-col="unitPrice"]').textContent.trim(), r.querySelector('[data-col="lineSubtotal"]').textContent.trim()]);
+    const total = () => modal().querySelector('[data-total="total"]').textContent;
+    type("name", "Maria");
+    expect(modal().querySelectorAll('.modal-footer .btn-primary')).toHaveLength(1);
+    expect(form.querySelector('[data-act="add-item"]').classList.contains("btn-primary")).toBe(false);
+    form.querySelector('[data-act="add-item"]').click();
+    expect(rows()).toEqual([["", "1", "", "—"]]);
+    expect([...form.elements["item-0"].options].map((o) => o.textContent)).toEqual(["Choose a product…", "Chicken Wings · ₱300.00", "Fries · ₱900.00"]);
+    choose("item-0", wings.id);
+    type("qty-0", "2");
+    form.querySelector('[data-act="add-item"]').click();
+    choose("item-1", fries.id);
+    type("qty-1", "3");
+    expect(rows()).toEqual([[wings.id, "2", "× ₱300.00", "₱600.00"], [fries.id, "3", "× ₱900.00", "₱2,700.00"]]);
+    expect(total()).toBe("₱3,300.00");
+    // Change a row's product: switching item 2 to Chicken Wings combines it into item 1.
+    choose("item-1", wings.id);
+    expect(rows()).toEqual([[wings.id, "5", "× ₱300.00", "₱1,500.00"]]);
+    // Remove, add back, an invalid quantity blocks Create order with a reason.
+    form.querySelector('[data-act="add-item"]').click();
+    choose("item-1", fries.id);
+    type("qty-1", "1.5"); // cases are whole
+    expect(modal().querySelector(".oe-item-note.form-error")).not.toBeNull();
+    form.dispatchEvent(new Event("submit", { cancelable: true }));
+    await flush();
+    expect(form.querySelector('[data-role="error"]').textContent).toMatch(/^Fries: /);
+    type("qty-1", "0");
+    form.dispatchEvent(new Event("submit", { cancelable: true }));
+    await flush();
+    expect(form.querySelector('[data-role="error"]').textContent).toBe("Fries: enter a quantity more than 0");
+    type("qty-1", "2");
+    form.querySelector('[data-act="add-item"]').click(); // a blank row left behind
+    form.dispatchEvent(new Event("submit", { cancelable: true }));
+    await flush();
+    expect(form.querySelector('[data-role="error"]').textContent).toBe("Choose a product for item 3, or remove it");
+    form.querySelectorAll('[data-act="remove"]')[2].click();
+    expect(total()).toBe("₱3,300.00"); // 5 × 300 + 2 × 900
+    form.dispatchEvent(new Event("submit", { cancelable: true }));
+    await flush();
+    expect(d.api).toHaveBeenCalledTimes(1);
+    expect(d.api.mock.calls[0][1].body).toMatchObject({ action: "create", order: { customer: { name: "Maria" }, items: [{ productId: wings.id, quantity: 5000 }, { productId: fries.id, quantity: Q(2) }] } });
   });
 
   it("editing an older order keeps its earlier source note and its delivery address", async () => {

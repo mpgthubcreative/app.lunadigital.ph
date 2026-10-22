@@ -4,6 +4,12 @@
 // the server re-reads every product and computes the real totals.
 // One idempotency key per dialog: double-clicks and retries can't create a
 // second order.
+// Items (2026-10-22): one compact row per item — product ▾ · qty · × unit
+// price · line total · ✕ — any number of them on ONE order. "+ Add Item"
+// adds a row; "Add product" is a quick pick. Choosing a product that is
+// already on the order adds to that row's quantity (one line per product,
+// as the server requires); a row's product can be changed or the row
+// removed until Create order. Create order stays the only primary action.
 
 import { html, render } from "../../lib/html.js";
 import { formatCentavos } from "../../lib/format.js";
@@ -49,6 +55,10 @@ export function openOrderEditor({ session, deps, order = null, prefill = null })
     discountText: order ? (order.discount / 100).toFixed(2) : "0",
     // Open orders hold their quantity in reserve; a fulfilled order holds none.
     lines: (order?.items || []).map((l) => ({ productId: l.productId, sku: l.sku, name: l.name, unit: l.unit, unitPrice: l.unitPrice, quantityText: formatQuantity(l.quantity), reservedHere: correcting ? 0 : l.quantity, available: null })),
+    // What this (open) order already holds per product: a row switched back
+    // to one of them counts it as available again.
+    reservedBy: Object.fromEntries((order?.items || []).map((l) => [l.productId, correcting ? 0 : l.quantity])),
+    hint: "",
     products: null, // every active product, for the dropdown (null = loading)
     error: "",
     busy: false,
@@ -77,6 +87,7 @@ export function openOrderEditor({ session, deps, order = null, prefill = null })
 
     function parsedLines() {
       return state.lines.map((l) => {
+        if (!l.productId) return { ...l, quantity: null, blank: true };
         try {
           return { ...l, quantity: parseQuantity(l.quantityText, l.unit) };
         } catch (err) {
@@ -123,7 +134,10 @@ export function openOrderEditor({ session, deps, order = null, prefill = null })
           </section>
           <section class="oe-section" data-role="oe-products">
             <div class="field"><label for="oeProduct">Add product</label><select class="input" id="oeProduct" name="product" data-role="product-select" disabled><option value="">Loading products…</option></select></div>
-            <div class="table-wrap"><table class="table oe-lines"><thead><tr><th>Product</th><th class="num">Available</th><th class="num">Price</th><th class="num">Quantity</th><th class="num">Subtotal</th><th><span class="visually-hidden">Remove</span></th></tr></thead><tbody data-role="lines"></tbody></table></div>
+            <div class="oe-items-head" aria-hidden="true"><span>Product</span><span>Qty</span><span>Unit price</span><span>Total</span><span></span></div>
+            <div class="oe-items" data-role="lines"></div>
+            <p class="stat-hint oe-hint" data-role="items-hint" aria-live="polite"></p>
+            <button type="button" class="btn btn-compact oe-add-item" data-act="add-item">+ Add Item</button>
           </section>
           <section class="oe-section" data-role="oe-money">
             ${canDiscount ? html`<div class="field oe-discount"><label for="oeDiscount">Discount (${currency})</label><input class="input" id="oeDiscount" name="discount" value="${state.discountText}" inputmode="decimal" autocomplete="off" /></div>` : ""}
@@ -189,22 +203,57 @@ export function openOrderEditor({ session, deps, order = null, prefill = null })
       if (!state.customerMatches.length) render(linkEl, html`<p class="stat-hint" data-role="no-customer">No saved customer starts with "${term}". It will be saved on the order as a walk-in.</p>`);
     }
 
+    // A row's product choices: every active product (plus the row's own, if
+    // it is no longer active, so an older order still shows what it holds).
+    const productOptions = (l) => {
+      const list = state.products || [];
+      const own = l.productId && !list.some((p) => p.id === l.productId) ? [{ id: l.productId, sku: l.sku, name: l.name, sellingPrice: l.unitPrice }] : [];
+      return html`<option value="" ${l.productId ? "" : "selected"}>${list.length || own.length ? "Choose a product…" : state.products === null ? "Loading products…" : "No active products yet"}</option>${[...own, ...list].map((p) => html`<option value="${p.id}" ${p.id === l.productId ? "selected" : ""}>${p.name} · ${formatCentavos(p.sellingPrice, currency)}</option>`)}`;
+    };
+    const unitOf = (l) => UNITS[l.unit]?.label ?? l.unit ?? "";
     function paintLines() {
       const p = preview();
       render(
         linesEl,
         html`${p.lines.map(
-          (l, i) => html`<tr data-line="${l.productId}">
-            <td class="oe-line-name"><span class="cell-strong">${l.name}</span><span class="cell-sub">${l.sku}</span></td>
-            <td class="num oe-line-meta" data-label="Available">${l.available === null ? "…" : `${formatQuantity(l.available + (l.reservedHere || 0))} ${UNITS[l.unit]?.label ?? l.unit}`}</td>
-            <td class="num oe-line-meta" data-label="Price">${formatCentavos(l.unitPrice, currency)}</td>
-            <td class="num"><input class="input input-qty" name="qty-${i}" data-line-index="${i}" value="${state.lines[i].quantityText}" inputmode="decimal" aria-label="Quantity for ${l.name}" autocomplete="off" />${l.qtyError ? html`<div class="form-error">${l.qtyError}</div>` : ""}</td>
-            <td class="num" data-col="lineSubtotal">${l.quantity ? formatCentavos(computeTotals([l]).subtotal, currency) : "—"}</td>
-            <td class="oe-line-remove"><button type="button" class="btn btn-compact btn-ghost" data-act="remove" data-index="${i}" aria-label="Remove ${l.name}">Remove</button></td>
-          </tr>`
+          (l, i) => html`<div class="oe-item" data-line="${l.productId || ""}" data-index="${i}">
+            <select class="select oe-item-product" name="item-${i}" data-item-index="${i}" aria-label="Product for item ${i + 1}">${productOptions(l)}</select>
+            <input class="input input-qty oe-item-qty" name="qty-${i}" data-line-index="${i}" value="${state.lines[i].quantityText}" inputmode="${UNITS[l.unit]?.decimals ? "decimal" : "numeric"}" aria-label="Quantity for ${l.name || `item ${i + 1}`}" autocomplete="off" ${l.productId ? "" : "disabled"} />
+            <span class="oe-item-price" data-col="unitPrice">${l.productId ? html`× ${formatCentavos(l.unitPrice, currency)}` : ""}</span>
+            <b class="oe-item-total" data-col="lineSubtotal">${l.quantity ? formatCentavos(computeTotals([l]).subtotal, currency) : "—"}</b>
+            <button type="button" class="btn btn-compact btn-ghost oe-item-remove" data-act="remove" data-index="${i}" aria-label="Remove ${l.name || `item ${i + 1}`}">✕</button>
+            ${l.qtyError ? html`<div class="form-error oe-item-note">${l.qtyError}</div>` : l.productId && l.available !== null && l.available !== undefined ? html`<div class="stat-hint oe-item-note">${formatQuantity(l.available + (l.reservedHere || 0))} ${unitOf(l)} available</div>` : ""}
+          </div>`
         )}`
       );
+      form.querySelector('[data-role="items-hint"]').textContent = state.hint;
       paintTotals();
+    }
+
+    // Product p on row i (null: a new row). Already on another row: that
+    // row's quantity grows instead (one line per product).
+    function setProduct(i, p, { addQty = "1" } = {}) {
+      const other = state.lines.findIndex((l, j) => j !== i && l.productId === p.id);
+      if (other >= 0) {
+        const row = state.lines[other];
+        const here = i === null ? addQty : state.lines[i].quantityText || "1";
+        try {
+          row.quantityText = formatQuantity(parseQuantity(row.quantityText, row.unit) + parseQuantity(here, row.unit));
+        } catch {
+          /* a quantity being typed: leave it for the person to fix */
+        }
+        if (i !== null) state.lines.splice(i, 1);
+        state.hint = `${p.name} is already on this order: its quantity is now ${row.quantityText}.`;
+        paintLines();
+        form.elements[`qty-${state.lines.indexOf(row)}`]?.focus();
+        return;
+      }
+      const line = { productId: p.id, sku: p.sku, name: p.name, unit: p.unit, unitPrice: p.sellingPrice, quantityText: i === null ? addQty : state.lines[i].quantityText || "1", reservedHere: state.reservedBy[p.id] || 0, available: p.available ?? null };
+      if (i === null) state.lines.push(line);
+      else state.lines[i] = line;
+      state.hint = "";
+      paintLines();
+      form.elements[`qty-${i === null ? state.lines.length - 1 : i}`]?.focus();
     }
 
     function paintTotals() {
@@ -216,12 +265,25 @@ export function openOrderEditor({ session, deps, order = null, prefill = null })
           <dt>Total</dt><dd data-total="total"><strong>${formatCentavos(p.total, currency)}</strong></dd>`
       );
       for (const [i, l] of p.lines.entries()) {
-        const cell = linesEl.querySelectorAll('[data-col="lineSubtotal"]')[i];
-        if (cell) cell.textContent = l.quantity ? formatCentavos(computeTotals([l]).subtotal, currency) : "—";
+        const row = linesEl.querySelectorAll(".oe-item")[i];
+        if (!row) continue;
+        row.querySelector('[data-col="lineSubtotal"]').textContent = l.quantity ? formatCentavos(computeTotals([l]).subtotal, currency) : "—";
+        // The row's note follows the typing: what's available, or why the quantity won't do.
+        let note = row.querySelector(".oe-item-note");
+        const text = l.qtyError || (l.productId && l.available !== null && l.available !== undefined ? `${formatQuantity(l.available + (l.reservedHere || 0))} ${unitOf(l)} available` : "");
+        if (!note && text) {
+          note = document.createElement("div");
+          row.appendChild(note);
+        }
+        if (note) {
+          note.className = `${l.qtyError ? "form-error" : "stat-hint"} oe-item-note`;
+          note.textContent = text;
+        }
       }
     }
 
-    // Every active product, by name; ones already on the order are disabled.
+    // Quick pick: every active product, by name. Picking one already on the
+    // order adds 1 to it (see setProduct).
     function paintProducts() {
       if (state.products === null) return;
       productSelect.disabled = !state.products.length;
@@ -229,7 +291,7 @@ export function openOrderEditor({ session, deps, order = null, prefill = null })
         productSelect,
         state.products.length
           ? html`<option value="">Choose a product (${state.products.length})…</option>${state.products.map(
-              (p) => html`<option value="${p.id}" ${state.lines.some((l) => l.productId === p.id) ? "disabled" : ""}>${p.sku} · ${p.name} · ${formatCentavos(p.sellingPrice, currency)} · ${formatQuantity(p.available)} ${UNITS[p.unit]?.label ?? p.unit} left</option>`
+              (p) => html`<option value="${p.id}">${p.sku} · ${p.name} · ${formatCentavos(p.sellingPrice, currency)} · ${formatQuantity(p.available)} ${UNITS[p.unit]?.label ?? p.unit} left</option>`
             )}`
           : html`<option value="">No active products yet: add them in Inventory</option>`
       );
@@ -240,7 +302,10 @@ export function openOrderEditor({ session, deps, order = null, prefill = null })
       .listActiveProducts()
       .then((rows) => (state.products = rows.filter((p) => p.status === "active")))
       .catch(() => (state.products = []))
-      .then(paintProducts);
+      .then(() => {
+        paintProducts();
+        paintLines(); // the rows' product lists
+      });
 
     form.addEventListener("input", (e) => {
       const t = e.target;
@@ -264,12 +329,13 @@ export function openOrderEditor({ session, deps, order = null, prefill = null })
       }
       if (t.name === "product" && t.value) {
         const p = (state.products || []).find((r) => r.id === t.value);
-        if (p && !state.lines.some((l) => l.productId === p.id)) {
-          state.lines.push({ productId: p.id, sku: p.sku, name: p.name, unit: p.unit, unitPrice: p.sellingPrice, quantityText: "1", reservedHere: 0, available: p.available });
-          paintLines();
-          paintProducts();
-          form.elements[`qty-${state.lines.length - 1}`]?.focus();
-        }
+        if (p) setProduct(null, p);
+        paintProducts();
+      }
+      // A row's own product ▾: set or switch it (combined if already on the order).
+      if (t.dataset.itemIndex !== undefined && t.value) {
+        const p = (state.products || []).find((r) => r.id === t.value);
+        if (p) setProduct(Number(t.dataset.itemIndex), p);
       }
     });
     form.addEventListener("click", (e) => {
@@ -315,8 +381,15 @@ export function openOrderEditor({ session, deps, order = null, prefill = null })
       }
       if (act === "remove") {
         state.lines.splice(Number(el.dataset.index), 1);
+        state.hint = "";
         paintLines();
         paintProducts();
+      }
+      if (act === "add-item") {
+        state.lines.push({ productId: null, sku: "", name: "", unit: null, unitPrice: 0, quantityText: "1", reservedHere: 0, available: null });
+        state.hint = "";
+        paintLines();
+        form.elements[`item-${state.lines.length - 1}`]?.focus();
       }
     });
 
@@ -326,8 +399,10 @@ export function openOrderEditor({ session, deps, order = null, prefill = null })
       errorEl.hidden = true;
       try {
         const p = preview();
+        const blank = p.lines.findIndex((l) => l.blank);
+        if (blank >= 0) throw new Error(`Choose a product for item ${blank + 1}, or remove it`);
         const bad = p.lines.find((l) => !l.quantity);
-        if (bad) throw new Error(`${bad.name}: ${bad.qtyError || "enter a quantity"}`);
+        if (bad) throw new Error(`${bad.name}: ${bad.qtyError || "enter a quantity more than 0"}`);
         if (p.discountError) throw new Error(p.discountError);
         // Save to Customers: the record first (name, contact, delivery
         // address), then the order linked to it. Once per form.

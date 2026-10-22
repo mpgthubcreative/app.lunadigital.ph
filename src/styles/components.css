@@ -4563,3 +4563,28 @@ button.wl-person-name:hover .wl-edit, button.wl-person-name:focus-visible .wl-ed
   }
   .rows td[data-col="latest-payment"] .lp:has(> .cell-sub:only-child) { display: none; }
 }
+/* New / edit order items (2026-10-22): one compact row per item —
+   product ▾ · qty · × unit price · total · ✕ (two lines on a phone). */
+.oe-items-head, .oe-item { display: grid; grid-template-columns: minmax(0, 1fr) 4.5rem 5.5rem 6.5rem 2.5rem; gap: var(--space-2); align-items: center; }
+.oe-items-head { padding: 0 0 var(--space-1); color: var(--text-muted); font-size: var(--text-xs); text-transform: uppercase; letter-spacing: 0.04em; }
+.oe-items-head span:nth-child(n+2) { text-align: right; }
+.oe-item { padding: var(--space-2) 0; border-top: 1px solid var(--border); }
+.oe-item .oe-item-product { width: 100%; min-width: 0; margin: 0; }
+.oe-item .oe-item-qty { width: 100%; text-align: right; }
+.oe-item-price { text-align: right; color: var(--text-muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.oe-item-total { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.oe-item-remove { min-width: 40px; min-height: 40px; padding: 0; }
+.oe-item-note { grid-column: 1 / -1; margin: 0; }
+.oe-hint:empty { display: none; }
+.oe-hint { margin: var(--space-1) 0 0; color: var(--luna-primary); }
+.oe-add-item { margin-top: var(--space-2); }
+@media (max-width: 719px) {
+  .oe-items-head { display: none; }
+  .oe-item { grid-template-columns: 5rem minmax(0, 1fr) auto 2.75rem; grid-template-areas: "prod prod prod rm" "qty price total total" "note note note note"; row-gap: var(--space-1); }
+  .oe-item .oe-item-product { grid-area: prod; }
+  .oe-item-remove { grid-area: rm; }
+  .oe-item .oe-item-qty { grid-area: qty; }
+  .oe-item-price { grid-area: price; text-align: left; }
+  .oe-item-total { grid-area: total; }
+  .oe-item-note { grid-area: note; }
+}
