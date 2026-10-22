@@ -345,7 +345,7 @@ describe("Luna Business workbook", () => {
     expect(rowsOf(wb.bytes, "Orders")[0]).toEqual(["Order No.", "Date", "Customer", "Source", "Items", "Total", "Paid", "Balance", "Status", "Created By"]);
     const [order] = dataOf(wb.bytes, "Orders");
     expect(order).toEqual([ids.orderNumber, serial("2026-10-18"), "Marian Santos", "Viber", "Hayst Kopi × 2; Hayst Choco × 1", "230", "100", "130", "Pending · Partially paid", "Carlo Reyes"]);
-    expect(dataOf(wb.bytes, "Payments")).toEqual([[serial("2026-10-18"), ids.orderNumber, "Marian Santos", "100", "GCash", "GC77"]]);
+    expect(dataOf(wb.bytes, "Payments")).toEqual([[serial("2026-10-18"), ids.orderNumber, "Marian Santos", "100", "GCash", "GC77", "Carlo Reyes"]]);
     expect(rowsOf(wb.bytes, "Users")[0]).toEqual(["Name", "Email", "Role", "Status"]);
     expect(dataOf(wb.bytes, "Users").map((r) => r[2])).toContain("Owner");
     expect(dataOf(wb.bytes, "Inventory")).toEqual([["Hayst Choco", "Coffee", "pcs", "19", "80"], ["Hayst Kopi", "Coffee", "pcs", "18", "75"]]);

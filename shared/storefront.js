@@ -21,6 +21,7 @@ import { slugify } from "./wedding.js";
 import { PAYMENT_METHODS } from "./payments.js";
 import { isValidIdempotencyKey } from "./orders.js";
 import { QTY_SCALE } from "./quantity.js";
+import { cleanInstructions } from "./pay-links.js";
 
 export const STOREFRONT_SCHEMA_VERSION = 1;
 export const STORE_SLUG = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
@@ -54,7 +55,7 @@ export class StorefrontError extends Error {
 }
 
 export function defaultStoreSettings(business = {}) {
-  return { open: false, displayName: (business.name || "").slice(0, 80), slug: null, note: "", pickup: true, delivery: false, paymentMethods: ["cash", "gcash"], hiddenProductIds: [] };
+  return { open: false, displayName: (business.name || "").slice(0, 80), slug: null, note: "", pickup: true, delivery: false, paymentMethods: ["cash", "gcash"], hiddenProductIds: [], paymentInstructions: "" };
 }
 
 const PRODUCT_ID = /^[A-Za-z0-9]{8,40}$/;
@@ -69,7 +70,7 @@ const clean = (v, { field, max, required = false }) => {
 
 // Owner settings. Partial input is merged over `current`; the result is the
 // whole, valid settings object.
-export const STORE_SETTING_FIELDS = Object.freeze(["open", "displayName", "slug", "note", "pickup", "delivery", "paymentMethods", "hiddenProductIds"]);
+export const STORE_SETTING_FIELDS = Object.freeze(["open", "displayName", "slug", "note", "pickup", "delivery", "paymentMethods", "hiddenProductIds", "paymentInstructions"]);
 export function validateStoreSettings(input, current) {
   if (!input || typeof input !== "object" || Array.isArray(input)) throw new StorefrontError("invalid-input", "Invalid settings");
   for (const k of Object.keys(input)) if (!STORE_SETTING_FIELDS.includes(k)) throw new StorefrontError("invalid-input", `Setting ${k} can't be changed here`);
@@ -81,6 +82,8 @@ export function validateStoreSettings(input, current) {
   }
   if (Object.hasOwn(input, "displayName")) out.displayName = clean(input.displayName, { field: "Store name", max: 80, required: true });
   if (Object.hasOwn(input, "note")) out.note = clean(input.note, { field: "Note to customers", max: 200 });
+  // 2026-10-22: shown on order payment links (shared/pay-links.js).
+  if (Object.hasOwn(input, "paymentInstructions")) out.paymentInstructions = cleanInstructions(input.paymentInstructions, StorefrontError);
   if (Object.hasOwn(input, "slug")) {
     const s = typeof input.slug === "string" ? input.slug.trim().toLowerCase() : input.slug;
     if (!isStoreSlug(s)) throw new StorefrontError("invalid-input", `The link name can use lowercase letters, numbers and hyphens (${STORE_SLUG_MIN}–${STORE_SLUG_MAX} characters), e.g. hayst-kopi`);

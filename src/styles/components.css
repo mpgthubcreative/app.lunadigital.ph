@@ -4403,3 +4403,77 @@ button.wl-person-name:hover .wl-edit, button.wl-person-name:focus-visible .wl-ed
 .field-radio label.check { min-height: 44px; align-items: center; font-weight: 400; margin-bottom: 0; }
 .field-radio input[type="radio"] { flex: none; width: 18px; height: 18px; margin: 0; }
 .field[hidden] { display: none; }
+
+/* ---- Order payment link (2026-10-22): /pay/{token}, phone first ---- */
+.pay-page { min-height: 100vh; max-width: 520px; margin: 0 auto; padding: var(--space-3) 16px var(--space-6); background: var(--bg); display: flex; flex-direction: column; gap: var(--space-3); }
+.pay-top { min-height: 28px; }
+.pay-business { font-weight: 700; font-size: var(--text-lg); overflow-wrap: anywhere; }
+.pay-main { display: flex; flex-direction: column; gap: var(--space-3); }
+.pay-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: var(--space-4); min-width: 0; }
+.pay-h1 { margin: 0; font-size: var(--text-xl); overflow-wrap: anywhere; }
+.pay-h2 { margin: 0 0 var(--space-2); font-size: var(--text-md); }
+.pay-note { margin: 4px 0 0; color: var(--text-muted); overflow-wrap: anywhere; }
+.pay-sum { display: grid; grid-template-columns: 1fr auto; gap: 6px var(--space-3); margin: var(--space-3) 0 0; }
+.pay-sum dt { color: var(--text-muted); }
+.pay-sum dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; }
+.pay-due { display: flex; justify-content: space-between; align-items: baseline; gap: var(--space-3); margin: var(--space-3) 0 0; padding-top: var(--space-3); border-top: 1px solid var(--border); }
+.pay-due b { font-size: 1.6rem; color: var(--luna-primary); font-variant-numeric: tabular-nums; }
+.pay-done { margin: var(--space-3) 0 0; color: var(--success); font-weight: 600; }
+.pay-sent { margin: 0; padding: var(--space-3); border-radius: var(--radius); background: color-mix(in srgb, var(--success) 12%, var(--surface)); color: var(--success); font-weight: 600; }
+.pay-instructions { margin: 0; white-space: pre-line; overflow-wrap: anywhere; }
+.pay-form .field { margin-bottom: var(--space-3); }
+.pay-methods { border: 0; padding: 0; margin: 0 0 var(--space-3); display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.pay-methods legend { font-weight: 600; font-size: var(--text-sm); margin-bottom: var(--space-1); padding: 0; }
+.pay-method { flex: 1 1 0; min-width: 96px; min-height: 44px; display: flex; align-items: center; justify-content: center; gap: 6px; border: 1px solid var(--border-strong); border-radius: var(--radius); padding: 0 var(--space-2); cursor: pointer; font-weight: 600; white-space: nowrap; }
+.pay-method input { position: absolute; opacity: 0; pointer-events: none; }
+.pay-method.is-on { border-color: var(--luna-primary); background: color-mix(in srgb, var(--luna-primary) 10%, var(--surface)); color: var(--luna-primary); }
+.pay-submit { width: 100%; min-height: 48px; }
+.pay-trap { position: absolute; left: -9999px; width: 1px; height: 1px; overflow: hidden; }
+.pay-list { list-style: none; margin: 0; padding: 0; }
+.pay-item { padding: var(--space-2) 0; border-top: 1px solid var(--border); }
+.pay-item:first-child { border-top: 0; }
+.pay-item-row { display: flex; justify-content: space-between; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+.pay-item-what { font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.pay-ref { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.pay-item-sub { color: var(--text-muted); font-size: var(--text-sm); }
+.pay-chip { font-size: var(--text-xs); font-weight: 600; padding: 2px 8px; border-radius: 999px; background: var(--surface-2, #f1f3f8); white-space: nowrap; }
+.pay-chip[data-state="verified"] { color: var(--success); }
+.pay-chip[data-state="for_verification"] { color: var(--warning); }
+.pay-chip[data-state="not_accepted"] { color: var(--danger); }
+.pay-receipt-fold > summary { cursor: pointer; color: var(--luna-primary); font-weight: 600; font-size: var(--text-sm); min-height: 36px; display: flex; align-items: center; }
+.pay-foot { margin-top: auto; display: flex; align-items: center; justify-content: center; gap: 6px; color: var(--text-muted); font-size: var(--text-xs); }
+.pay-foot svg { width: 16px; height: 16px; }
+/* The receipt (customer page and Luna). */
+.pay-receipt { border: 1px solid var(--border); border-radius: var(--radius); padding: var(--space-3); background: var(--surface); }
+.pay-receipt-head { display: flex; justify-content: space-between; align-items: center; gap: var(--space-2); }
+.pay-receipt-title { font-weight: 700; }
+.pay-receipt-status { color: var(--success); font-weight: 700; font-size: var(--text-sm); }
+.pay-receipt-amount { margin: var(--space-2) 0; font-size: 1.5rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+.pay-receipt-list { display: grid; grid-template-columns: auto 1fr; gap: 6px var(--space-3); margin: 0; }
+.pay-receipt-list dt { color: var(--text-muted); }
+.pay-receipt-list dd { margin: 0; text-align: right; overflow-wrap: anywhere; }
+.pay-receipt-key { font-weight: 700; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+/* The Owner's payment link sheet. */
+.pl-link { display: flex; gap: var(--space-2); align-items: center; }
+.pl-link .input { flex: 1 1 auto; min-width: 0; font-size: var(--text-sm); }
+.pl-instructions { white-space: pre-line; overflow-wrap: anywhere; margin: 0; }
+/* Print receipt: only the receipt being printed (body.is-printing-receipt). */
+@media print {
+  body.is-printing-receipt * { visibility: hidden; }
+  body.is-printing-receipt .is-print-target, body.is-printing-receipt .is-print-target * { visibility: visible; }
+  body.is-printing-receipt .is-print-target { position: absolute; left: 0; top: 0; width: 100%; border: 0; }
+}
+.pay-label { display: block; font-weight: 600; font-size: var(--text-sm); margin-bottom: 4px; }
+.pay-file-row { display: flex; align-items: center; gap: var(--space-3); }
+.pay-file { position: relative; min-height: 44px; display: inline-flex; align-items: center; cursor: pointer; }
+.pay-file-input { position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; }
+.pay-thumb { width: 56px; height: 56px; object-fit: cover; border-radius: var(--radius-sm, 6px); border: 1px solid var(--border); }
+.pl-link { margin-bottom: var(--space-3); }
+/* Customer profile: one compact row per order (2026-10-22). */
+.cp-orders { list-style: none; margin: 0 0 var(--space-3); padding: 0; }
+.cp-order { display: grid; grid-template-columns: 1fr auto; column-gap: var(--space-3); padding: var(--space-2) 0; border-top: 1px solid var(--border); }
+.cp-order:first-child { border-top: 0; }
+.cp-num { font-weight: 600; overflow-wrap: anywhere; }
+.cp-total { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.cp-sub { color: var(--text-muted); font-size: var(--text-sm); }
+.cp-due { text-align: right; color: var(--danger); font-size: var(--text-sm); font-weight: 600; white-space: nowrap; }

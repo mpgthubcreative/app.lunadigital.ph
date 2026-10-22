@@ -47,6 +47,7 @@ const PAYMENT_COLUMNS = [
   { header: "Amount", format: "money", width: 14, total: true, value: (p) => p.amount },
   { header: "Method", format: "text", width: 14, value: (p) => label(PAYMENT_METHODS, p.method) },
   { header: "Reference", format: "text", width: 18, value: (p) => p.reference },
+  { header: "Sent by", format: "text", width: 22, value: (p) => (p.via === "payment_link" ? "Customer (payment link)" : p.createdBy?.name) },
 ];
 const memberStatus = (m) => (m.status !== "active" ? "Disabled" : m.activation?.status === "pending" ? "Invited" : "Active");
 const USER_COLUMNS = [

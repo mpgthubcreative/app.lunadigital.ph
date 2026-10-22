@@ -149,10 +149,15 @@ const historyAt = () => new Date();
 
 // ---------- Record ----------
 
-export async function recordPayment({ db, bucket, tenant, FieldValue, business, orderId, input, proof = null, actor, canVerify, now = new Date() }) {
+// paymentId (optional): a payment id fixed by the caller (an order payment
+// link's submit key), so a retry finds the same payment instead of adding a
+// second one (-> { alreadyRecorded: true }). extra: fields stored on the
+// payment as they are (e.g. via: "payment_link", customerId).
+export async function recordPayment({ db, bucket, tenant, FieldValue, business, orderId, input, proof = null, actor, canVerify, now = new Date(), paymentId = null, extra = null }) {
   const data = validatePaymentInput(input, { hasProof: Boolean(proof) });
   const r = refs(tenant, { orderId });
-  const paymentRef = tenant.collection("payments").doc();
+  if (paymentId !== null && !isValidPaymentId(paymentId)) throw new PaymentError("invalid-payment", "Invalid payment");
+  const paymentRef = paymentId ? tenant.doc("payments", paymentId) : tenant.collection("payments").doc();
   const decoded = proof ? decodeProof(proof) : null;
   const day = businessDate(business.timezone, now);
   const key = referenceKey(data.method, data.reference);
@@ -160,6 +165,13 @@ export async function recordPayment({ db, bucket, tenant, FieldValue, business, 
 
   try {
     return await db.runTransaction(async (tx) => {
+      if (paymentId) {
+        const existing = await tx.get(paymentRef);
+        if (existing.exists) {
+          if (existing.data().orderId !== orderId) throw new PaymentError("invalid-payment", "Invalid payment");
+          return { paymentId, orderId, state: existing.data().state, alreadyRecorded: true };
+        }
+      }
       const orderSnap = await tx.get(r.order);
       if (!orderSnap.exists) throw new PaymentError("not-found", "Order not found");
       const order = orderSnap.data();
@@ -204,6 +216,7 @@ export async function recordPayment({ db, bucket, tenant, FieldValue, business, 
         createdAt: stamp,
         updatedBy: actor,
         updatedAt: stamp,
+        ...(extra || {}),
       };
       tx.create(paymentRef, payment);
       if (key) tx.create(tenant.doc("paymentRefs", key), { paymentId: paymentRef.id, orderId, createdAt: stamp });
@@ -227,7 +240,11 @@ export async function recordPayment({ db, bucket, tenant, FieldValue, business, 
     }, TX_OPTIONS);
   } catch (err) {
     if (stored) await undoProof({ db, bucket, tenant, FieldValue, stored });
-    if (err && err.code === 6) throw new PaymentError("duplicate-reference", "This payment reference has already been used.");
+    if (err && err.code === 6) {
+      // A fixed payment id that appeared meanwhile: the same submit, retried.
+      if (paymentId && (await paymentRef.get()).exists) return { paymentId, orderId, alreadyRecorded: true };
+      throw new PaymentError("duplicate-reference", "This payment reference has already been used.");
+    }
     throw err;
   }
 }

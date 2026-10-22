@@ -8,6 +8,7 @@ import { formatCentavos } from "../../lib/format.js";
 import { PAYMENT_METHODS, PAYMENT_METHOD_IDS, parseCentavos, normalizeReference } from "@shared/index.js";
 import { prepareProof as defaultPrepareProof, PHOTO_ACCEPT } from "../../lib/image.js";
 import { bindReferenceDetection, detectReference } from "../../lib/payment-reference.js";
+import { receiptHtml } from "../../components/payment-receipt.js";
 
 const METHOD_OPTIONS = PAYMENT_METHOD_IDS.map((id) => ({ value: id, label: PAYMENT_METHODS[id].label }));
 const pesos = (c) => (c / 100).toFixed(2);
@@ -86,6 +87,50 @@ export function removePaymentDialog({ payment, api, currency = "PHP" }) {
     fields: [{ name: "reason", label: "Reason", type: "textarea", required: true }],
     submitLabel: "Remove payment",
     onSubmit: (v) => api("payments", { method: "POST", body: { action: "void", paymentId: payment.id, reason: v.reason } }),
+  });
+}
+
+// Reject / Needs correction (2026-10-22): a payment the customer sent from
+// the order's payment link that doesn't check out. It stops counting (like
+// Remove); the customer sees "Not accepted" and this reason on their link,
+// so they can send it again correctly.
+export function rejectPaymentDialog({ payment, api, currency = "PHP" }) {
+  return formDialog({
+    title: `Not accepted: ${formatCentavos(payment.amount, currency)}?`,
+    intro: "The customer sees this on their payment link and can send the payment again. It no longer counts toward the order.",
+    fields: [{ name: "reason", label: "What needs correcting", type: "textarea", required: true, placeholder: "e.g. The screenshot shows ₱900, not ₱1,000" }],
+    submitLabel: "Not accepted",
+    onSubmit: (v) => api("payments", { method: "POST", body: { action: "void", paymentId: payment.id, reason: v.reason } }),
+  });
+}
+
+// A verified payment's receipt (the same as the customer's), with Print.
+export const receiptOf = (payment, businessName) => ({ business: businessName, orderNumber: payment.orderNumber, customer: payment.customerName || "", amount: payment.amount, method: methodLabel(payment.method), reference: payment.reference || null, date: payment.receivedDay || null, status: "Verified" });
+export function showReceipt({ payment, businessName, currency = "PHP" }) {
+  const backdrop = document.createElement("div");
+  backdrop.className = "modal-backdrop";
+  document.body.appendChild(backdrop);
+  render(
+    backdrop,
+    html`<div class="modal" role="dialog" aria-modal="true" aria-label="Payment receipt" data-role="receipt-viewer">
+      <div class="modal-body">${receiptHtml(receiptOf(payment, businessName), { currency })}</div>
+      <div class="modal-footer"><button type="button" class="btn" data-act="print">Print</button><button type="button" class="btn btn-primary" data-act="close">Close</button></div>
+    </div>`
+  );
+  backdrop.addEventListener("click", (e) => {
+    const act = e.target.closest("[data-act]")?.dataset.act;
+    if (e.target === backdrop || act === "close") backdrop.remove();
+    if (act === "print") {
+      const target = backdrop.querySelector('[data-role="receipt"]');
+      target.classList.add("is-print-target");
+      document.body.classList.add("is-printing-receipt");
+      try {
+        window.print();
+      } finally {
+        document.body.classList.remove("is-printing-receipt");
+        target.classList.remove("is-print-target");
+      }
+    }
   });
 }
 

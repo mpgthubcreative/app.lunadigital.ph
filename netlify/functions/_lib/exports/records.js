@@ -82,6 +82,8 @@ const PAYMENT_COLUMNS = [
   // Never the storage path or a URL: only whether a screenshot exists.
   { header: "Proof attached", format: "bool", width: 10, value: (p) => Boolean(p.proof) },
   { header: "Verified by", format: "text", width: 18, value: (p) => p.verifiedBy?.name },
+  // 2026-10-22: who sent it (a customer's own payment link, or the staff member).
+  { header: "Sent by", format: "text", width: 22, value: (p) => (p.via === "payment_link" ? "Customer (payment link)" : p.createdBy?.name) },
   { header: "Note", format: "text", width: 30, value: (p) => p.note },
 ];
 

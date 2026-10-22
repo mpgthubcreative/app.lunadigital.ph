@@ -34,6 +34,7 @@ export * from "./grocery.js";
 export * from "./wedding.js";
 export * from "./wedding-seating.js";
 export * from "./storefront.js";
+export * from "./pay-links.js";
 export * from "./operators.js";
 export * from "./tenant-config.js";
 export * from "./metering.js";

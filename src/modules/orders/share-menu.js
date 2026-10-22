@@ -25,6 +25,7 @@ export function openShareMenu({ session, api, toast, listActiveProducts, origin 
           <div class="field"><label for="sm-note">Note to customers <span class="co-optional">optional</span></label><input class="input" id="sm-note" name="note" maxlength="200" value="${s.note}" placeholder="e.g. Orders before 3pm are delivered today" /></div>
           <div class="field"><label for="sm-slug">Link name</label><input class="input" id="sm-slug" name="slug" maxlength="50" value="${s.slug}" autocomplete="off" /><div class="stat-hint">${origin}/store/<b>${s.slug}</b> · changing it stops the old link.</div></div>
           <fieldset class="field"><legend>How customers get their order</legend>${Object.keys(STORE_FULFILLMENT).map((k) => html`<label class="sm-check"><input type="checkbox" name="${k}" ${s[k] ? "checked" : ""} /> ${STORE_FULFILLMENT[k].label}</label>`)}</fieldset>
+          <div class="field"><label for="sm-pay">Payment instructions <span class="co-optional">shown on order payment links</span></label><textarea class="input" id="sm-pay" name="paymentInstructions" rows="3" maxlength="500" placeholder="e.g. GCash 0917 123 4567 (Ana R.)">${s.paymentInstructions || ""}</textarea></div>
           <fieldset class="field"><legend>Payment choices shown</legend>${STORE_PAYMENT_METHOD_IDS.map((m) => html`<label class="sm-check"><input type="checkbox" name="pm" value="${m}" ${s.paymentMethods.includes(m) ? "checked" : ""} /> ${PAYMENT_METHODS[m].label}</label>`)}</fieldset>
           <details class="sm-products" data-role="products-fold">
             <summary>Products shown <span class="co-optional">${hidden.size ? `${hidden.size} hidden` : "all active products with a price"}</span></summary>
@@ -139,6 +140,7 @@ export function openShareMenu({ session, api, toast, listActiveProducts, origin 
       const changes = {
         displayName: String(fd.get("displayName") || ""),
         note: String(fd.get("note") || ""),
+        paymentInstructions: String(fd.get("paymentInstructions") || ""),
         slug: String(fd.get("slug") || "").trim().toLowerCase(),
         pickup: fd.has("pickup"),
         delivery: fd.has("delivery"),

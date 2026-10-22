@@ -285,6 +285,12 @@ function boot() {
     import("./store.js").then((m) => m.renderStorePage(root));
     return;
   }
+  // 2026-10-22: an order's payment link needs no login either (the token
+  // is the only credential; /api/pay checks it and shows only that order).
+  if (window.location.pathname.startsWith("/pay/")) {
+    import("./pay.js").then((m) => m.renderPayPage(root));
+    return;
+  }
   // Phase 18.6: the account activation page needs no login either.
   if (window.location.pathname === "/activate") {
     import("./activate.js").then((m) => m.renderActivatePage(root));

@@ -174,7 +174,7 @@ describe("Orders → Share menu", () => {
     form.querySelector('input[name="delivery"]').checked = true;
     form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
     await until(() => api.mock.calls.length === 3);
-    expect(api.mock.calls[2][1].body.settings).toEqual({ displayName: "Biz A", note: "", slug: "biz-a-coffee", pickup: true, delivery: true, paymentMethods: ["cash", "gcash"] });
+    expect(api.mock.calls[2][1].body.settings).toEqual({ displayName: "Biz A", note: "", paymentInstructions: "", slug: "biz-a-coffee", pickup: true, delivery: true, paymentMethods: ["cash", "gcash"] });
 
     const fold = document.querySelector('[data-role="products-fold"]');
     fold.open = true;

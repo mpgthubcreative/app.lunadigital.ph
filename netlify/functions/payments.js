@@ -4,6 +4,7 @@
 //   { action: "verify", paymentId }                                                                                    payments.verify
 //   { action: "void", paymentId, reason }                                                                              payments.verify
 //   { action: "proof", paymentId }  -> { contentType, dataBase64 }   (read only)                                       payments.view
+//   { action: "payLink", orderId, rotate? }  -> { token, path }  the order's payment link       payments.record (rotate: payments.verify)
 // amount is integer centavos. A payment recorded by someone with
 // payments.verify is verified at once; otherwise it's "for verification".
 // amountPaid / balance / status are always derived on the server.
@@ -12,6 +13,7 @@ import { respond, withErrorHandling, requireMethod, parseJsonBody, RequestError 
 import { getAdmin } from "./_lib/firebase-admin.js";
 import { requireTenant } from "./_lib/tenant.js";
 import { recordPayment, updatePayment, verifyPayment, voidPayment, readProof } from "./_lib/payments.js";
+import { payLinkFor } from "./_lib/pay-links.js";
 import { actorOf, only } from "./_lib/inventory-http.js";
 import { PaymentError } from "../../shared/payments.js";
 import { MeteringError } from "../../shared/metering.js";
@@ -22,6 +24,7 @@ const ACTIONS = {
   verify: { permission: "payments.verify", write: true, fields: ["action", "paymentId"] },
   void: { permission: "payments.verify", write: true, fields: ["action", "paymentId", "reason"] },
   proof: { permission: "payments.view", write: false, fields: ["action", "paymentId"] },
+  payLink: { permission: "payments.record", write: true, fields: ["action", "orderId", "rotate"] },
 };
 
 const STATUS = {
@@ -40,6 +43,7 @@ const STATUS = {
   "storage-reservation-lost": 409,
   "storage-conflict": 409,
   "business-misconfigured": 409,
+  "invalid-order": 400,
 };
 
 // Base64 screenshots (<= 2.5 MB decoded) fit well inside this.
@@ -74,6 +78,11 @@ export function createPaymentsHandler({ getAdmin: loadAdmin, now = () => new Dat
           return respond(200, { success: true, ...(await verifyPayment({ ...common, paymentId: body.paymentId })) });
         case "void":
           return respond(200, { success: true, ...(await voidPayment({ ...common, paymentId: body.paymentId, reason: body.reason })) });
+        case "payLink": {
+          const rotate = body.rotate === true;
+          if (rotate && ctx.permissions["payments.verify"] !== true) throw new RequestError("forbidden", "You don't have permission to replace payment links.", 403);
+          return respond(200, { success: true, ...(await payLinkFor({ db, tenant: ctx.tenant, orderId: body.orderId, actor: actorOf(ctx), rotate, now: now() })) });
+        }
         default:
           return respond(200, { success: true, ...(await readProof({ tenant: ctx.tenant, bucket, businessId: ctx.business.id, paymentId: body.paymentId })) });
       }

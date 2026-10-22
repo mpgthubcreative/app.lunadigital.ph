@@ -78,7 +78,7 @@ describe("Edit -> Save on a fulfilled order", () => {
     const { d, detail } = await openDetail(session("owner"), fulfilledOrder.id);
     // Owner pilot: Edit and Close; Record payment (a balance remains) sits under ⋯ More.
     expect(footer(detail)).toEqual(["⋯ More", "Edit", "Close"]);
-    expect([...detail.querySelectorAll('[data-role="more-menu"] button')].map((b) => b.textContent.trim())).toEqual(["Record payment"]);
+    expect([...detail.querySelectorAll('[data-role="more-menu"] button')].map((b) => b.textContent.trim())).toEqual(["Payment link", "Record payment"]);
     detail.querySelector('[data-act="edit"]').click();
     await flush();
     const form = document.querySelector(".modal-backdrop form");
@@ -100,7 +100,7 @@ describe("Edit -> Save on a fulfilled order", () => {
   it("no correction / reversal / COGS buttons exist anywhere", async () => {
     const { detail } = await openDetail(session("owner"), fulfilledOrder.id);
     expect(document.body.textContent).not.toMatch(/Fix Mistake|Reverse|Financial Correction|COGS Adjustment/i);
-    expect(detail.querySelectorAll(".modal-footer button").length).toBeLessThanOrEqual(4);
+    expect(detail.querySelectorAll(".modal-footer button").length).toBeLessThanOrEqual(5); // ⋯ More (Payment link, Record payment), Edit, Close
   });
 });
 
@@ -132,7 +132,7 @@ describe("⋯ More holds cancel and delete for open orders", () => {
     expect(menu.hidden).toBe(true);
     detail.querySelector('[data-act="more"]').click();
     expect(menu.hidden).toBe(false);
-    expect([...menu.querySelectorAll("button")].map((b) => b.textContent.trim())).toEqual(["Record payment", "Mark fulfilled", "Cancel order", "Delete order"]);
+    expect([...menu.querySelectorAll("button")].map((b) => b.textContent.trim())).toEqual(["Payment link", "Record payment", "Mark fulfilled", "Cancel order", "Delete order"]);
     menu.querySelector('[data-act="delete"]').click();
     await flush();
     const form = [...document.querySelectorAll(".modal-backdrop form")].at(-1);

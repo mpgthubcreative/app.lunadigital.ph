@@ -13,7 +13,7 @@ import { formatCentavos } from "../../lib/format.js";
 import { PAYMENT_STATES, PAYMENT_METHODS, PAYMENT_METHOD_IDS, isDayId } from "@shared/index.js";
 import { exportButton, bindExport, mayExport, exportHint } from "../../lib/export.js";
 import * as defaultData from "./data.js";
-import { editPaymentDialog, removePaymentDialog, showProof, methodLabel } from "./actions.js";
+import { editPaymentDialog, removePaymentDialog, rejectPaymentDialog, showReceipt, showProof, methodLabel } from "./actions.js";
 import { when } from "../orders/view.js";
 
 export const STATE_TONE = { for_verification: "warning", verified: "success", voided: "neutral" };
@@ -139,6 +139,8 @@ export function mount(container, session, { data = defaultData, api = defaultApi
           <dl class="dl dl-compact">
             <dt>Customer</dt><dd>${p.customerName}</dd><dt>Method</dt><dd>${methodLabel(p.method)}</dd>
             <dt>Reference</dt><dd>${p.reference || "—"}</dd><dt>Status</dt><dd>${PAYMENT_STATES[p.state]?.label ?? p.state}</dd>
+            <dt>Proof</dt><dd>${p.proof ? html`<button type="button" class="btn-linklike" data-act="proof">View screenshot</button>` : "—"}</dd>
+            ${p.via === "payment_link" ? html`<dt>Sent by</dt><dd data-role="via">The customer, from the payment link</dd>` : ""}
             ${p.note ? html`<dt>Note</dt><dd>${p.note}</dd>` : ""}
           </dl>
           <h3 class="section-title">Activity</h3>
@@ -147,6 +149,8 @@ export function mount(container, session, { data = defaultData, api = defaultApi
         <div class="modal-footer">
           ${canVerify && live ? html`<div class="menu-wrap"><button type="button" class="btn" data-act="more">⋯ More</button><div class="menu" data-role="more-menu" hidden><button type="button" class="menu-item menu-danger" data-act="remove">Remove payment</button></div></div>` : ""}
           ${canVerify && live ? html`<button type="button" class="btn" data-act="edit">Edit</button>` : ""}
+          ${canVerify && p.state === "for_verification" && p.via === "payment_link" ? html`<button type="button" class="btn" data-act="reject">Not accepted</button>` : ""}
+          ${p.state === "verified" ? html`<button type="button" class="btn" data-act="receipt">Receipt</button>` : ""}
           ${canVerify && p.state === "for_verification" ? html`<button type="button" class="btn btn-primary" data-act="verify">Mark verified</button>` : ""}
           <button type="button" class="btn" data-act="close">Close</button>
         </div>
@@ -170,6 +174,9 @@ export function mount(container, session, { data = defaultData, api = defaultApi
       };
       if (act === "edit") return run(() => editPaymentDialog({ payment: p, api, currency }), "Payment updated");
       if (act === "remove") return run(() => removePaymentDialog({ payment: p, api, currency }), "Payment removed");
+      if (act === "reject") return run(() => rejectPaymentDialog({ payment: p, api, currency }), "Marked not accepted. The customer sees why on their link.");
+      if (act === "receipt") return showReceipt({ payment: p, businessName: session.business.name, currency });
+      if (act === "proof") return showProof({ api, paymentId: p.id, title: `Screenshot · ${p.orderNumber}` });
       if (act === "verify") {
         return run(() => verify(p), "Payment verified");
       }

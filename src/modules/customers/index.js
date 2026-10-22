@@ -3,8 +3,9 @@
 // Not a CRM.
 //   Row      Customer | Contact | Delivery address | Orders | [Add order] ⋯
 //            (⋯ = View, Edit)
-//   Details  Contact, Delivery address, [Add order]; then total orders, last
-//            order and the order history.
+//   Details  Contact, Delivery address, [Add order] [View orders]; then
+//            total orders, total purchased, outstanding balance, last order
+//            and the 5 most recent orders (View orders shows them all).
 //   Form     Name * , Contact, Delivery address (nothing else asked; older
 //            records keep any company / email / notes they had).
 // Add order opens the order form with the customer linked and their name,
@@ -185,7 +186,7 @@ export function mount(container, session, { data = defaultData, api = defaultApi
     backdrop.className = "modal-backdrop is-panel";
     document.body.appendChild(backdrop);
     const close = () => backdrop.remove();
-    const view = { orders: null, ordersError: false };
+    const view = { orders: null, ordersError: false, all: false };
     const s = c.stats || {};
     const paint = () =>
       render(
@@ -197,26 +198,28 @@ export function mount(container, session, { data = defaultData, api = defaultApi
               <dt>Contact</dt><dd>${c.phone || "—"}</dd>
               <dt>Delivery address</dt><dd>${c.address || "—"}</dd>
             </dl>
-            ${canOrder && c.status === "active" ? html`<div class="page-actions"><button type="button" class="btn btn-primary" data-act="add-order">Add order</button></div>` : ""}
+            ${(canOrder && c.status === "active") || canSeeOrders ? html`<div class="page-actions">${canOrder && c.status === "active" ? html`<button type="button" class="btn btn-primary" data-act="add-order">Add order</button>` : ""}${canSeeOrders && (s.orderCount ?? 0) > 5 && !view.all ? html`<button type="button" class="btn" data-act="all-orders">View orders</button>` : ""}</div>` : ""}
             <dl class="dl dl-compact" data-role="customer-stats">
-              <dt>Total orders</dt><dd>${s.orderCount ?? 0}</dd>
+              <dt>Total orders</dt><dd data-role="order-count">${s.orderCount ?? 0}</dd>
+              <dt>Total purchased</dt><dd data-role="total-purchased">${formatCentavos(s.totalOrdered ?? 0, currency)}</dd>
+              <dt>Outstanding balance</dt><dd data-role="outstanding">${formatCentavos(Math.max(0, s.outstandingBalance ?? 0), currency)}</dd>
               <dt>Last order</dt><dd>${s.lastOrderAt ? `${s.lastOrderNumber ?? ""} · ${when(s.lastOrderAt, timezone)}` : "—"}</dd>
             </dl>
             ${canSeeOrders
-              ? html`<h3 class="section-title">Order history</h3>
+              ? html`<h3 class="section-title">${view.all ? "Orders" : "Recent orders"}</h3>
                   <div data-role="customer-orders">${view.ordersError
                     ? html`<p class="form-error">Couldn't load orders.</p>`
                     : view.orders === null
                       ? html`<p class="stat-hint">Loading…</p>`
                       : !view.orders.length
                         ? html`<p class="stat-hint">No orders for this customer yet.</p>`
-                        : html`<div class="table-wrap"><table class="table table-compact">
-                            <thead><tr><th>Order #</th><th>Date</th><th class="num">Total</th><th>Payment</th><th>Fulfillment</th></tr></thead>
-                            <tbody>${view.orders.map(
-                              (o) => html`<tr data-order="${o.id}"><td>${o.orderNumber}</td><td>${when(o.createdAt, timezone)}</td>
-                                <td class="num">${formatCentavos(o.total, currency)}</td>
-                                <td>${PAYMENT_STATUSES[o.paymentStatus]?.label ?? o.paymentStatus}</td><td>${FULFILLMENT_STATUSES[o.fulfillmentStatus]?.label ?? o.fulfillmentStatus}</td></tr>`
-                            )}</tbody></table></div>`}</div>`
+                        : html`<ul class="cp-orders">${view.orders.slice(0, view.all ? view.orders.length : 5).map((o) => {
+                            // One compact row: number · total, then date · payment · fulfilment · what's still due.
+                            const due = o.fulfillmentStatus === "cancelled" ? 0 : Math.max(0, o.balance ?? o.total - (o.amountPaid || 0));
+                            return html`<li class="cp-order" data-order="${o.id}"><span class="cp-num">${o.orderNumber}</span><b class="cp-total">${formatCentavos(o.total, currency)}</b>
+                              <span class="cp-sub">${[(when(o.createdAt, timezone) || "").replace(/,? \d{1,2}:\d{2}.*$/, ""), PAYMENT_STATUSES[o.paymentStatus]?.label ?? o.paymentStatus, FULFILLMENT_STATUSES[o.fulfillmentStatus]?.label ?? o.fulfillmentStatus].filter(Boolean).join(" · ")}</span>
+                              <span class="cp-due" data-role="balance">${due ? `${formatCentavos(due, currency)} due` : ""}</span></li>`;
+                          })}</ul>`}</div>`
               : ""}
             <details class="help-details"><summary>Activity</summary><ul class="list activity" data-role="customer-activity">${customerActivity(c, { timezone }).map((line) => html`<li>${line}</li>`)}</ul></details>
           </div>
@@ -249,6 +252,12 @@ export function mount(container, session, { data = defaultData, api = defaultApi
       if (act === "more") {
         const menu = backdrop.querySelector('[data-role="more-menu"]');
         menu.hidden = !menu.hidden;
+        return undefined;
+      }
+      if (act === "all-orders") {
+        view.all = true;
+        paint();
+        backdrop.querySelector('[data-role="customer-orders"]')?.scrollIntoView?.({ block: "start" });
         return undefined;
       }
       try {

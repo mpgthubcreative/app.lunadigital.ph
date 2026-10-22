@@ -29,7 +29,8 @@ import { listProducts } from "../inventory/data.js";
 import { orderRow, historyRows, costCorrectionRows, qtyText, sourceLabel, fulfillmentLabel, paymentLabel, FULFILLMENT_TONE, PAYMENT_TONE, when } from "./view.js";
 import { openOrderEditor } from "./editor.js";
 import { openShareMenu } from "./share-menu.js";
-import { recordPaymentDialog, editPaymentDialog, removePaymentDialog, showProof, methodLabel } from "../payments/actions.js";
+import { recordPaymentDialog, editPaymentDialog, removePaymentDialog, rejectPaymentDialog, showReceipt, showProof, methodLabel } from "../payments/actions.js";
+import { openPayLinkSheet } from "../payments/link-sheet.js";
 import { STATE_TONE } from "../payments/index.js";
 import { searchCustomers as defaultSearchCustomers } from "../customers/data.js";
 import { exportButton, bindExport, mayExport, exportHint } from "../../lib/export.js";
@@ -163,6 +164,7 @@ export function mount(container, session, { data = defaultDeps.data, payments = 
     // Owner pilot: Edit and Close are the two buttons; everything else an
     // order can do (payment, fulfil, cancel, delete) sits under ⋯ More.
     const more = [
+      ...(canRecord ? [html`<button type="button" class="menu-item" data-act="pay-link">Payment link</button>`] : []),
       ...(canRecord ? [html`<button type="button" class="menu-item" data-act="record">Record payment</button>`] : []),
       ...(open && can.fulfill ? [html`<button type="button" class="menu-item" data-act="fulfill">Mark fulfilled</button>`] : []),
       ...(open && can.cancel ? [html`<button type="button" class="menu-item" data-act="cancel">Cancel order</button>`] : []),
@@ -179,7 +181,9 @@ export function mount(container, session, { data = defaultDeps.data, payments = 
     const history = historyRows(order, { currency, timezone });
     const payActions = (p) => [
       ...(p.proof ? [html`<button type="button" class="menu-item" role="menuitem" data-act="p-proof" data-payment="${p.id}">View screenshot</button>`] : []),
+      ...(p.state === "verified" ? [html`<button type="button" class="menu-item" role="menuitem" data-act="p-receipt" data-payment="${p.id}">Receipt</button>`] : []),
       ...(can.verifyPayment && p.state === "for_verification" ? [html`<button type="button" class="menu-item" role="menuitem" data-act="p-verify" data-payment="${p.id}">Verify</button>`] : []),
+      ...(can.verifyPayment && p.state === "for_verification" && p.via === "payment_link" ? [html`<button type="button" class="menu-item" role="menuitem" data-act="p-reject" data-payment="${p.id}">Not accepted / needs correction</button>`] : []),
       ...(can.verifyPayment && p.state !== "voided" ? [html`<button type="button" class="menu-item" role="menuitem" data-act="p-edit" data-payment="${p.id}">Edit</button>`, html`<div class="menu-sep" role="separator"></div><button type="button" class="menu-item menu-danger" role="menuitem" data-act="p-remove" data-payment="${p.id}">Remove</button>`] : []),
     ];
     render(
@@ -212,7 +216,7 @@ export function mount(container, session, { data = defaultDeps.data, payments = 
                 return html`<li class="od-pay" data-payment="${p.id}">
                   <span class="od-pay-main"><span class="od-pay-date">${day(p.receivedAt || p.createdAt)}${flag ? html` ${badge(flag, STATE_TONE[p.state] || "neutral")}` : ""}</span>
                     <span class="od-pay-amt"><b>${money(p.amount)}</b> · ${methodLabel(p.method)}</span>
-                    ${p.reference || p.proof ? html`<span class="od-sub">${[p.reference ? `Ref ${p.reference}` : "", p.proof ? "Screenshot attached" : ""].filter(Boolean).join(" · ")}</span>` : ""}</span>
+                    ${p.reference || p.proof || p.via ? html`<span class="od-sub">${[p.reference ? `Ref ${p.reference}` : "", p.proof ? "Screenshot attached" : "", p.via === "payment_link" ? "Sent by the customer (payment link)" : ""].filter(Boolean).join(" · ")}</span>` : ""}</span>
                   ${acts.length ? html`<details class="line-menu"><summary class="btn btn-compact btn-ghost" aria-label="More for this payment">⋯</summary><div class="line-menu-list" role="menu">${acts}</div></details>` : ""}
                 </li>`;
               })}</ul>`
@@ -253,6 +257,9 @@ export function mount(container, session, { data = defaultDeps.data, payments = 
       if (act === "p-proof") return showProof({ api, paymentId: payment.id, title: `Screenshot · ${order.orderNumber}` });
       if (act === "p-edit") return after(editPaymentDialog({ payment, api, currency }), "Payment updated");
       if (act === "p-remove") return after(removePaymentDialog({ payment, api, currency }), "Payment removed");
+      if (act === "p-reject") return after(rejectPaymentDialog({ payment, api, currency }), "Marked not accepted. The customer sees why on their link.");
+      if (act === "p-receipt") return showReceipt({ payment, businessName: session.business.name, currency });
+      if (act === "pay-link") return openPayLinkSheet({ order, api, toast, session });
       if (act === "p-verify") {
         try {
           return await after(api("payments", { method: "POST", body: { action: "verify", paymentId: payment.id } }), "Payment verified");

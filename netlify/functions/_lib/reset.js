@@ -60,6 +60,8 @@ export async function resetWorkspaceData({ db, admin, bucket, businessId, actor,
 
   const counts = {};
   for (const name of plan.removes) {
+    // Order payment links: the public pointer (top level) goes first.
+    if (name === "orderPayLinks") for (const d of (await tenant.collection(name).get()).docs) if (d.data().hash) await db.collection("orderPayLinks").doc(d.data().hash).delete();
     const n = await deleteCollection(db, tenant.collection(name), RESET_NESTED[name] || []);
     if (n) counts[name] = n;
   }

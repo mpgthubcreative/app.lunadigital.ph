@@ -14,6 +14,7 @@ import { respond, withErrorHandling, requireMethod, parseJsonBody, RequestError 
 import { getAdmin } from "./_lib/firebase-admin.js";
 import { requireTenant } from "./_lib/tenant.js";
 import { createOrder, updateOrder, fulfillOrder, cancelOrder, deleteOrder, setFulfillmentStage } from "./_lib/orders.js";
+import { dropPayLink } from "./_lib/pay-links.js";
 import { actorOf, only } from "./_lib/inventory-http.js";
 import { OrderError } from "../../shared/orders.js";
 import { CustomerError } from "../../shared/customers.js";
@@ -97,8 +98,12 @@ export function createOrdersHandler({ getAdmin: loadAdmin, now = () => new Date(
           return updateOrder({ ...common, business: ctx.business, orderId: body.orderId, input: body.order, expectedRevision: body.expectedRevision ?? null, canDiscount, canLinkCustomers, canCorrect: ctx.permissions["orders.correct"] === true, reason: body.reason ?? null });
         case "stage":
           return setFulfillmentStage({ ...common, orderId: body.orderId, stage: body.stage });
-        case "delete":
-          return deleteOrder({ ...common, orderId: body.orderId, reason: body.reason ?? null });
+        case "delete": {
+          const r = await deleteOrder({ ...common, orderId: body.orderId, reason: body.reason ?? null });
+          // Its payment link (if any) goes too.
+          await dropPayLink({ db, tenant: ctx.tenant, orderId: body.orderId }).catch((err) => console.error("orders: dropping a payment link failed:", err?.message));
+          return r;
+        }
         case "fulfill":
           return fulfillOrder({ ...common, business: ctx.business, orderId: body.orderId, now: now() });
         default:

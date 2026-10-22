@@ -16,6 +16,10 @@ const newKey = () => (globalThis.crypto && crypto.randomUUID ? crypto.randomUUID
 // Customer: a saved customer (linked by id; the server copies its name and
 // phone) or a walk-in name typed here. An already-linked order keeps its
 // link unless the user unlinks it.
+// 2026-10-22: three ways, all kept: a saved customer (Find saved customer →
+// Use; Unlink keeps the customer record), a new customer typed here (Save to
+// Customers makes the record and links this order to it, never merging with
+// a look-alike), or Walk-in / No saved customer.
 // prefill (a NEW order from Customers → Add order): { customerId, customer:
 // { name, phone }, deliveryAddress } so the saved details aren't retyped.
 // The order keeps its own copy: editing the customer later never changes it.
@@ -27,10 +31,14 @@ export function openOrderEditor({ session, deps, order = null, prefill = null })
   // Editing a fulfilled order is a correction: same screen, plus a reason.
   const correcting = order?.fulfillmentStatus === "fulfilled";
   const canLink = canUseModule({ entitlements: session.entitlements, permissions: perms }, "customers") && typeof deps.searchCustomers === "function";
+  // Save to Customers: new orders, for whoever may add customers.
+  const canSave = canLink && !order && perms["customers.manage"] === true && typeof deps.api === "function";
   const state = {
     customer: { name: (order ?? prefill)?.customer?.name ?? "", phone: (order ?? prefill)?.customer?.phone ?? "", notes: order?.customer?.notes ?? "" },
     customerId: (order ?? prefill)?.customerId ?? null,
     customerMatches: [],
+    saveCustomer: false,
+    created: null, // { key, customerId }: a customer this form already saved (a retry reuses it)
     // A source dropdown; the "where" note is asked only for Other. A note on
     // an older order (from the earlier free-text box) is kept as it was.
     source: order?.source ?? "",
@@ -154,7 +162,8 @@ export function openOrderEditor({ session, deps, order = null, prefill = null })
       if (!canLink) return render(linkEl, html``);
       render(
         linkEl,
-        html`<p class="oe-linked"><button type="button" class="btn-linklike" data-act="find-customer">Find saved customer</button> <span class="stat-hint">or type a walk-in name</span></p>
+        html`<p class="oe-linked"><button type="button" class="btn-linklike" data-act="find-customer">Find saved customer</button> · <button type="button" class="btn-linklike" data-act="walk-in">Walk-in / No saved customer</button></p>
+          ${canSave ? html`<label class="check oe-save" data-role="save-customer"><input type="checkbox" name="saveCustomer" ${state.saveCustomer ? "checked" : ""} /> <span>Save to Customers <span class="stat-hint">(for their next orders)</span></span></label>` : ""}
           ${state.customerMatches.length
             ? html`<ul class="list" data-role="customer-matches">${state.customerMatches.map(
                 (c) => html`<li><button type="button" class="btn btn-compact" data-act="use-customer" data-id="${c.id}">Use</button> ${c.name}${c.company ? ` · ${c.company}` : ""}${c.phone ? ` · ${c.phone}` : ""}</li>`
@@ -247,6 +256,7 @@ export function openOrderEditor({ session, deps, order = null, prefill = null })
     });
     form.addEventListener("change", (e) => {
       const t = e.target;
+      if (t.name === "saveCustomer") state.saveCustomer = t.checked;
       if (t.name === "source") {
         state.source = t.value;
         otherEl.hidden = state.source !== "other";
@@ -290,6 +300,19 @@ export function openOrderEditor({ session, deps, order = null, prefill = null })
         paintLink();
         form.elements.name.focus();
       }
+      if (act === "walk-in") {
+        state.customer.name = "Walk-in";
+        state.customer.phone = "";
+        state.saveCustomer = false;
+        form.elements.name.value = "Walk-in";
+        form.elements.phone.value = "";
+        if (!state.source) {
+          state.source = "walk_in";
+          form.elements.source.value = "walk_in";
+        }
+        state.customerMatches = [];
+        paintLink();
+      }
       if (act === "remove") {
         state.lines.splice(Number(el.dataset.index), 1);
         paintLines();
@@ -306,9 +329,24 @@ export function openOrderEditor({ session, deps, order = null, prefill = null })
         const bad = p.lines.find((l) => !l.quantity);
         if (bad) throw new Error(`${bad.name}: ${bad.qtyError || "enter a quantity"}`);
         if (p.discountError) throw new Error(p.discountError);
+        // Save to Customers: the record first (name, contact, delivery
+        // address), then the order linked to it. Once per form.
+        let customerId = state.customerId;
+        if (!customerId && canSave && state.saveCustomer) {
+          const name = state.customer.name.trim();
+          if (!name || /^walk-?in$/i.test(name)) throw new Error("Type the customer's name to save them to Customers");
+          const k = JSON.stringify([name, state.customer.phone.trim(), state.deliveryAddress.trim()]);
+          if (state.created?.key !== k) {
+            state.busy = true;
+            submitBtn.disabled = true;
+            const r = await deps.api("customers", { method: "POST", body: { action: "create", customer: { name, ...(state.customer.phone.trim() ? { phone: state.customer.phone.trim() } : {}), ...(state.deliveryAddress.trim() ? { address: state.deliveryAddress.trim() } : {}) } } });
+            state.created = { key: k, customerId: r.customerId };
+          }
+          customerId = state.created.customerId;
+        }
         const payload = {
           customer: { name: state.customer.name, phone: state.customer.phone, notes: state.customer.notes },
-          ...(state.customerId ? { customerId: state.customerId } : {}),
+          ...(customerId ? { customerId } : {}),
           source: state.source,
           // Other needs its note; any other source keeps an older order's note unchanged.
           sourceNote: state.source === "other" || state.source === order?.source ? state.sourceNote : "",

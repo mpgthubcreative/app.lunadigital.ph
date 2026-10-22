@@ -130,6 +130,11 @@ export async function saveStoreSettings({ db, tenant, FieldValue, business, inpu
 // slug -> the ONE business it belongs to, or NOT_FOUND. The store must be
 // the business's CURRENT link, on an active (writable) subscription with
 // valid entitlements that include Orders and Inventory.
+// The payment instructions shown on order payment links (./pay-links.js).
+export async function paymentInstructionsOf(tenant, business) {
+  return settingsOf(await settingsRef(tenant).get(), business).paymentInstructions || "";
+}
+
 export async function resolveStore({ db, slug }) {
   if (!isStoreSlug(slug)) throw NOT_FOUND();
   const link = await slugRef(db, slug).get();
