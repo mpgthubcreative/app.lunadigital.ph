@@ -3,6 +3,9 @@
 //   { action: "opening",  productId, quantity, unitCost, reference?, note }             inventory.adjust
 //   { action: "adjustment_increase" | "adjustment_decrease",
 //     productId, quantity, reason, note?, reference? }                                  inventory.adjust
+//   { action: "count", productId, onHand, reason, note?, reference? }                   inventory.adjust
+//     (2026-10-22) the stock on hand counted; the server works out the
+//     adjustment (count − current on hand) inside its transaction
 // quantity: scaled integer (shared/quantity.js); unitCost: integer centavos.
 // The server computes every balance and the moving average; the browser
 // only names the action. Reservations, releases and fulfillment are not
@@ -21,19 +24,20 @@ const ACTIONS = {
   opening: { permission: "inventory.adjust", fields: ["action", "productId", "quantity", "unitCost", "reference", "note"] },
   adjustment_increase: { permission: "inventory.adjust", fields: ["action", "productId", "quantity", "reason", "note", "reference"] },
   adjustment_decrease: { permission: "inventory.adjust", fields: ["action", "productId", "quantity", "reason", "note", "reference"] },
+  count: { permission: "inventory.adjust", fields: ["action", "productId", "onHand", "reason", "note", "reference"] },
 };
 
 function movementFrom(body) {
   const reference = optionalText(body.reference, "Reference", 80);
   const note = optionalText(body.note, "Note", 300);
-  const movement = { type: body.action, quantity: body.quantity, note, referenceType: reference ? "manual" : null, referenceId: reference };
+  const movement = body.action === "count" ? { type: "count", onHand: body.onHand, note, referenceType: reference ? "manual" : null, referenceId: reference } : { type: body.action, quantity: body.quantity, note, referenceType: reference ? "manual" : null, referenceId: reference };
   if (body.action === "receipt" || body.action === "opening") movement.unitCost = body.unitCost;
   if (body.action === "opening") {
     if (!reference && !note) throw new RequestError("invalid-request", "An opening balance needs a reference or a note (e.g. the stock count it comes from).", 400);
     movement.reason = "opening_balance";
   }
   if (body.action === "receipt") movement.reason = "receipt";
-  if (body.action.startsWith("adjustment_")) {
+  if (body.action.startsWith("adjustment_") || body.action === "count") {
     if (!Object.prototype.hasOwnProperty.call(ADJUSTMENT_REASONS, body.reason)) {
       throw new RequestError("invalid-request", `Reason must be one of: ${Object.keys(ADJUSTMENT_REASONS).join(", ")}`, 400);
     }

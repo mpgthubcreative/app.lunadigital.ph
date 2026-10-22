@@ -6,7 +6,7 @@
 // by shared/quantity.js; the server does the maths.
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { mount, parseAdjustment } from "../../src/modules/inventory/index.js";
+import { mount, parseStockOnHand, countPreview } from "../../src/modules/inventory/index.js";
 import { resolvePermissions } from "../../shared/permissions.js";
 import { sessionFixture } from "../helpers/session-fixture.js";
 
@@ -96,7 +96,7 @@ describe("row actions follow permissions", () => {
   it("owner: inline price / reorder / status, Adjust (moved) or Starting stock (unused), View details", async () => {
     await show(session("owner"));
     // inline reorder + price cells are buttons too, in column order
-    expect(rowButtons("p1")).toEqual(["20", "₱1,250.00", "Adjust", "View details"]);
+    expect(rowButtons("p1")).toEqual(["20", "₱1,250.00", "Update stock", "View details"]);
     expect(rowButtons("p2")).toEqual(["0", "₱50.00", "Starting stock", "View details"]);
     expect(row("p1").querySelector('[data-act="adjust"]')).not.toBeNull();
     expect(row("p2").querySelector('[data-act="opening"]')).not.toBeNull();
@@ -150,35 +150,60 @@ describe("inline edits", () => {
   });
 });
 
-describe("Adjust: signed quantity + reason", () => {
-  it("parses -3 / +2 / 4 into decrease / increase", () => {
-    expect(parseAdjustment("-3", "sack")).toEqual({ type: "adjustment_decrease", quantity: Q(3) });
-    expect(parseAdjustment("+2.5", "kg")).toEqual({ type: "adjustment_increase", quantity: 2500 });
-    expect(parseAdjustment("4", "pcs")).toEqual({ type: "adjustment_increase", quantity: Q(4) });
-    expect(() => parseAdjustment("0", "pcs")).toThrow();
-    expect(() => parseAdjustment("-1.5", "pcs")).toThrow(/at most 0 decimal/);
-    expect(() => parseAdjustment("abc", "pcs")).toThrow();
+describe("Update stock: enter the stock on hand you counted", () => {
+  it("parses the count for the unit: whole numbers for pcs / sack, the unit's decimals otherwise; never negative", () => {
+    expect(parseStockOnHand("47", "sack")).toBe(Q(47));
+    expect(parseStockOnHand("0", "pcs")).toBe(0);
+    expect(parseStockOnHand("1,200", "pcs")).toBe(Q(1200));
+    expect(parseStockOnHand("12.5", "kg")).toBe(12500);
+    expect(() => parseStockOnHand("1.5", "pcs")).toThrow("Enter a whole number of pcs, e.g. 47");
+    expect(() => parseStockOnHand("-3", "pcs")).toThrow("Stock on hand can't be less than 0");
+    expect(() => parseStockOnHand("", "pcs")).toThrow("Enter the stock on hand");
+    expect(() => parseStockOnHand("abc", "kg")).toThrow(/up to 3 decimal places/);
+    expect(countPreview(Q(50), "47", "pcs")).toBe("Current: 50 pcs · New: 47 pcs · Change: −3 pcs");
+    expect(countPreview(Q(47), "55", "pcs")).toBe("Current: 47 pcs · New: 55 pcs · Change: +8 pcs");
+    expect(countPreview(Q(50), "x", "pcs")).toBe("");
   });
 
-  it("shows the current stock and sends a decrease with its reason", async () => {
+  it("Stock on hand (no + / −), Reason defaults to Stock count correction; sends the count, never a computed change", async () => {
     const deps = await show(session("owner"));
     row("p1").querySelector('[data-act="adjust"]').click();
-    expect(lastForm().textContent).toMatch(/Now: 140 sack in stock/);
-    fill({ change: "-3", reason: "damaged", note: "Wet" });
+    const f = lastForm();
+    expect(f.closest(".modal-backdrop").querySelector("h2").textContent).toMatch(/^Update stock: /);
+    expect(f.textContent).toMatch(/Current stock: 140 sack/);
+    expect(f.querySelector('label[for$="onHand"]').textContent).toBe("Stock on hand (sack) *");
+    expect(f.textContent).toMatch(/Enter the quantity you have now\. Luna will update the inventory based on this number\./);
+    expect(f.textContent).not.toMatch(/-3 or \+2/);
+    expect(f.elements.reason.value).toBe("count_correction");
+    f.elements.onHand.value = "137";
+    f.elements.onHand.dispatchEvent(new Event("input", { bubbles: true }));
+    expect(f.querySelector('[data-role="count-preview"]').textContent).toBe("Current: 140 sack · New: 137 sack · Change: −3 sack");
+    f.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
     await flush();
-    expect(deps.api).toHaveBeenCalledWith("inventory", { method: "POST", body: { action: "adjustment_decrease", productId: "p1", quantity: Q(3), reason: "damaged", note: "Wet" } });
+    expect(deps.api).toHaveBeenCalledWith("inventory", { method: "POST", body: { action: "count", productId: "p1", onHand: Q(137), reason: "count_correction" } });
   });
 
-  it("server refusals stay visible in the dialog", async () => {
+  it("the same number, a negative, or Other without a note: refused in the dialog, nothing sent; server refusals stay visible", async () => {
     const deps = fakes();
     deps.api = vi.fn(async () => {
-      throw Object.assign(new Error("Not enough unreserved stock for this adjustment"), { status: 409 });
+      throw Object.assign(new Error("10 sack are set aside for open orders, so stock on hand can't be less than that"), { status: 409 });
     });
     await show(session("owner"), deps);
     row("p1").querySelector('[data-act="adjust"]').click();
-    fill({ change: "-500", reason: "lost" });
-    await flush();
-    expect(lastForm().querySelector('[data-role="error"]').textContent).toMatch(/Not enough/);
+    const f = lastForm();
+    const submit = async (onHand, reason = "count_correction", note = "") => {
+      f.elements.onHand.value = onHand;
+      f.elements.reason.value = reason;
+      f.elements.note.value = note;
+      f.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+      await flush();
+      return f.querySelector('[data-role="error"]').textContent;
+    };
+    expect(await submit("140")).toBe("Stock on hand is already 140 sack. Nothing to change.");
+    expect(await submit("-1")).toBe("Stock on hand can't be less than 0");
+    expect(await submit("120", "other")).toBe("Explain the change in the note (Reason: Other)");
+    expect(deps.api).not.toHaveBeenCalledWith("inventory", expect.anything());
+    expect(await submit("2", "lost")).toMatch(/set aside for open orders/);
   });
 });
 
@@ -235,7 +260,7 @@ describe("View details", () => {
   it("owner details hold the uncommon actions: receive, adjust, edit; delete only when unused", async () => {
     await show(session("owner"));
     let d = await openDetails("p1");
-    expect([...d.querySelectorAll(".modal-footer button")].map((b) => b.textContent.trim())).toEqual(["Receive", "Adjust", "Edit product", "Close"]);
+    expect([...d.querySelectorAll(".modal-footer button")].map((b) => b.textContent.trim())).toEqual(["Receive", "Update stock", "Edit product", "Close"]);
     expect(d.querySelector('.modal-footer [data-act="close"]').classList.contains("btn-ghost")).toBe(true); // Close is the quiet one
     document.querySelector(".modal-backdrop").remove();
     d = await openDetails("p2");

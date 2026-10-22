@@ -28,6 +28,7 @@ import { render } from "../lib/html.js";
 import { card, emptyState } from "../components/ui.js";
 import { isStaffPortalSession } from "../staff/is-staff.js";
 import { installMenuBehavior } from "../components/menus.js";
+import { installViewport } from "../lib/viewport.js";
 import { scheduleFeedbackPrompt } from "./feedback.js";
 
 // Pages a member can still open once a free trial has ended.
@@ -260,6 +261,8 @@ function boot() {
   // Every ⋯ / ▾ menu behaves like a popover (one open; outside tap, scroll,
   // navigation, a dialog and Escape close it): ../components/menus.js.
   installMenuBehavior(document);
+  // Dialogs and the phone frame fit the screen above the on-screen keyboard.
+  installViewport(window);
   // A page's CSS / helper file renamed by a deploy (Vite's preload error):
   // reload once for the current files rather than a broken page.
   window.addEventListener("vite:preloadError", (event) => {

@@ -19,6 +19,7 @@ import { html, render } from "../lib/html.js";
 import { icon, lunaMark } from "../components/icons.js";
 import { initials } from "../lib/format.js";
 import { mountBell } from "./notification-bell.js";
+import { isTyping } from "../lib/viewport.js";
 import { showExportPage, canSeeWeddingSetup, canSeeWeddingProgram, canSeeCrewMeals } from "./routes.js";
 import { openFeedback, isOwner } from "./feedback.js";
 
@@ -147,7 +148,8 @@ export function shellNavigation(session) {
 const KEYBOARD_MIN = 150;
 // The phone layout (layout.css: the app frame and bottom tabs).
 const PHONE = "(max-width: 719px)";
-export const isTyping = (el) => Boolean(el?.matches?.('textarea, select, [contenteditable="true"], input:not([type="checkbox"], [type="radio"], [type="button"], [type="submit"], [type="file"], [type="range"], [type="color"])'));
+// What counts as typing (the keyboard is up for it): ../lib/viewport.js.
+export { isTyping };
 
 export function renderShell(root, session, handlers = {}) {
   // Tenant terminology (Phase 17) may relabel a module; ids and paths never change.

@@ -35,6 +35,7 @@ const STATUS = {
   "insufficient-stock": 409,
   "insufficient-reserved": 409,
   "no-cost-basis": 409,
+  "no-change": 409,
   "unit-locked": 409,
 };
 

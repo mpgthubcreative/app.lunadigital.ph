@@ -35,6 +35,7 @@ import {
   costOfQuantity,
   inventoryValue,
   centavosToCostUnits,
+  formatQuantity,
 } from "./quantity.js";
 
 export const PRODUCT_SCHEMA_VERSION = 1;
@@ -55,6 +56,23 @@ export const MOVEMENT_TYPES = Object.freeze({
 // Movements a browser may request through /api/inventory. Reservation,
 // release and fulfillment are only reachable from server code (Phase 7).
 export const MANUAL_MOVEMENTS = Object.freeze(["opening", "receipt", "adjustment_increase", "adjustment_decrease"]);
+
+// A stock count (2026-10-22): the user enters the stock on hand they
+// counted; the change (count − on hand) is worked out here from the state
+// read in the SAME transaction, and becomes an ordinary adjustment
+// (increase at the current average cost, decrease leaving it unchanged),
+// so balances, costs, history and reports work exactly as before.
+// movement: { type: "count", onHand (scaled, >= 0), reason, note?, … }
+export function countMovement(state, movement) {
+  const counted = movement.onHand;
+  const unit = UNITS[state.unit]?.label ?? state.unit;
+  if (!isQuantity(counted, state.unit)) throw new InventoryError("invalid-quantity", UNITS[state.unit]?.decimals ? `Enter the stock on hand: 0 or more, up to ${UNITS[state.unit].decimals} decimal places` : `Enter the stock on hand as a whole number of ${unit}: 0 or more`);
+  const delta = counted - state.onHand;
+  if (delta === 0) throw new InventoryError("no-change", `Stock on hand is already ${formatQuantity(counted)} ${unit}. Nothing changed.`);
+  if (counted < state.reserved) throw new InventoryError("insufficient-stock", `${formatQuantity(state.reserved)} ${unit} are set aside for open orders, so stock on hand can't be less than that`);
+  const { onHand, ...rest } = movement;
+  return { ...rest, type: delta > 0 ? "adjustment_increase" : "adjustment_decrease", quantity: Math.abs(delta), countedOnHand: counted };
+}
 
 // Reasons for manual adjustments (free text detail is required as well).
 export const ADJUSTMENT_REASONS = Object.freeze({

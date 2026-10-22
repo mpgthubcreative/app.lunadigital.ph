@@ -30,13 +30,29 @@ const UNIT_OPTIONS = Object.entries(UNITS).map(([value, u]) => ({ value, label: 
 const REASON_OPTIONS = Object.entries(ADJUSTMENT_REASONS).map(([value, label]) => ({ value, label }));
 const pesos = (centavos) => (centavos / 100).toFixed(2);
 
-// "-3", "+2.5", "4" -> { type, quantity } for the product's unit.
-export function parseAdjustment(text, unit) {
-  const t = typeof text === "string" ? text.trim() : "";
-  const sign = t.startsWith("-") || t.startsWith("−") ? -1 : 1;
-  const magnitude = parseQuantity(t.replace(/^[+\-−]/, ""), unit);
-  if (magnitude === 0) throw new Error("Enter a change other than 0");
-  return { type: sign < 0 ? "adjustment_decrease" : "adjustment_increase", quantity: magnitude };
+// Stock count (2026-10-22): the stock on hand the user counted, as a scaled
+// quantity for the product's unit (0 or more; the unit's decimals).
+export function parseStockOnHand(text, unit) {
+  const t = typeof text === "string" ? text.trim().replace(/,/g, "") : "";
+  if (!t) throw new Error("Enter the stock on hand");
+  if (/^[-−]/.test(t)) throw new Error("Stock on hand can't be less than 0");
+  try {
+    return parseQuantity(t, unit);
+  } catch (err) {
+    throw new Error(UNITS[unit]?.decimals ? `Enter a number with up to ${UNITS[unit].decimals} decimal places, e.g. 12.5` : `Enter a whole number of ${unitLabel(unit)}, e.g. 47`);
+  }
+}
+// "Current: 50 pcs · New: 47 pcs · Change: −3 pcs" (display only; the server
+// works out the real change from the stock it reads when saving).
+export function countPreview(current, text, unit) {
+  let next;
+  try {
+    next = parseStockOnHand(text, unit);
+  } catch {
+    return "";
+  }
+  const d = next - current;
+  return `Current: ${qty(current, unit)} · New: ${qty(next, unit)} · Change: ${d === 0 ? "none" : `${d > 0 ? "+" : "−"}${qty(Math.abs(d), unit)}`}`;
 }
 
 export function mount(container, session, { data = defaultData, api = defaultApi, toast = defaultToast, exportDeps = {} } = {}) {
@@ -81,7 +97,7 @@ export function mount(container, session, { data = defaultData, api = defaultApi
           <option value="inactive" ${p.status === "inactive" ? "selected" : ""}>Inactive</option>
         </select>`
       : r.status === "active" ? badge("Active", "success") : badge("Inactive", "neutral");
-    const primary = can.adjust ? html`<button type="button" class="btn btn-compact" data-act="${r.hasMovements ? "adjust" : "opening"}" data-id="${r.id}">${r.hasMovements ? "Adjust" : "Starting stock"}</button>` : "";
+    const primary = can.adjust ? html`<button type="button" class="btn btn-compact" data-act="${r.hasMovements ? "adjust" : "opening"}" data-id="${r.id}">${r.hasMovements ? "Update stock" : "Starting stock"}</button>` : "";
     const low = r.isLowStock ? html` ${badge("Low stock", "warning")}` : "";
     return html`<tr data-product="${r.id}" class="${r.isLowStock ? "row-warning" : ""}" data-open>
       ${mobileCell({ title: r.name, sub: `${r.sku} · ${r.reserved} set aside · ${r.price}`, end: html`${r.available} <small>${r.unit} left</small>` })}
@@ -195,22 +211,38 @@ export function mount(container, session, { data = defaultData, api = defaultApi
   }
 
   // ---- stock ----
+  // Update stock (2026-10-22): count, enter the number, save. The server
+  // turns the count into the adjustment (count − on hand) in its own
+  // transaction; nobody works out a + or − here.
   async function adjust(p) {
     const ok = await formDialog({
-      title: `Adjust ${p.name}`,
-      intro: `Now: ${qty(p.onHand, p.unit)} in stock (${qty(p.available, p.unit)} left after orders set aside). Increases use the current average cost; decreases leave it unchanged.`,
+      title: `Update stock: ${p.name}`,
+      intro: `Current stock: ${qty(p.onHand, p.unit)}${p.reserved ? ` (${qty(p.reserved, p.unit)} set aside for orders)` : ""}.`,
       fields: [
-        { name: "change", label: `Adjustment (${unitLabel(p.unit)}), e.g. -3 or +2`, required: true, inputmode: "decimal" },
-        { name: "reason", label: "Reason", type: "select", options: REASON_OPTIONS, required: true },
+        { name: "onHand", label: `Stock on hand (${unitLabel(p.unit)})`, required: true, inputmode: UNITS[p.unit]?.decimals ? "decimal" : "numeric", hint: "Enter the quantity you have now. Luna will update the inventory based on this number." },
+        { name: "reason", label: "Reason", type: "select", options: REASON_OPTIONS, value: "count_correction", required: true },
         { name: "note", label: "Note", type: "textarea", hint: "Required when the reason is Other." },
       ],
       submitLabel: "Save",
+      onFormChange: (form) => {
+        const input = form.elements.onHand;
+        if (input.dataset.preview) return;
+        input.dataset.preview = "1";
+        const out = document.createElement("div");
+        out.className = "stat-hint count-preview";
+        out.dataset.role = "count-preview";
+        input.closest(".field").appendChild(out);
+        input.addEventListener("input", () => (out.textContent = countPreview(p.onHand, input.value, p.unit)));
+      },
       onSubmit: (v) => {
-        const { type, quantity } = parseAdjustment(v.change, p.unit);
-        return send("inventory", { action: type, productId: p.id, quantity, reason: v.reason, ...(v.note ? { note: v.note } : {}) });
+        const onHand = parseStockOnHand(v.onHand, p.unit);
+        if (onHand === p.onHand) throw new Error(`Stock on hand is already ${qty(onHand, p.unit)}. Nothing to change.`);
+        if (onHand < (p.reserved || 0)) throw new Error(`${qty(p.reserved, p.unit)} are set aside for open orders, so stock on hand can't be less than that`);
+        if (v.reason === "other" && !v.note.trim()) throw new Error("Explain the change in the note (Reason: Other)");
+        return send("inventory", { action: "count", productId: p.id, onHand, reason: v.reason, ...(v.note ? { note: v.note } : {}) });
       },
     });
-    if (ok) await done("Inventory adjusted");
+    if (ok) await done(`Stock updated: ${qty(ok.balance?.onHand ?? 0, p.unit)}`);
   }
 
   async function stockIn(kind, p) {
@@ -307,7 +339,7 @@ export function mount(container, session, { data = defaultData, api = defaultApi
           <div class="modal-footer">
             ${can.receive && p.status === "active" ? html`<button type="button" class="btn" data-act="d-receipt">Receive</button>` : ""}
             ${can.adjust && !(p.movementCount > 0) ? html`<button type="button" class="btn" data-act="d-opening">Starting stock</button>` : ""}
-            ${can.adjust && p.movementCount > 0 ? html`<button type="button" class="btn" data-act="d-adjust">Adjust</button>` : ""}
+            ${can.adjust && p.movementCount > 0 ? html`<button type="button" class="btn" data-act="d-adjust">Update stock</button>` : ""}
             ${can.manage ? html`<button type="button" class="btn" data-act="d-edit">Edit product</button>` : ""}
             ${can.manage && !(p.movementCount > 0) ? html`<button type="button" class="btn btn-danger-ghost" data-act="d-delete">Delete</button>` : ""}
             <button type="button" class="btn btn-ghost" data-act="close">Close</button>

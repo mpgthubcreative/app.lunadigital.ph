@@ -23,6 +23,7 @@ import { overviewView, businessesView, plansView, auditView } from "./views.js";
 import { subscriptionsView, paymentsView, usageCostView } from "./money.js";
 import { feedbackView } from "./feedback.js";
 import { installMenuBehavior } from "../components/menus.js";
+import { installViewport } from "../lib/viewport.js";
 
 const BASE = "/console";
 const SECTIONS = [
@@ -119,6 +120,7 @@ async function boot() {
   const root = document.getElementById("app");
   // The same ⋯ menu placement / closing as the app (components/menus.js).
   installMenuBehavior(document);
+  installViewport(window);
   setTokenProvider(currentIdToken);
   renderBoot(root, "Loading Luna Console…");
   await watchUser(async (user) => {

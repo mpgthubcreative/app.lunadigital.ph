@@ -353,6 +353,15 @@
     border-top: 1px solid var(--border);
   }
 
+  /* The keyboard is open (src/lib/viewport.js): the frame fits the visible
+     area above it, so the page scroller can bring every field and button
+     up; the tabs step aside (see shell.js). */
+  html.keyboard-open .shell:not(.console-shell) {
+    top: var(--vv-top, 0px);
+    bottom: auto;
+    height: var(--vv-height, 100%);
+  }
+
   /* The keyboard is open: the tabs step aside (see shell.js). */
   .shell.keyboard-open .tabbar {
     display: none;

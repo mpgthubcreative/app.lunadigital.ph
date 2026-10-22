@@ -4477,3 +4477,34 @@ button.wl-person-name:hover .wl-edit, button.wl-person-name:focus-visible .wl-ed
 .cp-total { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .cp-sub { color: var(--text-muted); font-size: var(--text-sm); }
 .cp-due { text-align: right; color: var(--danger); font-size: var(--text-sm); font-weight: 600; white-space: nowrap; }
+
+/* The on-screen keyboard (2026-10-22, every workspace + Super Admin; see
+   src/lib/viewport.js). iPhone Safari / Android keep the layout viewport
+   when the keyboard opens, so a dialog sized to the screen ran under it.
+   While typing, dialogs fit the VISIBLE area: header, the body scrolls,
+   Save / Cancel stay just above the keyboard. */
+@media (max-width: 719px) {
+  .modal-body {
+    scroll-padding-block: var(--space-4) var(--space-6);
+  }
+  html.keyboard-open .modal-backdrop {
+    top: var(--vv-top, 0px);
+    bottom: auto;
+    height: var(--vv-height, 100%);
+  }
+  html.keyboard-open .modal,
+  html.keyboard-open .modal-backdrop.is-panel > .modal {
+    max-height: var(--vv-height, 100dvh);
+    height: auto;
+    border-radius: 14px 14px 0 0;
+  }
+  /* More room for the form: tighter header and footer while typing (the
+     keyboard covers the home-indicator area, so no safe-area padding). */
+  html.keyboard-open .modal-header {
+    padding-top: var(--space-3);
+  }
+  html.keyboard-open .modal-footer {
+    padding-top: var(--space-2);
+    padding-bottom: var(--space-2);
+  }
+}

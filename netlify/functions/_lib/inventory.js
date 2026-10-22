@@ -26,6 +26,7 @@ import {
   isLowStock,
   isValidProductId,
   planMovement,
+  countMovement,
   InventoryError,
   MOVEMENT_TYPES,
 } from "../../../shared/inventory.js";
@@ -247,6 +248,8 @@ export async function prepareMovements(tx, { tenant, items }) {
       movementCount: product.movementCount,
       avgCostUnits: costs.avgCostUnits ?? null,
     };
+    // A stock count becomes the adjustment that reaches it (from THIS read).
+    if (item.movement?.type === "count") item.movement = countMovement(state, item.movement);
     return { item, refs: r, product, costs, state, plan: planMovement(state, item.movement) };
   });
   for (const p of planned) p.crossing = p.plan.next.isLowStock && !p.product.isLowStock ? lowStockEvent(p.item.productId, p.product, p.plan.next.available) : null;
@@ -287,6 +290,7 @@ export async function prepareMovements(tx, { tenant, items }) {
         availableAfter: next.available,
         reason: m.reason ?? null,
         note: m.note ?? null,
+        ...(m.countedOnHand !== undefined ? { countedOnHand: m.countedOnHand } : {}),
         referenceType: m.referenceType ?? null,
         referenceId: m.referenceId ?? null,
         actor,
