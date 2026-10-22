@@ -39,6 +39,47 @@ export function paymentCell(o, can) {
   </select>`;
 }
 
+// Latest payment, inline on the order row (2026-10-22): what came in and
+// what to do next, without opening Payments.
+//   GCash · Ref 1234567891234   Waiting verification
+//   [View screenshot] [Verify] [Not accepted]      (verified: [Receipt])
+//   Payment link · Copy                            (while something is due)
+// From order.lastPayment (server-written); older orders fall back to their
+// latest reference / screenshot.
+const LP_STATE = { for_verification: ["Waiting verification", "warning"], verified: ["Verified", "success"], voided: ["Not accepted", "danger"] };
+export function latestPaymentCell(o, can) {
+  const lp = o.lastPayment || (o.lastPaymentRef || o.lastProofPaymentId ? { id: o.lastProofPaymentId || null, reference: o.lastPaymentRef || null, hasProof: Boolean(o.lastProofPaymentId), state: null, method: null } : null);
+  const due = o.fulfillmentStatus !== "cancelled" && (o.balance ?? o.total - (o.amountPaid || 0)) > 0;
+  const link = due && can.recordPayment ? html`<button type="button" class="btn btn-compact lp-link" data-act="copy-pay-link" data-id="${o.id}" aria-label="Copy the payment link for ${o.orderNumber}">Payment link · Copy</button>` : "";
+  if (!lp) return html`<div class="lp" data-role="latest-payment">${link || html`<span class="cell-sub">—</span>`}</div>`;
+  const what = [lp.method ? methodText(lp.method) : "", lp.reference ? `Ref ${lp.reference}` : lp.hasProof ? "Screenshot submitted" : ""].filter(Boolean).join(" · ");
+  const [word, tone] = LP_STATE[lp.state] || [];
+  const acts = [
+    lp.hasProof && lp.id && can.viewPayments ? html`<button type="button" class="btn-linklike" data-act="lp-proof" data-id="${o.id}">View screenshot</button>` : "",
+    lp.state === "for_verification" && can.verifyPayment ? html`<button type="button" class="btn btn-compact" data-act="lp-verify" data-id="${o.id}">Verify</button>` : "",
+    lp.state === "for_verification" && can.verifyPayment && lp.via === "payment_link" ? html`<button type="button" class="btn-linklike lp-reject" data-act="lp-reject" data-id="${o.id}">Not accepted</button>` : "",
+    lp.state === "verified" ? html`<button type="button" class="btn-linklike" data-act="lp-receipt" data-id="${o.id}">Receipt</button>` : "",
+  ].filter(Boolean);
+  return html`<div class="lp" data-role="latest-payment">
+    <span class="lp-what">${what || "Payment"}${word ? html` <span class="lp-state" data-tone="${tone}">${word}</span>` : ""}</span>
+    ${acts.length ? html`<span class="lp-acts">${acts}</span>` : ""}
+    ${link}
+  </div>`;
+}
+const methodText = (m) => ({ gcash: "GCash", maya: "Maya", bank_transfer: "Bank transfer", cash: "Cash", cod: "COD", other: "Other" })[m] ?? m;
+
+// Copies text that is still being fetched (the order's payment link), inside
+// the same tap: Safari only allows clipboard writes started by the gesture.
+export async function copyPending(textPromise, { clipboard = globalThis.navigator?.clipboard, ClipboardItemCtor = globalThis.ClipboardItem } = {}) {
+  if (clipboard?.write && ClipboardItemCtor) {
+    await clipboard.write([new ClipboardItemCtor({ "text/plain": Promise.resolve(textPromise).then((t) => new Blob([t], { type: "text/plain" })) })]);
+    return textPromise;
+  }
+  const text = await textPromise;
+  await clipboard.writeText(text);
+  return text;
+}
+
 export function fulfillmentCell(o, can) {
   if (!can.fulfill || !isOpenFulfillment(o.fulfillmentStatus)) return badge(fulfillmentLabel(o.fulfillmentStatus), FULFILLMENT_TONE[o.fulfillmentStatus] || "neutral");
   const choices = Object.entries(FULFILLMENT_STATUSES).filter(([k]) => k !== "cancelled" || can.cancel);

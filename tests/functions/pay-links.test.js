@@ -226,6 +226,25 @@ describe("verification, receipts, partial payments and the customer's balance", 
   });
 });
 
+describe("the order row's latest payment (2026-10-22)", () => {
+  it("record → verify → reject keep order.lastPayment in step (method, reference, proof, state, who sent it)", async () => {
+    const orderId = await orderOf(5000);
+    const token = await linkFor(orderId);
+    await submit(token, { amount: 100000, method: "gcash", reference: "4444555566667" }, { proof });
+    const lp = () => order(orderId).lastPayment;
+    expect(lp()).toMatchObject({ amount: 100000, method: "gcash", reference: "4444555566667", hasProof: true, state: "for_verification", via: "payment_link", day: "2026-10-22" });
+    const id = lp().id;
+    await owner({ action: "verify", paymentId: id });
+    expect(lp()).toMatchObject({ id, state: "verified" });
+    await owner({ action: "update", paymentId: id, changes: { reference: "4444555566668" } });
+    expect(lp()).toMatchObject({ id, reference: "4444555566668", state: "verified" });
+    const staff = await owner({ action: "record", orderId, payment: { amount: 50000, method: "cash" } });
+    expect(lp()).toMatchObject({ id: staff.body.paymentId, method: "cash", reference: null, hasProof: false, state: "verified", via: null });
+    await owner({ action: "void", paymentId: staff.body.paymentId, reason: "Wrong order" });
+    expect(lp()).toMatchObject({ id: staff.body.paymentId, state: "voided" });
+  });
+});
+
 describe("shared rules", () => {
   it("token from the path; public payment input; instructions keep their lines", () => {
     expect(payTokenFrom(`/pay/${"a".repeat(32)}`)).toBe("a".repeat(32));

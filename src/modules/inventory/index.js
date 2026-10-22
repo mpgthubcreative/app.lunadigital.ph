@@ -245,16 +245,22 @@ export function mount(container, session, { data = defaultData, api = defaultApi
     if (ok) await done(`Stock updated: ${qty(ok.balance?.onHand ?? 0, p.unit)}`);
   }
 
+  // Starting stock / Receive (2026-10-22): the quantity and the Cost per
+  // unit; Reference and Note are optional, under More details (Luna records
+  // who and when anyway). The cost per unit is the product's cost basis:
+  // starting stock sets it, a delivery averages into it; fulfilled orders'
+  // COGS, Reports and the Costs page all use that same one figure.
   async function stockIn(kind, p) {
     const ok = await formDialog({
       title: kind === "receipt" ? `Receive ${p.name}` : `Starting stock: ${p.name}`,
-      intro: kind === "opening" ? "Only possible before any other movement. Sets the starting stock and average cost." : "Updates the moving average cost.",
+      intro: kind === "opening" ? "What you have now and what one unit cost you. Only before any other stock movement." : "",
       fields: [
-        { name: "quantity", label: `Quantity (${unitLabel(p.unit)})`, required: true, inputmode: "decimal" },
-        { name: "unitCost", label: `Unit cost (${currency})`, required: true, inputmode: "decimal" },
-        { name: "reference", label: kind === "receipt" ? "Reference (DR / invoice no.)" : "Reference" },
-        { name: "note", label: "Note", type: "textarea", hint: kind === "opening" ? "A reference or a note is required (e.g. the stock count it comes from)." : "" },
+        { name: "quantity", label: kind === "receipt" ? `Quantity received (${unitLabel(p.unit)})` : `Starting stock (${unitLabel(p.unit)})`, required: true, inputmode: UNITS[p.unit]?.decimals ? "decimal" : "numeric" },
+        { name: "unitCost", label: `Cost per unit (${currency})`, required: true, inputmode: "decimal", hint: "What one unit costs you. Luna uses this to calculate COGS and profit." },
+        { name: "reference", label: kind === "receipt" ? "Reference (DR / invoice no.)" : "Reference", more: true },
+        { name: "note", label: "Note", type: "textarea", more: true },
       ],
+      moreLabel: "More details",
       submitLabel: kind === "receipt" ? "Receive" : "Record",
       onSubmit: (v) => {
         const body = { action: kind, productId: p.id, quantity: parseQuantity(v.quantity, p.unit), unitCost: parseCentavos(v.unitCost) };

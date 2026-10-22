@@ -54,10 +54,10 @@ describe("switching business lands on a valid page at once", () => {
     r.router.stop();
   });
 
-  it("Household Grocery List -> Distributor: the Dashboard opens", () => {
+  it("Household Grocery List -> Distributor: Orders opens (its home since 2026-10-22)", () => {
     const r = open(S.distributor(), "/grocery-list", { justSwitched: true });
-    expect(r.url()).toBe("/");
-    expect(r.pages).toEqual(["/"]);
+    expect(r.url()).toBe("/orders");
+    expect(r.pages).toEqual(["/orders"]);
     r.router.stop();
   });
 
@@ -147,10 +147,10 @@ describe("helpers", () => {
 describe("switchLandingPath: always a valid, authorized page of the destination", () => {
   const PLANS = { distributor: "growth", "household-payroll": "household-plus", "bridal-expense": "bridal-plus", "baby-expense": "baby-plus" };
   const as = (template, roleTemplate) => sessionFixture({ roleTemplate, planId: PLANS[template], workspaceTemplateId: template });
-  const DEFAULTS = { distributor: "/", "household-payroll": "/payroll", "bridal-expense": "/wedding-suppliers", "baby-expense": "/" };
+  const DEFAULTS = { distributor: "/orders", "household-payroll": "/payroll", "bridal-expense": "/wedding-suppliers", "baby-expense": "/" };
   const SHARED = new Set(["/users", "/settings", "/notifications", "/subscription", "/export"]);
 
-  it("default page per template: Business Dashboard, Household Payroll, Bridal Money, Baby Dashboard", () => {
+  it("default page per template: Business Orders, Household Payroll, Bridal Money, Baby Dashboard", () => {
     for (const [t, path] of Object.entries(DEFAULTS)) expect(defaultPath(buildRoutes(as(t, "owner"))), t).toBe(path);
   });
 
@@ -178,11 +178,11 @@ describe("switchLandingPath: always a valid, authorized page of the destination"
     expect(cases).toBeGreaterThan(200);
   });
 
-  it("Business Orders -> Bridal: Money; Bridal Music & Program -> Business: Dashboard; Business Costs (/expenses) -> Bridal: Money, not Wedding Expenses", () => {
+  it("Business Orders -> Bridal: Money; Bridal Music & Program -> Business: Orders; Business Costs (/expenses) -> Bridal: Money, not Wedding Expenses", () => {
     const bridal = as("bridal-expense", "owner");
     const biz = as("distributor", "owner");
     expect(switchLandingPath(bridal, buildRoutes(bridal), "/orders")).toBe("/wedding-suppliers");
-    expect(switchLandingPath(biz, buildRoutes(biz), "/wedding-program")).toBe("/");
+    expect(switchLandingPath(biz, buildRoutes(biz), "/wedding-program")).toBe("/orders");
     expect(switchLandingPath(bridal, buildRoutes(bridal), "/expenses")).toBe("/wedding-suppliers");
     expect(switchLandingPath(bridal, buildRoutes(bridal), "/users/")).toBe("/users");
   });

@@ -12,7 +12,8 @@ describe("resolveNavigation", () => {
 
   it("shows the owner every enabled, built module", () => {
     expect(ids(resolveNavigation({ entitlements, permissions: resolvePermissions("owner") }))).toEqual([
-      "dashboard", "orders", "payments", "inventory", "customers", "expenses", "reports", "users", "settings",
+      // 2026-10-22: no Dashboard page in Distributor; Orders first.
+      "orders", "inventory", "customers", "reports", "payments", "expenses", "users", "settings",
     ]);
   });
 

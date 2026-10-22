@@ -140,7 +140,7 @@ describe("Costs page", () => {
     submit(f);
     await flush();
     expect(d.api).toHaveBeenLastCalledWith("products", { method: "POST", body: { action: "setUnitCost", productId: "prodKOPI000000001", unitCost: 4525 } });
-    expect(d.toast).toHaveBeenCalledWith("Unit cost saved.", "success");
+    expect(d.toast).toHaveBeenCalledWith("Cost per unit saved.", "success");
   });
 
   it("who sees what: without inventory.costs no COGS; without products.manage COGS is read-only; view-only expenses have no Add / ⋯", async () => {

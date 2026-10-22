@@ -144,13 +144,17 @@ describe("Orders → Share menu", () => {
     await until(() => document.querySelector('[data-role="link"]'));
     expect(document.querySelector('[data-role="link"]').value).toBe("https://app.example/store/biz-a");
     expect(document.querySelector('[data-x="preview"]').getAttribute("href")).toBe("/store/biz-a");
-    expect(document.querySelector('[data-role="store-status"]').textContent).toMatch(/Closed/);
+    // 2026-10-22: Online ordering On / Off, said plainly; Store link vs an order's Payment link.
+    expect(document.querySelector('[data-role="store-status"]').textContent).toBe("Off");
+    expect(document.querySelector('[data-role="ordering-note"]').textContent).toBe("Online ordering is currently off. Customers who open your store link will see that ordering is unavailable.");
+    expect(document.querySelector('label[for="sm-link"]').textContent.replace(/\s+/g, " ").trim()).toBe("Store link customers create a new order");
+    expect(document.querySelector('[data-role="link-kinds"]').textContent).toMatch(/Payment link instead/);
     expect(document.querySelector('[data-role="store-settings"]')).toBeNull();
-    expect(document.querySelector('[data-x="open"]')).toBeNull();
+    expect(document.querySelector('[data-x="on"]')).toBeNull();
     document.querySelector('[data-x="copy"]').click();
     await flush();
     expect(copy).toHaveBeenCalledWith("https://app.example/store/biz-a");
-    expect(toast).toHaveBeenCalledWith("Menu link copied.", "success");
+    expect(toast).toHaveBeenCalledWith("Store link copied.", "success");
   });
 
   it("Owner: open / close in one tap; settings save the whole form; products hidden only when the list was opened", async () => {
@@ -161,12 +165,12 @@ describe("Orders → Share menu", () => {
     });
     const products = [{ id: "prodA00000001", name: "A", status: "active" }, { id: "prodB00000001", name: "B", status: "active" }];
     openShareMenu({ session: session("owner"), api, toast: vi.fn(), listActiveProducts: vi.fn(async () => products), origin: "https://app.example", share: null });
-    await until(() => document.querySelector('[data-x="open"]'));
-    const box = document.querySelector('[data-x="open"]');
-    box.checked = true;
-    box.dispatchEvent(new Event("change", { bubbles: true }));
-    await until(() => api.mock.calls.length === 2 && document.querySelector('[data-x="open"]')?.checked);
-    expect(document.querySelector('[data-role="store-status"]')).toBeNull(); // the toggle says it
+    await until(() => document.querySelector('[data-x="on"]'));
+    expect(document.querySelector('[data-x="off"]').getAttribute("aria-pressed")).toBe("true");
+    document.querySelector('[data-x="on"]').click();
+    await until(() => api.mock.calls.length === 2 && document.querySelector('[data-x="on"]')?.getAttribute("aria-pressed") === "true");
+    expect(document.querySelector('[data-role="store-status"]')).toBeNull(); // the On / Off control says it
+    expect(document.querySelector('[data-role="ordering-note"]').textContent).toMatch(/^Customers can place orders from your store link/);
     expect(api.mock.calls[1][1].body).toEqual({ action: "save", settings: { open: true } });
 
     const form = document.querySelector('[data-role="settings-form"]');
@@ -193,12 +197,10 @@ describe("Orders → Share menu", () => {
     });
     const toast = vi.fn();
     openShareMenu({ session: session("owner"), api, toast, listActiveProducts: vi.fn(), origin: "https://app.example", share: null });
-    await until(() => document.querySelector('[data-x="open"]'));
-    const box = document.querySelector('[data-x="open"]');
-    box.checked = true;
-    box.dispatchEvent(new Event("change", { bubbles: true }));
+    await until(() => document.querySelector('[data-x="on"]'));
+    document.querySelector('[data-x="on"]').click();
     await until(() => toast.mock.calls.length === 1);
     expect(toast).toHaveBeenCalledWith("You're offline. Check your connection.", "danger");
-    expect(document.querySelector('[data-x="open"]').checked).toBe(false);
+    expect(document.querySelector('[data-x="off"]').getAttribute("aria-pressed")).toBe("true");
   });
 });

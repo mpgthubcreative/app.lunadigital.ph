@@ -433,12 +433,15 @@ describe("module access re-checks the workspace", () => {
 describe("navigation", () => {
   const nav = (t, role) => resolveNavigation(access(t, role)).map((m) => `${m.path} ${m.label}`);
 
-  it("Distributor: unchanged order and labels for every role", () => {
-    // Customers is back (2026-10-20) and Expenses is the "Costs" page;
-    // Imports isn't launched. Staff hold no expenses.* permission, so no Costs.
-    expect(nav("distributor", "owner")).toEqual(["/ Dashboard", "/orders Orders", "/payments Payments", "/inventory Inventory", "/customers Customers", "/expenses Costs", "/reports Reports", "/users Users", "/settings Settings"]);
-    expect(nav("distributor", "staff")).toEqual(["/ Dashboard", "/orders Orders", "/payments Payments", "/inventory Inventory", "/customers Customers"]);
-    expect(nav("distributor", "manager")).toEqual(["/ Dashboard", "/orders Orders", "/payments Payments", "/inventory Inventory", "/customers Customers", "/expenses Costs", "/reports Reports", "/users Users", "/settings Settings"]);
+  it("Distributor (final UX, 2026-10-22): Orders home, no Dashboard page; Orders · Inventory · Customers · Reports, then Payments and Costs (More)", () => {
+    // Expenses is the "Costs" page; Imports isn't launched. Staff hold no expenses.* / reports permission.
+    expect(nav("distributor", "owner")).toEqual(["/orders Orders", "/inventory Inventory", "/customers Customers", "/reports Reports", "/payments Payments", "/expenses Costs", "/users Users", "/settings Settings"]);
+    expect(nav("distributor", "staff")).toEqual(["/orders Orders", "/inventory Inventory", "/customers Customers", "/payments Payments"]);
+    expect(nav("distributor", "manager")).toEqual(["/orders Orders", "/inventory Inventory", "/customers Customers", "/reports Reports", "/payments Payments", "/expenses Costs", "/users Users", "/settings Settings"]);
+    const t = WORKSPACE_TEMPLATES.distributor;
+    expect([t.home, t.navHidden, t.mobileTabs, t.moreModules]).toEqual(["orders", ["dashboard"], ["orders", "inventory", "customers", "reports"], ["payments", "expenses"]]);
+    expect(t.modules).toContain("dashboard"); // its metrics stay (Reports, exports, notifications, Super Admin)
+    expect(validateWorkspaceTemplate({ ...t, moreModules: ["orders"] }, CTX)).toContain("moreModules orders must be a navigation module that isn't home or a phone tab");
   });
 
   it("non-Distributor workspaces get no Distributor navigation, and their own names", () => {
@@ -459,8 +462,8 @@ describe("navigation", () => {
     expect(validateWorkspaceTemplate({ ...t, home: "dashboard" }, CTX)).toContain("home must be a navigation module");
     expect(validateWorkspaceTemplate({ ...t, navHidden: [] }, CTX)).toContain("allowed module dashboard has no navigation position");
     expect(validateWorkspaceTemplate({ ...t, mobileTabs: ["payroll", "attendance", "advances", "household", "users"] }, CTX)).toContain("mobileTabs must be up to four distinct module ids");
-    // Distributor and Baby keep their Dashboard (and three tabs).
-    for (const id of ["distributor", "baby-expense"]) {
+    // Baby keeps its Dashboard (and three tabs).
+    for (const id of ["baby-expense"]) {
       expect(WORKSPACE_TEMPLATES[id].navigation[0]).toBe("dashboard");
       expect(validateWorkspaceTemplate({ ...WORKSPACE_TEMPLATES[id], mobileTabs: [...WORKSPACE_TEMPLATES[id].mobileTabs, "users"] }, CTX)).toContain("mobileTabs must be up to three distinct module ids");
     }

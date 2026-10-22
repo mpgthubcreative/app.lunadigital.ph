@@ -38,6 +38,10 @@ export const canSeeWeddingProgram = (session) => snapshotWorkspaceTemplateId(ses
 // Owner-pilot Bridal: Crew Meals (who eats, how many meals, where), under More.
 export const CREW_ROUTE = Object.freeze({ path: "/wedding-crew-meals", label: "Crew Meals", moduleId: "weddingcrew" });
 export const canSeeCrewMeals = (session) => snapshotWorkspaceTemplateId(session?.entitlements) === "bridal-expense" && session?.member?.permissions?.["vendors.view"] === true && canUseModule(accessOf(session), "vendors");
+// Distributor (2026-10-22): Share menu (the store link + Store settings) as
+// a page under More (also a button on Orders).
+export const SHARE_ROUTE = Object.freeze({ path: "/share-menu", label: "Share menu", moduleId: "sharemenu" });
+export const canSeeShareMenu = (session) => snapshotWorkspaceTemplateId(session?.entitlements) === "distributor" && session?.member?.permissions?.["orders.view"] === true && canUseModule(accessOf(session), "orders");
 export const canSeeWeddingSetup = (session) => snapshotWorkspaceTemplateId(session?.entitlements) === "bridal-expense" && session?.member?.permissions?.["guests.view"] === true && canUseModule(accessOf(session), "guests");
 
 export function buildRoutes(session) {
@@ -50,6 +54,7 @@ export function buildRoutes(session) {
   if (canSeeWeddingSetup(session)) routes.push({ ...SETUP_ROUTE });
   if (canSeeWeddingProgram(session)) routes.push({ ...PROGRAM_ROUTE });
   if (canSeeCrewMeals(session)) routes.push({ ...CREW_ROUTE });
+  if (canSeeShareMenu(session)) routes.push({ ...SHARE_ROUTE });
   // Owner-pilot UX: a workspace whose home isn't the Dashboard (Household:
   // Payroll) sends "/" (sign-in, old links) there.
   const template = getWorkspaceTemplate(snapshotWorkspaceTemplateId(session.entitlements));
@@ -72,6 +77,7 @@ export function routeAllowed(session, route) {
   if (route && route.moduleId === SETUP_ROUTE.moduleId) return canSeeWeddingSetup(session);
   if (route && route.moduleId === PROGRAM_ROUTE.moduleId) return canSeeWeddingProgram(session);
   if (route && route.moduleId === CREW_ROUTE.moduleId) return canSeeCrewMeals(session);
+  if (route && route.moduleId === SHARE_ROUTE.moduleId) return canSeeShareMenu(session);
   return Boolean(route && route.moduleId) && canUseModule(accessOf(session), route.moduleId);
 }
 
@@ -92,7 +98,7 @@ export function renderPageNotAvailable(container) {
 // available" for the previous workspace's route.
 
 // Every page the tenant app knows, whatever the workspace.
-const EXTRA_ROUTES = [NOTIFICATIONS_ROUTE, SUBSCRIPTION_ROUTE, EXPORT_ROUTE, SETUP_ROUTE, PROGRAM_ROUTE, CREW_ROUTE];
+const EXTRA_ROUTES = [NOTIFICATIONS_ROUTE, SUBSCRIPTION_ROUTE, EXPORT_ROUTE, SETUP_ROUTE, PROGRAM_ROUTE, CREW_ROUTE, SHARE_ROUTE];
 const KNOWN_PATHS = new Set(["/", ...MODULES.filter((m) => m.available).map((m) => m.path), ...EXTRA_ROUTES.map((r) => r.path)]);
 export const isKnownAppPath = (path) => KNOWN_PATHS.has(path);
 
@@ -105,6 +111,7 @@ export function workspacePaths(session) {
     if (m?.available) paths.add(m.path);
   }
   if (template?.id === "bridal-expense") for (const r of [SETUP_ROUTE, PROGRAM_ROUTE, CREW_ROUTE]) paths.add(r.path);
+  if (template?.id === "distributor") paths.add(SHARE_ROUTE.path);
   return paths;
 }
 

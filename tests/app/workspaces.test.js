@@ -37,10 +37,9 @@ function visit(session, path) {
 }
 
 describe("navigation", () => {
-  it("Distributor: unchanged", () => {
+  it("Distributor (final UX, 2026-10-22): Orders · Inventory · Customers · Reports, then Payments, Costs, Share menu, Download Excel, Users, Subscription, Settings; no Dashboard", () => {
     renderShell(document.getElementById("app"), sessionFixture());
-    // Customers is back (2026-10-20): save a recurring buyer once.
-    expect(navOf()).toEqual(["/ Dashboard", "/orders Orders", "/payments Payments", "/inventory Inventory", "/customers Customers", "/expenses Costs", "/reports Reports", "/export Download Excel", "/users Users", "/subscription Subscription", "/settings Settings"]);
+    expect(navOf()).toEqual(["/orders Orders", "/inventory Inventory", "/customers Customers", "/reports Reports", "/payments Payments", "/expenses Costs", "/share-menu Share menu", "/export Download Excel", "/users Users", "/subscription Subscription", "/settings Settings"]);
   });
 
   it("Bridal: Money / Tasks / Guests; More = Wedding Setup, Music & Program, Download Excel, Users, Subscription, Settings (no Budget page: it's in Money)", () => {

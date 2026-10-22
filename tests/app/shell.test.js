@@ -16,7 +16,8 @@ describe("app shell", () => {
     const root = document.getElementById("app");
     const shell = renderShell(root, sessionFixture());
     expect([...root.querySelectorAll(".nav-link")].map((a) => a.getAttribute("href"))).toEqual([
-      "/", "/orders", "/payments", "/inventory", "/customers", "/expenses", "/reports", "/export", "/users", "/subscription", "/settings",
+      // 2026-10-22: Orders · Inventory · Customers, Reports, then More (Payments, Costs, Share menu …); no Dashboard.
+      "/orders", "/inventory", "/customers", "/reports", "/payments", "/expenses", "/share-menu", "/export", "/users", "/subscription", "/settings",
     ]);
     expect(root.querySelector(".banner-info").textContent).toMatch(/Staging/);
 
@@ -32,9 +33,9 @@ describe("app shell", () => {
 
   it("builds staff and manager navigation from permissions, not role names", () => {
     renderShell(document.getElementById("app"), sessionFixture({ roleTemplate: "staff" }));
-    expect(navLabels()).toEqual(["Dashboard", "Orders", "Payments", "Inventory", "Customers"]);
+    expect(navLabels()).toEqual(["Orders", "Inventory", "Customers", "Payments", "Share menu"]);
     renderShell(document.getElementById("app"), sessionFixture({ roleTemplate: "manager" }));
-    expect(navLabels()).toEqual(["Dashboard", "Orders", "Payments", "Inventory", "Customers", "Costs", "Reports", "Download Excel", "Users", "Settings"]);
+    expect(navLabels()).toEqual(["Orders", "Inventory", "Customers", "Reports", "Payments", "Costs", "Share menu", "Download Excel", "Users", "Settings"]);
   });
 
   it("shows a read-only banner for suspended businesses", () => {

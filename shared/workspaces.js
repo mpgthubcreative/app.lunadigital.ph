@@ -25,6 +25,9 @@
 //   redirects      (2026-10-21) { menuHidden module: visible module }: the
 //                  retired page's address opens the other page (Bridal:
 //                  Budget -> Expenses). The module itself stays enabled.
+//   moreModules    (2026-10-22) navigation modules shown under More /
+//                  Manage instead of with the daily pages (Distributor:
+//                  Payments, Costs)
 //   menuHidden     (Owner-pilot Bridal UX) navigation modules that keep
 //                  their route but get no menu entry: reached from another
 //                  page (Bridal: Wedding Expenses and Supplier Payments open
@@ -99,8 +102,15 @@ const TEMPLATES = [
     // recurring buyer once, so new orders aren't retyped (not a CRM). Phone:
     // Dashboard · Orders · Inventory · Payments + More (Customers, Costs,
     // Reports, Users, Download Excel, Settings).
-    navigation: ["dashboard", "orders", "payments", "inventory", "customers", "expenses", "reports", "imports", "users", "settings"],
-    mobileTabs: ["orders", "inventory", "payments"],
+    // 2026-10-22 (final Distributor UX): Orders (sell + collect) is home;
+    // Orders · Inventory · Customers · Reports + More. No Dashboard page
+    // (its metrics stay for Reports, exports, notifications and Super
+    // Admin); Payments (audit / reconciliation) and Costs live under More.
+    navigation: ["orders", "inventory", "customers", "reports", "payments", "expenses", "imports", "users", "settings"],
+    mobileTabs: ["orders", "inventory", "customers", "reports"],
+    navHidden: ["dashboard"],
+    moreModules: ["payments", "expenses"],
+    home: "orders",
     dashboard: {
       // Selected period first, then current operations (Phase 12.5). The
       // Dashboard workbook (Download Excel) lists all of these. Owner pilot:
@@ -286,7 +296,7 @@ export function validateWorkspaceTemplate(t, { moduleIds, coreModuleIds, availab
   const problems = [];
   const isObj = (v) => Boolean(v) && typeof v === "object" && !Array.isArray(v);
   if (!isObj(t)) return ["template must be an object"];
-  const allowedKeys = ["id", "version", "upgradingFrom", "name", "description", "status", "modules", "navigation", "mobileTabs", "navHidden", "menuHidden", "redirects", "home", "dashboard", "labels", "settings", "plannedModules"];
+  const allowedKeys = ["id", "version", "upgradingFrom", "name", "description", "status", "modules", "navigation", "mobileTabs", "navHidden", "moreModules", "menuHidden", "redirects", "home", "dashboard", "labels", "settings", "plannedModules"];
   for (const k of Object.keys(t)) if (!allowedKeys.includes(k)) problems.push(`unknown key ${k}`);
   if (typeof t.id !== "string" || !WORKSPACE_TEMPLATE_ID_PATTERN.test(t.id)) problems.push("invalid id");
   if (!Number.isSafeInteger(t.version) || t.version < 1) problems.push("version must be a positive integer");
@@ -313,6 +323,9 @@ export function validateWorkspaceTemplate(t, { moduleIds, coreModuleIds, availab
   const menuHidden = t.menuHidden === undefined ? [] : Array.isArray(t.menuHidden) ? t.menuHidden : null;
   if (!menuHidden || new Set(menuHidden).size !== menuHidden.length) problems.push("menuHidden must be a list without duplicates");
   for (const m of menuHidden || []) if (!nav.includes(m) || m === t.home || (t.mobileTabs || []).includes(m)) problems.push(`menuHidden ${m} must be a navigation module that isn't home or a phone tab`);
+  const more = t.moreModules === undefined ? [] : Array.isArray(t.moreModules) ? t.moreModules : null;
+  if (!more || new Set(more).size !== more.length) problems.push("moreModules must be a list without duplicates");
+  for (const m of more || []) if (!nav.includes(m) || m === t.home || (t.mobileTabs || []).includes(m)) problems.push(`moreModules ${m} must be a navigation module that isn't home or a phone tab`);
   const redirects = t.redirects === undefined ? {} : t.redirects && typeof t.redirects === "object" && !Array.isArray(t.redirects) ? t.redirects : null;
   if (!redirects) problems.push("redirects must be an object");
   for (const [from, to] of Object.entries(redirects || {})) if (!(menuHidden || []).includes(from) || !nav.includes(to) || (menuHidden || []).includes(to)) problems.push(`redirects ${from} must be a menuHidden module sent to a visible navigation module`);

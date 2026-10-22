@@ -212,10 +212,12 @@ describe("POST /api/products and /api/inventory", () => {
     expect(asOwner.body.cost.avgUnitCostCentavos).toBe(6000);
   });
 
-  it("opening needs a reference or note; adjustments need a known reason", async () => {
+  it("starting stock needs only the quantity and cost per unit (2026-10-22; who / when recorded); adjustments need a known reason", async () => {
     const { body } = await create();
-    expect((await call(inventory(), world.uids.ownera, { action: "opening", productId: body.productId, quantity: Q(5), unitCost: 100 })).status).toBe(400);
-    expect((await call(inventory(), world.uids.ownera, { action: "opening", productId: body.productId, quantity: Q(5), unitCost: 100, reference: "COUNT-1" })).status).toBe(200);
+    expect((await call(inventory(), world.uids.ownera, { action: "opening", productId: body.productId, quantity: Q(5), unitCost: -1 })).status).toBe(400);
+    expect((await call(inventory(), world.uids.ownera, { action: "opening", productId: body.productId, quantity: Q(5), unitCost: 100 })).status).toBe(200);
+    const opening = [...world.db.docs.entries()].find(([p, d]) => p.startsWith("businesses/biz-a/inventoryTransactions/") && d.productId === body.productId && d.type === "opening")[1];
+    expect(opening).toMatchObject({ reason: "opening_balance", note: null, referenceId: null, actor: expect.objectContaining({ uid: world.uids.ownera }) });
     expect((await call(inventory(), world.uids.ownera, { action: "adjustment_decrease", productId: body.productId, quantity: Q(1), reason: "because" })).status).toBe(400);
     expect((await call(inventory(), world.uids.ownera, { action: "adjustment_decrease", productId: body.productId, quantity: Q(1), reason: "other" })).status).toBe(400);
     expect((await call(inventory(), world.uids.ownera, { action: "adjustment_decrease", productId: body.productId, quantity: Q(9), reason: "lost" })).status).toBe(409);

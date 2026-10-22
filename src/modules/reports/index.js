@@ -5,6 +5,7 @@
 //
 // How did the business do in this period? (actual transactions)
 //   Total Sales         gross sales of fulfilled orders (before discounts)
+//   Total Orders        orders created in the period (fulfilled ones noted)
 //   Total Net Profit    a peso amount: net sales (sales − discounts −
 //                       returns) − actual COGS of the units sold − operating
 //                       expenses (shared/finance.js estimatedOperatingProfit)
@@ -85,6 +86,7 @@ export function mount(container, session, { api = defaultApi, now = () => new Da
     return html`
       <div class="rp-totals" data-role="totals">
         ${total("sales", "Total Sales", money(o.grossSales))}
+        ${total("orders", "Total Orders", o.ordersCreated === null || o.ordersCreated === undefined ? NO_DATA : o.ordersCreated.toLocaleString("en-PH"), { note: o.fulfilledOrders ? `${o.fulfilledOrders.toLocaleString("en-PH")} fulfilled` : "" })}
         ${total("net-profit", "Total Net Profit", money(profit), { main: true, loss: profit < 0, note: profitNote(profit) })}
         ${total("sku-margin", "Overall SKU Margin", pct(sku?.overall.marginPct), { loss: sku?.overall.marginPct < 0, note: sku ? "Current prices and costs" : "" })}
       </div>

@@ -17,7 +17,7 @@
 
 import { html, render } from "../../lib/html.js";
 import { pageHeader, emptyState, badge, filterBar, bindFilterBar, mobileCell, openButton, bindRowOpen, skeleton } from "../../components/ui.js";
-import { orderPermissions, paymentCell, fulfillmentCell, inlineOrderActions } from "./inline.js";
+import { orderPermissions, paymentCell, fulfillmentCell, latestPaymentCell, copyPending, inlineOrderActions } from "./inline.js";
 import { formDialog } from "../../components/form-dialog.js";
 import { confirmDialog, toast as defaultToast } from "../../components/feedback.js";
 import { api as defaultApi } from "../../lib/api.js";
@@ -107,7 +107,7 @@ export function mount(container, session, { data = defaultDeps.data, payments = 
               : !state.rows.length
                 ? emptyState({ iconName: "orders", title: filtered ? "No orders match these filters" : "No orders", body: filtered ? "Remove a filter to see more." : can.create ? "Create the first order from a chat or call." : "Orders appear here as your team enters them." })
                 : html`<div class="table-wrap"><table class="table table-compact rows" data-role="orders">
-                    <thead><tr><th class="m-only"></th><th>Order #</th><th>Customer</th><th class="num">Total</th><th class="col-secondary">Reference</th><th class="col-secondary">Proof</th><th>Payment</th><th>Fulfillment</th><th><span class="visually-hidden">Details</span></th></tr></thead>
+                    <thead><tr><th class="m-only"></th><th>Order #</th><th>Customer</th><th class="num">Total</th><th>Latest payment</th><th>Payment</th><th>Fulfillment</th><th><span class="visually-hidden">Details</span></th></tr></thead>
                     <tbody>${state.rows.map((o) => {
                       const r = orderRow(o, { currency, timezone });
                       return html`<tr data-order="${r.id}" data-open>
@@ -115,8 +115,7 @@ export function mount(container, session, { data = defaultDeps.data, payments = 
                         <td><span class="cell-strong">${r.number}</span><span class="cell-sub">${r.when}</span></td>
                         <td>${r.customer}<span class="cell-sub">${r.items}</span></td>
                         <td class="num">${r.total}</td>
-                        <td class="col-secondary" data-col="reference">${r.reference}</td>
-                        <td class="col-secondary" data-col="proof">${r.proofPaymentId && can.viewPayments ? html`<button type="button" class="cell-edit" data-act="proof" data-payment="${r.proofPaymentId}" data-id="${r.id}">View screenshot</button>` : "—"}</td>
+                        <td data-col="latest-payment" data-m="ctl">${latestPaymentCell(o, can)}</td>
                         <td data-col="payment" data-m="ctl">${paymentCell(o, can)}</td>
                         <td data-col="fulfillment" data-m="ctl">${fulfillmentCell(o, can)}</td>
                         <td class="row-actions" data-m="more">${openButton(r.id, `View details of ${r.number}`)}</td>
@@ -323,6 +322,48 @@ export function mount(container, session, { data = defaultDeps.data, payments = 
         return openDetail(el.dataset.id);
       case "proof":
         return showProof({ api, paymentId: el.dataset.payment, title: `Screenshot · ${find(el.dataset.id)?.orderNumber ?? ""}` });
+      // The row's latest payment and payment link (2026-10-22).
+      case "copy-pay-link": {
+        const o = find(el.dataset.id);
+        const link = api("payments", { method: "POST", body: { action: "payLink", orderId: o.id } }).then((r) => `${location.origin}${r.path}`);
+        try {
+          await copyPending(link);
+          toast(`Payment link for ${o.orderNumber} copied ✓`, "success");
+        } catch {
+          // No clipboard here (or not allowed): show the link to copy by hand.
+          link.then(() => openPayLinkSheet({ order: o, api, toast, session })).catch((err) => toast(err.message || "Couldn't get the payment link.", "danger"));
+        }
+        return undefined;
+      }
+      case "lp-proof": {
+        const o = find(el.dataset.id);
+        return showProof({ api, paymentId: o.lastPayment?.id ?? o.lastProofPaymentId, title: `Screenshot · ${o.orderNumber}` });
+      }
+      case "lp-verify": {
+        const o = find(el.dataset.id);
+        const p = o.lastPayment;
+        if (!(await confirmDialog({ title: `Verify ${formatCentavos(p.amount, currency)} for ${o.orderNumber}?`, body: `${methodLabel(p.method)}${p.reference ? ` · Ref ${p.reference}` : ""}. Check it reached your GCash / Maya / bank first.`, confirmLabel: "Mark verified" }))) return undefined;
+        try {
+          await api("payments", { method: "POST", body: { action: "verify", paymentId: p.id } });
+          toast("Payment verified", "success");
+          return load();
+        } catch (err) {
+          return toast(err.message, "danger");
+        }
+      }
+      case "lp-reject": {
+        const o = find(el.dataset.id);
+        if (await rejectPaymentDialog({ payment: { ...o.lastPayment, orderNumber: o.orderNumber }, api, currency })) {
+          toast("Marked not accepted. The customer sees why on their link.", "success");
+          load();
+        }
+        return undefined;
+      }
+      case "lp-receipt": {
+        const o = find(el.dataset.id);
+        const p = o.lastPayment;
+        return showReceipt({ payment: { ...p, orderNumber: o.orderNumber, customerName: /^walk-?in$/i.test(o.customer?.name || "") ? "" : o.customer?.name, receivedDay: p.day }, businessName: session.business.name, currency });
+      }
       case "next":
         state.cursors.push(state.rows.at(-1));
         return load();

@@ -4508,3 +4508,58 @@ button.wl-person-name:hover .wl-edit, button.wl-person-name:focus-visible .wl-ed
     padding-bottom: var(--space-2);
   }
 }
+/* Share menu (2026-10-22): Online ordering On / Off up front. */
+.sm-ordering { margin-bottom: var(--space-4); }
+.sm-ordering-row { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); }
+.sm-ordering-label { font-weight: 700; }
+.sm-ordering .seg-btn { min-height: 40px; min-width: 64px; }
+.sm-off { margin: var(--space-2) 0 0; padding: var(--space-2) var(--space-3); border-radius: var(--radius); background: color-mix(in srgb, var(--warning) 10%, var(--surface)); color: var(--warning); font-weight: 600; font-size: var(--text-sm); }
+/* Orders: the latest payment, inline on the row (2026-10-22). */
+.lp { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; min-width: 0; }
+.lp-what { font-size: var(--text-sm); overflow-wrap: anywhere; }
+.lp-state { font-size: var(--text-xs); font-weight: 700; white-space: nowrap; }
+.lp-state[data-tone="warning"] { color: var(--warning); }
+.lp-state[data-tone="success"] { color: var(--success); }
+.lp-state[data-tone="danger"] { color: var(--danger); }
+.lp-acts { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+.lp-acts .btn-linklike, .lp-link { min-height: 36px; }
+.lp-reject { color: var(--danger); }
+/* Payments (2026-10-22): audit list, one compact row per payment. */
+.py-today { margin: 0 0 var(--space-3); color: var(--text-muted); }
+.py-today b { color: var(--text); margin-right: 4px; }
+.py-tools { margin-bottom: var(--space-2); }
+.py-more { margin: 0 0 var(--space-3); }
+.py-more > summary { cursor: pointer; min-height: 40px; display: inline-flex; align-items: center; color: var(--luna-primary); font-weight: 600; font-size: var(--text-sm); }
+.py-more-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: var(--space-2) var(--space-3); align-items: end; padding: var(--space-2) 0; }
+.py-more-actions { display: flex; gap: var(--space-2); }
+.py-list { list-style: none; margin: 0; padding: 0; }
+.py-row { display: grid; grid-template-columns: 1fr auto; column-gap: var(--space-3); row-gap: 4px; padding: var(--space-3) var(--space-4); border-top: 1px solid var(--border); }
+.py-row:first-child { border-top: 0; }
+.py-main { all: unset; cursor: pointer; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.py-main:focus-visible { outline: 2px solid var(--luna-primary); outline-offset: 2px; border-radius: 4px; }
+.py-who { font-weight: 600; overflow-wrap: anywhere; }
+.py-sub { color: var(--text-muted); font-size: var(--text-sm); overflow-wrap: anywhere; }
+.py-end { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; }
+.py-amt { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.py-state { font-size: var(--text-xs); font-weight: 700; white-space: nowrap; }
+.py-state[data-tone="warning"] { color: var(--warning); }
+.py-state[data-tone="success"] { color: var(--success); }
+.py-state[data-tone="neutral"] { color: var(--text-muted); }
+.py-acts { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: var(--space-3); align-items: center; }
+.py-acts .btn-linklike { min-height: 36px; }
+.rows td[data-col="latest-payment"] { white-space: normal; min-width: 11rem; }
+@media (max-width: 719px) {
+  /* Phones: the latest payment gets its own line under the two dropdowns. */
+  .rows td[data-col="latest-payment"] {
+    order: 4;
+    flex: 1 1 100%;
+    min-width: 0;
+  }
+  .rows td[data-col="latest-payment"] .lp {
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px var(--space-3);
+  }
+  .rows td[data-col="latest-payment"] .lp:has(> .cell-sub:only-child) { display: none; }
+}

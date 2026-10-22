@@ -9,7 +9,11 @@
 //   paymentRefs/{method_REF}     duplicate-reference guard, per business         (server only)
 //   orders/{orderId}             amountPaid, verifiedPaid, pendingPaid, balance,
 //                                paymentStatus, paymentCount, lastPaymentRef,
-//                                lastProofPaymentId (+ statusHistory entries)
+//                                lastProofPaymentId, lastPayment (+ statusHistory entries)
+// lastPayment (2026-10-22): the latest payment's summary for the order row
+// (Orders shows it inline: method · reference · status, screenshot, verify,
+// receipt) — { id, amount, method, reference, hasProof, state, via, day },
+// written in the same transaction as the payment it describes.
 // Storage (server only, never public, no download tokens):
 //   tenants/{bid}/payments/proofs/{orderId}/{paymentId}-{n}.{ext}
 // Phase 18: a screenshot is metered and enforced against the plan's file
@@ -146,6 +150,7 @@ function balanceGauges(tx, { tenant, FieldValue, before, after }) {
 }
 
 const historyAt = () => new Date();
+const lastPaymentOf = (id, p) => ({ id, amount: p.amount, method: p.method, reference: p.reference || null, hasProof: Boolean(p.proof), state: p.state, via: p.via || null, day: p.receivedDay || null });
 
 // ---------- Record ----------
 
@@ -224,6 +229,7 @@ export async function recordPayment({ db, bucket, tenant, FieldValue, business, 
         ...fields,
         paymentCount: (order.paymentCount || 0) + 1,
         lastPaymentRef: data.reference || order.lastPaymentRef || null,
+        lastPayment: lastPaymentOf(paymentRef.id, payment),
         ...(stored ? { lastProofPaymentId: paymentRef.id } : {}),
         statusHistory: append(order.statusHistory, { type: "payment", at: historyAt(), actor, paymentId: paymentRef.id, amount: data.amount, method: data.method, reference: data.reference || null, verified, label: `Payment recorded ${peso(data.amount)} via ${label}` }),
         updatedBy: actor,
@@ -326,6 +332,7 @@ export async function updatePayment({ db, bucket, tenant, FieldValue, business, 
       tx.update(orderRef, {
         ...fields,
         ...(merged.reference && order.lastPaymentRef === payment.reference ? { lastPaymentRef: merged.reference } : {}),
+        ...(order.lastPayment?.id === paymentId ? { lastPayment: lastPaymentOf(paymentId, { ...payment, ...merged, proof: stored || payment.proof }) } : {}),
         ...(stored ? { lastProofPaymentId: paymentId } : {}),
         statusHistory: orderHistory,
         updatedBy: actor,
@@ -364,7 +371,7 @@ export async function verifyPayment({ db, tenant, FieldValue, paymentId, actor }
     const stamp = FieldValue.serverTimestamp();
     const entry = { type: "verified", at: historyAt(), actor, label: "Payment marked verified" };
     tx.update(r.payment, { state: "verified", verifiedBy: actor, verifiedAt: stamp, history: append(payment.history, entry), revision: (payment.revision || 1) + 1, updatedBy: actor, updatedAt: stamp });
-    tx.update(orderRef, { ...fields, statusHistory: append(order.statusHistory, { ...entry, paymentId }), updatedBy: actor, updatedAt: stamp });
+    tx.update(orderRef, { ...fields, ...(order.lastPayment?.id === paymentId ? { lastPayment: { ...order.lastPayment, state: "verified" } } : {}), statusHistory: append(order.statusHistory, { ...entry, paymentId }), updatedBy: actor, updatedAt: stamp });
     resolution.commit({ FieldValue });
     return { paymentId, orderId: payment.orderId, ...fields };
   }, TX_OPTIONS);
@@ -397,6 +404,8 @@ export async function voidPayment({ db, tenant, FieldValue, business, paymentId,
       paymentCount: Math.max(0, (order.paymentCount || 1) - 1),
       ...(order.lastProofPaymentId === paymentId ? { lastProofPaymentId: null } : {}),
       ...(order.lastPaymentRef && order.lastPaymentRef === payment.reference ? { lastPaymentRef: null } : {}),
+      // A rejected / removed latest payment stays visible as such on the row.
+      ...(order.lastPayment?.id === paymentId ? { lastPayment: { ...order.lastPayment, state: "voided" } } : {}),
       statusHistory: append(order.statusHistory, { ...entry, paymentId }),
       updatedBy: actor,
       updatedAt: stamp,

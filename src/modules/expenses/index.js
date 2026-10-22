@@ -216,7 +216,7 @@ export function mount(container, session, { data = defaultData, inventoryData = 
     const priced = state.products.filter((p) => unitCostOf(p) !== null).sort((a, b) => a.name.localeCompare(b.name));
     const unpriced = state.products.filter((p) => unitCostOf(p) === null);
     return html`<section class="wl-section cost-section" data-section="cogs">
-      <div class="cost-head"><h2 class="cost-title">COGS</h2><span class="stat-hint">Unit cost</span></div>
+      <div class="cost-head"><h2 class="cost-title">COGS</h2><span class="stat-hint">Cost per unit</span></div>
       ${state.cogsError
         ? emptyState({ title: "Couldn't load", body: state.cogsError })
         : state.cogsLoading
@@ -244,12 +244,12 @@ export function mount(container, session, { data = defaultData, inventoryData = 
       title,
       fields: [
         ...(product ? [] : [{ name: "productId", label: "Product", type: "select", options: state.products.filter((p) => unitCostOf(p) === null).sort((a, b) => a.name.localeCompare(b.name)).map((p) => ({ value: p.id, label: p.name })) }]),
-        { name: "unitCost", label: "Unit cost (₱)", value: product && unitCostOf(product) !== null ? pesos(unitCostOf(product)) : "", inputmode: "decimal", required: true, hint: "What one unit costs you now. Used for COGS from now on." },
+        { name: "unitCost", label: "Cost per unit (₱)", value: product && unitCostOf(product) !== null ? pesos(unitCostOf(product)) : "", inputmode: "decimal", required: true, hint: "What one unit costs you. Luna uses this to calculate COGS and profit (the same cost as in Inventory)." },
       ],
       submitLabel: "Save",
       onSubmit: (v) => {
         const unitCost = parseCentavos(v.unitCost);
-        if (!(unitCost > 0)) throw new Error("Enter a unit cost more than ₱0");
+        if (!(unitCost > 0)) throw new Error("Enter a cost per unit more than ₱0");
         return api("products", { method: "POST", body: { action: "setUnitCost", productId: product ? product.id : v.productId, unitCost } });
       },
     });
@@ -272,7 +272,7 @@ export function mount(container, session, { data = defaultData, inventoryData = 
     else if (act === "cogs-add") r = await setCost(null, "Add product cost");
     else if (act === "cogs-edit" && product) r = await setCost(product, `${product.name} unit cost`);
     if (!r || r.unchanged) return undefined;
-    toast(act === "exp-add" ? "Expense added." : act === "exp-edit" ? "Expense updated." : act === "exp-remove" ? "Expense removed." : "Unit cost saved.", "success");
+    toast(act === "exp-add" ? "Expense added." : act === "exp-edit" ? "Expense updated." : act === "exp-remove" ? "Expense removed." : "Cost per unit saved.", "success");
     return act.startsWith("exp") ? loadExpenses() : loadCogs();
   };
   container.addEventListener("click", onClick);

@@ -72,11 +72,12 @@ describe("Reports page", () => {
     expect(presetsFor("2026-10-09").thisYear).toMatchObject({ from: "2026-01-01", to: "2026-10-09" });
   });
 
-  it("exactly three totals: Total Sales, Total Net Profit (pesos: net sales − COGS − operating expenses, 'Profitable'), Overall SKU Margin (%)", async () => {
+  it("exactly four totals: Total Sales, Total Orders (2026-10-22), Total Net Profit (pesos: net sales − COGS − operating expenses, 'Profitable'), Overall SKU Margin (%)", async () => {
     mount(container, sessionFixture(), { api: vi.fn(async () => FIN), now: NOW });
     await flush();
     const totals = [...container.querySelectorAll("[data-total]")].map((t) => [t.querySelector(".rp-label").textContent, t.querySelector(".rp-value").textContent]);
-    expect(totals).toEqual([["Total Sales", "₱80,000.00"], ["Total Net Profit", "₱25,000.00"], ["Overall SKU Margin", "46.0%"]]);
+    expect(totals).toEqual([["Total Sales", "₱80,000.00"], ["Total Orders", "9"], ["Total Net Profit", "₱25,000.00"], ["Overall SKU Margin", "46.0%"]]);
+    expect(container.querySelector('[data-role="orders-note"]').textContent).toBe("8 fulfilled");
     expect(FIN.overview.netSales - FIN.overview.cogs - FIN.overview.operatingExpenses).toBe(FIN.overview.estimatedOperatingProfit);
     expect(container.querySelector('[data-role="net-profit-note"]').textContent).toBe("Profitable");
     expect(container.querySelector('[data-total="net-profit"]').classList.contains("is-main")).toBe(true);
@@ -125,10 +126,10 @@ describe("Reports page", () => {
   });
 
   it("null from the server is 'No data yet', not ₱0; an empty period says so", async () => {
-    const r = { ...FIN, overview: { ...FIN.overview, grossSales: null, netSales: null, estimatedOperatingProfit: null }, series: [{ period: "2026-10", netProfit: null }], skuMargins: { rows: [], overall: { included: 0, priceTotal: 0, unitProfitTotal: 0, marginPct: null } } };
+    const r = { ...FIN, overview: { ...FIN.overview, ordersCreated: null, grossSales: null, netSales: null, estimatedOperatingProfit: null }, series: [{ period: "2026-10", netProfit: null }], skuMargins: { rows: [], overall: { included: 0, priceTotal: 0, unitProfitTotal: 0, marginPct: null } } };
     mount(container, sessionFixture(), { api: vi.fn(async () => r), now: NOW });
     await flush();
-    expect([...container.querySelectorAll(".rp-value")].map((v) => v.textContent)).toEqual([NO_DATA, NO_DATA, NO_DATA]);
+    expect([...container.querySelectorAll(".rp-value")].map((v) => v.textContent)).toEqual([NO_DATA, NO_DATA, NO_DATA, NO_DATA]);
     expect(container.querySelector('[data-chart="net-profit"]').textContent).toMatch(/No sales or costs recorded/);
     expect(container.querySelector('[data-section="products"]').textContent).toMatch(/No active products yet/);
   });

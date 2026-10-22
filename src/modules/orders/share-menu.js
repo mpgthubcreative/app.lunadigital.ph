@@ -4,16 +4,25 @@
 // choices, products shown) are for settings.manage (the Owner). Customers'
 // orders arrive in Orders like any other order (source "Online store").
 //
-// openShareMenu({ session, api, toast, listActiveProducts, origin? }) resolves when closed.
+// 2026-10-22: Online ordering On / Off is stated up front (Off: customers
+// who open the link see that ordering is unavailable), and the Store link
+// (a customer creates a NEW order) is told apart from an order's Payment
+// link (a customer pays an EXISTING order; Orders → the order). They are
+// separate links with separate security (a public store slug vs a secret
+// per-order token).
+// openShareMenu({ session, api, toast, listActiveProducts, origin?, host? })
+// resolves when closed. host: render as a page into that element (More →
+// Share menu) instead of a dialog.
 
 import { html, render } from "../../lib/html.js";
+import { pageHeader } from "../../components/ui.js";
 import { STORE_PAYMENT_METHOD_IDS, PAYMENT_METHODS, STORE_FULFILLMENT } from "@shared/index.js";
 
-export function openShareMenu({ session, api, toast, listActiveProducts, origin = window.location.origin, share = typeof navigator !== "undefined" && navigator.share ? (d) => navigator.share(d) : null, copy = (t) => navigator.clipboard?.writeText(t) }) {
+export function openShareMenu({ session, api, toast, listActiveProducts, origin = window.location.origin, share = typeof navigator !== "undefined" && navigator.share ? (d) => navigator.share(d) : null, copy = (t) => navigator.clipboard?.writeText(t), host = null }) {
   return new Promise((resolve) => {
     const state = { status: "loading", message: "", settings: null, path: "", canManage: false, busy: false, error: "", products: null };
-    const backdrop = document.createElement("div");
-    backdrop.className = "modal-backdrop";
+    const backdrop = host || document.createElement("div");
+    if (!host) backdrop.className = "modal-backdrop";
     const link = () => `${origin}${state.path}`;
 
     function settingsForm(s) {
@@ -37,29 +46,38 @@ export function openShareMenu({ session, api, toast, listActiveProducts, origin 
       </details>`;
     }
 
-    function draw() {
+    // Online ordering On / Off first: what customers who open the link get.
+    const ordering = (s) => html`<section class="sm-ordering" data-role="online-ordering">
+        <div class="sm-ordering-row"><span class="sm-ordering-label">Online ordering</span>
+          ${state.canManage
+            ? html`<span class="seg" role="group" aria-label="Online ordering"><button type="button" class="seg-btn${s.open ? " is-on" : ""}" data-x="on" aria-pressed="${s.open}" ${state.busy ? "disabled" : ""}>On</button><button type="button" class="seg-btn${s.open ? "" : " is-on"}" data-x="off" aria-pressed="${!s.open}" ${state.busy ? "disabled" : ""}>Off</button></span>`
+            : html`<b class="${s.open ? "tone-success" : "tone-muted"}" data-role="store-status">${s.open ? "On" : "Off"}</b>`}</div>
+        <p class="${s.open ? "stat-hint" : "sm-off"}" data-role="ordering-note">${s.open ? "Customers can place orders from your store link. They arrive in Orders as \"Online store\"; nothing is fulfilled until you do it there." : "Online ordering is currently off. Customers who open your store link will see that ordering is unavailable."}</p>
+      </section>`;
+    function body() {
       const s = state.settings;
+      return state.status === "loading"
+        ? html`<p class="stat-hint">Loading…</p>`
+        : state.status === "error"
+          ? html`<p class="form-error" data-role="message">${state.message}</p>`
+          : html`${ordering(s)}
+              <div class="field"><label for="sm-link">Store link <span class="co-optional">customers create a new order</span></label><input class="input" id="sm-link" readonly value="${link()}" data-role="link" /></div>
+              <div class="sm-actions">
+                <button type="button" class="btn btn-primary" data-x="copy">Copy</button>
+                ${share ? html`<button type="button" class="btn" data-x="share">Share</button>` : ""}
+                <a class="btn" href="${state.path}" target="_blank" rel="noopener" data-x="preview">Preview</a>
+              </div>
+              <p class="stat-hint" data-role="link-kinds">To get paid for an order you already have, send its Payment link instead (Orders → the order → Payment link). It's a different, private link for that one order.</p>
+              ${state.canManage ? settingsForm(s) : ""}`;
+    }
+    function draw() {
       render(
         backdrop,
-        html`<div class="modal" role="dialog" aria-modal="true" aria-labelledby="sm-title" data-role="share-menu">
+        host
+          ? html`<div data-role="share-menu" class="sm-page">${pageHeader({ title: "Share menu" })}<section class="card"><div class="card-body">${body()}</div></section></div>`
+          : html`<div class="modal" role="dialog" aria-modal="true" aria-labelledby="sm-title" data-role="share-menu">
           <div class="modal-header"><h2 class="card-title" id="sm-title">Share menu</h2></div>
-          <div class="modal-body">
-            ${state.status === "loading"
-              ? html`<p class="stat-hint">Loading…</p>`
-              : state.status === "error"
-                ? html`<p class="form-error" data-role="message">${state.message}</p>`
-                : html`${state.canManage
-                      ? html`<label class="sm-check sm-open"><input type="checkbox" data-x="open" ${s.open ? "checked" : ""} ${state.busy ? "disabled" : ""} /> Taking orders online</label>`
-                      : html`<p class="sm-status" data-role="store-status"><b class="${s.open ? "tone-success" : "tone-muted"}">${s.open ? "Open" : "Closed"}</b> · ${s.open ? "customers can order from this link." : "customers see that you're not taking orders."}</p>`}
-                    <div class="field"><label for="sm-link">Menu link</label><input class="input" id="sm-link" readonly value="${link()}" data-role="link" /></div>
-                    <div class="sm-actions">
-                      <button type="button" class="btn btn-primary" data-x="copy">Copy link</button>
-                      ${share ? html`<button type="button" class="btn" data-x="share">Share</button>` : ""}
-                      <a class="btn" href="${state.path}" target="_blank" rel="noopener" data-x="preview">Preview</a>
-                    </div>
-                    <p class="stat-hint">Customers' orders appear in Orders as "Online store". Nothing is fulfilled until you do it there.</p>
-                    ${state.canManage ? settingsForm(s) : ""}`}
-          </div>
+          <div class="modal-body">${body()}</div>
           <div class="modal-footer"><button type="button" class="btn btn-ghost" data-x="close">Close</button></div>
         </div>`
       );
@@ -89,7 +107,7 @@ export function openShareMenu({ session, api, toast, listActiveProducts, origin 
 
     const close = () => {
       document.removeEventListener("keydown", onKey);
-      backdrop.remove();
+      if (!host) backdrop.remove();
       resolve();
     };
     const onKey = (e) => {
@@ -97,11 +115,14 @@ export function openShareMenu({ session, api, toast, listActiveProducts, origin 
     };
     backdrop.addEventListener("click", async (e) => {
       const x = e.target.closest("[data-x]")?.dataset.x;
-      if (x === "close" || e.target === backdrop) return close();
+      if (x === "close" || (!host && e.target === backdrop)) return close();
+      if ((x === "on" || x === "off") && state.settings && state.settings.open !== (x === "on")) {
+        return save({ open: x === "on" }, x === "on" ? "Online ordering is on." : "Online ordering is off. Customers who open the link see that ordering is unavailable.");
+      }
       if (x === "copy") {
         try {
           await copy(link());
-          toast("Menu link copied.", "success");
+          toast("Store link copied.", "success");
         } catch {
           backdrop.querySelector('[data-role="link"]').select();
           toast("Copy the link from the box.", "neutral");
@@ -115,9 +136,6 @@ export function openShareMenu({ session, api, toast, listActiveProducts, origin 
         }
       }
       return undefined;
-    });
-    backdrop.addEventListener("change", (e) => {
-      if (e.target.dataset?.x === "open") save({ open: e.target.checked }, e.target.checked ? "Your store is open for online orders." : "Your store is closed for online orders.");
     });
     backdrop.addEventListener(
       "toggle",
@@ -153,8 +171,10 @@ export function openShareMenu({ session, api, toast, listActiveProducts, origin 
       }
       save(changes, "Store settings saved.");
     });
-    document.addEventListener("keydown", onKey);
-    document.body.appendChild(backdrop);
+    if (!host) {
+      document.addEventListener("keydown", onKey);
+      document.body.appendChild(backdrop);
+    }
     draw();
     api("storefront", { method: "POST", body: { action: "get" } })
       .then((r) => {

@@ -1,6 +1,7 @@
 // POST /api/inventory   (Inventory module + write access, and per action:)
 //   { action: "receipt",  productId, quantity, unitCost, reference?, note? }            inventory.receive
-//   { action: "opening",  productId, quantity, unitCost, reference?, note }             inventory.adjust
+//   { action: "opening",  productId, quantity, unitCost, reference?, note? }            inventory.adjust
+//     (2026-10-22: reference / note optional; who and when are recorded anyway)
 //   { action: "adjustment_increase" | "adjustment_decrease",
 //     productId, quantity, reason, note?, reference? }                                  inventory.adjust
 //   { action: "count", productId, onHand, reason, note?, reference? }                   inventory.adjust
@@ -32,10 +33,7 @@ function movementFrom(body) {
   const note = optionalText(body.note, "Note", 300);
   const movement = body.action === "count" ? { type: "count", onHand: body.onHand, note, referenceType: reference ? "manual" : null, referenceId: reference } : { type: body.action, quantity: body.quantity, note, referenceType: reference ? "manual" : null, referenceId: reference };
   if (body.action === "receipt" || body.action === "opening") movement.unitCost = body.unitCost;
-  if (body.action === "opening") {
-    if (!reference && !note) throw new RequestError("invalid-request", "An opening balance needs a reference or a note (e.g. the stock count it comes from).", 400);
-    movement.reason = "opening_balance";
-  }
+  if (body.action === "opening") movement.reason = "opening_balance";
   if (body.action === "receipt") movement.reason = "receipt";
   if (body.action.startsWith("adjustment_") || body.action === "count") {
     if (!Object.prototype.hasOwnProperty.call(ADJUSTMENT_REASONS, body.reason)) {

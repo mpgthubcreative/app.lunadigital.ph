@@ -62,8 +62,10 @@ describe("Household navigation without a Dashboard", () => {
     expect(document.querySelector('.tab-link[href="/"]')).toBeNull();
   });
 
-  it("the other workspaces keep their Dashboard at / (Bridal: Money, see wedding.test.js)", () => {
-    for (const t of ["distributor", "baby-expense"]) {
+  it("Baby keeps its Dashboard at / (Bridal: Money, see wedding.test.js; Distributor: Orders since 2026-10-22)", () => {
+    const d = sessionFixture({ workspaceTemplateId: "distributor" });
+    expect(visit(d, "/").route.moduleId).toBe("orders");
+    for (const t of ["baby-expense"]) {
       const s = sessionFixture({ workspaceTemplateId: t });
       expect(visit(s, "/").route.moduleId, t).toBe("dashboard");
       document.getElementById("app").innerHTML = "";

@@ -20,7 +20,7 @@ import { icon, lunaMark } from "../components/icons.js";
 import { initials } from "../lib/format.js";
 import { mountBell } from "./notification-bell.js";
 import { isTyping } from "../lib/viewport.js";
-import { showExportPage, canSeeWeddingSetup, canSeeWeddingProgram, canSeeCrewMeals } from "./routes.js";
+import { showExportPage, canSeeShareMenu, canSeeWeddingSetup, canSeeWeddingProgram, canSeeCrewMeals } from "./routes.js";
 import { openFeedback, isOwner } from "./feedback.js";
 
 // One bell per rendered shell (a business switch renders a new shell).
@@ -52,8 +52,11 @@ const SUBSCRIPTION_MESSAGES = {
 };
 
 // The purpose of each page decides its group (and nothing else).
-const MANAGE = new Set(["users", "settings", "imports", "subscription", "downloads", "weddingsetup", "weddingprogram", "weddingcrew"]);
+const MANAGE = new Set(["users", "settings", "imports", "subscription", "downloads", "weddingsetup", "weddingprogram", "weddingcrew", "sharemenu"]);
 export const navGroup = (id) => (id === "dashboard" ? "overview" : id === "reports" ? "analyze" : MANAGE.has(id) ? "manage" : "work");
+// A page's group in THIS workspace: the template may move a daily page under
+// More / Manage (moreModules; Distributor: Payments, Costs).
+const groupOf = (m) => m.group || navGroup(m.id);
 const GROUP_LABELS = { overview: "Overview", work: "Work", analyze: "Analyze", manage: "Manage" };
 // One-word labels for the phone tab bar (display only; ids never change).
 const SHORT = { dashboard: "Dashboard", tasks: "Tasks", guests: "Guests", vendors: "Expenses", vendorpayments: "Payments", expenses: "Expenses", budget: "Budget", schedule: "Schedule", providers: "Providers", grocery: "Grocery", household: "Staff", attendance: "Attendance", payroll: "Payroll", advances: "Advances", orders: "Orders", inventory: "Inventory", payments: "Payments", customers: "Customers" };
@@ -67,7 +70,8 @@ const NAV_HIDDEN = new Set(["vendorpayments"]);
 
 // Pages a member may put on the phone's main tabs: the work pages (never
 // the Dashboard, Users, Settings…).
-export const arrangeable = (nav) => nav.filter((m) => m.id !== "dashboard" && navGroup(m.id) === "work");
+// Reports may be a phone tab too (Distributor, 2026-10-22).
+export const arrangeable = (nav) => nav.filter((m) => m.id !== "dashboard" && (groupOf(m) === "work" || groupOf(m) === "analyze"));
 
 // preference (shared/navigation-prefs.js): the member's own order for the
 // main tabs; pages they can't open are skipped and the template's default
@@ -84,7 +88,7 @@ export function mobileTabs(nav, templateId, preference = null) {
   const room = usable.has("dashboard") ? 3 : Math.min(4, wanted.length || 4);
   // Top up: the template's default first, then the navigation order.
   for (const id of wanted) if (picked.length < room && usable.has(id) && !picked.includes(id)) picked.push(id);
-  for (const m of nav) if (picked.length < room && m.id !== "dashboard" && navGroup(m.id) === "work" && !picked.includes(m.id)) picked.push(m.id);
+  for (const m of nav) if (picked.length < room && m.id !== "dashboard" && groupOf(m) === "work" && !picked.includes(m.id)) picked.push(m.id);
   return [...(usable.has("dashboard") ? ["dashboard"] : []), ...picked.slice(0, room)].map((id) => usable.get(id));
 }
 
@@ -108,10 +112,13 @@ export function shellNavigation(session) {
   // Phase 18.6: Supplier Payments is run from the Wedding Suppliers rows; its
   // page stays reachable (payment history) but leaves the menu.
   // Owner-pilot Bridal UX: the template's menuHidden pages keep their route only.
-  const menuHidden = new Set(getWorkspaceTemplate(snapshotWorkspaceTemplateId(session.entitlements))?.menuHidden || []);
+  const template = getWorkspaceTemplate(snapshotWorkspaceTemplateId(session.entitlements));
+  const menuHidden = new Set(template?.menuHidden || []);
+  const more = new Set(template?.moreModules || []);
   const nav = resolveNavigation({ entitlements: session.entitlements, permissions: session.member.permissions })
     .filter((m) => !NAV_HIDDEN.has(m.id) && !menuHidden.has(m.id))
-    .map((m) => (labels[m.id] ? { ...m, label: labels[m.id] } : m));
+    .map((m) => (labels[m.id] ? { ...m, label: labels[m.id] } : m))
+    .map((m) => (more.has(m.id) ? { ...m, group: "manage" } : m));
   // Phase 18.6: the Owner's Luna subscription, under Manage (before Settings).
   if (session.member.permissions?.["billing.view"] === true) {
     const at = nav.findIndex((m) => m.id === "settings");
@@ -119,20 +126,25 @@ export function shellNavigation(session) {
   }
   // Owner-pilot Bridal: Wedding Setup first under Manage (More on a phone).
   if (canSeeWeddingSetup(session)) {
-    const at = nav.findIndex((m) => navGroup(m.id) === "manage");
+    const at = nav.findIndex((m) => groupOf(m) === "manage");
     nav.splice(at < 0 ? nav.length : at, 0, { id: "weddingsetup", path: "/wedding-setup", label: "Wedding Setup", icon: "heart" });
   }
   // Owner-pilot Bridal: Music & Program right after Wedding Setup.
   if (canSeeWeddingProgram(session)) {
     const setupAt = nav.findIndex((m) => m.id === "weddingsetup");
-    const at = setupAt >= 0 ? setupAt + 1 : nav.findIndex((m) => navGroup(m.id) === "manage");
+    const at = setupAt >= 0 ? setupAt + 1 : nav.findIndex((m) => groupOf(m) === "manage");
     nav.splice(at < 0 ? nav.length : at, 0, { id: "weddingprogram", path: "/wedding-program", label: "Music & Program", icon: "music" });
   }
   // Owner-pilot Bridal: Crew Meals right after Music & Program.
   if (canSeeCrewMeals(session)) {
     const prev = ["weddingprogram", "weddingsetup"].map((id) => nav.findIndex((m) => m.id === id)).find((i) => i >= 0) ?? -1;
-    const at = prev >= 0 ? prev + 1 : nav.findIndex((m) => navGroup(m.id) === "manage");
+    const at = prev >= 0 ? prev + 1 : nav.findIndex((m) => groupOf(m) === "manage");
     nav.splice(at < 0 ? nav.length : at, 0, { id: "weddingcrew", path: "/wedding-crew-meals", label: "Crew Meals", icon: "gift" });
+  }
+  // Distributor (2026-10-22): Share menu (store link + Store settings) under More, before Download Excel.
+  if (canSeeShareMenu(session)) {
+    const at = nav.findIndex((m) => ["imports", "users", "settings"].includes(m.id));
+    nav.splice(at < 0 ? nav.length : at, 0, { id: "sharemenu", path: "/share-menu", label: "Share menu", icon: "orders" });
   }
   // Owner-pilot: Download Excel, one page under More / Manage (every workspace).
   if (showExportPage(session)) {
@@ -164,7 +176,7 @@ export function renderShell(root, session, handlers = {}) {
   const tabs = mobileTabs(nav, workspace, session.member.navigationPreference);
   const rest = nav.filter((m) => !tabs.includes(m));
   const groups = Object.keys(GROUP_LABELS)
-    .map((g) => ({ id: g, label: GROUP_LABELS[g], items: nav.filter((m) => navGroup(m.id) === g) }))
+    .map((g) => ({ id: g, label: GROUP_LABELS[g], items: nav.filter((m) => groupOf(m) === g) }))
     .filter((g) => g.items.length);
   const who = session.user.name || session.user.email;
 
