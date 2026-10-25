@@ -7,7 +7,8 @@
 // couple's Wedding Setup (nothing about a couple is built in).
 
 import { html, render } from "../../../lib/html.js";
-import { fontsOf, FONTS } from "@shared/invitation-design.js";
+import { fontsOf, FONTS, TEMPLATES } from "@shared/invitation-design.js";
+import { signaturePage, namesOf, zonedEpoch, countdown } from "./signature.js";
 
 // A published Luna Bridal+ design: colours / fonts as CSS variables (set
 // through the CSSOM: the site's policy blocks inline style attributes),
@@ -90,7 +91,14 @@ export const isWeddingHomePath = (path) => /^\/w\/[a-z0-9-]{1,60}\/?$/.test(path
 // preview (Owner, inside Luna): the same page, but answers aren't sent and
 // the tab title / address bar are left alone.
 export function renderInvitePage(root, { token = inviteTokenFrom(window.location.pathname), fetchImpl = (...a) => window.fetch(...a), preview = false } = {}) {
-  const state = { status: "loading", inv: null, message: "", choosing: null, seats: null, done: null, busy: false };
+  const state = { status: "loading", inv: null, message: "", choosing: null, seats: null, meal: null, note: "", done: null, busy: false, timer: null };
+  // What Wedding Setup asks with an Accept: a meal (one of its options) and
+  // a dietary note. Neither = Accept answers at once for a party of one.
+  const asks = () => {
+    const w = state.inv.wedding;
+    return { meals: Array.isArray(w.mealOptions) ? w.mealOptions : [], note: w.askDietary === true };
+  };
+  const needsStep = () => state.inv.guest.seats > 1 || asks().meals.length > 0 || asks().note;
   const of = (n) => `${n} of ${state.inv.guest.seats}`;
   if (!preview) document.title = "You're invited";
   // The theme's serif (Google Fonts is allowed by the site's policy).
@@ -116,10 +124,14 @@ export function renderInvitePage(root, { token = inviteTokenFrom(window.location
     }
     const answered = guest.rsvp !== "awaiting" ? html`<p class="inv-quiet" data-role="current">Your answer: ${guest.rsvp === "attending" ? `Attending · ${guest.seats > 1 ? of(guest.confirmed) : guest.confirmed}` : "Not attending"}${rsvpOpen ? " (you can change it)" : ""}</p>` : "";
     if (!rsvpOpen) return html`${answered}<p class="inv-quiet" data-role="closed">RSVPs are closed. Please contact the couple for any change.</p>`;
-    if (state.choosing === "attending" && guest.seats > 1) {
-      return html`<p>How many will attend?</p>
-        <div class="inv-seats" role="group" aria-label="How many will attend">${Array.from({ length: guest.seats }, (_, i) => i + 1).map((n) => html`<button type="button" class="inv-seat${state.seats === n ? " is-on" : ""}" data-seats="${n}" aria-pressed="${state.seats === n ? "true" : "false"}">${n}</button>`)}</div>
-        <div class="inv-actions"><button type="button" class="inv-btn" data-act="back">Back</button><button type="button" class="inv-btn inv-primary" data-act="send" ${state.seats && !state.busy ? "" : "disabled"}>Confirm RSVP</button></div>`;
+    if (state.choosing === "attending" && needsStep()) {
+      const { meals, note } = asks();
+      const ready = state.seats && (!meals.length || state.meal) && !state.busy;
+      return html`${guest.seats > 1 ? html`<p>How many will attend?</p>
+        <div class="inv-seats" role="group" aria-label="How many will attend">${Array.from({ length: guest.seats }, (_, i) => i + 1).map((n) => html`<button type="button" class="inv-seat${state.seats === n ? " is-on" : ""}" data-seats="${n}" aria-pressed="${state.seats === n ? "true" : "false"}">${n}</button>`)}</div>` : ""}
+        ${meals.length ? html`<p>Meal preference</p><div class="inv-seats inv-meals" role="group" aria-label="Meal preference">${meals.map((m) => html`<button type="button" class="inv-seat${state.meal === m ? " is-on" : ""}" data-meal="${m}" aria-pressed="${state.meal === m ? "true" : "false"}">${m}</button>`)}</div>` : ""}
+        ${note ? html`<label class="inv-note-label" for="inv-note">Dietary needs or allergies (optional)</label><textarea class="inv-note" id="inv-note" data-role="rsvp-note" rows="2" maxlength="300">${state.note}</textarea>` : ""}
+        <div class="inv-actions"><button type="button" class="inv-btn" data-act="back">Back</button><button type="button" class="inv-btn inv-primary" data-act="send" ${ready ? "" : "disabled"}>Confirm RSVP</button></div>`;
     }
     return html`${answered}<p>Will you be joining us?</p>
       <div class="inv-actions"><button type="button" class="inv-btn inv-primary" data-act="accept" ${state.busy ? "disabled" : ""}>Accept</button><button type="button" class="inv-btn" data-act="decline" ${state.busy ? "disabled" : ""}>Decline</button></div>
@@ -132,7 +144,8 @@ export function renderInvitePage(root, { token = inviteTokenFrom(window.location
     const d = design.config;
     const A = design.assets || {};
     const asset = (id) => (id && A[id] ? A[id] : null);
-    const texts = d.texts || {};
+    // A Standard template: the couple's own wording lines (Wedding Setup).
+    const texts = { ...(d.texts || {}), ...(design.standard ? state.inv.options?.wording || {} : {}) };
     const heroPhoto = () =>
       d.hero.style === "none" ? "" : html`<div class="inv-hero-wrap">${hero ? html`<img class="inv-hero" src="${hero}" alt="">` : html`<div class="inv-hero inv-hero-plain" aria-hidden="true"></div>`}${asset(d.assets.heroOverlay) ? html`<img class="inv-hero-frame" src="${asset(d.assets.heroOverlay)}" alt="" aria-hidden="true">` : ""}</div>`;
     const head = html`<header class="inv-head"><p class="inv-names">${w.coupleNames || ""}</p><p class="inv-script">${texts.scriptLine || "are getting married"}</p>${w.weddingDate ? html`<p class="inv-date">${longDate(w.weddingDate)}</p>` : ""}</header>`;
@@ -181,7 +194,39 @@ export function renderInvitePage(root, { token = inviteTokenFrom(window.location
     applyDesign(root.querySelector(".inv-page"), design);
   }
 
+  // The signature layout (Gold Elegance, Black & White, Rustic Garden).
+  function signature() {
+    const { design, options } = state.inv;
+    const d = design.config;
+    const t = TEMPLATES[d.templateId] || {};
+    // Template wording, a Custom design's texts, then the couple's own words.
+    const W = { ...(t.wording || {}), ...(d.texts?.scriptLine ? { tagline: d.texts.scriptLine } : {}), ...(d.texts?.rsvpTitle ? { rsvpTitle: d.texts.rsvpTitle } : {}), ...(design.standard ? options?.wording || {} : {}) };
+    render(root, signaturePage({ inv: state.inv, names: namesOf(state.inv.wedding), wording: W, time12, rsvpBlock, message: state.message }));
+    const page = root.querySelector(".inv-page");
+    applyDesign(page, design);
+    if (design.standard && HEX.test(options?.accent || "")) page.style.setProperty("--inv-accent", options.accent);
+    // Palette swatches: colours through the CSSOM (no inline styles).
+    for (const sw of page.querySelectorAll(".sg-swatch[data-hex]")) if (HEX.test(sw.dataset.hex)) sw.style.setProperty("--sw", sw.dataset.hex);
+    // The countdown ticks while the page is open.
+    const w = state.inv.wedding;
+    if (state.timer) clearInterval(state.timer);
+    state.timer = null;
+    if (w.weddingDate && page.querySelector('[data-role="countdown"]')) {
+      const target = zonedEpoch(w.weddingDate, w.ceremonyTime, state.inv.timezone);
+      state.timer = setInterval(() => {
+        const left = countdown(target);
+        if (!root.isConnected || !left) {
+          clearInterval(state.timer);
+          state.timer = null;
+          return;
+        }
+        for (const el of root.querySelectorAll("[data-cd]")) el.textContent = String(left[el.dataset.cd]);
+      }, 30_000);
+    }
+  }
+
   function draw() {
+    if (state.status === "ready" && state.inv.design?.config?.kind === "signature") return signature();
     if (state.status === "ready" && state.inv.design?.config) return designedPage();
     if (state.status !== "ready") {
       render(root, html`<main class="inv-page"><article class="inv-card"><p class="inv-quiet" data-role="message">${state.status === "loading" ? "Opening your invitation…" : state.message}</p></article></main>`);
@@ -192,13 +237,14 @@ export function renderInvitePage(root, { token = inviteTokenFrom(window.location
     // wedding without them sees exactly the original page.
     const { wedding: w, hero, guest, gallery = [] } = state.inv;
     const faq = Array.isArray(w.faq) ? w.faq : [];
+    const own = state.inv.options?.wording || {};
     render(
       root,
       html`<main class="inv-page" data-role="invite-page">
         <article class="inv-card">
           <header class="inv-head">
             <p class="inv-names">${w.coupleNames || ""}</p>
-            <p class="inv-script">are getting married</p>
+            <p class="inv-script">${own.scriptLine || "are getting married"}</p>
             ${w.weddingDate ? html`<p class="inv-date">${longDate(w.weddingDate)}</p>` : ""}
           </header>
           ${hero ? html`<img class="inv-hero" src="${hero}" alt="">` : html`<div class="inv-hero inv-hero-plain" aria-hidden="true"></div>`}
@@ -209,7 +255,7 @@ export function renderInvitePage(root, { token = inviteTokenFrom(window.location
           ${gallery.length ? html`<section class="inv-section inv-sec-gallery" data-section="gallery"><div class="inv-gallery" data-style="grid">${gallery.map((src) => html`<img src="${src}" alt="" loading="lazy">`)}</div></section>` : ""}
           ${faq.length ? html`<section class="inv-section inv-sec-faq" data-section="faq"><h3>Questions</h3><dl class="inv-faq">${faq.map((f) => html`<dt>${f.q}</dt><dd>${f.a}</dd>`)}</dl></section>` : ""}
           <section class="inv-rsvp" data-role="rsvp">
-            <h2>RSVP</h2>
+            <h2>${own.rsvpTitle || "RSVP"}</h2>
             <p class="inv-quiet">This invitation is for</p>
             <p class="inv-guest" data-role="guest-name">${guest.name}</p>
             <p class="inv-quiet" data-role="seats">${guest.seats} seat${guest.seats === 1 ? "" : "s"} reserved</p>
@@ -232,7 +278,9 @@ export function renderInvitePage(root, { token = inviteTokenFrom(window.location
     state.message = "";
     draw();
     try {
-      const r = await call({ action: "respond", token, rsvp: status === "attending" ? { status, confirmed } : { status } }, fetchImpl);
+      const { meals, note } = asks();
+      const extra = status === "attending" ? { ...(meals.length && state.meal ? { meal: state.meal } : {}), ...(note && state.note.trim() ? { note: state.note.trim() } : {}) } : {};
+      const r = await call({ action: "respond", token, rsvp: status === "attending" ? { status, confirmed, ...extra } : { status } }, fetchImpl);
       state.done = { rsvp: r.rsvp, confirmed: r.confirmed };
       state.inv.guest = { ...state.inv.guest, rsvp: r.rsvp, confirmed: r.confirmed };
     } catch (err) {
@@ -243,19 +291,31 @@ export function renderInvitePage(root, { token = inviteTokenFrom(window.location
   }
 
   root.addEventListener("click", (event) => {
-    const el = event.target.closest("[data-act], [data-seats]");
+    const el = event.target.closest("[data-act], [data-seats], [data-meal], [data-jump]");
     if (!el || state.status !== "ready") return;
+    if (el.dataset.jump) {
+      root.querySelector(`#sg-${el.dataset.jump}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+      return;
+    }
     if (el.dataset.seats) {
       state.seats = Number(el.dataset.seats);
       draw();
       return;
     }
+    if (el.dataset.meal !== undefined) {
+      state.meal = el.dataset.meal;
+      draw();
+      return;
+    }
     const a = el.dataset.act;
     if (a === "accept") {
-      if (state.inv.guest.seats > 1) {
+      if (needsStep()) {
         state.choosing = "attending";
         // Never assume every reserved seat is coming: the guest picks.
-        state.seats = state.inv.guest.rsvp === "attending" ? state.inv.guest.confirmed : null;
+        const g = state.inv.guest;
+        state.seats = g.seats === 1 ? 1 : g.rsvp === "attending" ? g.confirmed : null;
+        state.meal = asks().meals.includes(g.meal) ? g.meal : null;
+        state.note = typeof g.note === "string" ? g.note : "";
         draw();
       } else send("attending", 1);
     } else if (a === "decline") send("declined");
@@ -263,6 +323,10 @@ export function renderInvitePage(root, { token = inviteTokenFrom(window.location
       state.choosing = null;
       draw();
     } else if (a === "send" && state.seats) send("attending", state.seats);
+  });
+
+  root.addEventListener("input", (event) => {
+    if (event.target.dataset?.role === "rsvp-note") state.note = event.target.value;
   });
 
   if (!token) {

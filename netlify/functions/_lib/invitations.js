@@ -7,6 +7,8 @@
 // Records:
 //   weddingSetup/current          the invitation details + RSVP settings
 //   weddingSetup/hero             the cover photo (small JPEG data URL)
+//   weddingPhotos/{slot}          a design's other photos (story1, story2,
+//                                 when, venue, dressCode; server-only)
 //   guestInvites/{guestId}        { token, hash, createdAt }  server-only
 //   invitations/{sha256(token)}   { businessId, guestId, createdAt }  top
 //                                 level, server-only (rules deny all)
@@ -19,17 +21,17 @@
 // link stops working at once. Every bad / revoked link gets the same answer.
 
 import { createHash, randomBytes } from "node:crypto";
-import { WeddingError, WEDDING_SCHEMA_VERSION, TOTALS_DOC_ID, SEATING_DOC_ID, RSVP_STATUSES, validateRsvp, validateWeddingSetup, rsvpOpen, setupMissing, isWeddingSlug, suggestWeddingSlug, invitePath, WEDDING_SLUG_MIN, WEDDING_SLUG_MAX } from "../../../shared/wedding.js";
+import { WeddingError, WEDDING_SCHEMA_VERSION, TOTALS_DOC_ID, SEATING_DOC_ID, RSVP_STATUSES, validateRsvp, validateWeddingSetup, rsvpOpen, setupMissing, isWeddingSlug, suggestWeddingSlug, invitePath, coupleDisplayName, WEDDING_SLUG_MIN, WEDDING_SLUG_MAX } from "../../../shared/wedding.js";
 import { businessDate, isDayId } from "../../../shared/metrics.js";
 import { prepareNotifications } from "./notifications.js";
 import { tenantDb } from "./tenant-db.js";
 import { guestTotalsWrite, releasedText } from "./wedding.js";
-import { roleLabel } from "../../../shared/wedding-roles.js";
+import { roleLabel, rolesPlan } from "../../../shared/wedding-roles.js";
 import { accessPolicy } from "../../../shared/subscription.js";
 import { attendingMarksFor } from "./wedding-roles.js";
 import { liveDesignFor, ownerInvitationStatus, previewDesign, TRIAL_PREVIEW_MESSAGE } from "./invitation-design.js";
 import { trialOpen } from "../../../shared/trial.js";
-import { invitationData } from "../../../shared/invitation-design.js";
+import { invitationData, PHOTO_SLOTS } from "../../../shared/invitation-design.js";
 import { reconcileSeats } from "../../../shared/wedding-seating.js";
 import { dataUrlImageType } from "../../../shared/image-type.js";
 
@@ -70,11 +72,27 @@ async function requirePaid(tenant) {
 
 // ---- Wedding Setup (Owner side, guests.manage) ----
 export async function readSetup({ tenant, business }) {
-  const [s, h, g] = await Promise.all([setupRef(tenant).get(), heroRef(tenant).get(), galleryCol(tenant).orderBy("order").limit(MAX_GALLERY).get()]);
+  const slots = Object.keys(PHOTO_SLOTS);
+  const [s, h, g, guests, ...p] = await Promise.all([setupRef(tenant).get(), heroRef(tenant).get(), galleryCol(tenant).orderBy("order").limit(MAX_GALLERY).get(), tenant.collection("guests").limit(2000).get(), ...slots.map((slot) => photoRef(tenant, slot).get())]);
+  // The entourage comes from the guests' roles (Guests → Role): counts only.
+  const entourage = rolesPlan(guests.docs.map((d) => ({ id: d.id, ...d.data() }))).map((gr) => ({ label: gr.label, count: gr.people.length }));
   const hero = h.exists && typeof h.data().dataUrl === "string" ? h.data().dataUrl : null;
+  const photos = Object.fromEntries(p.flatMap((snap, i) => (snap.exists && typeof snap.data().dataUrl === "string" ? [[slots[i], snap.data().dataUrl]] : [])));
   // hero: the current cover photo, so the Owner sees what's set.
   // invitation: Standard (Luna Bridal) / Customized (Luna Bridal+) and its state.
-  return { setup: s.exists ? s.data() : {}, hasHero: Boolean(hero), hero, gallery: g.docs.map((d) => ({ id: d.id, dataUrl: d.data().dataUrl })), invitation: business ? await ownerInvitationStatus({ tenant, business }) : null };
+  return { setup: s.exists ? s.data() : {}, hasHero: Boolean(hero), hero, photos, entourage, gallery: g.docs.map((d) => ({ id: d.id, dataUrl: d.data().dataUrl })), invitation: business ? await ownerInvitationStatus({ tenant, business }) : null };
+}
+// A design's photo slot (shrunk in the browser), or null to remove it.
+const photoRef = (tenant, slot) => tenant.doc("weddingPhotos", slot);
+export async function savePhoto({ tenant, FieldValue, slot, dataUrl, actor }) {
+  if (typeof slot !== "string" || !Object.hasOwn(PHOTO_SLOTS, slot)) throw new WeddingError("invalid-input", "Invalid photo");
+  if (dataUrl === null) {
+    await photoRef(tenant, slot).delete();
+    return { slot, photo: false };
+  }
+  if (typeof dataUrl !== "string" || dataUrl.length > 400_000 || !dataUrlImageType(dataUrl)) throw new WeddingError("invalid-input", "Choose a JPEG, PNG or WebP photo (it's shrunk before upload)");
+  await photoRef(tenant, slot).set({ dataUrl, updatedBy: who(actor), updatedAt: FieldValue.serverTimestamp() });
+  return { slot, photo: true };
 }
 // Gallery photos for a customized invitation (shrunk in the browser).
 const galleryCol = (tenant) => tenant.collection("weddingGallery");
@@ -134,7 +152,7 @@ export async function saveSetup({ db, tenant, FieldValue, input, actor, now = ne
   await db.runTransaction(async (tx) => {
     const cur = await tx.get(setupRef(tenant));
     const before = cur.exists ? cur.data() : {};
-    const coupleNames = Object.hasOwn(data, "coupleNames") ? data.coupleNames : before.coupleNames;
+    const coupleNames = coupleDisplayName({ ...before, ...data });
     // Not sent = keep the current one (or make one); blank = make one from the names.
     const wanted = Object.hasOwn(data, "weddingSlug") ? data.weddingSlug : before.weddingSlug ?? null;
     const plan = await prepareSlug(tx, { db, tenant, current: before.weddingSlug ?? null, wanted, coupleNames, now });
@@ -154,7 +172,7 @@ async function ensureSlug({ db, tenant, now = new Date() }) {
       const own = await tx.get(slugRef(db, s.weddingSlug));
       if (own.exists && own.data().businessId === tenant.businessId) return s.weddingSlug;
     }
-    const plan = await prepareSlug(tx, { db, tenant, current: null, wanted: null, coupleNames: s.coupleNames, now });
+    const plan = await prepareSlug(tx, { db, tenant, current: null, wanted: null, coupleNames: coupleDisplayName(s), now });
     if (plan.slug) tx.set(setupRef(tenant), { weddingSlug: plan.slug }, { merge: true });
     plan.commit();
     return plan.slug;
@@ -234,7 +252,8 @@ export async function viewInvite({ db, token, now = new Date() }) {
     setup,
     hero: h.exists ? h.data().dataUrl : null,
     // roles: ready for personal wording later ("…one of our Principal Sponsors"); not shown yet.
-    guest: { name: r.guest.name, seats: int(r.guest.partySize), rsvp: r.guest.rsvp, confirmed: int(r.guest.confirmed), roles: (Array.isArray(r.guest.roles) ? r.guest.roles : []).map((x) => roleLabel(x)) },
+    // meal / note: this party's own earlier answer (to change it).
+    guest: { name: r.guest.name, seats: int(r.guest.partySize), rsvp: r.guest.rsvp, confirmed: int(r.guest.confirmed), roles: (Array.isArray(r.guest.roles) ? r.guest.roles : []).map((x) => roleLabel(x)), meal: typeof r.guest.rsvpMeal === "string" ? r.guest.rsvpMeal : null, note: typeof r.guest.rsvpNote === "string" ? r.guest.rsvpNote : null },
     rsvpOpen: rsvpOpen(setup, today),
     // The canonical address (current wedding link): an older link moves to it.
     path: invitePath(setup.weddingSlug, token),
@@ -242,6 +261,7 @@ export async function viewInvite({ db, token, now = new Date() }) {
     // null = the Luna Standard page) with the images / gallery / entourage
     // its sections need.
     look: await liveDesignFor({ tenant: tenantDb(db, r.businessId), business: r.business, setup }),
+    timezone: r.business.timezone || "Asia/Manila",
   });
 }
 
@@ -262,7 +282,14 @@ export async function respondInvite({ db, FieldValue, token, rsvp, now = new Dat
     const status = rsvp?.status;
     if (!["attending", "declined"].includes(status)) throw new WeddingError("invalid-input", "Choose Accept or Decline");
     const v = validateRsvp(status === "attending" ? { status, confirmed: Number(rsvp.confirmed) } : { status }, g.partySize);
-    if (v.status === g.rsvp && v.confirmed === int(g.confirmed)) return { rsvp: v.status, confirmed: v.confirmed, unchanged: true, name: g.name };
+    // The meal choice / dietary note, only where Wedding Setup asks for them.
+    const extra = guestExtras(setup, v.status, rsvp);
+    const extraChanged = Object.entries(extra).some(([k, x]) => (g[k] ?? null) !== x);
+    if (v.status === g.rsvp && v.confirmed === int(g.confirmed) && !extraChanged) return { rsvp: v.status, confirmed: v.confirmed, unchanged: true, name: g.name };
+    if (v.status === g.rsvp && v.confirmed === int(g.confirmed)) {
+      tx.update(gRef, { ...extra, history: append(g.history, { at: now, actor: null, label: "Guest updated their meal / dietary note", source: "guest" }), revision: int(g.revision) + 1, updatedBy: { uid: null, name: `${g.name} (invitation)` }, updatedAt: FieldValue.serverTimestamp() });
+      return { rsvp: v.status, confirmed: v.confirmed, name: g.name, ...extra };
+    }
     const marks = attendingMarksFor(g, v);
     const next = { ...g, rsvp: v.status, confirmed: v.confirmed, ...marks };
     // Seats follow the confirmed people (shared/wedding-seating.js): fewer
@@ -275,11 +302,29 @@ export async function respondInvite({ db, FieldValue, token, rsvp, now = new Dat
       events: [{ type: "guest.rsvp", key: `${r.guestId}-${now.getTime()}`, title: `${g.name} RSVP'd ${rsvpWords(v.status, v.confirmed).replace(/ (\d+)$/, " · $1")}`, message: `${g.name} answered their invitation: ${rsvpWords(v.status, v.confirmed).replace(/ (\d+)$/, " · $1")}.`, recordType: "guest", recordId: r.guestId }],
     });
     const stamp = FieldValue.serverTimestamp();
-    tx.update(gRef, { rsvp: v.status, confirmed: v.confirmed, rsvpDate: today, rsvpSource: "guest", ...seating.fields, ...marks, history: append(g.history, { at: now, actor: null, label, source: "guest", from: { rsvp: g.rsvp, confirmed: int(g.confirmed) }, to: v }), revision: int(g.revision) + 1, updatedBy: { uid: null, name: `${g.name} (invitation)` }, updatedAt: stamp });
+    tx.update(gRef, { rsvp: v.status, confirmed: v.confirmed, rsvpDate: today, rsvpSource: "guest", ...extra, ...seating.fields, ...marks, history: append(g.history, { at: now, actor: null, label, source: "guest", from: { rsvp: g.rsvp, confirmed: int(g.confirmed) }, to: v }), revision: int(g.revision) + 1, updatedBy: { uid: null, name: `${g.name} (invitation)` }, updatedAt: stamp });
     tx.set(totalsRef(tenant), { schemaVersion: WEDDING_SCHEMA_VERSION, ...guestTotalsWrite(FieldValue, g, next), updatedAt: stamp }, { merge: true });
     notes.commit({ FieldValue });
-    return { rsvp: v.status, confirmed: v.confirmed, name: g.name };
+    return { rsvp: v.status, confirmed: v.confirmed, name: g.name, ...extra };
   }, TX_OPTIONS);
+}
+// { rsvpMeal, rsvpNote } to store with a guest's answer: a meal from the
+// setup's options and a short dietary note, each only when the setup asks
+// (cleared when they decline). {} when neither is asked.
+export function guestExtras(setup, status, rsvp) {
+  const meals = Array.isArray(setup.mealOptions) ? setup.mealOptions : [];
+  const out = {};
+  if (meals.length) {
+    const m = rsvp?.meal === undefined || rsvp.meal === null || rsvp.meal === "" ? null : rsvp.meal;
+    if (m !== null && (typeof m !== "string" || !meals.includes(m))) throw new WeddingError("invalid-input", "Choose one of the meal options");
+    out.rsvpMeal = status === "attending" ? m : null;
+  }
+  if (setup.askDietary === true) {
+    const n = rsvp?.note === undefined || rsvp.note === null ? "" : rsvp.note;
+    if (typeof n !== "string" || n.trim().length > 300) throw new WeddingError("invalid-input", "Dietary note: up to 300 characters");
+    out.rsvpNote = status === "attending" ? n.trim().replace(/\s+/g, " ") || null : null;
+  }
+  return out;
 }
 
 export { RSVP_STATUSES };

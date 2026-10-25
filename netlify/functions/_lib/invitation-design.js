@@ -15,7 +15,7 @@
 import { randomBytes } from "node:crypto";
 import { validateDesignConfig, resolveDesign, assetIdsOf, invitationLevelOf, invitationStatus, invitationContent, invitationData, SAMPLE_GUEST, PLAN_MARKETING_NAMES, TEMPLATES, SECTION_IDS, DEFAULT_TEMPLATE_ID, isStandardTemplate, DesignError } from "../../../shared/invitation-design.js";
 import { trialOpen } from "../../../shared/trial.js";
-import { rsvpOpen } from "../../../shared/wedding.js";
+import { rsvpOpen, coupleDisplayName } from "../../../shared/wedding.js";
 import { sniffImageType } from "../../../shared/image-type.js";
 import { businessDate } from "../../../shared/metrics.js";
 import { rolesPlan } from "../../../shared/wedding-roles.js";
@@ -72,6 +72,13 @@ async function componentData(tenant, resolved) {
     const g = await tenant.collection("weddingGallery").orderBy("order").limit(6).get();
     extra.gallery = g.docs.map((d) => d.data().dataUrl).filter((u) => typeof u === "string");
   }
+  // The design's photo slots (weddingPhotos/{slot}), e.g. a signature
+  // layout's story / venue / dress code photos.
+  const slots = resolved ? TEMPLATES[resolved.templateId]?.photoSlots ?? [] : [];
+  if (slots.length) {
+    const snaps = await Promise.all(slots.map((slot) => tenant.doc("weddingPhotos", slot).get()));
+    extra.photos = Object.fromEntries(snaps.flatMap((p, i) => (p.exists && typeof p.data().dataUrl === "string" ? [[slots[i], p.data().dataUrl]] : [])));
+  }
   if (resolved?.sections.visible.entourage) {
     const guests = await tenant.collection("guests").limit(2000).get();
     extra.entourage = rolesPlan(guests.docs.map((d) => ({ id: d.id, ...d.data() }))).map((gr) => ({ label: gr.label, names: gr.people.map((p) => p.name) }));
@@ -126,7 +133,7 @@ export async function sampleInvitation({ tenant, business, which = "draft", now 
   const [setupSnap, heroSnap, preview] = await Promise.all([tenant.doc("weddingSetup", "current").get(), tenant.doc("weddingSetup", "hero").get(), previewDesign({ tenant, business, which })]);
   const setup = setupSnap.exists ? setupSnap.data() : {};
   return {
-    invitation: invitationData({ setup, hero: heroSnap.exists ? heroSnap.data().dataUrl : null, guest: { ...SAMPLE_GUEST }, rsvpOpen: rsvpOpen(setup, businessDate(business.timezone || "Asia/Manila", now)), look: preview, sample: true }),
+    invitation: invitationData({ setup, hero: heroSnap.exists ? heroSnap.data().dataUrl : null, guest: { ...SAMPLE_GUEST }, rsvpOpen: rsvpOpen(setup, businessDate(business.timezone || "Asia/Manila", now)), look: preview, sample: true, timezone: business.timezone || "Asia/Manila" }),
     which,
   };
 }
@@ -145,7 +152,7 @@ export async function invitationSummary({ tenant, business }) {
   // Published = what guests see now; a custom draft saved after it isn't live until Publish.
   const status = custom ? (st.live === "custom" ? "published" : doc?.draft?.state === "ready" ? "ready" : "draft") : "published";
   return {
-    coupleNames: s.coupleNames ?? null,
+    coupleNames: coupleDisplayName(s) || null,
     weddingDate: s.weddingDate ?? null,
     type: custom ? "custom" : "standard",
     productName: PLAN_MARKETING_NAMES[planOf(business)] ?? null,

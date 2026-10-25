@@ -98,6 +98,8 @@ export const GUEST_COLUMNS = [
   { header: "Confirmed guests", format: "integer", width: 10, total: true, value: (g) => g.confirmed ?? 0 },
   { header: "Invitation sent", format: "date", width: 12, value: (g) => g.invitationSent },
   { header: "RSVP date", format: "date", width: 12, value: (g) => g.rsvpDate },
+  { header: "Meal", format: "text", width: 16, value: (g) => g.rsvpMeal ?? null },
+  { header: "Dietary note", format: "text", width: 26, value: (g) => g.rsvpNote ?? null },
   { header: "Contact", format: "text", width: 20, value: (g) => g.contact },
   { header: "Notes", format: "text", width: 30, value: (g) => g.notes },
 ];

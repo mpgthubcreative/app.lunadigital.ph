@@ -71,7 +71,7 @@ beforeEach(async () => {
 describe("Wedding Setup fields → the invitation (audit)", () => {
   it("every content field the couple fills in reaches the invitation contract; the rest drive RSVP, the link or the template", () => {
     const content = new Set(INVITATION_CONTENT_FIELDS);
-    const notContent = { rsvpEnabled: "rsvpOpen", closeAfterDeadline: "rsvpOpen", weddingSlug: "path", templateId: "design", showTable: "not on the form (reserved)" };
+    const notContent = { rsvpEnabled: "rsvpOpen", closeAfterDeadline: "rsvpOpen", weddingSlug: "path", templateId: "design", templateOptions: "design (wording / accent of the design shown: options)", showTable: "not on the form (reserved)" };
     for (const f of SETUP_FIELDS) expect(content.has(f) || f in notContent, f).toBe(true);
     const out = invitationData({ setup: FULL, guest: {}, rsvpOpen: true });
     for (const f of INVITATION_CONTENT_FIELDS) expect(out.wedding[f], f).toEqual(FULL[f] ?? null);
@@ -94,7 +94,7 @@ describe("Luna Bridal Custom, design not published yet (guests see Luna Standard
     expect(v.design).toBeNull();
     expect(v.gallery).toEqual([JPEG(10), JPEG(20), JPEG(30)]);
     expect(v.hero).toBe(JPEG(40));
-    for (const f of INVITATION_CONTENT_FIELDS) expect(v.wedding[f], f).toEqual(FULL[f]);
+    for (const f of INVITATION_CONTENT_FIELDS) expect(v.wedding[f], f).toEqual(FULL[f] ?? null);
     expect(v.guest.name).toBe("Santos Family");
   });
 

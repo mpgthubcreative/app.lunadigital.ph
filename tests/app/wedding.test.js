@@ -841,6 +841,8 @@ describe("Bridal More: Wedding Setup and Download Excel", () => {
   });
 
   const FULL = { coupleNames: "Camille & Carlo", ceremonyVenue: "Example Church", ceremonyAddress: "Taguig City", receptionVenue: "Example Garden", receptionAddress: "Pasig City", dressCode: "Formal", welcomeMessage: "Join us!", weddingDate: "2027-12-12", rsvpDeadline: "2027-11-15", ceremonyTime: "15:00", receptionTime: "17:30", ceremonyMap: "https://maps.app.goo.gl/church", receptionMap: "https://maps.app.goo.gl/garden", rsvpEnabled: true, closeAfterDeadline: false, weddingSlug: "camilleandcarloforever" };
+  // What a blank form sends for the generic fields (2026-10-24).
+  const BLANK_GENERIC = { partner1Name: null, partner2Name: null, city: null, rsvpContact: null, mealOptions: [], sameVenue: false, askDietary: false, templateOptions: { standard: { wording: { scriptLine: null, rsvpTitle: null } } } };
   const fill = (f, v) => {
     for (const [k, x] of Object.entries(v)) {
       if (typeof x === "boolean") f.elements[k].checked = x;
@@ -867,7 +869,7 @@ describe("Bridal More: Wedding Setup and Download Excel", () => {
     expect(btn.disabled).toBe(true);
     expect(btn.textContent).toBe("Saving…");
     expect(container.querySelector('[data-role="save-state"]').textContent).toBe("Saving…");
-    expect(api).toHaveBeenLastCalledWith("wedding-setup", { method: "POST", body: { action: "save", setup: { ...FULL, templateId: "standard" } } });
+    expect(api).toHaveBeenLastCalledWith("wedding-setup", { method: "POST", body: { action: "save", setup: { ...BLANK_GENERIC, ...FULL, templateId: "standard" } } });
     release();
     await flush();
     expect(container.querySelector('[data-role="save-state"]').dataset.state).toBe("saved");
@@ -891,7 +893,7 @@ describe("Bridal More: Wedding Setup and Download Excel", () => {
     expect(same.elements.weddingDate.value).toBe("2027-12-12");
     submit(same);
     await flush();
-    expect(api).toHaveBeenLastCalledWith("wedding-setup", { method: "POST", body: { action: "save", setup: { ...FULL, templateId: "standard" } } });
+    expect(api).toHaveBeenLastCalledWith("wedding-setup", { method: "POST", body: { action: "save", setup: { ...BLANK_GENERIC, ...FULL, templateId: "standard" } } });
   });
 
   it("Wedding Setup: a failed save says so (role=alert), keeps the typed values and lets the Owner retry; a bad map link isn't sent", async () => {
@@ -1773,13 +1775,13 @@ describe("Luna Bridal / Luna Bridal+ invitations (one engine, per-wedding design
       container = document.getElementById("content");
       mountSetup(container, wedding(), { api: vi.fn(async (_p, { body }) => (body.action === "get" ? { setup: { coupleNames: "Carlo & Yanie" }, hasHero: false, gallery: [], invitation } : { design: null })), toast: () => {}, preview: vi.fn(async () => ({})) });
       await flush();
-      return { name: container.querySelector('[data-role="invitation-name"]').textContent, line: container.querySelector('[data-role="invitation-line"]').textContent, state: container.querySelector('[data-role="invitation-state"]')?.textContent ?? null, plus: Boolean(container.querySelector('[data-role="plus-content"]')) };
+      return { name: container.querySelector('[data-role="invitation-name"]').textContent, line: container.querySelector('[data-role="invitation-line"]').textContent, state: container.querySelector('[data-role="invitation-state"]')?.textContent ?? null, picker: Boolean(container.querySelector('[name="templateId"]')) };
     };
-    expect(await mountWith({ level: "standard", live: "standard" })).toMatchObject({ name: "Standard Invitation", state: null, plus: false });
+    expect(await mountWith({ level: "standard", live: "standard" })).toMatchObject({ name: "Standard Invitation", state: null, picker: true });
     expect(container.textContent).toContain("Included with Luna Bridal");
     expect((await mountWith({ level: "standard", live: "standard" })).line).toMatch(/Customized Invitation comes with Luna Bridal Custom/);
     const draft = await mountWith({ level: "custom", live: "standard", hasDraft: true, draftState: "draft" });
-    expect(draft).toMatchObject({ name: "Customized Invitation", state: "Draft", plus: true });
+    expect(draft).toMatchObject({ name: "Customized Invitation", state: "Draft", picker: false });
     expect(draft.line).toBe("Draft · Your current Standard invitation remains live.");
     expect(container.querySelector('[data-act="preview-draft"]')).not.toBeNull();
     const live = await mountWith({ level: "custom", live: "custom", publishedVersion: 2, hasDraft: true, draftState: "draft" });
@@ -1788,10 +1790,10 @@ describe("Luna Bridal / Luna Bridal+ invitations (one engine, per-wedding design
     // Only content fields for the couple: no design controls. Optional
     // content appears on request (+ Add story), never as empty fields.
     expect(container.querySelector('[name="story"]')).toBeNull();
-    expect([...container.querySelectorAll('[data-act="reveal"]')].map((b) => b.textContent)).toEqual(["+ Add story", "+ Add closing line"]);
+    expect([...container.querySelectorAll('[data-role="add-more"] [data-act="reveal"]')].map((b) => b.textContent)).toEqual(["+ Our story", "+ Schedule", "+ Dress code details", "+ Colour palette", "+ Attire notes", "+ Getting there / parking", "+ Reminders", "+ Gift note", "+ FAQ", "+ Closing line"]);
     container.querySelector('[data-act="reveal"][data-key="story"]').click();
     expect(container.querySelector('[name="story"]')).not.toBeNull();
-    expect([...container.querySelectorAll(".ws-sub-title")].map((h) => h.textContent)).toEqual(["Couple & Date", "Ceremony & Reception", "Story", "Frequently Asked Questions", "Photos"]);
+    expect([...container.querySelectorAll('[data-panel="details"] .ws-section > .ws-sub-title')].map((h) => h.textContent)).toEqual(["Couple", "Wedding information", "Wedding details", "Entourage", "RSVP", "Photos & media"]);
     expect(container.querySelector('[name="templateId"], [type="color"]')).toBeNull();
   });
 
@@ -1802,6 +1804,7 @@ describe("Luna Bridal / Luna Bridal+ invitations (one engine, per-wedding design
       const api = vi.fn(async (_p, { body }) => (body.action === "get" ? { setup: { coupleNames: "Carlo & Yanie", faq }, hasHero: false, gallery: [], invitation: { level: "custom", live: "standard" } } : body.action === "save" ? { setup: body.setup } : { design: null }));
       mountSetup(container, wedding(), { api, toast: () => {}, preview: vi.fn(async () => ({})) });
       await flush();
+      if (!faq.length) container.querySelector('[data-act="reveal"][data-key="faq"]').click();
       return api;
     };
     // Nothing saved yet: the section explains itself and offers + Add FAQ; no blank pairs.

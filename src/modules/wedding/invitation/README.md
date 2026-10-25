@@ -13,10 +13,15 @@ src/modules/wedding/invitation/
     modern/template.js      Modern
     romantic/template.js    Romantic
     editorial/template.js   Editorial
+    gold/template.js        Gold Elegance   (signature layout)
+    monochrome/template.js  Black & White   (signature layout)
+    rustic/template.js      Rustic Garden   (signature layout)
   customized/       Customized designs (Luna Bridal Custom): Super Admin assigns one
     garden/template.js      Garden (Custom-only; existing designs use it)
-  registry.js       The one list of every design: id, name, category, source, availability
-  renderer.js       The guest page /w/{slug}/invite/{token}
+  registry.js       The one list of every design: id, name, category, version, kind,
+                    preview, source, availability, the fields it uses, photo slots, wording
+  renderer.js       The guest page /w/{slug}/invite/{token} (the card layout)
+  signature.js      The signature layout (a full page; Gold / Black & White / Rustic)
   preview.js        The in-app preview (Owner and Super Admin; Super Admin always with a sample guest)
   README.md         This file
 ```
@@ -30,6 +35,9 @@ src/modules/wedding/invitation/
 | `modern` | Modern | Standard | Owner, in Wedding Setup |
 | `romantic` | Romantic | Standard | Owner, in Wedding Setup |
 | `editorial` | Editorial | Standard | Owner, in Wedding Setup |
+| `gold` | Gold Elegance | Standard | Owner, in Wedding Setup |
+| `monochrome` | Black & White | Standard | Owner, in Wedding Setup |
+| `rustic` | Rustic Garden | Standard | Owner, in Wedding Setup |
 | `garden` | Garden | Customized | Super Admin, in a Luna Bridal Custom design |
 
 Ids are permanent: weddings (`weddingSetup/current.templateId`) and Custom
@@ -50,16 +58,44 @@ can turn sections on or off in a Custom design.
 | `modern` | **no** | yes | no | yes | **no** | yes |
 | `romantic` | yes | **no** | no | **no** | **no** | yes |
 | `editorial` | yes | yes | no | **no** | yes | yes |
+| `gold` | yes | in Details | yes | yes | yes | yes |
+| `monochrome` | yes | in Details | yes | yes | yes | yes |
+| `rustic` | yes | in Details | yes | yes | yes | yes |
 | `garden` (Customized) | yes | **no** | yes | yes | **no** | yes |
 
 Every design shows the names, date, cover photo, welcome message,
-ceremony, reception, dress code and RSVP. Our story, FAQ, the closing line
-and gallery photos are entered in Wedding Setup on Luna Bridal Custom
-weddings (Luna Bridal Owners don't see those fields, so those Standard
-templates have nothing to drop). The Luna Standard page is the original
+ceremony, reception, dress code and RSVP (with the meal choice and dietary
+note when Wedding Setup asks for them). The signature designs show the
+map links inside their Details section (and show entourage, gallery and
+FAQ only when there is content). Since 2026-10-24 every Owner can enter
+every field; a field the chosen design doesn't show says "Not shown by …"
+in Wedding Setup and is kept for any design that shows it. The Luna Standard page is the original
 hard-coded invitation in `renderer.js` (`draw()`); the `standard` template
 file is its look for a Custom design that starts from it, with the
 sections listed in that file.
+
+## One wedding profile, many designs (2026-10-24)
+
+Wedding Setup is the **wedding profile** (information); a template is
+**presentation**. Every template reads the same fields from
+`weddingSetup/current` (all optional except the names and the date):
+
+| Group | Fields |
+| --- | --- |
+| Couple | `partner1Name`, `partner2Name`, `coupleNames` (the names line; filled from the two names unless the couple types one), `partner1Parents`, `partner2Parents`, `weddingSlug` |
+| Wedding information | `weddingDate`, `city`, `ceremonyTime/Venue/Address/Map`, `sameVenue`, `receptionTime/Venue/Address/Map` |
+| Wedding details | `welcomeMessage`, `dressCode`, `dressCodeDetails`, `palette` [{name, hex}], `attireNotes` [], `schedule` [{time, title}], `gettingThere`, `reminders` [], `giftNote`, `story` (paragraphs), `faq` [{q, a}], `footerNote` |
+| Entourage | not typed here: from Guests → Role (`rolesPlan`) |
+| RSVP | `rsvpEnabled`, `rsvpDeadline`, `closeAfterDeadline`, `rsvpContact`, `mealOptions` [], `askDietary` |
+| Photos & media | `weddingSetup/hero` (cover), `weddingPhotos/{story1, story2, when, venue, dressCode}`, `weddingGallery/*` |
+| Design | `templateId`, `templateOptions.{templateId}.wording / accent` (kept per design) |
+
+A template file declares the rest: `version`, `kind` (`card` | `signature`),
+`variant`, `recommended` (the "looks best with" prompt), `photoSlots`,
+`wording` (default lines the couple can reword) and `accents`. The
+registry derives `uses` (the fields its sections show), `required`
+(names + date) and `preview` (`public/invitations/previews/{id}.webp`).
+Older weddings have none of the new fields and show exactly as before.
 
 ## One data path (Wedding Setup → Preview → guests)
 
@@ -83,8 +119,13 @@ Standard template picked on screen.
    `templates/vintage/`.
 2. In `template.js`, give it a new permanent `id` (`"vintage"`, the same as
    the folder), a `label` and a `description`, and change the `theme`,
-   `layout`, `hero`, `order`, `show` and `gallery` values.
-3. Register it (below). It then appears in Wedding Setup's template picker
+   `layout`, `hero`, `order`, `show` and `gallery` values. Optionally
+   `kind: "signature"` (+ `variant`, `wording`, `accents`, `photoSlots`,
+   `recommended`); a new look of the signature layout also needs its
+   `[data-variant="…"]` CSS in `src/styles/layout.css`.
+3. Add its preview image `public/invitations/previews/{id}.webp` (a
+   screenshot of the design with sample details, ~390 px wide).
+4. Register it (below). It then appears in Wedding Setup's template picker
    for every Luna Bridal Owner.
 
 ## Add a Customized template
@@ -163,7 +204,9 @@ Push to `main` to deploy staging; production is separate.
 - Links, prices or plan rules.
 
 A design file holds presentation only: `id`, `label`, `description`,
-`theme`, `layout`, `hero`, `order`, `show` and `gallery`.
+`theme`, `layout`, `hero`, `order`, `show`, `gallery`, and optionally
+`version`, `kind`, `variant`, `recommended`, `photoSlots`, `wording`,
+`accents`, `showsWhenAdded`.
 
 ## Not part of this step
 

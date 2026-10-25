@@ -49,7 +49,7 @@ const sub = async (body) => parse(await createSubscriptionHandler(deps())({ ...r
 
 describe("the template registry", () => {
   it("Luna Standard, Classic, Modern, Romantic, Editorial for the Owner; Garden kept for Custom designs; every template complete", () => {
-    expect(STANDARD_TEMPLATE_IDS).toEqual(["standard", "classic", "modern", "romantic", "editorial"]);
+    expect(STANDARD_TEMPLATE_IDS).toEqual(["standard", "classic", "modern", "romantic", "editorial", "gold", "monochrome", "rustic"]);
     expect(TEMPLATE_IDS).toEqual([...STANDARD_TEMPLATE_IDS, "garden"]);
     for (const id of TEMPLATE_IDS) {
       const t = TEMPLATES[id];

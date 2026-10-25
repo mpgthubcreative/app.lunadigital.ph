@@ -2,7 +2,8 @@
 //   { action: "view", token }                       the invitation for THIS party
 //                                                   (couple, date, venues, their
 //                                                   name, seats, current answer)
-//   { action: "respond", token, rsvp: { status: "attending" | "declined", confirmed? } }
+//   { action: "respond", token, rsvp: { status: "attending" | "declined", confirmed?, meal?, note? } }
+//     meal: one of Wedding Setup's meal options; note: dietary needs (when asked)
 // The token (from /invite/{token}) is the only credential: 24 random bytes,
 // looked up by its SHA-256, revocable (a new link replaces it). Every bad or
 // revoked link gets the same answer; no ids or other guests are returned.
@@ -23,7 +24,7 @@ export function createInviteHandler({ getAdmin: loadAdmin, now = () => new Date(
     if (!keys || keys.some((k) => !["action", "token", "rsvp"].includes(k)) || !["view", "respond"].includes(body.action) || (body.action === "view" && "rsvp" in body)) {
       throw new RequestError("invalid-request", "Invalid request.", 400);
     }
-    if (body.action === "respond" && (!body.rsvp || typeof body.rsvp !== "object" || Object.keys(body.rsvp).some((k) => !["status", "confirmed"].includes(k)))) throw new RequestError("invalid-request", "Invalid request.", 400);
+    if (body.action === "respond" && (!body.rsvp || typeof body.rsvp !== "object" || Object.keys(body.rsvp).some((k) => !["status", "confirmed", "meal", "note"].includes(k)))) throw new RequestError("invalid-request", "Invalid request.", 400);
     const { db, admin } = await loadAdmin();
     try {
       if (body.action === "view") return respond(200, { success: true, invitation: await viewInvite({ db, token: body.token, now: now() }) });

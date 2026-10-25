@@ -29,18 +29,38 @@ export const PLAN_MARKETING_NAMES = Object.freeze({ "bridal-basic": "Luna Bridal
 // The wedding details a guest's invitation shows: the ONLY Wedding Setup
 // fields that leave the couple's workspace, for a guest link and for Luna
 // Super Admin's invitation work (2026-10-20 privacy model).
-export const INVITATION_CONTENT_FIELDS = Object.freeze(["coupleNames", "weddingDate", "ceremonyTime", "ceremonyVenue", "ceremonyAddress", "ceremonyMap", "receptionTime", "receptionVenue", "receptionAddress", "receptionMap", "dressCode", "welcomeMessage", "rsvpDeadline", "story", "footerNote", "faq"]);
-export const invitationContent = (setup) => Object.fromEntries(INVITATION_CONTENT_FIELDS.map((k) => [k, setup?.[k] ?? null]));
+// 2026-10-24: plus the generic profile fields any template may show.
+export const INVITATION_CONTENT_FIELDS = Object.freeze(["coupleNames", "weddingDate", "ceremonyTime", "ceremonyVenue", "ceremonyAddress", "ceremonyMap", "receptionTime", "receptionVenue", "receptionAddress", "receptionMap", "dressCode", "welcomeMessage", "rsvpDeadline", "story", "footerNote", "faq", "partner1Name", "partner2Name", "partner1Parents", "partner2Parents", "city", "sameVenue", "schedule", "gettingThere", "dressCodeDetails", "palette", "attireNotes", "reminders", "giftNote", "rsvpContact", "mealOptions", "askDietary"]);
+// coupleNames: the names line ("Partner 1 & Partner 2" when not typed).
+export const invitationContent = (setup) => ({ ...Object.fromEntries(INVITATION_CONTENT_FIELDS.map((k) => [k, setup?.[k] ?? null])), coupleNames: coupleDisplayName(setup) || null });
+// The couple's wording / accent for the Standard template being shown
+// (setup.templateOptions[templateId]); a Custom design uses its own texts.
+export function templateOptionsFor(setup, look) {
+  const d = look?.design;
+  const id = d?.config ? (d.standard ? d.config.templateId : null) : DEFAULT_TEMPLATE_ID;
+  const o = id ? setup?.templateOptions?.[id] : null;
+  if (!o || typeof o !== "object") return null;
+  const entry = getTemplateEntry(id);
+  const wording = Object.fromEntries(Object.entries(o.wording && typeof o.wording === "object" ? o.wording : {}).filter(([k, v]) => Object.hasOwn(entry.wording, k) && typeof v === "string" && v));
+  const accent = entry.accents.find((a) => a.id === o.accent)?.hex ?? null;
+  return { wording, accent };
+}
 // The one invitation data contract (2026-10-21): what the renderer
 // (src/modules/wedding/invitation/renderer.js) draws, for a guest's link,
 // the Owner's Wedding Setup Preview and Super Admin's preview alike.
 // look = { design, gallery, entourage } from the same server loader
 // (liveDesignFor / previewDesign). Only the source (live / draft) and the
 // guest (real / sample) differ.
-export function invitationData({ setup, hero = null, guest, rsvpOpen, look = null, path = null, sample = false }) {
+// photos: the design's photo slots (look.photos); timezone: the business's,
+// for the countdown.
+export function invitationData({ setup, hero = null, guest, rsvpOpen, look = null, path = null, sample = false, timezone = null }) {
+  const photos = look?.photos && typeof look.photos === "object" ? Object.fromEntries(Object.entries(look.photos).filter(([k, v]) => Object.hasOwn(PHOTO_SLOTS, k) && typeof v === "string")) : {};
   return {
     wedding: invitationContent(setup),
     hero: typeof hero === "string" ? hero : null,
+    photos,
+    options: templateOptionsFor(setup, look),
+    ...(typeof timezone === "string" && timezone ? { timezone } : {}),
     guest,
     rsvpOpen: rsvpOpen === true,
     design: look?.design ?? null,
@@ -54,7 +74,7 @@ export function invitationData({ setup, hero = null, guest, rsvpOpen, look = nul
 export const SAMPLE_GUEST = Object.freeze({ name: "Sample Guest", seats: 2, rsvp: "awaiting", confirmed: 0, roles: [] });
 
 export const SECTION_LABELS = Object.freeze({ hero: "Hero (names, date, photo)", welcome: "Welcome message", story: "Our story", ceremony: "Ceremony", reception: "Reception", map: "Map links", dressCode: "Dress code", entourage: "Entourage (from Roles)", gallery: "Gallery", faq: "FAQ", rsvp: "RSVP", footer: "Footer" });
-export const FONTS = Object.freeze(["Cormorant Garamond", "Playfair Display", "EB Garamond", "Libre Baskerville", "Great Vibes", "Dancing Script", "Parisienne", "Montserrat", "Lato", "Josefin Sans", "Poppins", "Inter"]);
+export const FONTS = Object.freeze(["Cormorant Garamond", "Playfair Display", "EB Garamond", "Libre Baskerville", "Young Serif", "Great Vibes", "Dancing Script", "Parisienne", "Pinyon Script", "Montserrat", "Lato", "Josefin Sans", "Poppins", "Inter", "Mulish", "Jost", "Nunito Sans"]);
 const ENUMS = Object.freeze({
   cardWidth: ["narrow", "normal", "wide"],
   spacing: ["compact", "normal", "airy"],
@@ -76,8 +96,9 @@ const TEXT_LIMITS = { scriptLine: 60, rsvpTitle: 30, footerLine: 120 };
 // (Standard) and customized/{id}/ (Luna Bridal Custom); registry.js is one
 // list for the guest page, Wedding Setup, Super Admin and this validation.
 // Nothing about a template is copied into a wedding.
-export { TEMPLATES, TEMPLATE_IDS, TEMPLATE_REGISTRY, CATEGORIES as TEMPLATE_CATEGORIES, STANDARD_TEMPLATE_IDS, CUSTOMIZED_TEMPLATE_IDS, DEFAULT_TEMPLATE_ID, SECTION_IDS, getTemplate, isStandardTemplate } from "../src/modules/wedding/invitation/registry.js";
-import { TEMPLATES, TEMPLATE_IDS, SECTION_IDS } from "../src/modules/wedding/invitation/registry.js";
+export { TEMPLATES, TEMPLATE_IDS, TEMPLATE_REGISTRY, CATEGORIES as TEMPLATE_CATEGORIES, STANDARD_TEMPLATE_IDS, CUSTOMIZED_TEMPLATE_IDS, DEFAULT_TEMPLATE_ID, SECTION_IDS, PHOTO_SLOTS, LAYOUT_KINDS, getTemplate, getTemplateEntry, isStandardTemplate } from "../src/modules/wedding/invitation/registry.js";
+import { TEMPLATES, TEMPLATE_IDS, SECTION_IDS, PHOTO_SLOTS, DEFAULT_TEMPLATE_ID, getTemplateEntry } from "../src/modules/wedding/invitation/registry.js";
+import { coupleDisplayName } from "./wedding.js";
 
 export class DesignError extends Error {
   constructor(message) {
@@ -103,6 +124,9 @@ export function resolveDesign(config) {
   const order = Array.isArray(c.sections?.order) ? [...c.sections.order, ...SECTION_IDS.filter((id) => !c.sections.order.includes(id))] : [...t.sections.order];
   return {
     templateId: TEMPLATES[c.templateId] ? c.templateId : "standard",
+    // the template's layout ("card" / "signature"); never stored
+    kind: t.kind,
+    variant: t.variant,
     theme: { ...t.theme, ...(isObj(c.theme) ? c.theme : {}) },
     layout: { ...t.layout, ...(isObj(c.layout) ? c.layout : {}) },
     hero: { ...t.hero, ...(isObj(c.hero) ? c.hero : {}) },

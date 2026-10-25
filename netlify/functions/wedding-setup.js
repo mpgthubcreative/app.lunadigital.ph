@@ -7,13 +7,15 @@
 //                                           in the browser) or remove it
 //   { action: "galleryAdd", dataUrl } / { action: "galleryRemove", photoId }   gallery photos
 //                                           (shown by a customized Luna Bridal+ design)
+//   { action: "photo", slot, dataUrl | null }  guests.manage: a design's photo slot
+//                                           (story1, story2, when, venue, dressCode)
 //   { action: "preview", which }            guests.view: the draft / live design to preview
 // get also returns the invitation level (Standard / Customized) and state.
 // Content only: the design is Luna Super Admin's (/api/invitation-design).
 
 import { getAdmin } from "./_lib/firebase-admin.js";
 import { weddingActionHandler } from "./_lib/wedding-http.js";
-import { readSetup, saveSetup, saveHero, addGalleryPhoto, removeGalleryPhoto, previewInvitation } from "./_lib/invitations.js";
+import { readSetup, saveSetup, saveHero, savePhoto, addGalleryPhoto, removeGalleryPhoto, previewInvitation } from "./_lib/invitations.js";
 
 export const createWeddingSetupHandler = (deps) =>
   weddingActionHandler("wedding-setup", {
@@ -26,6 +28,7 @@ export const createWeddingSetupHandler = (deps) =>
       preview: { permission: "guests.view", fields: ["action", "which", "templateId"], run: (c, b) => previewInvitation({ ...c, which: b.which, templateId: b.templateId }) },
       save: { permission: "guests.manage", fields: ["action", "setup"], run: (c, b) => saveSetup({ ...c, input: b.setup }) },
       hero: { permission: "guests.manage", fields: ["action", "dataUrl"], run: (c, b) => saveHero({ ...c, dataUrl: b.dataUrl ?? null }) },
+      photo: { permission: "guests.manage", fields: ["action", "slot", "dataUrl"], run: (c, b) => savePhoto({ ...c, slot: b.slot, dataUrl: b.dataUrl ?? null }) },
     },
   });
 

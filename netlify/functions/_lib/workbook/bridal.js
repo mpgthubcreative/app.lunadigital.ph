@@ -17,7 +17,7 @@
 import { categoriesQuery, weddingSuppliersQuery, supplierPaymentsQuery, expensesQuery, weddingTasksQuery, guestsQuery } from "../../../../shared/list-queries.js";
 import { sortCategories } from "../../../../shared/baby.js";
 import { EXPENSE_METHODS } from "../../../../shared/expenses.js";
-import { TASK_STATUSES, RSVP_STATUSES, GUEST_CATEGORIES, SEATING_DOC_ID } from "../../../../shared/wedding.js";
+import { TASK_STATUSES, RSVP_STATUSES, GUEST_CATEGORIES, SEATING_DOC_ID, coupleDisplayName } from "../../../../shared/wedding.js";
 import { seatingPlan } from "../../../../shared/wedding-seating.js";
 import { moneyRows, moneyLabel, MONEY_STATUS } from "../../../../shared/wedding-money.js";
 import { peopleOf, rolesPlan, roleLabel } from "../../../../shared/wedding-roles.js";
@@ -109,7 +109,7 @@ const PROGRAM_COLUMNS = [
   { header: "Notes", format: "text", width: 30, value: (i) => i.notes },
 ];
 const SETUP_COLUMNS = [
-  { header: "Couple", format: "text", width: 26, value: (s) => s.coupleNames },
+  { header: "Couple", format: "text", width: 26, value: (s) => coupleDisplayName(s) || null },
   { header: "Wedding Date", format: "date", width: 14, value: (s) => s.weddingDate },
   { header: "Ceremony Venue", format: "text", width: 28, value: (s) => s.ceremonyVenue },
   { header: "Ceremony Time", format: "text", width: 13, value: (s) => clock(s.ceremonyTime) },

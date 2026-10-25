@@ -1,0 +1,20 @@
+// Black & White: an editorial "wedding issue", Playfair Display + Jost,
+// strictly black and white, photos in black and white. Signature layout.
+export default {
+  id: "monochrome",
+  label: "Black & White",
+  description: "A magazine-style page in black and white, photos in monochrome.",
+  version: 1,
+  kind: "signature",
+  variant: "monochrome",
+  theme: { background: "#ffffff", card: "#ffffff", text: "#000000", muted: "#4d4d4d", accent: "#000000", accentText: "#ffffff", border: "#d1d1d1", headingFont: "Playfair Display", bodyFont: "Jost", scriptFont: "Playfair Display" },
+  layout: { cardWidth: "wide", spacing: "airy", align: "center", corners: "square", buttonStyle: "square", frame: "full", namesCase: "normal" },
+  hero: { style: "full-bleed" },
+  order: ["hero", "welcome", "story", "ceremony", "reception", "map", "dressCode", "entourage", "gallery", "faq", "rsvp", "footer"],
+  show: ["hero", "welcome", "story", "ceremony", "reception", "map", "dressCode", "entourage", "gallery", "faq", "rsvp", "footer"],
+  gallery: { style: "grid" },
+  recommended: ["city", "ceremonyVenue", "ceremonyTime", "story", "schedule", "dressCode"],
+  photoSlots: ["story1", "story2", "when", "venue", "dressCode"],
+  wording: { intro: "The Wedding Issue", tagline: "Are getting married", countdownTitle: "Until we say I do", storyEyebrow: "Feature No. 01", storyTitle: "Our Love Story", detailsEyebrow: "The Details · No. 02", detailsTitle: "Wedding Details", scheduleTitle: "The Order of the Day", dressEyebrow: "Style Notes · No. 03", dressTitle: "Dress Code", rsvpEyebrow: "No. 04 · Kindly Reply", rsvpTitle: "RSVP", closing: "With love" },
+  accents: [],
+};

@@ -3687,8 +3687,8 @@ tr.is-saving {
 
 /* Owner-pilot Bridal: the invitation previewed inside Luna (Owner-only bar on top). */
 .inv-preview-backdrop { padding: 0; align-items: stretch; }
-.inv-preview { position: fixed; inset: 0; display: flex; flex-direction: column; background: var(--bg, #fff); z-index: 1; }
-.inv-preview-bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-2); padding: var(--space-2) var(--space-3); border-bottom: 1px solid var(--border); background: var(--surface, #fff); }
+.inv-preview { position: fixed; inset: 0; display: flex; flex-direction: column; background: var(--bg); z-index: 1; }
+.inv-preview-bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-2); padding: var(--space-2) var(--space-3); border-bottom: 1px solid var(--border); background: var(--surface); }
 .inv-preview-note { font-size: var(--text-sm); color: var(--text-muted); }
 .inv-preview-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
 .inv-preview-body { flex: 1 1 auto; overflow: auto; }
@@ -4588,3 +4588,45 @@ button.wl-person-name:hover .wl-edit, button.wl-person-name:focus-visible .wl-ed
   .oe-item-total { grid-area: total; }
   .oe-item-note { grid-area: note; }
 }
+
+/* ---------- Wedding Setup: generic profile + invitation design (2026-10-24) ---------- */
+.ws-tabs { position: sticky; top: 0; z-index: 3; display: grid; grid-template-columns: 1fr 1fr; gap: 4px; padding: 4px; margin: 0 0 var(--space-3); background: var(--surface-sunken); border-radius: 999px; }
+.ws-tab { min-height: 44px; border: 0; border-radius: 999px; background: transparent; color: var(--text-muted); font: inherit; font-weight: 600; cursor: pointer; }
+.ws-tab[aria-selected="true"] { background: var(--surface); color: var(--text); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12); }
+.ws-pair { display: grid; gap: 0 var(--space-3); grid-template-columns: 1fr; }
+@media (min-width: 560px) { .ws-pair { grid-template-columns: 1fr 1fr; } }
+.ws-unused { font-weight: 400; font-size: 0.78rem; color: var(--text-muted); }
+.ws-unused::before { content: "· "; }
+.ws-row { display: flex; align-items: center; gap: var(--space-2); margin-bottom: var(--space-2); }
+.ws-row .input { flex: 1 1 auto; min-width: 0; }
+.ws-row .ws-row-time { flex: 0 0 7.5rem; }
+.ws-row-color { flex: none; width: 44px; height: 44px; padding: 2px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); }
+.ws-list { margin-bottom: var(--space-3); }
+.ws-chips { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-top: var(--space-1); }
+.ws-add-more { margin-top: var(--space-2); }
+.ws-used { border-color: var(--luna-primary); }
+.ws-slots { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: var(--space-2); margin: var(--space-2) 0 var(--space-3); }
+.ws-slot { margin: 0; display: flex; flex-direction: column; gap: 4px; }
+.ws-slot img, .ws-slot-empty { display: block; width: 100%; aspect-ratio: 4 / 5; object-fit: cover; border-radius: var(--radius-sm); border: 1px solid var(--border); }
+.ws-slot-empty { background: repeating-linear-gradient(45deg, var(--surface-sunken) 0 8px, transparent 8px 16px); }
+.ws-slot figcaption { font-size: 0.85rem; }
+.tpl-item { position: relative; display: flex; flex-direction: column; gap: 4px; }
+.tpl-thumb { flex: none; width: 64px; height: 86px; object-fit: cover; object-position: top; border-radius: 6px; border: 1px solid var(--border); background: var(--surface-sunken); }
+/* The design picker (2026-10-24): two thumbnails per row on a phone. */
+[data-role="template-choice"] .tpl-options { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+[data-role="template-choice"] .tpl-option { position: relative; flex-direction: column; gap: var(--space-1); padding: var(--space-2); height: 100%; }
+[data-role="template-choice"] .tpl-option input { position: absolute; top: 10px; left: 10px; margin: 0; }
+[data-role="template-choice"] .tpl-thumb { width: 100%; height: auto; aspect-ratio: 3 / 4; }
+[data-role="template-choice"] .tpl-text .stat-hint { font-size: 0.78rem; line-height: 1.35; }
+[data-role="template-choice"] .tpl-preview { align-self: stretch; }
+.tpl-preview { align-self: flex-start; }
+.ws-ready { margin: var(--space-3) 0; padding: var(--space-3); border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-muted); }
+.ws-ready p { margin: 0 0 var(--space-1); }
+.ws-wording { margin: var(--space-3) 0; padding: var(--space-2) var(--space-3); border: 1px solid var(--border); border-radius: var(--radius); }
+.ws-wording summary { min-height: 44px; display: flex; align-items: center; font-weight: 600; cursor: pointer; }
+.ws-accents { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.ws-accent { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; padding: 0 var(--space-2); border: 1px solid var(--border); border-radius: 999px; cursor: pointer; }
+.ws-accent:has(input:checked) { border-color: var(--luna-primary); box-shadow: 0 0 0 2px var(--luna-primary-soft); }
+.ws-accent input { margin: 0; }
+.ws-accent-dot { width: 18px; height: 18px; border-radius: 50%; background: var(--dot, #ccc); }
+.ws-save { position: sticky; bottom: 0; z-index: 2; padding: var(--space-2) 0; background: var(--bg); }

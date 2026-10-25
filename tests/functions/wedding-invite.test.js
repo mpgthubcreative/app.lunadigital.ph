@@ -86,7 +86,7 @@ describe("invitation links: secure, revocable, tenant-safe", () => {
     // The same link comes back (made once).
     expect(ok(await api("guests", u.mon, { action: "inviteLink", guestId: g })).path).toBe(path);
     const v = ok(await guest({ action: "view", token })).invitation;
-    expect(v.guest).toEqual({ name: "Maria Santos", seats: 2, rsvp: "awaiting", confirmed: 0, roles: [] });
+    expect(v.guest).toEqual({ name: "Maria Santos", seats: 2, rsvp: "awaiting", confirmed: 0, roles: [], meal: null, note: null });
     expect(v.wedding).toMatchObject({ coupleNames: "Camille & Carlo", ceremonyVenue: "Example Church", rsvpDeadline: "2026-11-15" });
     expect(v.rsvpOpen).toBe(true);
     expect(JSON.stringify(v)).not.toContain(g);

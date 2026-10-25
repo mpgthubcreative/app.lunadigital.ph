@@ -15,6 +15,7 @@
 //   4. trace    one auditLog entry (range, sheet names, rows; no data) and
 //               the export meters, like every Luna export.
 
+import { coupleDisplayName } from "../../../../shared/wedding.js";
 import { writeXlsx } from "../../../../shared/xlsx.js";
 import { workbookSheet, EXPORT_MAX_ROWS, ExportError, canExport } from "../../../../shared/exports.js";
 import { WORKBOOK_PERMISSION, WorkbookError, workbookKind, workbookHasRange, resolveWorkbookRange, workbookFileName } from "../../../../shared/workbook.js";
@@ -87,7 +88,7 @@ export async function buildWorkbook({ db, ctx, admin, input, now = new Date() })
   const sheets = parts.map((p) => workbookSheet({ ...p, timezone }));
   const rowCount = parts.reduce((n, p) => n + p.rows.length, 0);
   let coupleNames = "";
-  if (kind === "bridal") coupleNames = (await readByIds({ db, tenant, collection: "weddingSetup", ids: ["current"] })).get("current")?.coupleNames ?? "";
+  if (kind === "bridal") coupleNames = coupleDisplayName((await readByIds({ db, tenant, collection: "weddingSetup", ids: ["current"] })).get("current"));
   const fileName = workbookFileName(kind, { range, businessName: business.name, coupleNames });
   const bytes = writeXlsx(sheets, { title: `${KIND_TITLE[kind]} — ${business.name || ""}${range.label ? ` · ${range.label}` : ""}`, created: now });
 

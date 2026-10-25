@@ -38,7 +38,7 @@
 //                      never stored)
 //   Confirmed guests = sum of confirmed attendees (people, not records)
 
-import { isStandardTemplate } from "../src/modules/wedding/invitation/registry.js";
+import { isStandardTemplate, getTemplateEntry } from "../src/modules/wedding/invitation/registry.js";
 import { isDayId, addDays } from "./metrics.js";
 import { isCentavos } from "./quantity.js";
 import { isValidRecordId, budgetSummary } from "./baby.js";
@@ -65,6 +65,21 @@ function text(value, { field, max, required = false }) {
   const t = value.trim().replace(/\s+/g, " ");
   if (t.length > max) throw new WeddingError("invalid-input", `${field} is too long (max ${max})`);
   if (!t && required) throw new WeddingError("invalid-input", `${field} is required`);
+  return t || null;
+}
+// Text that keeps its paragraphs (a story, a message): spaces collapse
+// within a line, at most one blank line between paragraphs.
+function paragraphs(value, { field, max }) {
+  if (value === undefined || value === null || value === "") return null;
+  if (typeof value !== "string") throw new WeddingError("invalid-input", `${field} must be text`);
+  const t = value
+    .replace(/\r\n?/g, "\n")
+    .split("\n")
+    .map((l) => l.trim().replace(/\s+/g, " "))
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+  if (t.length > max) throw new WeddingError("invalid-input", `${field} is too long (max ${max})`);
   return t || null;
 }
 function only(input, fields, what) {
@@ -407,11 +422,25 @@ export function validateTableInput(input, { partial = false } = {}) {
 // builder. The hero photo is kept apart (weddingSetup/hero).
 // story / footerNote / faq: content for the sections a customized
 // (Luna Bridal+) invitation can show; the Standard invitation ignores them.
-export const SETUP_TEXT = { coupleNames: 80, ceremonyVenue: 100, ceremonyAddress: 160, receptionVenue: 100, receptionAddress: 160, dressCode: 80, welcomeMessage: 600, story: 1500, footerNote: 200 };
+//
+// 2026-10-24 generic Wedding Setup: one wedding profile (information) for
+// every invitation template (presentation). Every field is optional and
+// any template can use it; a template only declares which ones it shows
+// (registry.js `uses`). Older weddings have none of the new fields and
+// read exactly as before. coupleNames stays THE names line every screen
+// shows: Wedding Setup fills it from the two partners' names unless the
+// couple types their own (coupleDisplayName for older data too).
+export const SETUP_TEXT = { coupleNames: 80, ceremonyVenue: 100, ceremonyAddress: 160, receptionVenue: 100, receptionAddress: 160, dressCode: 80, welcomeMessage: 600, story: 1500, footerNote: 200, partner1Name: 60, partner2Name: 60, partner1Parents: 160, partner2Parents: 160, city: 80, dressCodeDetails: 400, gettingThere: 400, giftNote: 400, rsvpContact: 120 };
+// Kept with their line breaks (paragraphs).
+const SETUP_PARAGRAPHS = new Set(["welcomeMessage", "story", "dressCodeDetails", "gettingThere", "giftNote"]);
+// Short lists: [label, max items, max characters].
+export const SETUP_LISTS = Object.freeze({ attireNotes: ["Attire note", 6, 150], reminders: ["Reminder", 6, 200], mealOptions: ["Meal option", 6, 40] });
+export const MAX_SCHEDULE = 12;
+export const MAX_PALETTE = 8;
 // templateId: the Owner's Standard invitation template (2026-10-21; the
 // templates are in src/modules/wedding/invitation/templates/). Null = Luna
 // Standard. A Custom design (Super Admin) has its own template.
-export const SETUP_FIELDS = [...Object.keys(SETUP_TEXT), "weddingDate", "ceremonyTime", "receptionTime", "ceremonyMap", "receptionMap", "rsvpDeadline", "rsvpEnabled", "closeAfterDeadline", "showTable", "weddingSlug", "faq", "templateId"];
+export const SETUP_FIELDS = [...Object.keys(SETUP_TEXT), "weddingDate", "ceremonyTime", "receptionTime", "ceremonyMap", "receptionMap", "rsvpDeadline", "rsvpEnabled", "closeAfterDeadline", "showTable", "weddingSlug", "faq", "templateId", "sameVenue", "askDietary", "schedule", "palette", "templateOptions", ...Object.keys(SETUP_LISTS)];
 export const MAX_FAQ = 8;
 
 // The friendly part of a guest's link: /w/{weddingSlug}/invite/{token}.
@@ -440,10 +469,11 @@ export function suggestWeddingSlug(coupleNames) {
 // A guest's link path (the plain /invite/{token} when there's no slug).
 export const invitePath = (slug, token) => (isWeddingSlug(slug) ? `/w/${slug}/invite/${token}` : `/invite/${token}`);
 const TIME = /^([01]\d|2[0-3]):[0-5]\d$/;
+const HEX6 = /^#[0-9a-fA-F]{6}$/;
 export function validateWeddingSetup(input) {
   only(input, SETUP_FIELDS, "setup");
   const out = {};
-  for (const [k, max] of Object.entries(SETUP_TEXT)) if (Object.hasOwn(input, k)) out[k] = text(input[k], { field: k, max });
+  for (const [k, max] of Object.entries(SETUP_TEXT)) if (Object.hasOwn(input, k)) out[k] = (SETUP_PARAGRAPHS.has(k) ? paragraphs : text)(input[k], { field: k, max });
   for (const k of ["weddingDate", "rsvpDeadline"]) {
     if (!Object.hasOwn(input, k)) continue;
     if (input[k] !== null && input[k] !== "" && !isDayId(input[k])) throw new WeddingError("invalid-input", "Choose a valid date");
@@ -480,7 +510,59 @@ export function validateWeddingSetup(input) {
     if (v !== null && !isStandardTemplate(v)) throw new WeddingError("invalid-input", "Choose one of the invitation templates");
     out.templateId = v;
   }
-  for (const k of ["rsvpEnabled", "closeAfterDeadline", "showTable"]) {
+  for (const [k, [label, maxItems, max]] of Object.entries(SETUP_LISTS)) {
+    if (!Object.hasOwn(input, k)) continue;
+    const list = input[k] === null ? [] : input[k];
+    if (!Array.isArray(list) || list.length > maxItems) throw new WeddingError("invalid-input", `Up to ${maxItems} ${label.toLowerCase()}s`);
+    out[k] = list.map((v) => text(v, { field: label, max })).filter(Boolean);
+  }
+  if (Object.hasOwn(input, "schedule")) {
+    const list = input.schedule === null ? [] : input.schedule;
+    if (!Array.isArray(list) || list.length > MAX_SCHEDULE) throw new WeddingError("invalid-input", `Up to ${MAX_SCHEDULE} schedule items`);
+    out.schedule = list
+      .map((x) => {
+        if (!x || typeof x !== "object" || Array.isArray(x) || Object.keys(x).some((k) => !["time", "title"].includes(k))) throw new WeddingError("invalid-input", "Invalid schedule item");
+        if (x.time !== null && x.time !== undefined && x.time !== "" && !TIME.test(x.time)) throw new WeddingError("invalid-input", "Choose a valid time");
+        return { time: x.time || null, title: text(x.title, { field: "Schedule item", max: 60 }) };
+      })
+      .filter((x) => x.title)
+      .sort((a, b) => (a.time || "99").localeCompare(b.time || "99"));
+  }
+  if (Object.hasOwn(input, "palette")) {
+    const list = input.palette === null ? [] : input.palette;
+    if (!Array.isArray(list) || list.length > MAX_PALETTE) throw new WeddingError("invalid-input", `Up to ${MAX_PALETTE} colours`);
+    out.palette = list.map((x) => {
+      if (!x || typeof x !== "object" || Array.isArray(x) || Object.keys(x).some((k) => !["name", "hex"].includes(k)) || typeof x.hex !== "string" || !HEX6.test(x.hex)) throw new WeddingError("invalid-input", "Choose a colour");
+      return { name: text(x.name, { field: "Colour name", max: 30 }), hex: x.hex.toLowerCase() };
+    });
+  }
+  // Per template (kept when the couple switches): the wording lines the
+  // template offers and one of its accent colours. Unknown keys are refused.
+  if (Object.hasOwn(input, "templateOptions")) {
+    const all = input.templateOptions === null ? {} : input.templateOptions;
+    if (!all || typeof all !== "object" || Array.isArray(all)) throw new WeddingError("invalid-input", "Invalid design options");
+    out.templateOptions = {};
+    for (const [id, o] of Object.entries(all)) {
+      const t = isStandardTemplate(id) ? getTemplateEntry(id) : null;
+      if (!t) throw new WeddingError("invalid-input", "Choose one of the invitation templates");
+      if (!o || typeof o !== "object" || Array.isArray(o) || Object.keys(o).some((k) => !["wording", "accent"].includes(k))) throw new WeddingError("invalid-input", "Invalid design options");
+      const one = {};
+      if (o.wording !== undefined && o.wording !== null) {
+        if (typeof o.wording !== "object" || Array.isArray(o.wording)) throw new WeddingError("invalid-input", "Invalid wording");
+        one.wording = {};
+        for (const [k, v] of Object.entries(o.wording)) {
+          if (!Object.hasOwn(t.wording, k)) throw new WeddingError("invalid-input", `${t.name} has no wording line ${k}`);
+          one.wording[k] = text(v, { field: "Wording", max: 80 });
+        }
+      }
+      if (o.accent !== undefined) {
+        if (o.accent !== null && !t.accents.some((a) => a.id === o.accent)) throw new WeddingError("invalid-input", "Choose one of the design's colours");
+        one.accent = o.accent;
+      }
+      out.templateOptions[id] = one;
+    }
+  }
+  for (const k of ["rsvpEnabled", "closeAfterDeadline", "showTable", "sameVenue", "askDietary"]) {
     if (!Object.hasOwn(input, k)) continue;
     if (typeof input[k] !== "boolean") throw new WeddingError("invalid-input", "Invalid setting");
     out[k] = input[k];
@@ -491,7 +573,24 @@ export function validateWeddingSetup(input) {
 // made (the invitation shows the couple and the date). [] = ready.
 export function setupMissing(setup) {
   const s = setup && typeof setup === "object" ? setup : {};
-  return [...(typeof s.coupleNames === "string" && s.coupleNames.trim() ? [] : ["the couple's names"]), ...(isDayId(s.weddingDate) ? [] : ["the wedding date"])];
+  return [...(coupleDisplayName(s) ? [] : ["the couple's names"]), ...(isDayId(s.weddingDate) ? [] : ["the wedding date"])];
+}
+// The names line: what the couple typed, else "Partner 1 & Partner 2".
+export function coupleDisplayName(setup) {
+  const s = setup && typeof setup === "object" ? setup : {};
+  const own = typeof s.coupleNames === "string" ? s.coupleNames.trim() : "";
+  if (own) return own;
+  return [s.partner1Name, s.partner2Name].filter((n) => typeof n === "string" && n.trim()).map((n) => n.trim()).join(" & ");
+}
+// The two names a template sets apart ("Camille" & "Carlo"): the partners'
+// names, else the names line split at "&" / "and".
+export function coupleNameParts(setup) {
+  const s = setup && typeof setup === "object" ? setup : {};
+  const p = [s.partner1Name, s.partner2Name].map((n) => (typeof n === "string" ? n.trim() : ""));
+  if (p[0] || p[1]) return p.filter(Boolean);
+  const line = coupleDisplayName(s);
+  const m = /^(.+?)\s+(?:&|and|\+)\s+(.+)$/i.exec(line);
+  return m ? [m[1], m[2]] : line ? [line] : [];
 }
 // Guests can answer while RSVP is on and (if set to close) the deadline
 // hasn't passed. The Owner can always change an RSVP in Luna.

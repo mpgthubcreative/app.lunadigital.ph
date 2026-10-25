@@ -10,4 +10,6 @@ export default {
   order: ["hero", "welcome", "ceremony", "reception", "dressCode", "rsvp", "story", "map", "entourage", "gallery", "faq", "footer"],
   show: ["hero", "welcome", "ceremony", "reception", "dressCode", "rsvp"],
   gallery: { style: "grid" },
+  // The original page also shows these once the couple adds them.
+  showsWhenAdded: ["story", "gallery", "faq", "footer"],
 };
