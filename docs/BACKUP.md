@@ -1,6 +1,36 @@
 # Luna backup and recovery
 
-Updated 2026-10-18 (Owner pilot). **Status: architecture only. Nothing here has been run against production.** Production is a Phase 19 concern; staging (`luna-business-os`) holds fake data only.
+Updated 2026-10-25. `luna-business-os` becomes production in place (see [PRODUCTION-READINESS.md](PRODUCTION-READINESS.md)).
+
+## Current state (2026-10-25, read from the project)
+
+| Protection | State | Decision |
+|---|---|---|
+| Firestore point-in-time recovery | OFF (version retention 1 hour) | Paid. The owner decides before cutover. |
+| Scheduled Firestore backups | None | Paid. The owner decides before cutover. |
+| Database delete protection | OFF | Left unchanged for now (owner decision). |
+| Storage soft delete | 7 days (Google default); no object versioning | Keep 7 days for now. |
+| Logical backup + restore (below) | Working, rehearsed | Used during the readiness phase. |
+
+## Logical backup and restore (in the repo, no extra cost or IAM)
+
+```sh
+# Back up everything (read-only): firestore.jsonl + files/ + manifest.json (counts, SHA-256)
+node --env-file=.env.local scripts/backup-firestore.js --out <dir> --files      # or --business <id>
+# Restore (dry run unless --execute; never deletes; keeps existing documents unless --overwrite):
+node --env-file=.env.local scripts/restore-firestore.js --from <dir> [--business <id>] [--files] --execute --confirm luna-business-os
+```
+
+Keep backups outside the repo (they hold customer data) and off shared drives.
+
+Auth accounts are not in this backup. Export them with `npx firebase auth:export auth.json --project staging`. The file holds password hashes: store it like a secret. Import with `auth:import`, using the hash parameters from Firebase Console → Authentication → ⋯ → Password hash parameters.
+
+**Rehearsal, 2026-10-25** (staging → empty emulator):
+- Full backup of staging: 756 documents and 3 files in 178 s.
+- Restore: 756/756 documents read back identical; 3/3 files.
+- Running the restore again wrote nothing.
+- A backup of the restored copy matches the original (same documents and content; the line order differs because subcollections are read in parallel).
+- One business (`veah-bridal`) deleted by accident, then restored alone: 57/57 identical.
 
 ## The rule
 

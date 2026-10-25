@@ -1,5 +1,7 @@
 # Luna production migration plan
 
+> **Superseded 2026-10-25:** there is no new Firebase project and no new Netlify site. The current ones are hardened in place and become production by configuration, on `app.luna.ph`. See [PRODUCTION-READINESS.md](PRODUCTION-READINESS.md) and [RELEASE.md](RELEASE.md). The checklists below (rules, Storage, Super Admin, public routes, what not to copy) still apply; the "new project", "Singapore" and `app.lunadigital.ph` parts don't.
+
 Prepared 2026-10-19. **Status: PLAN ONLY. Nothing here has been created or deployed.** Execution needs the owner's explicit approval, step by step.
 
 - **Baseline:** the commit recorded under "Production migration baseline" in `docs/phase-18-6-progress.md` (the sixth 2026-10-21 baseline: the Bridal UX simplification (Expenses / Tasks / Guests / More, the guest hub, Wedding Setup sections), on top of seating per person, ⋯ menus, the phone app frame, the invitation data contract, Luna Bridal ₱499, HEIC photos and trial releases; it supersedes every earlier baseline). CI must pass on it.
