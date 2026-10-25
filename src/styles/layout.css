@@ -1054,6 +1054,8 @@ label.check {
 .sg-section + .sg-section { border-top: 1px solid var(--inv-border); }
 .sg-welcome .sg-lead { max-width: 36rem; margin: 0 auto 24px; }
 .sg-parents { display: grid; gap: 20px; }
+.sg-family .sg-family-member { margin: 0 0 8px; }
+.sg-family-rel { display: block; font-size: 0.72rem; letter-spacing: 0.14em; text-transform: uppercase; color: var(--inv-muted); }
 
 .sg-story-photos { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 0 0 28px; }
 .sg-story-photos:has(> :only-child) { grid-template-columns: 1fr; }
@@ -1133,3 +1135,7 @@ label.check {
   .sg-gallery-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 @media (prefers-reduced-motion: reduce) { .sg-nav { backdrop-filter: none; } }
+
+/* RSVP: names for the party's unnamed seats (optional). */
+.inv-companions { margin: 12px 0; }
+.inv-companions .inv-companion { display: block; width: 100%; margin: 6px 0 0; }

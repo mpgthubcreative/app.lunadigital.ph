@@ -75,7 +75,7 @@ const SECTION_FIELDS = Object.freeze({
   signature: {
     ...CARD_FIELDS,
     hero: ["coupleNames", "partner1Name", "partner2Name", "weddingDate", "ceremonyTime", "city"],
-    welcome: ["welcomeMessage", "partner1Parents", "partner2Parents"],
+    welcome: ["welcomeMessage", "partner1Parents", "partner2Parents", "partner1Family", "partner2Family"],
     ceremony: [...CARD_FIELDS.ceremony, "schedule", "gettingThere"],
     reception: [...CARD_FIELDS.reception, "sameVenue"],
     dressCode: ["dressCode", "dressCodeDetails", "palette", "attireNotes"],
@@ -95,32 +95,34 @@ const CARD_WORDING = Object.freeze({ scriptLine: "are getting married", rsvpTitl
 // photo) and wording lines it edits, the invitation sections it belongs to
 // (it's offered only when the design shows one of them) and its guide line.
 // entourage → Guests (roles); gallery → the gallery photos.
-const ED = (id, label, sections, o) => Object.freeze({ id, label, sections, fields: o.fields ?? [], photos: o.photos ?? [], wording: o.wording ?? [], guide: o.guide, ...(o.link ? { link: o.link } : {}) });
+// guide: [what the section holds, where to tap] (the Guide's two lines).
+const ED = (id, label, sections, o) => Object.freeze({ id, label, sections, fields: o.fields ?? [], photos: o.photos ?? [], wording: o.wording ?? [], guide: o.guide.join(" "), shows: o.guide[0], tap: o.guide[1], ...(o.link ? { link: o.link } : {}) });
 const SECTION_EDITORS = Object.freeze({
   signature: [
-    ED("hero", "Names & date", ["hero"], { fields: ["partner1Name", "partner2Name", "coupleNames", "weddingDate", "city"], photos: ["hero"], wording: ["intro", "tagline", "countdownTitle"], guide: "Names · Date · City · Cover photo. Tap the names or the photo." }),
-    ED("welcome", "Welcome & families", ["welcome"], { fields: ["welcomeMessage", "partner1Parents", "partner2Parents"], guide: "Welcome message · Parents. Tap the welcome text." }),
-    ED("story", "Our story", ["story"], { fields: ["story"], photos: ["story1", "story2"], wording: ["storyEyebrow", "storyTitle"], guide: "Your story · Two photos. Tap Our Love Story." }),
-    ED("details", "Wedding details", ["ceremony", "reception", "map"], { fields: ["ceremonyTime", "ceremonyVenue", "ceremonyAddress", "ceremonyMap", "sameVenue", "receptionTime", "receptionVenue", "receptionAddress", "receptionMap", "gettingThere"], photos: ["when", "venue"], wording: ["detailsEyebrow", "detailsTitle"], guide: "Ceremony · Reception · Times · Map · Parking. Tap Wedding Details." }),
-    ED("schedule", "Schedule", ["ceremony"], { fields: ["schedule"], wording: ["scheduleTitle"], guide: "The day's timeline. Tap the schedule." }),
-    ED("dress", "Dress code", ["dressCode"], { fields: ["dressCode", "dressCodeDetails", "palette", "attireNotes"], photos: ["dressCode"], wording: ["dressEyebrow", "dressTitle"], guide: "Attire · Colours · Notes · Photo. Tap Dress Code." }),
-    ED("goodToKnow", "Good to know", ["faq"], { fields: ["reminders", "giftNote", "faq"], guide: "Reminders · Gift note · FAQ. Tap Good to know." }),
-    ED("rsvp", "RSVP", ["rsvp"], { fields: ["rsvpEnabled", "rsvpDeadline", "closeAfterDeadline", "rsvpContact", "mealOptions", "askDietary"], wording: ["rsvpEyebrow", "rsvpTitle"], guide: "Deadline · Meal choices · Dietary question · Contact. Tap RSVP." }),
-    ED("entourage", "Entourage", ["entourage"], { link: "/guests", guide: "Comes from your guests' Roles (Guests → Role)." }),
-    ED("gallery", "Gallery", ["gallery"], { guide: "Up to 6 photos. Tap the gallery." }),
-    ED("closing", "Closing", ["footer"], { fields: ["footerNote"], wording: ["closing"], guide: "Closing line · Closing words. Tap the footer." }),
+    ED("hero", "Names & date", ["hero"], { fields: ["partner1Name", "partner2Name", "coupleNames", "weddingDate", "city"], photos: ["hero"], wording: ["intro", "tagline", "countdownTitle"], guide: ["Names · Date · City · Photo", "Tap the invitation header or photo to edit."] }),
+    ED("welcome", "Welcome", ["welcome"], { fields: ["welcomeMessage"], guide: ["Welcome message", "Tap the welcome text to edit."] }),
+    ED("family", "Family", ["welcome"], { fields: ["partner1Family", "partner2Family", "partner1Parents", "partner2Parents"], guide: ["Parents · Siblings · Grandparents, for each side", "Tap Family to edit."] }),
+    ED("story", "Our story", ["story"], { fields: ["story"], photos: ["story1", "story2"], wording: ["storyEyebrow", "storyTitle"], guide: ["Your story · Two photos", "Tap Our Love Story to edit."] }),
+    ED("details", "Wedding details", ["ceremony", "reception", "map"], { fields: ["ceremonyTime", "ceremonyVenue", "ceremonyAddress", "ceremonyMap", "sameVenue", "receptionTime", "receptionVenue", "receptionAddress", "receptionMap", "gettingThere"], photos: ["when", "venue"], wording: ["detailsEyebrow", "detailsTitle"], guide: ["Ceremony · Reception · Time · Map · Parking", "Tap Wedding Details to edit."] }),
+    ED("schedule", "Schedule", ["ceremony"], { fields: ["schedule"], wording: ["scheduleTitle"], guide: ["The day's timeline", "Tap the schedule to edit."] }),
+    ED("dress", "Dress code", ["dressCode"], { fields: ["dressCode", "dressCodeDetails", "palette", "attireNotes"], photos: ["dressCode"], wording: ["dressEyebrow", "dressTitle"], guide: ["Attire · Colours · Notes · Photo", "Tap Dress Code to edit."] }),
+    ED("goodToKnow", "Good to know", ["faq"], { fields: ["reminders", "giftNote", "faq"], guide: ["Reminders · Gift note · FAQ", "Tap Good to know to edit."] }),
+    ED("rsvp", "RSVP", ["rsvp"], { fields: ["rsvpEnabled", "rsvpDeadline", "closeAfterDeadline", "rsvpContact", "mealOptions", "askDietary"], wording: ["rsvpEyebrow", "rsvpTitle"], guide: ["Deadline · Meal choices · Dietary question · Contact", "Tap RSVP to edit."] }),
+    ED("entourage", "Entourage", ["entourage"], { link: "/guests", guide: ["Comes from your guests' Roles", "Edit it in Guests → Roles."] }),
+    ED("gallery", "Gallery", ["gallery"], { guide: ["Up to 6 photos", "Tap the gallery to edit."] }),
+    ED("closing", "Closing", ["footer"], { fields: ["footerNote"], wording: ["closing"], guide: ["Closing line · Closing words", "Tap the footer to edit."] }),
   ],
   card: [
-    ED("hero", "Names & date", ["hero"], { fields: ["partner1Name", "partner2Name", "coupleNames", "weddingDate"], photos: ["hero"], wording: ["scriptLine"], guide: "Names · Date · Cover photo. Tap the names or the photo." }),
-    ED("welcome", "Welcome message", ["welcome"], { fields: ["welcomeMessage"], guide: "Tap the welcome text." }),
-    ED("story", "Our story", ["story"], { fields: ["story"], guide: "Tap Our story." }),
-    ED("details", "Ceremony & reception", ["ceremony", "reception", "map"], { fields: ["ceremonyTime", "ceremonyVenue", "ceremonyAddress", "ceremonyMap", "receptionTime", "receptionVenue", "receptionAddress", "receptionMap"], guide: "Times · Venues · Addresses · Maps. Tap Ceremony or Reception." }),
-    ED("dress", "Dress code", ["dressCode"], { fields: ["dressCode"], guide: "Tap Dress code." }),
-    ED("goodToKnow", "FAQ", ["faq"], { fields: ["faq"], guide: "Questions and answers. Tap Questions." }),
-    ED("rsvp", "RSVP", ["rsvp"], { fields: ["rsvpEnabled", "rsvpDeadline", "closeAfterDeadline", "mealOptions", "askDietary"], wording: ["rsvpTitle"], guide: "Deadline · Meal choices · Dietary question. Tap RSVP." }),
-    ED("entourage", "Entourage", ["entourage"], { link: "/guests", guide: "Comes from your guests' Roles (Guests → Role)." }),
-    ED("gallery", "Gallery", ["gallery"], { guide: "Up to 6 photos. Tap the gallery." }),
-    ED("closing", "Closing line", ["footer"], { fields: ["footerNote"], guide: "Tap the closing line." }),
+    ED("hero", "Names & date", ["hero"], { fields: ["partner1Name", "partner2Name", "coupleNames", "weddingDate"], photos: ["hero"], wording: ["scriptLine"], guide: ["Names · Date · Photo", "Tap the names or the photo to edit."] }),
+    ED("welcome", "Welcome message", ["welcome"], { fields: ["welcomeMessage"], guide: ["Welcome message", "Tap the welcome text to edit."] }),
+    ED("story", "Our story", ["story"], { fields: ["story"], guide: ["Your story", "Tap Our story to edit."] }),
+    ED("details", "Ceremony & reception", ["ceremony", "reception", "map"], { fields: ["ceremonyTime", "ceremonyVenue", "ceremonyAddress", "ceremonyMap", "receptionTime", "receptionVenue", "receptionAddress", "receptionMap"], guide: ["Times · Venues · Addresses · Maps", "Tap Ceremony or Reception to edit."] }),
+    ED("dress", "Dress code", ["dressCode"], { fields: ["dressCode"], guide: ["Attire", "Tap Dress code to edit."] }),
+    ED("goodToKnow", "FAQ", ["faq"], { fields: ["faq"], guide: ["Questions and answers", "Tap Questions to edit."] }),
+    ED("rsvp", "RSVP", ["rsvp"], { fields: ["rsvpEnabled", "rsvpDeadline", "closeAfterDeadline", "mealOptions", "askDietary"], wording: ["rsvpTitle"], guide: ["Deadline · Meal choices · Dietary question", "Tap RSVP to edit."] }),
+    ED("entourage", "Entourage", ["entourage"], { link: "/guests", guide: ["Comes from your guests' Roles", "Edit it in Guests → Roles."] }),
+    ED("gallery", "Gallery", ["gallery"], { guide: ["Up to 6 photos", "Tap the gallery to edit."] }),
+    ED("closing", "Closing line", ["footer"], { fields: ["footerNote"], guide: ["Closing line", "Tap the closing line to edit."] }),
   ],
 });
 
@@ -143,6 +145,7 @@ export const TEMPLATE_REGISTRY = Object.freeze(
   ].map(([file, category]) => {
     const kind = file.kind ?? "card";
     const sections = [...new Set([...file.show, ...(file.showsWhenAdded ?? [])])];
+    const editors = SECTION_EDITORS[kind].filter((e) => e.sections.some((s) => sections.includes(s)));
     return Object.freeze({
       id: file.id,
       name: file.label,
@@ -168,7 +171,10 @@ export const TEMPLATE_REGISTRY = Object.freeze(
       // Template-owned preview content (templates/{id}/sample.js); null = none.
       sampleData: SAMPLES[file.id] ? Object.freeze(structuredClone(SAMPLES[file.id].data)) : null,
       sampleAssets: Object.freeze({ ...(SAMPLES[file.id]?.assets ?? {}) }),
-      editableSections: Object.freeze(SECTION_EDITORS[kind].filter((e) => e.sections.some((s) => sections.includes(s)))),
+      editableSections: Object.freeze(editors),
+      // The same, keyed by section: the Guide's lines and what each edits.
+      sectionGuide: Object.freeze(Object.fromEntries(editors.map((e) => [e.id, Object.freeze({ label: e.label, shows: e.shows, tap: e.tap })]))),
+      fieldMappings: Object.freeze(Object.fromEntries(editors.map((e) => [e.id, Object.freeze({ fields: e.fields, photos: e.photos, wording: e.wording })]))),
       file,
     });
   })

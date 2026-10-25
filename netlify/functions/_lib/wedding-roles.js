@@ -134,6 +134,34 @@ function namingShift(g, memberId, named = 1) {
 }
 const freedText = (released) => (released.length ? ` · seat freed: ${released.map((r) => r.name).join(", ")}` : "");
 
+// Companion names a guest types with their RSVP (2026-10-25): they name the
+// party's unnamed seats in order (u1, u2 …, so each keeps its table), at
+// most the seats still unnamed. null = nothing to name. The link stays the
+// party's own: no companion gets a link of their own.
+export function nameCompanions(g, names) {
+  if (names === undefined || names === null) return null;
+  if (!Array.isArray(names) || names.length > 20) throw new WeddingError("invalid-input", "Invalid guest names");
+  const typed = names.map((n) => (typeof n === "string" ? n.trim().replace(/\s+/g, " ") : "")).filter(Boolean);
+  if (!typed.length) return null;
+  const members = membersOf(g);
+  const open = Math.max(0, (Number.isSafeInteger(g.partySize) ? g.partySize : 1) - 1 - members.length);
+  if (typed.length > open) throw new WeddingError("invalid-input", open ? `Up to ${open} more ${open === 1 ? "name" : "names"} for your party` : "Everyone in your party already has a name");
+  const seen = new Set([g.name, ...members.map((m) => m.name)].map(keyOf));
+  const added = typed.map((n) => {
+    const name = cleanName(n);
+    if (seen.has(keyOf(name))) throw new WeddingError("invalid-input", `${name} is already in your party`);
+    seen.add(keyOf(name));
+    return { id: newMemberId(), name, roles: [] };
+  });
+  // u1..uk → the new people; later unnamed seats shift down by k.
+  const rename = Object.fromEntries(added.map((m, i) => [`u${i + 1}`, m.id]));
+  for (const k of Object.keys(seatsOf(g))) {
+    const n = Number(UNNAMED_SEAT.exec(k)?.[1]);
+    if (n > added.length) rename[k] = `u${n - added.length}`;
+  }
+  return { members: [...members, ...added], rename, names: added.map((m) => m.name) };
+}
+
 // seatKey "uN": the unnamed person being named (Member n in Guest Details),
 // so their table stays with them; absent = the first unnamed one.
 export async function addMember({ db, tenant, FieldValue, guestId, name, seatKey = null, actor, now = new Date() }) {

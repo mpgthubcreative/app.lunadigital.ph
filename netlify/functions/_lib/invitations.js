@@ -26,9 +26,9 @@ import { businessDate, isDayId } from "../../../shared/metrics.js";
 import { prepareNotifications } from "./notifications.js";
 import { tenantDb } from "./tenant-db.js";
 import { guestTotalsWrite, releasedText } from "./wedding.js";
-import { roleLabel, rolesPlan } from "../../../shared/wedding-roles.js";
+import { roleLabel, rolesPlan, membersOf } from "../../../shared/wedding-roles.js";
 import { accessPolicy } from "../../../shared/subscription.js";
-import { attendingMarksFor } from "./wedding-roles.js";
+import { attendingMarksFor, nameCompanions } from "./wedding-roles.js";
 import { liveDesignFor, ownerInvitationStatus, previewDesign, TRIAL_PREVIEW_MESSAGE } from "./invitation-design.js";
 import { trialOpen } from "../../../shared/trial.js";
 import { invitationData, PHOTO_SLOTS, isOfferedTemplate } from "../../../shared/invitation-design.js";
@@ -53,6 +53,11 @@ export function guestRsvpLabel(from, to, invited) {
   if (from.rsvp === "awaiting") return `Guest responded: ${to.status === "attending" ? `Attending · ${partyWords(to.status, to.confirmed, invited)}` : WORDS[to.status]}`;
   return `Guest changed RSVP: ${partyWords(from.rsvp, from.confirmed, invited)} → ${partyWords(to.status, to.confirmed, invited)}`;
 }
+// The party as its own guest sees it: the other named people, and the seats with no name yet.
+const partyOf = (g) => {
+  const named = membersOf(g).map((m) => m.name);
+  return { named, open: Math.max(0, int(g.partySize) - 1 - named.length) };
+};
 const append = (list, e) => {
   const l = Array.isArray(list) ? list : [];
   if (l.length >= MAX_HISTORY) throw new WeddingError("history-full", "Too many changes on this record");
@@ -201,6 +206,32 @@ export async function saveHero({ tenant, FieldValue, dataUrl, actor }) {
   return { hero: true };
 }
 
+// Reset invitation (Wedding Setup → ⋯, 2026-10-25): the design returns to
+// its own example presentation. Clears the invitation-only content, every
+// design's wording / accent, the cover photo, the design photos and the
+// gallery. Kept: the names, the date, the city, ceremony / reception
+// details, the RSVP settings (guests' answers depend on them), the chosen
+// design, published state and the wedding link. Guests, RSVPs, roles,
+// seating and the rest of the wedding are never touched (that is Reset
+// Data, Settings).
+export const INVITATION_RESET_FIELDS = Object.freeze(["welcomeMessage", "partner1Family", "partner2Family", "partner1Parents", "partner2Parents", "story", "schedule", "gettingThere", "dressCode", "dressCodeDetails", "palette", "attireNotes", "reminders", "giftNote", "faq", "footerNote", "templateOptions"]);
+export async function resetInvitation({ db, tenant, FieldValue, actor }) {
+  const slots = Object.keys(PHOTO_SLOTS);
+  const gallery = await galleryCol(tenant).limit(MAX_GALLERY + 10).get();
+  await db.runTransaction(async (tx) => {
+    const cur = await tx.get(setupRef(tenant));
+    if (cur.exists) {
+      const next = Object.fromEntries(Object.entries(cur.data()).filter(([k]) => !INVITATION_RESET_FIELDS.includes(k)));
+      tx.set(setupRef(tenant), { ...next, updatedBy: who(actor), updatedAt: FieldValue.serverTimestamp() });
+    }
+    tx.delete(heroRef(tenant));
+    for (const slot of slots) tx.delete(photoRef(tenant, slot));
+    for (const d of gallery.docs) tx.delete(d.ref);
+  }, TX_OPTIONS);
+  const back = await setupRef(tenant).get();
+  return { reset: true, setup: back.exists ? back.data() : {} };
+}
+
 // ---- Links (Owner side, guests.manage) ----
 // A link needs a set-up invitation: the couple's names and the date.
 async function requireSetup(tenant) {
@@ -267,7 +298,9 @@ export async function viewInvite({ db, token, now = new Date() }) {
     hero: h.exists ? h.data().dataUrl : null,
     // roles: ready for personal wording later ("…one of our Principal Sponsors"); not shown yet.
     // meal / note: this party's own earlier answer (to change it).
-    guest: { name: r.guest.name, seats: int(r.guest.partySize), rsvp: r.guest.rsvp, confirmed: int(r.guest.confirmed), roles: (Array.isArray(r.guest.roles) ? r.guest.roles : []).map((x) => roleLabel(x)), meal: typeof r.guest.rsvpMeal === "string" ? r.guest.rsvpMeal : null, note: typeof r.guest.rsvpNote === "string" ? r.guest.rsvpNote : null },
+    // party: the names already known in this party, and how many seats
+    // have no name yet (the guest can name them when they accept).
+    guest: { name: r.guest.name, seats: int(r.guest.partySize), rsvp: r.guest.rsvp, confirmed: int(r.guest.confirmed), roles: (Array.isArray(r.guest.roles) ? r.guest.roles : []).map((x) => roleLabel(x)), meal: typeof r.guest.rsvpMeal === "string" ? r.guest.rsvpMeal : null, note: typeof r.guest.rsvpNote === "string" ? r.guest.rsvpNote : null, party: partyOf(r.guest) },
     rsvpOpen: rsvpOpen(setup, today),
     // The canonical address (current wedding link): an older link moves to it.
     path: invitePath(setup.weddingSlug, token),
@@ -300,24 +333,31 @@ export async function respondInvite({ db, FieldValue, token, rsvp, now = new Dat
     // The meal choice / dietary note, only where Wedding Setup asks for them.
     const extra = guestExtras(setup, v.status, rsvp);
     const extraChanged = Object.entries(extra).some(([k, x]) => (g[k] ?? null) !== x);
-    if (v.status === g.rsvp && v.confirmed === int(g.confirmed) && !extraChanged) return { rsvp: v.status, confirmed: v.confirmed, unchanged: true, name: g.name };
+    // Names for the party's unnamed seats (accepting only): they become the
+    // party's named members, each keeping the seat / table that was theirs.
+    const named = v.status === "attending" ? nameCompanions(g, rsvp?.companions) : null;
+    const party = named ? { members: named.members } : {};
+    const namedText = named ? ` · named ${named.names.join(", ")}` : "";
+    if (v.status === g.rsvp && v.confirmed === int(g.confirmed) && !extraChanged && !named) return { rsvp: v.status, confirmed: v.confirmed, unchanged: true, name: g.name };
     if (v.status === g.rsvp && v.confirmed === int(g.confirmed)) {
-      tx.update(gRef, { ...extra, history: append(g.history, { at: now, actor: null, label: "Guest updated their meal / dietary note", source: "guest" }), revision: int(g.revision) + 1, updatedBy: { uid: null, name: `${g.name} (invitation)` }, updatedAt: FieldValue.serverTimestamp() });
+      const kept = named ? reconcileSeats(g, { ...g, ...party }, { rename: named.rename }).fields : {};
+      tx.update(gRef, { ...extra, ...party, ...kept, history: append(g.history, { at: now, actor: null, label: named ? `Guest named their party${namedText.replace(" · named", ":")}` : "Guest updated their meal / dietary note", source: "guest" }), revision: int(g.revision) + 1, updatedBy: { uid: null, name: `${g.name} (invitation)` }, updatedAt: FieldValue.serverTimestamp() });
       return { rsvp: v.status, confirmed: v.confirmed, name: g.name, ...extra };
     }
-    const marks = attendingMarksFor(g, v);
-    const next = { ...g, rsvp: v.status, confirmed: v.confirmed, ...marks };
+    const base = { ...g, ...party };
+    const marks = attendingMarksFor(base, v);
+    const next = { ...base, rsvp: v.status, confirmed: v.confirmed, ...marks };
     // Seats follow the confirmed people (shared/wedding-seating.js): fewer
     // frees the last people's seats, named in the history.
-    const seating = reconcileSeats(g, next);
+    const seating = reconcileSeats(g, next, named ? { rename: named.rename } : undefined);
     const tables = seatingSnap.exists && seatingSnap.data().tables ? seatingSnap.data().tables : {};
-    const label = `${guestRsvpLabel({ rsvp: g.rsvp, confirmed: int(g.confirmed) }, v, int(g.partySize))}${releasedText(seating.released, tables)}`;
+    const label = `${guestRsvpLabel({ rsvp: g.rsvp, confirmed: int(g.confirmed) }, v, int(g.partySize))}${namedText}${releasedText(seating.released, tables)}`;
     const notes = await prepareNotifications(tx, {
       tenant,
       events: [{ type: "guest.rsvp", key: `${r.guestId}-${now.getTime()}`, title: `${g.name} RSVP'd ${rsvpWords(v.status, v.confirmed).replace(/ (\d+)$/, " · $1")}`, message: `${g.name} answered their invitation: ${rsvpWords(v.status, v.confirmed).replace(/ (\d+)$/, " · $1")}.`, recordType: "guest", recordId: r.guestId }],
     });
     const stamp = FieldValue.serverTimestamp();
-    tx.update(gRef, { rsvp: v.status, confirmed: v.confirmed, rsvpDate: today, rsvpSource: "guest", ...extra, ...seating.fields, ...marks, history: append(g.history, { at: now, actor: null, label, source: "guest", from: { rsvp: g.rsvp, confirmed: int(g.confirmed) }, to: v }), revision: int(g.revision) + 1, updatedBy: { uid: null, name: `${g.name} (invitation)` }, updatedAt: stamp });
+    tx.update(gRef, { rsvp: v.status, confirmed: v.confirmed, rsvpDate: today, rsvpSource: "guest", ...extra, ...party, ...seating.fields, ...marks, history: append(g.history, { at: now, actor: null, label, source: "guest", from: { rsvp: g.rsvp, confirmed: int(g.confirmed) }, to: v }), revision: int(g.revision) + 1, updatedBy: { uid: null, name: `${g.name} (invitation)` }, updatedAt: stamp });
     tx.set(totalsRef(tenant), { schemaVersion: WEDDING_SCHEMA_VERSION, ...guestTotalsWrite(FieldValue, g, next), updatedAt: stamp }, { merge: true });
     notes.commit({ FieldValue });
     return { rsvp: v.status, confirmed: v.confirmed, name: g.name, ...extra };

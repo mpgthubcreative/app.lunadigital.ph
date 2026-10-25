@@ -13,9 +13,12 @@
 //                        2026-10-21; earlier bills / weddings keep theirs);
 //                        30-day trial; 1 planner, 500 MB, the Standard
 //                        invitation templates
-//   Luna Bridal Custom   starting at ₱2,990 / 12 months; customized website
-//                        invitation + designer work (plan id bridal-plus,
-//                        kept: the invitation level is tied to it)
+//   Luna Bridal Custom   LEGACY since 2026-10-25 (plan id bridal-plus): no
+//                        longer sold or offered as an upgrade; weddings
+//                        already on it keep it (their Customized invitation,
+//                        bills and records). Luna Bridal is the one Bridal
+//                        product; new invitation designs come from the
+//                        template registry, never a new plan.
 //   (Baby keeps its two plans.)
 // Product, term and add-ons are separate (shared/plan-billing.js): the
 // terms and add-ons are data here, edited in Super Admin → Plans. Customers
@@ -333,9 +336,8 @@ export const PLAN_SEED = Object.freeze({
     modules: BRIDAL_MODULES,
     billing: { billingType: "term", price: 49900, termMonths: 12, autoRenew: false, trialDays: 30, terms: [{ months: 12, price: 49900, kind: "main" }] },
   }),
-  // Luna Bridal Custom: the customized invitation website + designer work
-  // (a service, not a bigger limit). "Starting at": the price follows the
-  // design scope (Super Admin price override).
+  // LEGACY (2026-10-25): Luna Bridal Custom, the customized invitation
+  // website + designer work. Kept only for the weddings already on it.
   "bridal-plus": personalPlan({
     id: "bridal-plus",
     name: "Luna Bridal Custom",
@@ -346,6 +348,7 @@ export const PLAN_SEED = Object.freeze({
     storage: 500 * MB,
     modules: BRIDAL_MODULES,
     plus: true,
+    legacy: true,
     billing: { billingType: "term", price: 299000, priceIsMinimum: true, termMonths: 12, autoRenew: false, terms: [{ months: 12, price: 299000, kind: "main" }] },
   }),
 });
@@ -353,7 +356,10 @@ export const PLAN_SEED = Object.freeze({
 // The workspace a plan belongs to (older stored plans had none: Distributor).
 export const planWorkspace = (plan) => (plan && typeof plan.workspaceTemplateId === "string" ? plan.workspaceTemplateId : "distributor");
 // The plans Super Admin offers (create, change plan, Plans page); legacy ones stay valid but hidden.
-export const isCatalogPlan = (plan) => Boolean(plan) && plan.legacy !== true;
+// Legacy = marked on the stored plan OR in this seed (a plan retired here is
+// retired everywhere, without rewriting the stored copy).
+export const isLegacyPlan = (plan) => Boolean(plan) && (plan.legacy === true || PLAN_SEED[plan.id]?.legacy === true);
+export const isCatalogPlan = (plan) => Boolean(plan) && !isLegacyPlan(plan);
 
 // Vocabulary every plan and override is validated against
 // (shared/entitlements.js). Adding a limit or feature means adding it here

@@ -55,13 +55,14 @@ async function owned(businessId, planId, workspaceTemplateId, { clock = OCT19, t
 }
 
 describe("products: one per workspace, terms, add-ons, users and storage limits", () => {
-  it("the sold catalog: Luna Household, Luna Distributor, Luna Bridal, Luna Bridal Custom; the + plans and Starter / Growth / Pro are legacy", () => {
+  it("the sold catalog: Luna Household, Luna Distributor, Luna Bridal; the + plans, Starter / Growth / Pro and Luna Bridal Custom are legacy", () => {
     const sold = Object.values(PLAN_SEED).filter(isCatalogPlan);
     const by = (w) => sold.filter((p) => planWorkspace(p) === w).map((p) => [p.name, priceLabel(p), p.limits.users, p.limits.storageBytes]);
     expect(by("distributor")).toEqual([["Luna Distributor", "₱2,390 / 12 months + ₱250 setup", 2, 500 * MB]]);
     expect(by("household-payroll")).toEqual([["Luna Household", "₱2,390 / 12 months", 1, 500 * MB]]);
-    expect(by("bridal-expense")).toEqual([["Luna Bridal", "₱499 / 12 months", 1, 500 * MB], ["Luna Bridal Custom", "Starting at ₱2,990 / 12 months", 1, 500 * MB]]);
-    expect(["distributor-plus", "household-plus", "starter", "growth", "pro"].map((id) => PLAN_SEED[id].legacy)).toEqual([true, true, true, true, true]);
+    // 2026-10-25: one Bridal product; Custom kept only for weddings already on it.
+    expect(by("bridal-expense")).toEqual([["Luna Bridal", "₱499 / 12 months", 1, 500 * MB]]);
+    expect(["distributor-plus", "household-plus", "starter", "growth", "pro", "bridal-plus"].map((id) => PLAN_SEED[id].legacy)).toEqual([true, true, true, true, true, true]);
     // Terms are data on the product, not separate plans.
     const h = PLAN_SEED["household-basic"];
     // 6 or 12 months (no monthly option); a 30-day free trial first.

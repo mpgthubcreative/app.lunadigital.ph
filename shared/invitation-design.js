@@ -30,7 +30,7 @@ export const PLAN_MARKETING_NAMES = Object.freeze({ "bridal-basic": "Luna Bridal
 // fields that leave the couple's workspace, for a guest link and for Luna
 // Super Admin's invitation work (2026-10-20 privacy model).
 // 2026-10-24: plus the generic profile fields any template may show.
-export const INVITATION_CONTENT_FIELDS = Object.freeze(["coupleNames", "weddingDate", "ceremonyTime", "ceremonyVenue", "ceremonyAddress", "ceremonyMap", "receptionTime", "receptionVenue", "receptionAddress", "receptionMap", "dressCode", "welcomeMessage", "rsvpDeadline", "story", "footerNote", "faq", "partner1Name", "partner2Name", "partner1Parents", "partner2Parents", "city", "sameVenue", "schedule", "gettingThere", "dressCodeDetails", "palette", "attireNotes", "reminders", "giftNote", "rsvpContact", "mealOptions", "askDietary"]);
+export const INVITATION_CONTENT_FIELDS = Object.freeze(["coupleNames", "weddingDate", "ceremonyTime", "ceremonyVenue", "ceremonyAddress", "ceremonyMap", "receptionTime", "receptionVenue", "receptionAddress", "receptionMap", "dressCode", "welcomeMessage", "rsvpDeadline", "story", "footerNote", "faq", "partner1Name", "partner2Name", "partner1Parents", "partner2Parents", "city", "sameVenue", "schedule", "gettingThere", "dressCodeDetails", "palette", "attireNotes", "reminders", "giftNote", "rsvpContact", "mealOptions", "askDietary", "partner1Family", "partner2Family"]);
 // coupleNames: the names line ("Partner 1 & Partner 2" when not typed).
 export const invitationContent = (setup) => ({ ...Object.fromEntries(INVITATION_CONTENT_FIELDS.map((k) => [k, setup?.[k] ?? null])), coupleNames: coupleDisplayName(setup) || null });
 // The couple's wording / accent for the Standard template being shown

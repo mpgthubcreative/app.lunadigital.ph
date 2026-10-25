@@ -15,6 +15,11 @@
 // changes made here are recorded as the Owner side's (rsvpSource "owner",
 // with who and when in the history), so a future invitation-link answer
 // ("guest") can sit beside them without overwriting the trail.
+// 2026-10-25: invitations are sent from All Guests itself. Each party row
+// has a second short line: Invitation link [Copy] (one tap; the link is made
+// on first use) and Sent ▾ (setting the existing invitationSent date),
+// then "RSVP received" once they answer. One link per PARTY (a +1 / +2
+// never gets its own); the party's RSVP covers everyone invited.
 // Owner-pilot second pass: the summary line, the RSVP | Seating switch,
 // then Search + "RSVP: All ▾" on one line. A category header is just
 // "FAMILY · 18/24" (people attending / invited). Each group's list scrolls
@@ -24,10 +29,11 @@
 
 import { html, render } from "../../lib/html.js";
 import { pageHeader, emptyState, skeleton, segmented } from "../../components/ui.js";
+import { examplesState } from "../../components/examples.js";
 import { formDialog } from "../../components/form-dialog.js";
 import { confirmDialog, toast as defaultToast } from "../../components/feedback.js";
 import { formatDayId } from "../../lib/format.js";
-import { RSVP_STATUSES, GUEST_SIDES, GUEST_CATEGORIES, GUEST_CATEGORY_IDS, rsvpSummary, seatingPlan, seatablePeople, seatsOf, MAX_TABLE_CAPACITY, setupMissing } from "@shared/index.js";
+import { RSVP_STATUSES, businessDate, GUEST_SIDES, GUEST_CATEGORIES, GUEST_CATEGORY_IDS, rsvpSummary, seatingPlan, seatablePeople, seatsOf, MAX_TABLE_CAPACITY, setupMissing } from "@shared/index.js";
 import { activityLines, detailsDialog } from "../baby/common.js";
 import * as defaultData from "./data.js";
 import { openInvitePreview, copyText, canShare } from "./invitation/preview.js";
@@ -42,7 +48,7 @@ const FILTERS = [["all", "All"], ["awaiting", "Waiting"], ["attending", "Attendi
 const MAX_GUESTS = 1000;
 
 const guestFields = (g = {}) => [
-  { name: "name", label: "Guest or household", value: g.name ?? "", required: true, placeholder: "e.g. Prado Family" },
+  { name: "name", label: "Guest or household", value: g.name ?? "", required: true, placeholder: "e.g. The Santos Family" },
   { name: "category", label: "Category", type: "select", options: [{ value: "", label: "— Choose —" }, ...CATEGORY_OPTIONS], value: g.category ?? "", required: true },
   { name: "partySize", label: "Seats (party size)", value: g.partySize ?? 1, inputmode: "numeric", required: true },
   { name: "side", label: "Side", type: "select", options: SIDE_OPTIONS, value: g.side ?? "both", more: true, default: true },
@@ -148,9 +154,28 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     const live = state.seating?.tables || {};
     return Object.entries(seatsOf(g)).filter(([k, t]) => can.has(k) && live[t]).length;
   };
-  // One row per party: name, then a quiet line (seated · side); RSVP and ⋯ on the right.
-  const rowSub = (g) => [g.rsvp === "attending" ? `${seatedOf(g)} seated` : "", GUEST_SIDES[g.side]?.label ?? ""].filter(Boolean).join(" · ");
-  const rsvpRow = (g) => html`<li class="wl-row wl-guest" data-guest="${g.id}"><button type="button" class="wl-main" data-act="view" data-id="${g.id}"><span class="wl-name">${g.name}</span>${rowSub(g) ? html`<span class="wl-sub" data-role="guest-sub">${rowSub(g)}</span>` : ""}</button>${seats(g)}${rsvpControl(g)}${guestMenu(g)}</li>`;
+  // One row per party: name, then a quiet line (side · invited · +N allowed /
+  // attending · seated); RSVP and ⋯ on the right; then the invitation line.
+  const openSeats = (g) => Math.max(0, (g.partySize || 1) - 1 - membersOf(g).length);
+  const rowSub = (g) =>
+    [
+      GUEST_SIDES[g.side]?.label ?? "",
+      `${g.partySize || 1} invited`,
+      g.rsvp === "attending" ? `${g.confirmed} attending` : g.rsvp === "declined" ? "declined" : openSeats(g) ? `+${openSeats(g)} allowed` : "",
+      g.rsvp === "attending" ? `${seatedOf(g)} seated` : "",
+    ]
+      .filter(Boolean)
+      .join(" · ");
+  // Invitation link [Copy] · Sent ▾ (· RSVP received), right on the row.
+  const inviteLine = (g) => {
+    if (!canManage) return "";
+    if (trial || state.setupMissing?.length) return "";
+    const sent = Boolean(g.invitationSent);
+    return html`<div class="wl-invite" data-role="invite-line"><span>Invitation link</span><button type="button" class="btn btn-compact" data-act="invite-copy-row" data-id="${g.id}" aria-label="Copy ${g.name}'s invitation link">Copy</button>
+      <select class="select select-compact" data-role="sent" data-id="${g.id}" aria-label="Invitation sent to ${g.name}"><option value="" ${sent ? "" : "selected"}>Not sent</option><option value="sent" ${sent ? "selected" : ""}>${sent ? `Sent ✓ ${formatDayId(g.invitationSent)}` : "Sent ✓"}</option></select>
+      ${g.rsvp !== "awaiting" ? html`<span class="wl-invite-done" data-role="rsvp-received">RSVP received</span>` : ""}</div>`;
+  };
+  const rsvpRow = (g) => html`<li class="wl-row wl-guest${canManage && !trial && !state.setupMissing?.length ? " has-invite" : ""}" data-guest="${g.id}"><button type="button" class="wl-main" data-act="view" data-id="${g.id}"><span class="wl-name">${g.name}</span>${rowSub(g) ? html`<span class="wl-sub" data-role="guest-sub">${rowSub(g)}</span>` : ""}</button>${seats(g)}${rsvpControl(g)}${guestMenu(g)}${inviteLine(g)}</li>`;
 
   const shown = () => {
     const q = state.search.toLowerCase();
@@ -160,7 +185,19 @@ export function mount(container, session, { data = defaultData, toast = defaultT
   function rsvpView() {
     const list = shown();
     const groups = groupGuests(list);
-    if (!state.rows.length) return emptyState({ iconName: "users", title: "No guests yet", body: "Add each guest or household with its number of seats." });
+    if (!state.rows.length)
+      return examplesState({
+        title: "No guests yet",
+        body: "Here's how your list will look:",
+        items: [
+          { name: "The Prado Family", sub: "Groom's side · 4 invited · 3 attending" },
+          { name: "Carlo Prado", sub: "Both / Mutual · 2 invited · +1 allowed" },
+          { name: "Anna Santos", sub: "Bride's side · 1 invited · Waiting for RSVP" },
+        ],
+        add: canManage ? { act: "new", label: "+ Add Guest" } : null,
+        helper: "Add individuals, couples or families. You can assign roles and tables later.",
+        role: "guest-examples",
+      });
     if (!groups.length) return html`<p class="stat-hint wl-none">No ${state.filter === "all" ? "" : RSVP_WORDS[state.filter].toLowerCase() + " "}guests${state.search ? ` matching "${state.search}"` : ""}.</p>`;
     return groups.map(
       (gr) => {
@@ -580,6 +617,26 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     }
   }
   const linkOf = async (g) => `${location.origin}${(await data.guestsApi({ action: "inviteLink", guestId: g.id })).path}`;
+  // One tap: the party's private link (made on first use) straight to the
+  // clipboard. The copy starts inside the tap (Safari needs that), with the
+  // link arriving a moment later; no clipboard = a small sheet to copy it.
+  async function copyRowLink(g) {
+    const url = linkOf(g);
+    let ok = false;
+    try {
+      if (globalThis.ClipboardItem && navigator.clipboard?.write) {
+        await navigator.clipboard.write([new ClipboardItem({ "text/plain": url.then((u) => new Blob([u], { type: "text/plain" })) })]);
+        ok = true;
+      }
+    } catch {
+      ok = false;
+    }
+    const link = await url;
+    if (!ok) ok = await copyText(link);
+    if (ok) toast(`Link copied: ${g.name}`, "success");
+    else await formDialog({ title: `Invitation link for ${g.name}`, fields: [{ name: "url", label: "Copy this link", value: link }], submitLabel: "Done", onSubmit: () => true });
+    if (g.invitation?.status !== "active") load();
+  }
   // View: the invitation inside Luna, with an Owner-only bar.
   async function viewInvite(g) {
     const url = await linkOf(g);
@@ -663,7 +720,8 @@ export function mount(container, session, { data = defaultData, toast = defaultT
         const r = await data.guestsApi({ action: "inviteLink", guestId: g.id });
         await copyLink(`${location.origin}${r.path}`, g.name, false, true);
         load();
-      } else if (a === "invite-view") await viewInvite(g);
+      } else if (a === "invite-copy-row") await copyRowLink(g);
+      else if (a === "invite-view") await viewInvite(g);
       else if (a === "invite-copy") await copyLink(await linkOf(g), g.name);
       else if (a === "invite-share") await shareLink(await linkOf(g), g.name);
       else if (a === "invite-new") {
@@ -681,6 +739,20 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     if (el.dataset?.role === "filter") {
       state.filter = el.value;
       draw();
+      return;
+    }
+    if (el.dataset?.role === "sent" && container.contains(el)) {
+      const g = state.rows.find((r) => r.id === el.dataset.id);
+      if (!g) return;
+      const invitationSent = el.value === "sent" ? g.invitationSent || businessDate(timezone || "Asia/Manila") : null;
+      el.disabled = true;
+      try {
+        await data.guestsApi({ action: "update", guestId: g.id, expectedRevision: g.revision, changes: { invitationSent } });
+        toast(invitationSent ? `Marked sent: ${g.name}` : `Marked not sent: ${g.name}`, "success");
+      } catch (err) {
+        toast(err.message || "Something went wrong", "danger");
+      }
+      load();
       return;
     }
     if (el.dataset?.role !== "rsvp" || !container.contains(el)) return;

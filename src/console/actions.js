@@ -6,7 +6,7 @@
 //
 // Change access: the product stays; its term, paid-through date, add-ons
 // and price change. Change product: only where there's a real choice
-// (Luna Bridal ↔ Luna Bridal Custom, or leaving an older "+" plan).
+// (leaving an older plan: Luna Bridal Custom, a "+" plan).
 
 import { html } from "../lib/html.js";
 import { badge, rowMenu } from "../components/ui.js";

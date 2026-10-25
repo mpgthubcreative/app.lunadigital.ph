@@ -4633,12 +4633,15 @@ button.wl-person-name:hover .wl-edit, button.wl-person-name:focus-visible .wl-ed
 
 /* ---------- Wedding Setup: edit the invitation itself (2026-10-25) ----------
    Phone first: the invitation is the screen; a sticky bar holds Edit /
-   Clean Preview / Guide and Publish. Edit mode adds small Edit / Replace
+   Clean Preview, Undo and ⋯ (Guide, Reset). Edit mode adds small Edit / Replace
    pills on the invitation (never on a guest's page). Desktop: the guide
    sits beside the invitation. */
 .ie { --ie-bar-h: 56px; }
-.ie-bar { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; min-height: var(--ie-bar-h); padding: 6px 0; background: var(--bg); }
-.ie-modes { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); flex: 1 1 auto; gap: 2px; padding: 3px; background: var(--surface-sunken); border-radius: 999px; min-width: 0; }
+.ie-bar { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: var(--space-2); min-height: var(--ie-bar-h); padding: 6px 0; background: var(--bg); }
+.ie-bar-end { display: flex; align-items: center; gap: 4px; flex: none; }
+.ie-bar-end [data-act="undo"] { min-height: 40px; }
+.ie-more > summary { min-width: 40px; min-height: 40px; justify-content: center; }
+.ie-modes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); flex: 1 1 auto; gap: 2px; padding: 3px; background: var(--surface-sunken); border-radius: 999px; min-width: 0; }
 .ie-status { float: right; display: flex; align-items: center; gap: var(--space-2); margin-left: var(--space-2); }
 .ie-mode { min-height: 40px; padding: 0 12px; border: 0; border-radius: 999px; background: transparent; color: var(--text-muted); font: inherit; font-size: 0.875rem; font-weight: 600; white-space: nowrap; cursor: pointer; }
 .ie-mode[aria-selected="true"] { background: var(--surface); color: var(--text); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12); }
@@ -4674,6 +4677,7 @@ button.wl-person-name:hover .wl-edit, button.wl-person-name:focus-visible .wl-ed
 .ie-guide-list { list-style: none; margin: var(--space-2) 0; padding: 0; }
 .ie-guide-list li { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); padding: var(--space-2) 0; border-bottom: 1px solid var(--border); }
 .ie-guide-list p { margin: 2px 0 0; }
+.ie-guide-shows { font-size: 0.9rem; }
 .ie-link { margin-top: var(--space-3); }
 .ie-link p { margin: 4px 0; overflow-wrap: anywhere; }
 
@@ -4682,6 +4686,16 @@ button.wl-person-name:hover .wl-edit, button.wl-person-name:focus-visible .wl-ed
 .ie-sheet .modal-body { display: flex; flex-direction: column; gap: var(--space-1); }
 .ie-sheet-photos { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: var(--space-2); margin-bottom: var(--space-2); }
 .ie-sheet .ws-wording { margin: var(--space-1) 0; }
+.ie-sheet .modal-footer .ie-reset-section { margin-right: auto; }
+/* A family member: relationship, (its own word), name, then ↑ ↓ Remove. */
+.ie-fam-row { display: grid; grid-template-columns: minmax(0, 9rem) minmax(0, 1fr); gap: 6px; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--border); }
+.ie-fam-row .ie-fam-label { grid-column: 1 / -1; }
+.ie-fam-row .ie-fam-name { grid-column: 2; }
+.ie-fam-row .ie-fam-label:not([hidden]) + .ie-fam-name { grid-column: 1 / -1; }
+.ie-fam-tools { grid-column: 1 / -1; display: flex; justify-content: flex-end; gap: 4px; }
+@media (max-width: 419px) {
+  .ie-long { display: none; }
+}
 
 /* Choosing a design. */
 .ie-choose-title { margin: var(--space-2) 0 4px; font-size: var(--text-lg, 1.25rem); }
@@ -4703,3 +4717,23 @@ button.wl-person-name:hover .wl-edit, button.wl-person-name:focus-visible .wl-ed
   .ie[data-mode="edit"] .ie-aside, .ie[data-mode="guide"] .ie-aside { display: block; position: sticky; top: calc(var(--ie-bar-h) + 8px); max-height: calc(100dvh - var(--ie-bar-h) - 32px); overflow: auto; }
   .ie[data-mode="guide"] .ie-canvas[hidden] { display: block; }
 }
+
+/* ---------- Example empty states (2026-10-25) ----------
+   Drawn like the real rows, but quiet and marked "Example"; never tappable. */
+.ex-state { margin: var(--space-2) 0 var(--space-4); }
+.ex-title { margin: 0 0 2px; font-weight: 600; }
+.ex-body { margin: 0 0 var(--space-2); }
+.ex-list { opacity: 0.78; }
+.ex-row { pointer-events: none; }
+.ex-row .wl-main { cursor: default; }
+.ex-end { flex: none; font-size: var(--text-sm); font-variant-numeric: tabular-nums; white-space: nowrap; color: var(--text-muted); }
+.ex-tag { flex: none; padding: 2px 8px; border-radius: 999px; background: var(--surface-sunken); color: var(--text-muted); font-size: 0.72rem; font-weight: 600; }
+.ex-add { margin: var(--space-3) 0 var(--space-1); }
+.ex-helper { margin: 0; }
+
+/* Guests: the invitation line under a party (link Copy · Sent ▾). */
+.wl-guest.has-invite { flex-wrap: wrap; row-gap: 0; }
+.wl-invite { flex: 1 0 100%; display: flex; align-items: center; flex-wrap: wrap; gap: 6px; padding: 0 0 8px; font-size: var(--text-sm); color: var(--text-muted); }
+.wl-invite .btn { min-height: 36px; }
+.wl-invite .select.select-compact { width: auto; min-height: 36px; }
+.wl-invite .wl-invite-done { color: var(--success, #2f7d4f); font-weight: 600; }

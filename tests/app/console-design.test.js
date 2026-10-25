@@ -68,7 +68,7 @@ describe("Console → Invitation design", () => {
     mockApi(WORKSPACE("bridal-basic"));
     await invitationDesignView(el, ctx, "biz-wed");
     await flush();
-    expect(el.querySelector('[data-role="not-entitled"]').textContent).toMatch(/publishing needs Luna Bridal Custom/);
+    expect(el.querySelector('[data-role="not-entitled"]').textContent).toMatch(/Customized designs are legacy/);
     expect(el.querySelector('[data-act="publish"]').disabled).toBe(true);
   });
 });

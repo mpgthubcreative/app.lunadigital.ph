@@ -47,7 +47,7 @@ export function invitationCard(inv, b, ctx) {
         ${custom ? html`<button type="button" class="btn btn-compact btn-primary" data-act="inv-publish">Publish</button>` : ""}
         <button type="button" class="btn btn-compact" data-act="inv-preview" data-which="live">View published invitation</button>
       </div>
-      <p class="stat-hint">Previews use a sample guest, never a real guest's link.${custom ? "" : " A custom design comes with Luna Bridal Custom."}</p>
+      <p class="stat-hint">Previews use a sample guest, never a real guest's link.${custom ? "" : " Customized designs are legacy (older Luna Bridal Custom weddings only)."}</p>
     </div>
   </section>`;
 }

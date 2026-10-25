@@ -236,12 +236,14 @@ export async function tenantSubscription({ db, FieldValue, businessId, now = new
 
 // "Continue with Luna": this workspace's products and terms, with the
 // one-time setup fee when it's still owed (Distributor's first paid bill).
+// A business already on a legacy product (e.g. Luna Bridal Custom) still
+// sees its own one, so it can renew / pay; no one else is offered it.
 async function continueOptions(db, business) {
   const snap = await db.collection("plans").get();
   const sub = business.subscription || {};
   return snap.docs
     .map((d) => ({ id: d.id, ...d.data() }))
-    .filter((p) => planWorkspace(p) === business.workspaceTemplateId && isCatalogPlan(p) && p.pricing?.billingType && p.status !== "inactive")
+    .filter((p) => planWorkspace(p) === business.workspaceTemplateId && (isCatalogPlan(p) || p.id === sub.planId) && p.pricing?.billingType && p.status !== "inactive")
     .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0))
     .map((p) => {
       const pb = planBilling(p);

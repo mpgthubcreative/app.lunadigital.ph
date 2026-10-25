@@ -204,7 +204,7 @@ describe("editing on the invitation", () => {
     expect(canvas.textContent).not.toMatch(/Sample|Example|Edit/);
     const notice = container.querySelector('[data-role="sample-notice"]');
     expect(canvas.contains(notice)).toBe(false);
-    expect(notice.textContent).toMatch(/items are still using the design's examples/);
+    expect(notice.textContent).toMatch(/items are still using template examples. Replace them before publishing/);
     expect(notice.textContent).toMatch(/Names, Wedding date/);
     container.querySelector('.ie-back [data-mode="edit"]').click();
     await flush(16);
@@ -214,7 +214,7 @@ describe("editing on the invitation", () => {
     await start();
     container.querySelector('[data-mode="guide"]').click();
     await flush();
-    expect([...container.querySelectorAll("[data-guide]")].map((li) => li.dataset.guide)).toEqual(["hero", "welcome", "story", "details", "schedule", "dress", "goodToKnow", "rsvp", "entourage", "gallery", "closing"]);
+    expect([...container.querySelectorAll("[data-guide]")].map((li) => li.dataset.guide)).toEqual(["hero", "welcome", "family", "story", "details", "schedule", "dress", "goodToKnow", "rsvp", "entourage", "gallery", "closing"]);
     expect(container.querySelector('[data-guide="dress"]').textContent).toMatch(/Attire · Colours/);
     expect(container.querySelector('[data-guide="entourage"] a[data-link]').getAttribute("href")).toBe("/guests");
     container.querySelector('[data-guide="rsvp"] [data-ie-edit]').click();

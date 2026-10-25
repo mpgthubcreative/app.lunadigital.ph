@@ -8,6 +8,8 @@
 //     only that section's fields and saves them
 //   → Clean Preview: exactly the guest's page, no controls
 //   → Publish
+// The bar: Edit · Clean Preview · Undo (the last change, one step) · ⋯
+// (Guide, Reset invitation). Each sheet can Reset its own section.
 //
 // ONE source of truth: every sheet saves the same Wedding Setup fields
 // (weddingSetup/current, /hero, weddingPhotos/{slot}) through
@@ -19,15 +21,15 @@
 //
 // Older weddings keep their design (Luna Standard, Classic, …): it still
 // renders and can be edited here; only the three offered designs can be
-// newly chosen. Luna Bridal Custom: the design is Luna's (Super Admin);
-// the couple edits content the same way.
+// newly chosen. Older Luna Bridal Custom weddings (legacy): the design is
+// Luna's (Super Admin); the couple edits content the same way.
 
 import { html, render } from "../../lib/html.js";
 import { photoDataUrl, PHOTO_ACCEPT } from "../../lib/image.js";
 import { pageHeader, skeleton } from "../../components/ui.js";
-import { toast as defaultToast } from "../../components/feedback.js";
+import { toast as defaultToast, confirmDialog } from "../../components/feedback.js";
 import { api as defaultApi } from "../../lib/api.js";
-import { isWeddingSlug, suggestWeddingSlug, rsvpOpen, businessDate, coupleDisplayName, setupMissing, MAX_FAQ, MAX_SCHEDULE, MAX_PALETTE, SETUP_LISTS } from "@shared/index.js";
+import { isWeddingSlug, rsvpOpen, businessDate, coupleDisplayName, setupMissing, MAX_FAQ, MAX_SCHEDULE, MAX_PALETTE, SETUP_LISTS, FAMILY_RELATIONS, MAX_FAMILY } from "@shared/index.js";
 import { openInvitePreview, copyText } from "./invitation/preview.js";
 import { TEMPLATE_REGISTRY, OFFERED_TEMPLATE_IDS, STANDARD_TEMPLATE_IDS, DEFAULT_TEMPLATE_ID, PHOTO_SLOTS, resolveDesign, invitationData, getTemplateEntry, isOfferedTemplate } from "@shared/invitation-design.js";
 import { previewSetup, isEmptyValue } from "./invitation/samples.js";
@@ -61,8 +63,11 @@ const F = {
   weddingDate: { label: "Wedding date", type: "date" },
   city: { label: "City", type: "text", max: 80 },
   welcomeMessage: { label: "Welcome message", type: "textarea", max: 600, rows: 3 },
-  partner1Parents: { label: "Partner 1's parents", type: "text", max: 160 },
-  partner2Parents: { label: "Partner 2's parents", type: "text", max: 160 },
+  partner1Family: { label: "Family of Partner 1", type: "family", side: 1 },
+  partner2Family: { label: "Family of Partner 2", type: "family", side: 2 },
+  // The older one-line entry: shown in the sheet only while it has text.
+  partner1Parents: { label: "Partner 1's family (one line, as typed before)", type: "text", max: 160, legacy: true, hint: "Shown only while the list above is empty." },
+  partner2Parents: { label: "Partner 2's family (one line, as typed before)", type: "text", max: 160, legacy: true, hint: "Shown only while the list above is empty." },
   story: { label: "Your story", type: "textarea", max: 1500, rows: 6, hint: "A blank line starts a new paragraph." },
   ceremonyTime: { label: "Ceremony time", type: "time" },
   ceremonyVenue: { label: "Ceremony venue", type: "text", max: 100 },
@@ -94,9 +99,12 @@ const F = {
 const TEXTUAL = Object.keys(F).filter((k) => ["text", "textarea", "date", "time", "url"].includes(F[k].type) && k !== "coupleNames");
 const CHECKS = Object.keys(F).filter((k) => F[k].type === "check");
 const LIST_PH = { attireNotes: "e.g. Please avoid white", reminders: "e.g. Please arrive 30 minutes early", mealOptions: "e.g. Beef" };
+// Never cleared by Reset section: the invitation always needs them.
+const REQUIRED_FIELDS = new Set(["partner1Name", "partner2Name", "coupleNames", "weddingDate"]);
+const FAMILY_KEYS = ["partner1Family", "partner2Family"];
 export const WORDING_LABELS = Object.freeze({ intro: "Line above the names", tagline: "Line under the names", scriptLine: "Line under the names", countdownTitle: "Countdown title", storyEyebrow: "Story label", storyTitle: "Story title", detailsEyebrow: "Details label", detailsTitle: "Details title", scheduleTitle: "Schedule title", dressEyebrow: "Dress code label", dressTitle: "Dress code title", rsvpEyebrow: "RSVP label", rsvpTitle: "RSVP title", closing: "Closing words" });
 // "Add your …" on a section still showing the design's example.
-const ADD_LABEL = { hero: "Add your names", welcome: "Add your welcome", story: "Add your story", details: "Add your venue", schedule: "Add your schedule", dress: "Add your dress code", goodToKnow: "Add your details", rsvp: "Set up RSVP", closing: "Add your closing line" };
+const ADD_LABEL = { hero: "Add your names", welcome: "Add your welcome", family: "Add your family", story: "Add your story", details: "Add your venue", schedule: "Add your schedule", dress: "Add your dress code", goodToKnow: "Add yours", rsvp: "Set up RSVP", closing: "Add your closing line" };
 
 // Frequently Asked Questions: + Add FAQ adds one at a time (up to MAX_FAQ);
 // a pair missing its question or answer is skipped. setup.faq = [{ q, a }].
@@ -109,20 +117,34 @@ const faqItem = (i, f) => html`<fieldset class="ws-faq" data-faq="${i}"><legend>
 export const faqListHtml = (list) => html`${list.map((f, i) => faqItem(i, f))}${list.length < MAX_FAQ ? html`<button type="button" class="btn btn-compact" data-act="faq-add">+ Add FAQ</button>` : ""}`;
 
 // A list editor's rows (schedule, palette, notes, reminders, meal options).
-const rowHtml = (key, i, v, ph) => {
+const rowHtml = (key, i, v, ph, count = 0) => {
   const remove = html`<button type="button" class="btn btn-compact btn-ghost" data-act="list-remove" data-key="${key}" data-i="${i}" aria-label="Remove">Remove</button>`;
+  // A family member: relationship (or none / Other with its own word), name, and its place in the list.
+  if (FAMILY_KEYS.includes(key)) {
+    const rel = v?.relation ?? "";
+    return html`<div class="ws-row ie-fam-row" data-row="${i}">
+      <select class="select ie-fam-rel" name="${key}-rel-${i}" aria-label="Relationship">${[["", "No label"], ...Object.entries(FAMILY_RELATIONS)].map(([id, l]) => html`<option value="${id}" ${id === rel ? "selected" : ""}>${l}</option>`)}</select>
+      <input class="input ie-fam-label" name="${key}-label-${i}" aria-label="Relationship, in your words" placeholder="e.g. Ninang" maxlength="30" value="${v?.label ?? ""}" ${rel === "other" ? "" : "hidden"}>
+      <input class="input ie-fam-name" name="${key}-name-${i}" aria-label="Name" placeholder="${ph?.name || "e.g. Ramon A. Prado"}" maxlength="80" value="${v?.name ?? ""}">
+      <span class="ie-fam-tools"><button type="button" class="btn btn-compact btn-ghost" data-act="list-up" data-key="${key}" data-i="${i}" aria-label="Move up" ${i === 0 ? "disabled" : ""}>↑</button><button type="button" class="btn btn-compact btn-ghost" data-act="list-down" data-key="${key}" data-i="${i}" aria-label="Move down" ${i >= count - 1 ? "disabled" : ""}>↓</button>${remove}</span>
+    </div>`;
+  }
   if (key === "schedule") return html`<div class="ws-row" data-row="${i}"><input class="input ws-row-time" type="time" name="schedule-time-${i}" aria-label="Time" value="${v?.time ?? ""}"><input class="input" name="schedule-title-${i}" aria-label="What happens" placeholder="${ph?.title || "e.g. Ceremony"}" maxlength="60" value="${v?.title ?? ""}">${remove}</div>`;
   if (key === "palette") return html`<div class="ws-row" data-row="${i}"><input class="ws-row-color" type="color" name="palette-hex-${i}" aria-label="Colour" value="${v?.hex || ph?.hex || "#c8b49a"}"><input class="input" name="palette-name-${i}" aria-label="Colour name" placeholder="${ph?.name || "e.g. Sage"}" maxlength="30" value="${v?.name ?? ""}">${remove}</div>`;
   return html`<div class="ws-row" data-row="${i}"><input class="input" name="${key}-${i}" aria-label="${F[key]?.label || key} ${i + 1}" placeholder="${ph || LIST_PH[key] || ""}" maxlength="${SETUP_LISTS[key][2]}" value="${v ?? ""}">${remove}</div>`;
 };
-const maxOf = (key) => (key === "schedule" ? MAX_SCHEDULE : key === "palette" ? MAX_PALETTE : SETUP_LISTS[key][1]);
-const addLabel = { schedule: "+ Add time", palette: "+ Add colour", attireNotes: "+ Add note", reminders: "+ Add reminder", mealOptions: "+ Add meal choice" };
+const maxOf = (key) => (key === "schedule" ? MAX_SCHEDULE : key === "palette" ? MAX_PALETTE : FAMILY_KEYS.includes(key) ? MAX_FAMILY : SETUP_LISTS[key][1]);
+const addLabel = { schedule: "+ Add time", palette: "+ Add colour", attireNotes: "+ Add note", reminders: "+ Add reminder", mealOptions: "+ Add meal choice", partner1Family: "+ Add family member", partner2Family: "+ Add family member" };
+const blankRow = (key) => (key === "palette" ? { name: "", hex: "#c8b49a" } : key === "schedule" ? { time: "", title: "" } : FAMILY_KEYS.includes(key) ? { relation: "", label: "", name: "" } : "");
 // samples: the design's example rows, shown as placeholders only.
-export const listHtml = (key, list, samples = []) => html`${list.map((v, i) => rowHtml(key, i, v, samples[i]))}${list.length < maxOf(key) ? html`<button type="button" class="btn btn-compact" data-act="list-add" data-key="${key}">${addLabel[key]}</button>` : ""}`;
+export const listHtml = (key, list, samples = []) => html`${list.map((v, i) => rowHtml(key, i, v, samples[i], list.length))}${list.length < maxOf(key) ? html`<button type="button" class="btn btn-compact" data-act="list-add" data-key="${key}">${addLabel[key]}</button>` : ""}`;
 function readList(f, key) {
   const out = [];
   for (let i = 0; i < 20; i++) {
-    if (key === "schedule") {
+    if (FAMILY_KEYS.includes(key)) {
+      if (!f[`${key}-name-${i}`]) break;
+      out.push({ relation: f[`${key}-rel-${i}`].value, label: f[`${key}-label-${i}`].value, name: f[`${key}-name-${i}`].value });
+    } else if (key === "schedule") {
       if (!f[`schedule-title-${i}`]) break;
       out.push({ time: f[`schedule-time-${i}`].value || null, title: f[`schedule-title-${i}`].value });
     } else if (key === "palette") {
@@ -135,7 +157,8 @@ function readList(f, key) {
   }
   return out;
 }
-const cleanList = (key, list) => (key === "schedule" ? list.map((x) => ({ time: x.time || null, title: x.title.trim() })).filter((x) => x.title) : key === "palette" ? list.filter((x) => x.name.trim()).map((x) => ({ name: x.name.trim(), hex: x.hex.toLowerCase() })) : list.map((v) => v.trim()).filter(Boolean));
+const cleanFamily = (list) => list.filter((x) => x.name.trim()).map((x) => (x.relation === "other" && x.label.trim() ? { relation: "other", label: x.label.trim(), name: x.name.trim() } : { relation: x.relation === "other" ? "" : x.relation, name: x.name.trim() }));
+const cleanList = (key, list) => (FAMILY_KEYS.includes(key) ? cleanFamily(list) : key === "schedule" ? list.map((x) => ({ time: x.time || null, title: x.title.trim() })).filter((x) => x.title) : key === "palette" ? list.filter((x) => x.name.trim()).map((x) => ({ name: x.name.trim(), hex: x.hex.toLowerCase() })) : list.map((v) => v.trim()).filter(Boolean));
 const joinNames = (a, b) => [a, b].map((x) => (x || "").trim()).filter(Boolean).join(" & ");
 
 // A sheet's values, as the API takes them (blank = null). Only the fields
@@ -155,7 +178,7 @@ export function readSetupForm(form, saved = {}) {
     }
     setup.faq = faq;
   }
-  for (const key of ["schedule", "palette", ...Object.keys(SETUP_LISTS)]) if (f[`${key}On`]) setup[key] = cleanList(key, readList(f, key));
+  for (const key of ["schedule", "palette", ...FAMILY_KEYS, ...Object.keys(SETUP_LISTS)]) if (f[`${key}On`]) setup[key] = cleanList(key, readList(f, key));
   if (Object.hasOwn(setup, "weddingSlug") && setup.weddingSlug) setup.weddingSlug = cleanSlugInput(setup.weddingSlug).replace(/^-+|-+$/g, "") || null;
   if (f.templateId) setup.templateId = f.templateId.value || null;
   for (const k of CHECKS) if (f[k]) setup[k] = f[k].checked;
@@ -172,11 +195,12 @@ export function readSetupForm(form, saved = {}) {
   return setup;
 }
 
-export function mount(container, session, { api = defaultApi, toast = defaultToast, shrink = shrinkPhoto, preview = openInvitePreview } = {}) {
+export function mount(container, session, { api = defaultApi, toast = defaultToast, shrink = shrinkPhoto, preview = openInvitePreview, confirm = confirmDialog } = {}) {
   const canEdit = session.member.permissions["guests.manage"] === true;
   const tz = session.business?.timezone || "Asia/Manila";
   const trial = session.subscription?.trial?.open === true;
-  const state = { setup: null, hero: null, photos: {}, gallery: [], entourage: [], invitation: null, look: null, error: null, mode: "edit", choosing: false, busy: false };
+  // undo: the last successful change, one step ({ label, steps }); null = nothing to undo.
+  const state = { setup: null, hero: null, photos: {}, gallery: [], entourage: [], invitation: null, look: null, error: null, mode: "edit", choosing: false, busy: false, undo: null };
   let alive = true;
   let sheet = null; // the open mini editor { backdrop, id }
 
@@ -200,9 +224,18 @@ export function mount(container, session, { api = defaultApi, toast = defaultToa
         : html`<span class="wl-chip" data-tone="warning" data-role="publish-state">Not published</span>`;
     return { status, publish: canEdit && !isCustom() && !published() ? html`<button type="button" class="btn btn-compact btn-primary" data-act="publish">Publish</button>` : "" };
   };
-  // The sticky bar: the three modes only (status and Publish sit below).
+  // The sticky bar: Edit · Clean Preview, Undo and ⋯ (Guide, Reset
+  // invitation). Status and Publish sit below.
   const modes = () => html`<div class="ie-bar" data-role="editor-bar">
-      <div class="ie-modes" role="tablist" aria-label="Invitation">${[["edit", "Edit"], ["preview", "Clean Preview"], ["guide", "Guide"]].map(([m, l]) => html`<button type="button" role="tab" class="ie-mode ie-mode-${m}" data-mode="${m}" aria-selected="${state.mode === m ? "true" : "false"}">${l}</button>`)}</div>
+      <div class="ie-modes" role="tablist" aria-label="Invitation">${[["edit", "Edit"], ["preview", html`<span class="ie-long">Clean </span>Preview`]].map(([m, l]) => html`<button type="button" role="tab" class="ie-mode ie-mode-${m}" data-mode="${m}" aria-selected="${state.mode === m ? "true" : "false"}">${l}</button>`)}</div>
+      <div class="ie-bar-end">
+        ${canEdit && state.mode !== "preview" ? html`<button type="button" class="btn btn-compact" data-act="undo" data-role="undo" ${state.undo ? html`title="Undo: ${state.undo.label}"` : "disabled"}>Undo</button>` : ""}
+        <details class="line-menu ie-more" data-role="editor-more"><summary class="btn btn-compact btn-ghost" aria-label="More">⋯</summary><div class="line-menu-list" role="menu">
+          <button type="button" class="menu-item ie-mode-guide" role="menuitem" data-mode="guide">Guide</button>
+          ${canEdit && !isCustom() ? html`<button type="button" class="menu-item" role="menuitem" data-act="change-design">Change design</button>` : ""}
+          ${canEdit ? html`<div class="menu-sep" role="separator"></div><button type="button" class="menu-item menu-danger" role="menuitem" data-act="reset-invitation">Reset invitation</button>` : ""}
+        </div></details>
+      </div>
     </div>`;
   const designLine = () => {
     const e = entry();
@@ -219,14 +252,14 @@ export function mount(container, session, { api = defaultApi, toast = defaultToa
   const sampleNotice = (m) => {
     const items = [...m.sampled, ...m.sampledPhotos];
     if (!items.length) return "";
-    return html`<div class="banner banner-info ie-notice" role="note" data-role="sample-notice"><strong>${items.length} ${items.length === 1 ? "item is" : "items are"} still using the design's examples:</strong> ${items.map((x) => x.label).join(", ")}. Replace them before publishing. Until then, your guests' invitation leaves them out.</div>`;
+    return html`<div class="banner banner-info ie-notice" role="note" data-role="sample-notice"><strong>${items.length} ${items.length === 1 ? "item is" : "items are"} still using template examples.</strong> Replace them before publishing: ${items.map((x) => x.label).join(", ")}. Until then, your guests' invitation leaves them out.</div>`;
   };
   const guide = () => {
     const slug = real().weddingSlug;
     const n = state.entourage.reduce((t, r) => t + r.count, 0);
     return html`<div class="ie-guide" data-role="guide">
-      <p class="stat-hint">Each part of the invitation and what it shows. Tap the part on the invitation, or Edit here.</p>
-      <ul class="ie-guide-list">${entry().editableSections.map((e) => html`<li data-guide="${e.id}"><div><strong>${e.label}</strong><p class="stat-hint">${e.id === "entourage" ? `${n ? `${n} ${n === 1 ? "person" : "people"} from your guests' Roles. ` : ""}${e.guide}` : e.guide}</p></div>${e.link ? html`<a class="btn btn-compact" href="${e.link}" data-link>Open Guests</a>` : canEdit ? html`<button type="button" class="btn btn-compact" data-ie-edit="${e.id}">Edit</button>` : ""}</li>`)}</ul>
+      <p class="stat-hint">${entry().name}: what each part shows. Personalize it right on the invitation.</p>
+      <ul class="ie-guide-list">${entry().editableSections.map((e) => html`<li data-guide="${e.id}"><div><strong>${e.label}</strong><p class="ie-guide-shows">${e.id === "entourage" && n ? `${n} ${n === 1 ? "person" : "people"} · ${e.shows}` : e.shows}</p><p class="stat-hint">${e.tap}</p></div>${e.link ? html`<a class="btn btn-compact" href="${e.link}" data-link>Open Guests</a>` : canEdit ? html`<button type="button" class="btn btn-compact" data-ie-edit="${e.id}">Edit</button>` : ""}</li>`)}</ul>
       <div class="ie-link" data-role="wedding-link"><strong>Wedding link</strong>
         ${isWeddingSlug(slug) ? html`<p class="ws-link-url" data-role="wedding-url">${origin()}/w/${slug}</p>` : html`<p class="stat-hint" data-role="wedding-url-none">Your link is made from your names when you save them.</p>`}
         <div class="ws-link-actions">${isWeddingSlug(slug) ? html`<button type="button" class="btn btn-compact" data-act="copy-wedding-link">Copy link</button>` : ""}${canEdit ? html`<button type="button" class="btn btn-compact btn-ghost" data-ie-edit="link">Change link</button>` : ""}<span class="ws-link-copied" data-role="copied" aria-live="polite"></span></div>
@@ -239,7 +272,7 @@ export function mount(container, session, { api = defaultApi, toast = defaultToa
     const legacy = !isNew() && !isOfferedTemplate(cur);
     return html`<section class="ie-choose" data-role="template-choice">
       <h2 class="ie-choose-title">Choose your invitation design</h2>
-      <p class="stat-hint">Each design opens complete, with its own example words and photos. Then tap anything to make it yours.</p>
+      <p class="stat-hint">Each design opens complete, with its own example words and photos. Then personalize it right on the invitation.</p>
       <div class="ie-choose-grid">${OFFERED_TEMPLATE_IDS.map((id) => {
         const r = getTemplateEntry(id);
         return html`<button type="button" class="ie-choice${id === cur && !isNew() ? " is-current" : ""}" data-choose="${id}"><img src="${r.sampleAssets.hero || r.preview}" alt="" loading="lazy"><span class="ie-choice-text"><strong>${r.name}</strong><span class="stat-hint">${r.description}</span></span><span class="btn btn-compact btn-primary ie-choice-go">${id === cur && !isNew() ? "Current design" : "Use this design"}</span></button>`;
@@ -331,6 +364,125 @@ export function mount(container, session, { api = defaultApi, toast = defaultToa
     }
   }
 
+  // ---------- Undo (one step) and Reset ----------
+  // The values a save is about to replace, as a save that puts them back:
+  // every field it sends (blank = null / [] / the field's default), and for
+  // a design's wording / accent every line it sends (saves merge them).
+  const blankOf = (k) => (F[k]?.type === "check" ? F[k].default === true : ["list", "schedule", "palette", "faq", "family"].includes(F[k]?.type) ? [] : null);
+  function undoSetupOf(changes) {
+    const s = real();
+    const out = {};
+    for (const k of Object.keys(changes)) {
+      if (k === "templateOptions") {
+        out.templateOptions = Object.fromEntries(Object.entries(changes.templateOptions).map(([id, o]) => {
+          const was = s.templateOptions?.[id] || {};
+          return [id, { wording: Object.fromEntries(Object.keys(o.wording || {}).map((w) => [w, was.wording?.[w] ?? null])), ...(Object.hasOwn(o, "accent") ? { accent: was.accent ?? null } : {}) }];
+        }));
+      } else out[k] = isEmptyValue(s[k]) && F[k] ? blankOf(k) : s[k] ?? null;
+    }
+    return out;
+  }
+  const sheetLabel = (id) => (id === "link" ? "Wedding link" : editable(id)?.label || "Change");
+  // The last successful change replaces the one before (one step only).
+  function remember(label, steps) {
+    state.undo = { label, steps };
+    const b = container.querySelector('[data-role="undo"]');
+    if (b) {
+      b.disabled = false;
+      b.title = `Undo: ${label}`;
+    }
+  }
+  async function undo() {
+    const u = state.undo;
+    if (!u || state.busy) return;
+    state.busy = true;
+    try {
+      for (const st of u.steps) {
+        if (st.kind === "setup") {
+          const r = await api("wedding-setup", { method: "POST", body: { action: "save", setup: st.setup } });
+          state.setup = r.setup && typeof r.setup === "object" ? r.setup : { ...real(), ...st.setup };
+        } else if (st.kind === "photo") await putPhoto(st.slot, st.dataUrl);
+        else if (st.kind === "galleryRemove") await api("wedding-setup", { method: "POST", body: { action: "galleryRemove", photoId: st.photoId } });
+        else if (st.kind === "galleryAdd") await api("wedding-setup", { method: "POST", body: { action: "galleryAdd", dataUrl: st.dataUrl } });
+      }
+      if (u.steps.some((st) => st.kind.startsWith("gallery"))) await reloadGallery();
+      state.undo = null;
+      state.busy = false;
+      toast(`Undone: ${u.label}`, "success");
+      draw();
+    } catch (err) {
+      state.busy = false;
+      toast(`Couldn't undo: ${err.message || "something went wrong"}`, "danger");
+    }
+  }
+  // Reset section: this section's fields, wording and photos back to the
+  // design's examples. The names and date stay (every invitation needs them).
+  async function resetSection(id) {
+    const ed = editable(id);
+    if (!ed || state.busy) return;
+    const s = real();
+    const fields = ed.fields.filter((k) => !REQUIRED_FIELDS.has(k));
+    const own = s.templateOptions?.[templateId()] || {};
+    const words = ed.wording.filter((w) => own.wording?.[w]);
+    const accent = id === "hero" && own.accent;
+    const photos = ed.photos.filter((slot) => photoOf(slot));
+    const typed = fields.filter((k) => !isEmptyValue(s[k]) && !(F[k]?.type === "check" && s[k] === (F[k].default === true)));
+    if (!typed.length && !words.length && !accent && !photos.length) {
+      closeSheet();
+      toast("This section already shows the design's examples.", "success");
+      return;
+    }
+    const ok = await confirm({ title: `Reset ${ed.label}?`, body: `What you entered here${photos.length ? " and your photos" : ""} will be removed. This section shows the design's examples again.${fields.length < ed.fields.length ? " Your names and date stay." : ""} Other sections are not changed. You can Undo right after.`, confirmLabel: "Reset section", danger: true });
+    if (!ok) return;
+    const changes = Object.fromEntries(fields.map((k) => [k, blankOf(k)]));
+    if (words.length || accent) changes.templateOptions = { [templateId()]: { wording: Object.fromEntries(ed.wording.map((w) => [w, null])), ...(id === "hero" && getTemplateEntry(templateId()).accents.length ? { accent: null } : {}) } };
+    state.busy = true;
+    try {
+      const before = undoSetupOf(changes);
+      const steps = [{ kind: "setup", setup: before }, ...photos.map((slot) => ({ kind: "photo", slot, dataUrl: photoOf(slot) }))];
+      const r = await api("wedding-setup", { method: "POST", body: { action: "save", setup: changes } });
+      state.setup = r.setup && typeof r.setup === "object" ? r.setup : { ...real(), ...changes };
+      for (const slot of photos) await putPhoto(slot, null);
+      remember(`${ed.label} reset`, steps);
+      state.busy = false;
+      closeSheet();
+      toast(`${ed.label} reset ✓`, "success");
+      draw();
+      await drawInvitation(merged(), id);
+    } catch (err) {
+      state.busy = false;
+      sheetError(`Not reset: ${err.message || "something went wrong"}.`);
+    }
+  }
+  // ⋯ → Reset invitation: the whole invitation back to the design's
+  // examples (server: resetInvitation). Never guests, RSVPs or the link.
+  async function resetInvitation() {
+    if (state.busy) return;
+    const ok = await confirm({
+      title: "Reset invitation?",
+      body: "Your invitation's words, family list, schedule, dress code, FAQ, closing line, design wording and colours, and all your photos are removed, so the design shows its own examples again. Your names, date, venues, RSVP settings, wedding link and published state stay. Guests, RSVP answers, roles, seating, expenses, tasks, crew meals and program are not touched.",
+      confirmLabel: "Reset invitation",
+      danger: true,
+    });
+    if (!ok) return;
+    state.busy = true;
+    try {
+      const r = await api("wedding-setup", { method: "POST", body: { action: "resetInvitation" } });
+      if (r?.setup && typeof r.setup === "object") state.setup = r.setup;
+      state.hero = null;
+      state.photos = {};
+      state.gallery = [];
+      state.look = { ...(state.look || {}), gallery: [] };
+      state.undo = null;
+      state.busy = false;
+      toast("Invitation reset ✓", "success");
+      draw();
+    } catch (err) {
+      state.busy = false;
+      toast(`Couldn't reset: ${err.message || "something went wrong"}`, "danger");
+    }
+  }
+
   // ---------- Mini editors (one section's fields) ----------
   const fieldHtml = (name, s, sample) => {
     const d = F[name];
@@ -339,6 +491,12 @@ export function mount(container, session, { api = defaultApi, toast = defaultToa
     const v = name === "coupleNames" && s.coupleNames === joinNames(s.partner1Name, s.partner2Name) ? "" : s[name];
     const ex = sample?.[name];
     const ph = typeof ex === "string" ? ex : "";
+    if (d.legacy && isEmptyValue(v)) return "";
+    if (d.type === "family") {
+      const list = Array.isArray(v) ? v : [];
+      const who = (d.side === 1 ? s.partner1Name : s.partner2Name) || (d.side === 1 ? "Partner 1" : "Partner 2");
+      return html`<div class="field ws-list ie-family" data-field="${name}"><input type="hidden" name="${name}On" value="1"><span class="field-label">Family of ${who}</span><div data-role="list-${name}">${listHtml(name, list.length ? list : [blankRow(name)], Array.isArray(ex) ? ex : [])}</div></div>`;
+    }
     if (d.type === "check") return html`<label class="wl-check" data-field="${name}"><input type="checkbox" name="${name}" ${v === true || (v == null && d.default) ? "checked" : ""}> ${d.label}</label>`;
     if (["list", "schedule", "palette"].includes(d.type)) {
       const list = Array.isArray(v) ? v : [];
@@ -391,14 +549,15 @@ export function mount(container, session, { api = defaultApi, toast = defaultToa
           ${wordingOn ? html`<details class="ws-wording" data-role="wording"><summary>Wording</summary><input type="hidden" name="wordingFor" value="${templateId()}">${ed.wording.map((k) => html`<div class="field"><label for="ie-w-${k}">${WORDING_LABELS[k] || k}</label><input class="input" id="ie-w-${k}" name="wording-${k}" maxlength="80" placeholder="${e.wording[k]}" value="${own.wording?.[k] ?? ""}"></div>`)}<p class="stat-hint">Blank = the design's own words.</p></details>` : ""}
           <p class="form-error" data-role="sheet-error" role="alert" hidden></p>
         </div>
-        <div class="modal-footer">${gallery ? html`<button type="button" class="btn btn-primary" data-sheet="cancel">Done</button>` : html`<button type="button" class="btn" data-sheet="cancel">Cancel</button><button type="submit" class="btn btn-primary" data-sheet="save">Save</button>`}</div>
+        <div class="modal-footer">${gallery ? html`<button type="button" class="btn btn-primary" data-sheet="cancel">Done</button>` : html`${id === "link" ? "" : html`<button type="button" class="btn btn-ghost ie-reset-section" data-act="reset-section">Reset section</button>`}<button type="button" class="btn" data-sheet="cancel">Cancel</button><button type="submit" class="btn btn-primary" data-sheet="save">Save</button>`}</div>
       </form>`
     );
     for (const el of backdrop.querySelectorAll(".ws-accent-dot[data-hex]")) if (/^#[0-9a-f]{6}$/i.test(el.dataset.hex)) el.style.setProperty("--dot", el.dataset.hex);
     backdrop.addEventListener("click", onSheetClick);
     backdrop.addEventListener("change", onSheetChange);
     backdrop.addEventListener("submit", onSheetSubmit);
-    backdrop.querySelector(".modal-body input:not([type=hidden]):not([type=checkbox]):not([type=radio]), .modal-body textarea")?.focus({ preventScroll: true });
+    // The first field the couple can see (a hidden "Other" word is skipped).
+    [...backdrop.querySelectorAll(".modal-body input:not([type=hidden]):not([type=checkbox]):not([type=radio]):not([type=color]), .modal-body textarea")].find((el) => !el.hidden && !el.closest("[hidden]"))?.focus({ preventScroll: true });
   }
   function closeSheet() {
     if (!sheet) return;
@@ -427,8 +586,10 @@ export function mount(container, session, { api = defaultApi, toast = defaultToa
       btn.textContent = "Saving…";
     }
     try {
+      const before = undoSetupOf(changes);
       const r = await api("wedding-setup", { method: "POST", body: { action: "save", setup: changes } });
       state.setup = r.setup && typeof r.setup === "object" ? r.setup : { ...real(), ...changes };
+      remember(sheetLabel(id), [{ kind: "setup", setup: before }]);
       state.busy = false;
       closeSheet();
       toast("Saved ✓", "success");
@@ -444,6 +605,11 @@ export function mount(container, session, { api = defaultApi, toast = defaultToa
     }
   }
   function onSheetChange(event) {
+    const rel = /^(partner[12]Family)-rel-(\d+)$/.exec(event.target.name || "");
+    if (rel) {
+      const label = sheet.backdrop.querySelector(`[name="${rel[1]}-label-${rel[2]}"]`);
+      if (label) label.hidden = event.target.value !== "other";
+    }
     if (event.target.name === "sameVenue") for (const el of sheet.backdrop.querySelectorAll('[data-field="receptionVenue"], [data-field="receptionAddress"], [data-field="receptionMap"]')) el.hidden = event.target.checked;
     if (event.target.dataset?.role === "gallery-add") addGallery(event.target.files[0]);
   }
@@ -455,11 +621,18 @@ export function mount(container, session, { api = defaultApi, toast = defaultToa
     if (el.dataset.iePhoto) return pickPhoto(el.dataset.iePhoto);
     const act = el.dataset.act;
     const form = sheet.backdrop.querySelector("form");
-    if (act === "list-add" || act === "list-remove") {
+    if (act === "reset-section") return resetSection(sheet.id);
+    if (["list-add", "list-remove", "list-up", "list-down"].includes(act)) {
       const key = el.dataset.key;
       const list = readList(form.elements, key);
-      if (act === "list-add") list.push(key === "palette" ? { name: "", hex: "#c8b49a" } : key === "schedule" ? { time: "", title: "" } : "");
-      else list.splice(Number(el.dataset.i), 1);
+      const i = Number(el.dataset.i);
+      if (act === "list-add") list.push(blankRow(key));
+      else if (act === "list-remove") list.splice(i, 1);
+      else {
+        const j = act === "list-up" ? i - 1 : i + 1;
+        if (j < 0 || j >= list.length) return;
+        [list[i], list[j]] = [list[j], list[i]];
+      }
       const box = form.querySelector(`[data-role="list-${key}"]`);
       render(box, listHtml(key, list, Array.isArray(entry().sampleData?.[key]) && !isCustom() ? entry().sampleData[key] : []));
       if (act === "list-add") box.querySelector(`[data-row="${list.length - 1}"] input:not([type="color"]):not([type="time"])`)?.focus();
@@ -492,12 +665,24 @@ export function mount(container, session, { api = defaultApi, toast = defaultToa
     document.body.appendChild(input);
     input.click();
   }
+  const photoOf = (slot) => (slot === "hero" ? state.hero : state.photos[slot]) || null;
+  const photoLabel = (slot) => (slot === "hero" ? "Cover photo" : PHOTO_SLOTS[slot]);
+  // One photo set (a data URL) or removed (null), and this screen's copy of it.
+  async function putPhoto(slot, dataUrl) {
+    await api("wedding-setup", { method: "POST", body: slot === "hero" ? { action: "hero", dataUrl } : { action: "photo", slot, dataUrl } });
+    if (slot === "hero") state.hero = dataUrl;
+    else if (dataUrl) state.photos = { ...state.photos, [slot]: dataUrl };
+    else {
+      const { [slot]: _gone, ...rest } = state.photos;
+      state.photos = rest;
+    }
+  }
   async function savePhoto(slot, file) {
     try {
       const dataUrl = await shrink(file);
-      await api("wedding-setup", { method: "POST", body: slot === "hero" ? { action: "hero", dataUrl } : { action: "photo", slot, dataUrl } });
-      if (slot === "hero") state.hero = dataUrl;
-      else state.photos = { ...state.photos, [slot]: dataUrl };
+      const before = photoOf(slot);
+      await putPhoto(slot, dataUrl);
+      remember(`${photoLabel(slot)} replaced`, [{ kind: "photo", slot, dataUrl: before }]);
       toast("Photo saved ✓", "success");
       afterPhoto(slot);
     } catch (err) {
@@ -506,12 +691,9 @@ export function mount(container, session, { api = defaultApi, toast = defaultToa
   }
   async function removePhoto(slot) {
     try {
-      await api("wedding-setup", { method: "POST", body: slot === "hero" ? { action: "hero", dataUrl: null } : { action: "photo", slot, dataUrl: null } });
-      if (slot === "hero") state.hero = null;
-      else {
-        const { [slot]: _gone, ...rest } = state.photos;
-        state.photos = rest;
-      }
+      const before = photoOf(slot);
+      await putPhoto(slot, null);
+      remember(`${photoLabel(slot)} removed`, [{ kind: "photo", slot, dataUrl: before }]);
       afterPhoto(slot);
     } catch (err) {
       toast(err.message || "Couldn't remove the photo.", "danger");
@@ -540,7 +722,8 @@ export function mount(container, session, { api = defaultApi, toast = defaultToa
   }
   async function addGallery(file) {
     try {
-      await api("wedding-setup", { method: "POST", body: { action: "galleryAdd", dataUrl: await shrink(file) } });
+      const r = await api("wedding-setup", { method: "POST", body: { action: "galleryAdd", dataUrl: await shrink(file) } });
+      if (r?.photoId) remember("Gallery photo added", [{ kind: "galleryRemove", photoId: r.photoId }]);
       await reloadGallery();
     } catch (err) {
       toast(err.message || "Couldn't add the photo.", "danger");
@@ -548,7 +731,9 @@ export function mount(container, session, { api = defaultApi, toast = defaultToa
   }
   async function removeGallery(photoId) {
     try {
+      const was = state.gallery.find((g) => g.id === photoId)?.dataUrl;
       await api("wedding-setup", { method: "POST", body: { action: "galleryRemove", photoId } });
+      if (was) remember("Gallery photo removed", [{ kind: "galleryAdd", dataUrl: was }]);
       await reloadGallery();
     } catch (err) {
       toast(err.message || "Couldn't remove the photo.", "danger");
@@ -570,6 +755,7 @@ export function mount(container, session, { api = defaultApi, toast = defaultToa
       state.setup = r.setup && typeof r.setup === "object" ? r.setup : { ...real(), templateId: id };
       state.choosing = false;
       state.mode = "edit";
+      state.undo = null;
       await loadLook();
       state.busy = false;
       draw();
@@ -627,6 +813,7 @@ export function mount(container, session, { api = defaultApi, toast = defaultToa
     const el = event.target.closest("[data-mode], [data-act], [data-ie-edit], [data-ie-photo], [data-choose]");
     if (!el) return;
     if (el.dataset.mode) {
+      el.closest("details")?.removeAttribute("open");
       state.mode = el.dataset.mode;
       draw();
       return;
@@ -635,6 +822,9 @@ export function mount(container, session, { api = defaultApi, toast = defaultToa
     if (el.dataset.ieEdit) return openSheet(el.dataset.ieEdit);
     if (el.dataset.iePhoto) return pickPhoto(el.dataset.iePhoto);
     const act = el.dataset.act;
+    el.closest("details.ie-more")?.removeAttribute("open");
+    if (act === "undo") return undo();
+    if (act === "reset-invitation") return resetInvitation();
     if (act === "change-design") {
       state.choosing = true;
       draw();

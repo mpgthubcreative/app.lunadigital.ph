@@ -15,6 +15,7 @@
 
 import { html, render } from "../../lib/html.js";
 import { pageHeader, emptyState, skeleton, segmented } from "../../components/ui.js";
+import { examplesState } from "../../components/examples.js";
 import { SAMPLE_CHECKLIST, sampleKey } from "@shared/wedding-samples.js";
 import { sampleList, sampleItem } from "./samples.js";
 import { formDialog } from "../../components/form-dialog.js";
@@ -32,7 +33,7 @@ const MAX_TASKS = 500;
 
 // Task + Due date up front; the rest under More options.
 const taskFields = (t = {}) => [
-  { name: "title", label: "Task", value: t.title ?? "", required: true, placeholder: "e.g. Book florist" },
+  { name: "title", label: "Task", value: t.title ?? "", required: true, placeholder: "e.g. Confirm final guest count" },
   { name: "dueDate", label: "Due date", type: "date", value: t.dueDate ?? "" },
   { name: "category", label: "Category", value: t.category ?? "", suggestions: SUGGESTED_TASK_CATEGORIES, more: true },
   { name: "assignee", label: "Assigned to", value: t.assignee ?? "", hint: "Anyone (no Luna account needed)", more: true },
@@ -130,7 +131,19 @@ export function mount(container, session, { data = defaultData, toast = defaultT
             : state.view === "sample"
               ? sampleList({ groups: SAMPLE_CHECKLIST, added: new Set(state.rows.map((t) => sampleKey(t.title))), canAdd: canManage, role: "sample-tasks", intro: "A starter checklist of what weddings usually need. Tap + Add for what applies to yours; it joins My Tasks." })
             : !state.rows.length
-              ? emptyState({ iconName: "tasks", title: "No tasks yet", body: "Add your wedding to-dos, or pick them from the Sample Checklist above." })
+              ? examplesState({
+                  title: "No tasks yet",
+                  body: "Your to-dos, each with its due date:",
+                  items: [
+                    { name: "Book final food tasting", end: "Due Nov 5" },
+                    { name: "Send final guest count to caterer", end: "Due Nov 20" },
+                    { name: "Confirm bridal car", end: "Due Dec 1" },
+                    { name: "Pick up wedding rings", end: "Due Dec 10" },
+                  ],
+                  add: canManage ? { act: "new", label: "+ Add Task" } : null,
+                  helper: "Or pick from the Sample Checklist above.",
+                  role: "task-examples",
+                })
               : html`
                 ${open ? html`<ul class="wl-list wl-section" data-role="tasks">${g.active.map(row)}</ul>` : html`<p class="stat-hint wl-none">Everything is done.</p>`}
                 ${g.done.length

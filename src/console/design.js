@@ -1,4 +1,5 @@
-// Luna Console: one wedding's invitation design (Luna Bridal Custom).
+// Luna Console: one wedding's invitation design (Luna Bridal Custom, legacy
+// since 2026-10-25: only weddings already on it publish a customized design).
 // Super Admin turns the designer's approved mockup into a design config for
 // THIS businessId: template, colours, fonts, layout, hero, section order /
 // visibility / colours, designer images, a few wording lines. Draft → Ready →
@@ -38,7 +39,7 @@ export async function invitationDesignView(el, ctx, businessId) {
     render(
       el,
       html`${pageHeader({ title: `Invitation design · ${w.business.name}`, subtitle: `${w.business.id} · plan ${w.business.planId ?? "—"}`, actions: html`<a class="btn" href="${ctx.base}/businesses?b=${businessId}" data-link>Back to business</a>` })}
-        ${st.level !== "custom" ? html`<div class="banner" role="status" data-role="not-entitled">This wedding is on Luna Bridal (Standard invitation). You can prepare a draft; publishing needs Luna Bridal Custom (change the product on the business page: data, guests and links stay).</div>` : ""}
+        ${st.level !== "custom" ? html`<div class="banner" role="status" data-role="not-entitled">This wedding is on Luna Bridal: the couple chooses and personalizes one of the invitation designs in Wedding Setup. Customized designs are legacy (Luna Bridal Custom is no longer sold): only weddings already on it can publish one.</div>` : ""}
         <p data-role="design-status"><strong>Guests see: ${st.live === "custom" ? `Custom design v${st.publishedVersion}` : "Standard invitation"}</strong> · Draft: ${w.draft.state === "ready" ? "Ready" : "Draft"}${w.draft.updatedAt ? ` · saved ${when(w.draft.updatedAt)}` : " · not saved yet (starts from Standard)"}</p>
         <form data-role="design-form" class="section grid grid-2">
           ${card({

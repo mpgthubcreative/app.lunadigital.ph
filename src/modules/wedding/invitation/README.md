@@ -115,7 +115,38 @@ no controls) → **Publish**.
 To add a design: its folder (`template.js` + optional `sample.js` and
 photos in `public/invitations/samples/{id}/`), register it, mark it
 `offered: true`. A new layout kind also needs its `data-edit` marks and a
-`SECTION_EDITORS` entry in `registry.js`.
+`SECTION_EDITORS` entry in `registry.js`. Never a new Bridal plan: Luna
+Bridal is the one product (Luna Bridal Custom is legacy since 2026-10-25;
+weddings already on it keep their Customized design).
+
+Per entry the registry also gives `sectionGuide` (each section's label,
+what it holds and where to tap: the Guide) and `fieldMappings` (each
+section → its fields, photo slots and wording lines), both derived from
+`editableSections`.
+
+### Final pass (2026-10-25)
+
+- **Bar:** Edit · Clean Preview · Undo · ⋯ (Guide, Change design, Reset
+  invitation). Clean Preview hides Undo and every editor mark.
+- **Family:** `partner1Family` / `partner2Family` = `[{ relation, label?,
+  name }]` in order (relation: Father … Aunt, `other` + its own word, or
+  none). The Family sheet adds / edits / removes / reorders each side. The
+  older one-line `partner1Parents` / `partner2Parents` still render while a
+  side has no list (and show in the sheet only while they hold text).
+- **Undo:** one step, on this screen: the last successful save, photo
+  change, gallery change or Reset section, put back through the same API.
+- **Reset section:** that section's fields, wording lines and photos back to
+  the design's examples (confirmation when something real is removed); the
+  names and date are never reset.
+- **Reset invitation** (`resetInvitation`, server): removes the invitation
+  content (`INVITATION_RESET_FIELDS`), every design's wording / accent, the
+  cover photo, design photos and gallery. Keeps the names, date, city,
+  ceremony / reception details, RSVP settings, design, publish state and
+  wedding link; never touches guests, RSVPs, roles, seating or any other
+  module (that is Reset Data).
+- **Companions at RSVP:** a guest's view carries `guest.party = { named,
+  open }`; accepting may name the unnamed seats (`rsvp.companions`), which
+  become party members keeping their seats. One private link per party.
 
 ## One wedding profile, many designs (2026-10-24)
 

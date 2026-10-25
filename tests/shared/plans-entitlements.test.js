@@ -1,15 +1,19 @@
 import { describe, it, expect } from "vitest";
-import { PLAN_SEED, LIMIT_KEYS, formatMoney } from "../../shared/plans.seed.js";
+import { PLAN_SEED, LIMIT_KEYS, formatMoney, isLegacyPlan, isCatalogPlan } from "../../shared/plans.seed.js";
 import { computeEntitlements } from "../../shared/entitlements.js";
 import { MODULE_IDS } from "../../shared/modules.js";
 
 describe("plan seed", () => {
   const plans = Object.values(PLAN_SEED);
 
-  it("one product per workspace (Bridal: Standard + Custom); the main product recommended; the + plans and Starter / Growth / Pro are legacy", () => {
+  it("one product per workspace; the main product recommended; the + plans, Starter / Growth / Pro and Luna Bridal Custom (2026-10-25) are legacy", () => {
     expect(Object.keys(PLAN_SEED)).toEqual(["distributor-basic", "distributor-plus", "starter", "growth", "pro", "household-basic", "household-plus", "baby-basic", "baby-plus", "bridal-basic", "bridal-plus"]);
     expect(plans.filter((p) => p.recommended).map((p) => p.id)).toEqual(["distributor-basic", "growth", "household-basic", "baby-plus", "bridal-basic"]);
-    expect(plans.filter((p) => p.legacy).map((p) => p.id)).toEqual(["distributor-plus", "starter", "growth", "pro", "household-plus"]);
+    expect(plans.filter((p) => p.legacy).map((p) => p.id)).toEqual(["distributor-plus", "starter", "growth", "pro", "household-plus", "bridal-plus"]);
+    // A stored copy without the flag is still legacy: the seed retires it.
+    expect(isLegacyPlan({ ...PLAN_SEED["bridal-plus"], legacy: undefined })).toBe(true);
+    expect(isCatalogPlan({ ...PLAN_SEED["bridal-plus"], legacy: undefined })).toBe(false);
+    expect(isCatalogPlan(PLAN_SEED["bridal-basic"])).toBe(true);
     expect(plans.filter((p) => p.workspaceTemplateId === "distributor" && !p.legacy).map((p) => [p.id, p.pricing.billingType, p.pricing.setupFee, p.pricing.trialDays, p.pricing.terms.map((t) => [t.months, t.price])])).toEqual([["distributor-basic", "annual", 25000, 30, [[6, 129900], [12, 239000]]]]);
   });
 

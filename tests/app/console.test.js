@@ -101,12 +101,13 @@ describe("console views", () => {
     expect([...g.elements.planId.options].map((o) => o.textContent)).not.toContain("Growth");
     g.elements.workspaceTemplateId.value = "bridal-expense";
     g.elements.workspaceTemplateId.dispatchEvent(new Event("change", { bubbles: true }));
-    expect([...g.elements.planId.options].map((o) => o.textContent)).toEqual(["All plans", "Luna Bridal", "Luna Bridal Custom"]);
-    g.elements.planId.value = "bridal-plus";
+    // Luna Bridal is the one Bridal product (Custom is legacy since 2026-10-25).
+    expect([...g.elements.planId.options].map((o) => o.textContent)).toEqual(["All plans", "Luna Bridal"]);
+    g.elements.planId.value = "bridal-basic";
     g.elements.status.value = "";
     submit(g);
     await flush();
-    expect(call).toHaveBeenLastCalledWith("listBusinesses", { filters: { workspaceTemplateId: "bridal-expense", planId: "bridal-plus" }, after: null });
+    expect(call).toHaveBeenLastCalledWith("listBusinesses", { filters: { workspaceTemplateId: "bridal-expense", planId: "bridal-basic" }, after: null });
   });
 
   it("Create business: Product → Term → name → owner; terms follow the product (Best Value default); the ID made from the name; sends intent only", async () => {
@@ -115,7 +116,8 @@ describe("console views", () => {
     const f = lastForm();
     expect([...f.querySelectorAll(".field label")].slice(0, 6).map((l) => l.textContent.replace(" *", ""))).toEqual(["Product", "Term", "Start", "Business / workspace name", "Owner name", "Owner email"]);
     // Sold products only: no Distributor+ / Household+ / Starter / Growth / Pro.
-    expect([...f.elements.planId.options].map((o) => o.textContent)).toEqual(["Luna Distributor", "Luna Household", "Baby Basic", "Baby Plus", "Luna Bridal", "Luna Bridal Custom"]);
+    // ... and no Luna Bridal Custom (legacy since 2026-10-25).
+    expect([...f.elements.planId.options].map((o) => o.textContent)).toEqual(["Luna Distributor", "Luna Household", "Baby Basic", "Baby Plus", "Luna Bridal"]);
     expect([...f.elements.termMonths.options].map((o) => o.textContent)).toEqual(["6 months · ₱1,299", "12 months · ₱2,390 · Best Value"]);
     // The 30-day free trial is the default start.
     expect(f.elements.start.value).toBe("trial");
@@ -134,20 +136,17 @@ describe("console views", () => {
     const [action, body] = call.mock.calls[0];
     expect(action).toBe("createBusiness");
     expect(body.business).toEqual({ name: "Prado Home", businessId: "prado-home", workspaceTemplateId: "household-payroll", planId: "household-basic", termMonths: 6, trial: true, ownerName: "Mon Prado", ownerEmail: "mon@prado.test", timezone: "Asia/Manila" });
-    // Bridal: one term (nothing to choose); Custom with the quoted price under Advanced.
+    // Bridal: one product, one term (nothing to choose), the free trial by default.
     const p2 = createBusinessDialog(ctxWith(call));
     const g = lastForm();
-    g.elements.planId.value = "bridal-plus";
+    g.elements.planId.value = "bridal-basic";
     g.elements.planId.dispatchEvent(new Event("change", { bubbles: true }));
     expect(g.elements.termMonths.closest(".field").hidden).toBe(true);
-    expect(g.elements.start.closest(".field").hidden).toBe(true); // Custom: no free trial
-    expect(g.elements.planId.closest(".field").querySelector(".stat-hint").textContent).toBe("Starting at ₱2,990 / 12 months · 1 user · 500 MB · no automatic renewal");
-    for (const [k, v] of Object.entries({ name: "Carlo & Yanie", ownerEmail: "c@y.test", ownerName: "Carlo", price: "3,990" })) g.elements[k].value = v;
+    for (const [k, v] of Object.entries({ name: "Carlo & Yanie", ownerEmail: "c@y.test", ownerName: "Carlo" })) g.elements[k].value = v;
     g.elements.name.dispatchEvent(new Event("change", { bubbles: true }));
     submit(g);
     await p2;
-    expect(call.mock.calls[1][1].business).toMatchObject({ planId: "bridal-plus", workspaceTemplateId: "bridal-expense", termMonths: 12, priceOverride: 399000, businessId: "carlo-yanie" });
-    expect(call.mock.calls[1][1].business).not.toHaveProperty("trial");
+    expect(call.mock.calls[1][1].business).toMatchObject({ planId: "bridal-basic", workspaceTemplateId: "bridal-expense", termMonths: 12, businessId: "carlo-yanie" });
   });
 
   it("Change access: term, paid through, add-ons and price, sent as changes only; the product menu only where there's a choice", async () => {
@@ -158,7 +157,8 @@ describe("console views", () => {
     expect(menu(r)).toContain("s-access");
     expect(menu(r)).not.toContain("s-plan"); // Luna Household is the only product
     expect(menu({ ...r, planId: "household-plus" })).toContain("s-plan"); // off an older "+" plan
-    expect(menu({ ...r, id: "w", workspaceTemplateId: "bridal-expense", planId: "bridal-basic", billingType: "term" })).toContain("s-plan"); // Standard ↔ Custom
+    expect(menu({ ...r, id: "w", workspaceTemplateId: "bridal-expense", planId: "bridal-basic", billingType: "term" })).not.toContain("s-plan"); // Luna Bridal is the only product
+    expect(menu({ ...r, id: "w", workspaceTemplateId: "bridal-expense", planId: "bridal-plus", billingType: "term" })).toContain("s-plan"); // off legacy Custom
     const p = runSubscriptionAction(ctx, "s-access", r);
     const f = lastForm();
     expect([...f.elements.termMonths.options].map((o) => o.value)).toEqual(["6", "12"]);
@@ -256,7 +256,7 @@ describe("console views", () => {
     expect(el.textContent).not.toMatch(/RSVP|guest list/i);
   });
 
-  it("products: one per workspace (Bridal: Standard + Custom), legacy hidden; what it's for, terms, included + add-ons, active count; Edit saves term and add-on prices", async () => {
+  it("products: one per workspace (Custom is legacy), legacy hidden; what it's for, terms, included + add-ons, active count; Edit saves term and add-on prices", async () => {
     const call = vi.fn(async (action) => (action === "plans" ? { plans, subscribers: { "distributor-basic": 8, "baby-plus": 3 } } : { plan: {} }));
     plansView(el, ctxWith(call));
     await flush();
@@ -264,12 +264,12 @@ describe("console views", () => {
     const group = (w) => [...el.querySelectorAll(`[data-workspace="${w}"] tbody [data-plan]`)].map((tr) => tr.dataset.plan);
     expect(group("distributor")).toEqual(["distributor-basic"]);
     expect(group("household-payroll")).toEqual(["household-basic"]);
-    expect(group("bridal-expense")).toEqual(["bridal-basic", "bridal-plus"]);
+    expect(group("bridal-expense")).toEqual(["bridal-basic"]);
     expect(el.querySelector('[data-plan="distributor-basic"] [data-col="subscribers"]').textContent).toBe("8");
     const row = (id) => el.querySelector(`[data-plan="${id}"]`).textContent.replace(/\s+/g, " ");
     expect(row("household-basic")).toMatch(/₱2,390 \/ 12 months.*kasambahay.*6 months · ₱1,299.*12 months · ₱2,390 · Best Value.*Additional family\/admin user · ₱199 \/ 12 months/);
     expect(row("distributor-basic")).toMatch(/Luna Distributor.*₱2,390 \/ 12 months \+ ₱250 setup/);
-    expect(row("bridal-plus")).toMatch(/Luna Bridal Custom.*Starting at ₱2,990 \/ 12 months.*customized invitation.*No automatic renewal/);
+    expect(el.querySelector('[data-plan="bridal-plus"]')).toBeNull();
     el.querySelector('[data-plan="distributor-basic"] [data-act="edit"]').click();
     const f = lastForm();
     f.elements["term-6"].value = "1399";

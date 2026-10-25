@@ -15,7 +15,7 @@
 import { newSubscriptionTerms, recurringAmount, addOnSnapshot, addOnCapacity, planBilling, isDayString, shiftDay, monthsText, isUnlimited, usesSeat, BILLING_TYPE_IDS } from "../../../shared/plan-billing.js";
 import { trialState, trialOpen, newTrial, TRIAL_DAYS } from "../../../shared/trial.js";
 import { businessDate as seatDay } from "../../../shared/metrics.js";
-import { planWorkspace, PLAN_SEED } from "../../../shared/plans.seed.js";
+import { planWorkspace, PLAN_SEED, isLegacyPlan } from "../../../shared/plans.seed.js";
 import { computeEntitlements, validatePlan, validateEntitlementsSnapshot, isValidPlanId, EntitlementError } from "../../../shared/entitlements.js";
 import { resolvePermissions, ROLE_TEMPLATES } from "../../../shared/permissions.js";
 import { SUBSCRIPTION_STATUSES } from "../../../shared/subscription.js";
@@ -443,7 +443,7 @@ export async function setAccess({ db, admin, businessId, changes, actor, reason,
 }
 
 // "Continue with Luna" (2026-10-21): an unconverted free trial chooses its
-// product (same workspace: Luna Bridal or Luna Bridal Custom) and term.
+// product (same workspace; Bridal: Luna Bridal) and term.
 // The paid terms start the day after the trial ends (or today once it has
 // ended); the first bill (with the one-time setup fee) is then made for
 // paying. The trial converts when that bill is paid. Same business, same
@@ -462,7 +462,7 @@ export async function chooseConversion({ db, admin, businessId, planId = null, t
       const sub = business.subscription || {};
       if (!trialOpen(sub)) throw new ProvisioningError("not-in-trial", "This workspace isn't on a free trial");
       const b = planBilling(plan);
-      if (!BILLING_TYPE_IDS.includes(plan.pricing?.billingType) || plan.legacy) throw new ProvisioningError("invalid-input", "Choose one of Luna's products");
+      if (!BILLING_TYPE_IDS.includes(plan.pricing?.billingType) || isLegacyPlan(plan)) throw new ProvisioningError("invalid-input", "Choose one of Luna's products");
       if (!b.terms.some((t) => t.months === termMonths)) throw new ProvisioningError("invalid-input", `${plan.name} is sold for ${b.terms.map((t) => monthsText(t.months)).join(", ")}`);
       const today = seatDay(business.timezone || "Asia/Manila", now);
       const t = trialState(sub, today);

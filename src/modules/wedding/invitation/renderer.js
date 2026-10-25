@@ -93,7 +93,15 @@ export const isWeddingHomePath = (path) => /^\/w\/[a-z0-9-]{1,60}\/?$/.test(path
 // preview (Owner, inside Luna): the same page, but answers aren't sent and
 // the tab title / address bar are left alone.
 export function renderInvitePage(root, { token = inviteTokenFrom(window.location.pathname), fetchImpl = (...a) => window.fetch(...a), preview = false } = {}) {
-  const state = { status: "loading", inv: null, message: "", choosing: null, seats: null, meal: null, note: "", done: null, busy: false, timer: null };
+  // companions: names typed for the party's unnamed seats (optional).
+  const state = { status: "loading", inv: null, message: "", choosing: null, seats: null, meal: null, note: "", companions: [], done: null, busy: false, timer: null };
+  // The party's known names and how many seats still have none (older links: none).
+  const partyOf = () => {
+    const p = state.inv.guest.party;
+    return { named: Array.isArray(p?.named) ? p.named.filter((n) => typeof n === "string") : [], open: Number.isSafeInteger(p?.open) ? p.open : 0 };
+  };
+  // Name fields: the unnamed seats among the ones coming (never the guest's own).
+  const companionSlots = () => Math.min(partyOf().open, Math.max(0, (state.seats || 0) - 1));
   // What Wedding Setup asks with an Accept: a meal (one of its options) and
   // a dietary note. Neither = Accept answers at once for a party of one.
   const asks = () => {
@@ -130,7 +138,9 @@ export function renderInvitePage(root, { token = inviteTokenFrom(window.location
       const { meals, note } = asks();
       const ready = state.seats && (!meals.length || state.meal) && !state.busy;
       return html`${guest.seats > 1 ? html`<p>How many will attend?</p>
-        <div class="inv-seats" role="group" aria-label="How many will attend">${Array.from({ length: guest.seats }, (_, i) => i + 1).map((n) => html`<button type="button" class="inv-seat${state.seats === n ? " is-on" : ""}" data-seats="${n}" aria-pressed="${state.seats === n ? "true" : "false"}">${n}</button>`)}</div>` : ""}
+        <div class="inv-seats" role="group" aria-label="How many will attend">${Array.from({ length: guest.seats }, (_, i) => i + 1).map((n) => html`<button type="button" class="inv-seat${state.seats === n ? " is-on" : ""}" data-seats="${n}" aria-pressed="${state.seats === n ? "true" : "false"}">${n}</button>`)}</div>
+        ${partyOf().named.length ? html`<p class="inv-quiet" data-role="party-named">In your party: ${partyOf().named.join(", ")}</p>` : ""}
+        ${companionSlots() ? html`<div class="inv-companions" data-role="companions"><p>Who's coming with you? <span class="inv-quiet">(optional)</span></p>${Array.from({ length: companionSlots() }, (_, i) => html`<input class="inv-note inv-companion" data-role="companion" data-i="${i}" maxlength="80" autocomplete="off" aria-label="Guest ${partyOf().named.length + i + 2} name" placeholder="Guest ${partyOf().named.length + i + 2} name" value="${state.companions[i] ?? ""}">`)}</div>` : ""}` : ""}
         ${meals.length ? html`<p>Meal preference</p><div class="inv-seats inv-meals" role="group" aria-label="Meal preference">${meals.map((m) => html`<button type="button" class="inv-seat${state.meal === m ? " is-on" : ""}" data-meal="${m}" aria-pressed="${state.meal === m ? "true" : "false"}">${m}</button>`)}</div>` : ""}
         ${note ? html`<label class="inv-note-label" for="inv-note">Dietary needs or allergies (optional)</label><textarea class="inv-note" id="inv-note" data-role="rsvp-note" rows="2" maxlength="300">${state.note}</textarea>` : ""}
         <div class="inv-actions"><button type="button" class="inv-btn" data-act="back">Back</button><button type="button" class="inv-btn inv-primary" data-act="send" ${ready ? "" : "disabled"}>Confirm RSVP</button></div>`;
@@ -281,7 +291,8 @@ export function renderInvitePage(root, { token = inviteTokenFrom(window.location
     draw();
     try {
       const { meals, note } = asks();
-      const extra = status === "attending" ? { ...(meals.length && state.meal ? { meal: state.meal } : {}), ...(note && state.note.trim() ? { note: state.note.trim() } : {}) } : {};
+      const names = state.companions.slice(0, companionSlots()).map((n) => (n || "").trim()).filter(Boolean);
+      const extra = status === "attending" ? { ...(meals.length && state.meal ? { meal: state.meal } : {}), ...(note && state.note.trim() ? { note: state.note.trim() } : {}), ...(names.length ? { companions: names } : {}) } : {};
       const r = await call({ action: "respond", token, rsvp: status === "attending" ? { status, confirmed, ...extra } : { status } }, fetchImpl);
       state.done = { rsvp: r.rsvp, confirmed: r.confirmed };
       state.inv.guest = { ...state.inv.guest, rsvp: r.rsvp, confirmed: r.confirmed };
@@ -329,6 +340,7 @@ export function renderInvitePage(root, { token = inviteTokenFrom(window.location
 
   root.addEventListener("input", (event) => {
     if (event.target.dataset?.role === "rsvp-note") state.note = event.target.value;
+    if (event.target.dataset?.role === "companion") state.companions[Number(event.target.dataset.i)] = event.target.value;
   });
 
   if (!token) {

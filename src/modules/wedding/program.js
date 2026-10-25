@@ -11,6 +11,7 @@
 
 import { html, render } from "../../lib/html.js";
 import { pageHeader, emptyState, skeleton, segmented } from "../../components/ui.js";
+import { examplesState } from "../../components/examples.js";
 import { formDialog } from "../../components/form-dialog.js";
 import { toast as defaultToast, confirmDialog } from "../../components/feedback.js";
 import { api as defaultApi } from "../../lib/api.js";
@@ -20,11 +21,25 @@ import { sampleList, sampleItem } from "./samples.js";
 import { detailsDialog } from "../baby/common.js";
 
 const SECTION_OPTIONS = Object.entries(PROGRAM_SECTIONS).map(([value, s]) => ({ value, label: s.label }));
+// What an empty program looks like filled in (examples only, never saved).
+const PROGRAM_EXAMPLES = {
+  ceremony: [
+    { name: "Bridal entrance", sub: "Song: Can't Help Falling in Love" },
+    { name: "Signing of marriage contract", sub: "Song: A Thousand Years" },
+    { name: "Recessional", sub: "Song: Best Day of My Life" },
+  ],
+  reception: [
+    { name: "Couple entrance", end: "6:30 PM" },
+    { name: "First dance", sub: "Song: Perfect" },
+    { name: "Cake cutting", end: "8:00 PM" },
+    { name: "Same-day edit", end: "9:00 PM" },
+  ],
+};
 
 // Moment, Song, Duration up front; Part, Person / group and Notes under More options.
 export const programFields = (i = {}, section) => [
   { name: "moment", label: "Moment", value: i.moment ?? "", required: true, placeholder: section === "ceremony" ? "e.g. Bride entrance" : "e.g. First dance" },
-  { name: "song", label: "Song", value: i.song ?? "", placeholder: "Title – artist (optional)" },
+  { name: "song", label: "Song", value: i.song ?? "", placeholder: "e.g. Perfect – Ed Sheeran" },
   { name: "duration", label: "Duration", value: Number.isSafeInteger(i.durationSec) ? formatDuration(i.durationSec) : "", placeholder: "e.g. 4:17", inputmode: "numeric", hint: "Optional. Minutes:seconds, or 1:00:00 for a long playlist." },
   ...(i.id ? [{ name: "section", label: "Part", type: "select", options: SECTION_OPTIONS, value: i.section, more: true, default: true }] : []),
   { name: "person", label: "Person / group", value: i.person ?? "", placeholder: "e.g. Entourage, Ninong & Ninang", more: true },
@@ -77,7 +92,15 @@ export function mount(container, session, { api = defaultApi, toast = defaultToa
         intro: "Common moments, no songs attached. Tap + Add for what's in your wedding, then set the song.",
       });
     }
-    if (!list.length) return emptyState({ iconName: "music", title: `No ${word} yet`, body: canManage ? "Tap + Add, or pick from the Sample Program." : "Nothing planned here yet." });
+    if (!list.length)
+      return examplesState({
+        title: `No ${word} yet`,
+        body: "Each moment, in order, with its song or time:",
+        items: PROGRAM_EXAMPLES[state.section],
+        add: canManage ? { act: "new", label: "+ Add Program Item" } : null,
+        helper: "Or pick from the Sample Program above.",
+        role: "program-examples",
+      });
     return html`<ul class="wl-list wl-program" data-role="program">${list.map((it, n) => row(it, n, list.length))}</ul>`;
   }
 

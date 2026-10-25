@@ -131,7 +131,7 @@ describe("template-owned sample content and photos", () => {
     // Empty groups show the design's example.
     expect(out.setup.story).toMatch(/rainy October/);
     expect(out.setup.schedule).toHaveLength(5);
-    expect(out.sampled.map((x) => x.id)).toEqual(["date", "city", "gettingThere", "welcome", "story", "schedule", "dress", "goodToKnow", "rsvp", "closing"]);
+    expect(out.sampled.map((x) => x.id)).toEqual(["date", "city", "gettingThere", "welcome", "family", "story", "schedule", "dress", "goodToKnow", "rsvp", "closing"]);
     // Photos: the couple's own where set, the design's elsewhere.
     expect(out.photos.story1).toBe("data:image/jpeg;base64,AAAA");
     expect(out.photos.story2).toBe("/invitations/samples/gold/story2.webp");

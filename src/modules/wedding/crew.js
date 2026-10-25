@@ -9,6 +9,7 @@
 
 import { html, render } from "../../lib/html.js";
 import { pageHeader, emptyState, skeleton, segmented } from "../../components/ui.js";
+import { examplesState } from "../../components/examples.js";
 import { formDialog } from "../../components/form-dialog.js";
 import { toast as defaultToast, confirmDialog } from "../../components/feedback.js";
 import { api as defaultApi } from "../../lib/api.js";
@@ -28,7 +29,7 @@ const n = (v) => {
   return x;
 };
 export const crewFields = (i = {}, suppliers = []) => [
-  { name: "name", label: "Crew / person", value: i.name ?? "", required: true, placeholder: "e.g. Photo team" },
+  { name: "name", label: "Crew / person", value: i.name ?? "", required: true, placeholder: "e.g. Photographer team" },
   ...MEALS.map((m) => ({ name: m, label: MEAL_LABELS[m], value: i[m] ? String(i[m]) : "", inputmode: "numeric", placeholder: "0" })),
   { name: "location", label: "Location", value: i.location ?? "", placeholder: "Hotel, Church, Reception…", suggestions: CREW_LOCATIONS },
   { name: "supplierId", label: "Linked supplier (optional)", type: "select", options: [{ value: "", label: "— None —" }, ...suppliers.map((s) => ({ value: s.id, label: s.name }))], value: i.supplierId ?? "", more: true, default: true },
@@ -83,7 +84,20 @@ export function mount(container, session, { api = defaultApi, toast = defaultToa
     if (state.mode === "sample") {
       return sampleList({ groups: [{ id: "crew", label: "Common wedding crews", items: SAMPLE_CREW.map((title) => ({ title, optional: false })) }], added: new Set(state.items.map((i) => sampleKey(i.name))), canAdd: canManage, role: "sample-crew", intro: "Teams that usually need meals on the day. Tap + Add for the ones you have, then set how many meals." });
     }
-    if (!state.items.length) return emptyState({ iconName: "gift", title: "No crew meals yet", body: canManage ? "Tap + Add, or pick from the Sample list." : "Nothing planned yet." });
+    if (!state.items.length)
+      return examplesState({
+        title: "No crew meals yet",
+        body: "Each team that needs food on the day, and how many meals:",
+        items: [
+          { name: "Photographer team", sub: "4 meals · Lunch" },
+          { name: "Videographer team", sub: "3 meals" },
+          { name: "Coordinator team", sub: "5 meals" },
+          { name: "Lights & sounds", sub: "4 meals" },
+        ],
+        add: canManage ? { act: "new", label: "+ Add Crew Meal" } : null,
+        helper: "Or pick from the Sample list above.",
+        role: "crew-examples",
+      });
     return html`<ul class="wl-list" data-role="crew">${state.items.map(row)}</ul>`;
   }
 

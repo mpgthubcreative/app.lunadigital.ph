@@ -437,10 +437,19 @@ const SETUP_PARAGRAPHS = new Set(["welcomeMessage", "story", "dressCodeDetails",
 export const SETUP_LISTS = Object.freeze({ attireNotes: ["Attire note", 6, 150], reminders: ["Reminder", 6, 200], mealOptions: ["Meal option", 6, 40] });
 export const MAX_SCHEDULE = 12;
 export const MAX_PALETTE = 8;
+// Family (2026-10-25): each side's people, in order: { relation, label?, name }.
+// relation: one of FAMILY_RELATIONS, "other" (label = the couple's own
+// word, e.g. "Ninang") or "" (no label). The older one-line partner1Parents /
+// partner2Parents stay valid and still show when a side has no list.
+export const FAMILY_RELATIONS = Object.freeze({ father: "Father", mother: "Mother", brother: "Brother", sister: "Sister", grandfather: "Grandfather", grandmother: "Grandmother", guardian: "Guardian", uncle: "Uncle", aunt: "Aunt", other: "Other" });
+export const MAX_FAMILY = 12;
+export const FAMILY_FIELDS = Object.freeze(["partner1Family", "partner2Family"]);
+// The relation as shown ("" = none).
+export const familyRelationLabel = (m) => (m?.relation === "other" ? m.label || "" : FAMILY_RELATIONS[m?.relation] || "");
 // templateId: the Owner's Standard invitation template (2026-10-21; the
 // templates are in src/modules/wedding/invitation/templates/). Null = Luna
 // Standard. A Custom design (Super Admin) has its own template.
-export const SETUP_FIELDS = [...Object.keys(SETUP_TEXT), "weddingDate", "ceremonyTime", "receptionTime", "ceremonyMap", "receptionMap", "rsvpDeadline", "rsvpEnabled", "closeAfterDeadline", "showTable", "weddingSlug", "faq", "templateId", "sameVenue", "askDietary", "schedule", "palette", "templateOptions", "published", ...Object.keys(SETUP_LISTS)];
+export const SETUP_FIELDS = [...Object.keys(SETUP_TEXT), "weddingDate", "ceremonyTime", "receptionTime", "ceremonyMap", "receptionMap", "rsvpDeadline", "rsvpEnabled", "closeAfterDeadline", "showTable", "weddingSlug", "faq", "templateId", "sameVenue", "askDietary", "schedule", "palette", "templateOptions", "published", ...FAMILY_FIELDS, ...Object.keys(SETUP_LISTS)];
 export const MAX_FAQ = 8;
 
 // The friendly part of a guest's link: /w/{weddingSlug}/invite/{token}.
@@ -527,6 +536,21 @@ export function validateWeddingSetup(input) {
       })
       .filter((x) => x.title)
       .sort((a, b) => (a.time || "99").localeCompare(b.time || "99"));
+  }
+  for (const k of FAMILY_FIELDS) {
+    if (!Object.hasOwn(input, k)) continue;
+    const list = input[k] === null ? [] : input[k];
+    if (!Array.isArray(list) || list.length > MAX_FAMILY) throw new WeddingError("invalid-input", `Up to ${MAX_FAMILY} family members per side`);
+    out[k] = list
+      .map((x) => {
+        if (!x || typeof x !== "object" || Array.isArray(x) || Object.keys(x).some((f) => !["relation", "label", "name"].includes(f))) throw new WeddingError("invalid-input", "Invalid family member");
+        const relation = x.relation === undefined || x.relation === null ? "" : x.relation;
+        if (relation !== "" && !Object.hasOwn(FAMILY_RELATIONS, relation)) throw new WeddingError("invalid-input", "Choose a relationship");
+        const name = text(x.name, { field: "Family member's name", max: 80 });
+        const label = relation === "other" ? text(x.label ?? "", { field: "Relationship", max: 30 }) : "";
+        return { relation: relation === "other" && !label ? "" : relation, ...(relation === "other" && label ? { label } : {}), name };
+      })
+      .filter((x) => x.name);
   }
   if (Object.hasOwn(input, "palette")) {
     const list = input.palette === null ? [] : input.palette;

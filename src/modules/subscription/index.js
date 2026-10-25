@@ -5,7 +5,8 @@
 //
 // Continue with Luna (2026-10-21): during or after the free trial the page
 // opens with the plans for this workspace (6 / 12 months; Bridal: Luna
-// Bridal or Luna Bridal Custom). The Owner chooses one; its first bill (with
+// Bridal; a wedding already on legacy Luna Bridal Custom keeps seeing its
+// own). The Owner chooses one; its first bill (with
 // Distributor's one-time setup fee) appears under Bills to pay. Paying it
 // continues the same workspace with all its information.
 

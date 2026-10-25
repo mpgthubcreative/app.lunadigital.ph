@@ -25,6 +25,15 @@ export const SAMPLE_COMMON = {
   sameVenue: true,
   gettingThere: "Free parking on site. Valet at the main entrance from 3:15 PM.",
   welcomeMessage: "Together with our families, we would love for you to celebrate with us.",
+  partner1Family: [
+    { relation: "father", name: "Robert Hayes" },
+    { relation: "mother", name: "Linda Hayes" },
+  ],
+  partner2Family: [
+    { relation: "father", name: "Daniel Brooks" },
+    { relation: "mother", name: "Maria Brooks" },
+    { relation: "sister", name: "Ella Brooks" },
+  ],
   reminders: ["Please arrive 30 minutes before the ceremony"],
   giftNote: "Your presence is the greatest gift.",
   faq: [{ q: "Can we bring our children?", a: "We love your little ones, but this will be an adults-only celebration." }],
@@ -47,6 +56,7 @@ export const SAMPLE_GROUPS = Object.freeze([
   ["details", "Ceremony & reception", ["ceremonyTime", "ceremonyVenue", "ceremonyAddress", "ceremonyMap", "receptionTime", "receptionVenue", "receptionAddress", "receptionMap", "sameVenue"]],
   ["gettingThere", "Getting there", ["gettingThere"]],
   ["welcome", "Welcome message", ["welcomeMessage"]],
+  ["family", "Family", ["partner1Family", "partner2Family", "partner1Parents", "partner2Parents"]],
   ["story", "Our story", ["story"]],
   ["schedule", "Schedule", ["schedule"]],
   ["dress", "Dress code", ["dressCode", "dressCodeDetails", "palette", "attireNotes"]],

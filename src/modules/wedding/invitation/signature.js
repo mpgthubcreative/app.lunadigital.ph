@@ -8,6 +8,7 @@
 // No hard-coded couple, photo or artwork.
 
 import { html } from "../../../lib/html.js";
+import { familyRelationLabel } from "../../../../shared/wedding.js";
 
 const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
@@ -99,12 +100,14 @@ export function signaturePage({ inv, names, wording: W, time12, rsvpBlock, messa
       ${left ? html`<section class="sg-countdown" data-role="countdown" aria-label="Countdown">${W.countdownTitle ? html`<p class="sg-cd-title">${W.countdownTitle}</p>` : ""}<div class="sg-cd-units">${[["days", "Days"], ["hours", "Hours"], ["minutes", "Minutes"]].map(([k, l]) => html`<div><span class="sg-cd-n" data-cd="${k}">${left[k]}</span><span class="sg-cd-l">${l}</span></div>`)}</div></section>` : ""}`
     : "";
 
+  // Each side's family: the list (relation, name), or the older one line.
+  const familyOf = (list, line) => (Array.isArray(list) && list.length ? list.filter((m) => m && m.name) : line ? [{ name: line }] : []);
   const parents = [
-    [n1, w.partner1Parents],
-    [n2, w.partner2Parents],
-  ].filter(([, p]) => p);
+    [n1, familyOf(w.partner1Family, w.partner1Parents)],
+    [n2, familyOf(w.partner2Family, w.partner2Parents)],
+  ].filter(([, p]) => p.length);
   const welcome = on("welcome") && (w.welcomeMessage || parents.length)
-    ? sec("welcome", "sg-welcome", html`${w.welcomeMessage ? html`<p class="sg-lead">${w.welcomeMessage}</p>` : ""}${parents.length ? html`<div class="sg-parents">${parents.map(([n, p]) => html`<div><p class="sg-kicker">${n ? `Family of ${n}` : "Family"}</p><p>${p}</p></div>`)}</div>` : ""}`)
+    ? sec("welcome", "sg-welcome", html`${w.welcomeMessage ? html`<p class="sg-lead">${w.welcomeMessage}</p>` : ""}${parents.length ? html`<div class="sg-parents" data-edit="family">${parents.map(([n, people]) => html`<div class="sg-family"><p class="sg-kicker">${n ? `Family of ${n}` : "Family"}</p>${people.map((m) => html`<p class="sg-family-member">${familyRelationLabel(m) ? html`<span class="sg-family-rel">${familyRelationLabel(m)}</span>` : ""}<span>${m.name}</span></p>`)}</div>`)}</div>` : ""}`)
     : "";
 
   const story = paragraphsOf(w.story);

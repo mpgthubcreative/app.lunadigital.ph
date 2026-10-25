@@ -21,6 +21,7 @@
 
 import { html, render } from "../../lib/html.js";
 import { pageHeader, emptyState, badge, skeleton } from "../../components/ui.js";
+import { examplesState } from "../../components/examples.js";
 import { formDialog } from "../../components/form-dialog.js";
 import { toast as defaultToast, confirmDialog } from "../../components/feedback.js";
 import { formatCentavos, formatDayId } from "../../lib/format.js";
@@ -240,7 +241,18 @@ export function mount(container, session, { data = defaultData, toast = defaultT
             ${state.loading
               ? skeleton(5)
               : !allRows().length
-                ? emptyState({ iconName: "budget", title: "Nothing here yet", body: "Tap + Add Expense for a supplier, a payment or something you still need to pay." })
+                ? examplesState({
+                    title: "No expenses yet",
+                    body: "Each supplier or purchase shows what it costs, what's paid and what's left:",
+                    items: [
+                      { name: "Photographer", sub: "₱90,000 total · ₱20,000 paid · ₱70,000 left" },
+                      { name: "Venue", sub: "₱150,000 total · ₱50,000 paid · ₱100,000 left" },
+                      { name: "Wedding dress", sub: "₱35,000 paid" },
+                    ],
+                    add: canPay || canManage ? { act: "add-expense", label: "+ Add Expense" } : null,
+                    helper: "Examples: venue, photographer, gown, flowers, catering, invitations.",
+                    role: "expense-examples",
+                  })
                 : html`${groupsHtml(allRows(), "money")}
                   ${state.otherMore ? html`<p class="wl-links"><a href="/expenses" data-link>All expenses ›</a></p>` : ""}`}
             ${state.inactive.length ? html`<details class="wl-fold"><summary>Removed from the list (${state.inactive.length})</summary><ul class="wl-list" data-role="suppliers-inactive">${moneyRows({ suppliers: state.inactive, categories: state.categories }).map(row)}</ul></details>` : ""}`}`
@@ -523,7 +535,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
         ...(canCategory ? [{ ...categoryField(state.categories), name: "newCategory", label: "New category" }] : []),
         { name: "supplierId", label: "Supplier", type: "select", options: [{ value: "", label: "Select supplier" }, ...suppliers.map((x) => ({ value: x.id, label: x.name })), ...(canManage ? [{ value: NEW, label: "+ Add supplier" }] : []), ...(canPay ? [{ value: NONE, label: "No supplier (one-off expense)" }] : [])], value: suppliers.length || !canManage ? "" : NEW },
         ...(canManage ? [{ name: "newSupplier", label: "Supplier name", value: "", placeholder: "e.g. ABC Photo & Films" }] : []),
-        { name: "payee", label: "Paid to / what for", value: "", placeholder: "e.g. Van rental" },
+        { name: "payee", label: "Paid to / what for", value: "", placeholder: "e.g. Photographer balance" },
         { name: "agreedAmount", label: "Total contract (₱)", value: "", inputmode: "decimal", hint: "Optional. Luna works out what's left." },
         // Without the right to pay or schedule: the contract only.
         ...(mayPay ? [{ name: "amount", label: "Record payment (₱)", value: "", inputmode: "decimal", hint: "Leave blank if nothing is paid yet." }, whenField("Pay later", "now"), ...paymentFields()] : []),
