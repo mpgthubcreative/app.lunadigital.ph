@@ -15,6 +15,6 @@ export function isProduction(value) {
 
 export const ENVIRONMENT_LABELS = Object.freeze({
   development: "Development",
-  staging: "Staging — demo data only",
+  staging: "Staging",
   production: "",
 });
