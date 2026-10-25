@@ -29,7 +29,7 @@ export const MODULES = Object.freeze([
   { id: "payments", label: "Payments", path: "/payments", icon: "payments", permission: "payments.view", available: true, collections: { payments: "payments.view" }, storage: { payments: "payments.view" } },
   { id: "inventory", label: "Inventory", path: "/inventory", icon: "inventory", permission: "inventory.view", available: true, collections: { products: "inventory.view", inventoryTransactions: "inventory.view", productCosts: "inventory.costs", inventoryTransactionCosts: "inventory.costs" }, storage: { products: "inventory.view" } },
   // Built in Phase 9 (Distributor customers).
-  { id: "customers", label: "Customers", path: "/customers", icon: "customers", permission: "customers.view", available: true, collections: { customers: "customers.view" }, storage: {} },
+  { id: "customers", label: "Customers", path: "/customers", icon: "customers", permission: "customers.view", available: true, collections: { customers: "customers.view", customerPrices: "customers.view", openingBalances: "customers.view" }, storage: {} },
   // Built in Phase 11 (Distributor reports; server-aggregated via
   // GET /api/reports).
   { id: "reports", label: "Reports", path: "/reports", icon: "reports", permission: "reports.view", available: true, collections: { reports: "reports.view" }, storage: { exports: "reports.export" } },

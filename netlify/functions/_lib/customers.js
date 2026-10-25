@@ -12,6 +12,8 @@
 // outstandingBalance the sum of their balances.
 
 import { validateCustomerInput, phoneKey, isValidCustomerId, CustomerError, CUSTOMER_SCHEMA_VERSION, EMPTY_CUSTOMER_STATS } from "../../../shared/customers.js";
+import { isValidProductId } from "../../../shared/inventory.js";
+import { MAX_CENTAVOS } from "../../../shared/quantity.js";
 // Contention on a hot customer is retried like orders and payments.
 const TX_OPTIONS = { maxAttempts: 10 };
 
@@ -175,6 +177,56 @@ export function applyCustomerStats(tx, { tenant, FieldValue, customerId, orders 
     update["stats.lastOrderNumber"] = lastOrder;
   }
   tx.update(tenant.doc("customers", customerId), update);
+}
+
+// ---------- Special prices (2026-10-25, customers.manage) ----------
+// One saved customer's selling price for one product, used when that
+// customer's orders get the product (./orders.js prices the line once, then
+// the order keeps it). customerPrices/{customerId}_{productId}, server-only;
+// every change is kept in its history; removing one deactivates it.
+const priceRef = (tenant, customerId, productId) => tenant.doc("customerPrices", `${customerId}_${productId}`);
+const productRef = (tenant, id) => {
+  if (!isValidProductId(id)) throw new CustomerError("invalid-product", "Choose a product");
+  return tenant.doc("products", id);
+};
+export async function setCustomerPrice({ db, tenant, FieldValue, customerId, productId, price, actor, source = null }) {
+  if (!Number.isSafeInteger(price) || price < 1 || price > MAX_CENTAVOS) throw new CustomerError("invalid-price", "Enter the special price (more than ₱0)");
+  const cRef = customerRef(tenant, customerId);
+  const pRef = productRef(tenant, productId);
+  return db.runTransaction(async (tx) => {
+    const [c, p, prev] = [await tx.get(cRef), await tx.get(pRef), await tx.get(priceRef(tenant, customerId, productId))];
+    if (!c.exists) throw new CustomerError("not-found", "Customer not found");
+    if (!p.exists) throw new CustomerError("invalid-product", "Choose a product");
+    const before = prev.exists ? prev.data() : null;
+    if (before && before.active !== false && before.price === price) return { customerId, productId, price, unchanged: true };
+    const stamp = FieldValue.serverTimestamp();
+    tx.set(priceRef(tenant, customerId, productId), {
+      schemaVersion: 1,
+      customerId,
+      productId,
+      productName: p.data().name,
+      sku: p.data().sku ?? null,
+      price,
+      active: true,
+      history: append(before?.history, { at: new Date(), actor, from: before && before.active !== false ? before.price : null, to: price, ...(source ? { source } : {}) }),
+      createdAt: before?.createdAt ?? stamp,
+      updatedBy: actor,
+      updatedAt: stamp,
+    });
+    return { customerId, productId, price, defaultPrice: p.data().sellingPrice };
+  }, TX_OPTIONS);
+}
+export async function clearCustomerPrice({ db, tenant, FieldValue, customerId, productId, actor }) {
+  customerRef(tenant, customerId);
+  productRef(tenant, productId);
+  const ref = priceRef(tenant, customerId, productId);
+  return db.runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    if (!snap.exists || snap.data().active === false) return { customerId, productId, unchanged: true };
+    const before = snap.data();
+    tx.update(ref, { active: false, history: append(before.history, { at: new Date(), actor, from: before.price, to: null }), updatedBy: actor, updatedAt: FieldValue.serverTimestamp() });
+    return { customerId, productId, cleared: true };
+  }, TX_OPTIONS);
 }
 
 export { CustomerError };

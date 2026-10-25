@@ -23,7 +23,11 @@ function checkReference(method, reference, hasProof = false) {
 }
 
 // "Paid" / "Partially paid" from the Orders row, or Record payment in details.
+// One request key per dialog: Save tapped twice, or sent again after a
+// slow network, is the same payment (the server keeps one).
+const newKey = () => (globalThis.crypto && crypto.randomUUID ? crypto.randomUUID() : `k${Date.now()}${Math.random().toString(36).slice(2)}${Math.random().toString(36).slice(2)}`).replace(/[^A-Za-z0-9_-]/g, "");
 export function recordPaymentDialog({ order, api, currency = "PHP", fullBalance = true, prepareProof = defaultPrepareProof, detect = detectReference }) {
+  const idempotencyKey = newKey();
   const balance = order.balance ?? order.total - (order.amountPaid || 0);
   return formDialog({
     title: `Payment for ${order.orderNumber}`,
@@ -45,7 +49,7 @@ export function recordPaymentDialog({ order, api, currency = "PHP", fullBalance 
       const proof = v.proof ? await prepareProof(v.proof) : null;
       return api("payments", {
         method: "POST",
-        body: { action: "record", orderId: order.id, payment: { amount, method: v.method, ...(reference ? { reference } : {}), ...(v.note ? { note: v.note } : {}) }, ...(proof ? { proof } : {}) },
+        body: { action: "record", idempotencyKey, orderId: order.id, payment: { amount, method: v.method, ...(reference ? { reference } : {}), ...(v.note ? { note: v.note } : {}) }, ...(proof ? { proof } : {}) },
       });
     },
   });
@@ -112,7 +116,7 @@ export function showReceipt({ payment, businessName, currency = "PHP" }) {
   document.body.appendChild(backdrop);
   render(
     backdrop,
-    html`<div class="modal" role="dialog" aria-modal="true" aria-label="Payment receipt" data-role="receipt-viewer">
+    html`<div class="modal" role="dialog" aria-modal="true" aria-label="Payment confirmation" data-role="receipt-viewer">
       <div class="modal-body">${receiptHtml(receiptOf(payment, businessName), { currency })}</div>
       <div class="modal-footer"><button type="button" class="btn" data-act="print">Print</button><button type="button" class="btn btn-primary" data-act="close">Close</button></div>
     </div>`

@@ -47,7 +47,7 @@ export function renderPayPage(root, { token = payTokenFrom(window.location.pathn
         (p) => html`<li class="pay-item" data-state="${p.state}">
           <div class="pay-item-row"><span class="pay-item-what">${money(p.amount)} · ${p.method}${p.reference ? html` · <span class="pay-ref">${p.reference}</span>` : ""}</span><span class="pay-chip" data-state="${p.state}">${STATE[p.state] ?? p.state}</span></div>
           <div class="pay-item-sub">${p.date ? formatDayId(p.date) : ""}${p.state === "not_accepted" && p.reason ? html` · <span data-role="reason">${p.reason}</span>` : ""}</div>
-          ${p.receipt ? html`<details class="pay-receipt-fold"><summary>View receipt</summary>${receiptHtml(p.receipt, { currency: state.view.currency })}</details>` : ""}
+          ${p.receipt ? html`<details class="pay-receipt-fold"><summary>View payment confirmation</summary>${receiptHtml(p.receipt, { currency: state.view.currency })}</details>` : ""}
         </li>`
       )}</ul></section>`;
   }

@@ -47,6 +47,9 @@ export const TENANT_COLLECTIONS = Object.freeze({
   skuIndex: null,
   idempotencyKeys: null,
   customers: "customers.view", // built in Phase 9
+  customerPrices: "customers.view", // 2026-10-25: special prices
+  openingBalances: "customers.view", // 2026-10-25: owed at the setup cutover
+  setupImports: null, // 2026-10-25: setup-service import records (server-only)
   // Unbuilt (placeholders): nobody reads them until each module is built
   // and explicitly activated.
   orders: "orders.view",

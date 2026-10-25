@@ -11,6 +11,19 @@ import { FieldValue } from "../helpers/fake-firebase.js";
 import { buildWorld, request } from "../helpers/tenants.js";
 import { QTY_SCALE } from "../../shared/quantity.js";
 import { countMovement } from "../../shared/inventory.js";
+// Stock actions need a request key (2026-10-25): a fresh one per call unless the test sets its own.
+let stockKeyN = 0;
+const withStockKey = (handler) => (event) => {
+  let body = null;
+  try {
+    body = JSON.parse(event.body);
+  } catch {
+    return handler(event);
+  }
+  if (!body || typeof body !== "object" || Array.isArray(body) || "idempotencyKey" in body || !["receipt", "opening", "count", "adjustment_increase", "adjustment_decrease"].includes(body.action)) return handler(event);
+  return handler({ ...event, body: JSON.stringify({ ...body, idempotencyKey: `test-stock-key-${String(++stockKeyN).padStart(6, "0")}` }) });
+};
+
 
 const Q = (n) => n * QTY_SCALE;
 const actor = { uid: "u-owner", name: "Owner A", email: "owner@t.test" };
@@ -24,7 +37,7 @@ const docAt = (p) => world.db.docs.get(p);
 const movements = (productId) => [...world.db.docs.entries()].filter(([p, d]) => p.startsWith("businesses/biz-a/inventoryTransactions/") && d.productId === productId).map(([p, d]) => ({ id: p.split("/").at(-1), ...d })).sort((a, b) => a.seq - b.seq);
 const costOf = (id) => docAt(`businesses/biz-a/inventoryTransactionCosts/${id}`);
 const product = (id) => docAt(`businesses/biz-a/products/${id}`);
-const inventory = createInventoryHandler({ getAdmin: async () => world });
+const inventory = withStockKey(createInventoryHandler({ getAdmin: async () => world }));
 const post = async (body, uid = world.uids.ownera) => {
   const res = await inventory({ ...request({ uid, businessId: "biz-a", method: "POST" }), body: JSON.stringify(body) });
   return { status: res.statusCode, body: JSON.parse(res.body) };

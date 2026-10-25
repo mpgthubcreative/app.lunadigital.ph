@@ -8,6 +8,9 @@
 //            and the 5 most recent orders (View orders shows them all).
 //   Form     Name * , Contact, Delivery address (nothing else asked; older
 //            records keep any company / email / notes they had).
+// Who owes us (2026-10-25): a second view (Customers | Who owes us):
+//   TOTAL UNPAID ₱X, then Customer | Balance | Oldest unpaid | View; View
+//   shows what makes up the balance (unpaid orders, an opening balance).
 // Add order opens the order form with the customer linked and their name,
 // contact and delivery address filled in. The order keeps its own copy, so
 // editing the customer later never rewrites past orders. Order statistics
@@ -15,13 +18,14 @@
 
 import { html, render } from "../../lib/html.js";
 import { bindExport } from "../../lib/export.js";
-import { pageHeader, emptyState, badge, filterBar, bindFilterBar, rowMenu, bindRowOpen, skeleton } from "../../components/ui.js";
+import { pageHeader, emptyState, badge, filterBar, bindFilterBar, rowMenu, bindRowOpen, skeleton, segmented, mobileCell } from "../../components/ui.js";
 import { examplesState } from "../../components/examples.js";
 import { formDialog } from "../../components/form-dialog.js";
 import { confirmDialog, toast as defaultToast } from "../../components/feedback.js";
 import { api as defaultApi } from "../../lib/api.js";
 import { formatCentavos } from "../../lib/format.js";
-import { CUSTOMER_STATUSES, PAYMENT_STATUSES, FULFILLMENT_STATUSES, canUseModule } from "@shared/index.js";
+import { CUSTOMER_STATUSES, PAYMENT_STATUSES, FULFILLMENT_STATUSES, PAYMENT_METHODS, canUseModule, businessDate, parseCentavos } from "@shared/index.js";
+import { receivableRows, daysBetween } from "./receivables.js";
 import * as defaultData from "./data.js";
 import { when } from "../orders/view.js";
 import { openOrderEditor } from "../orders/editor.js";
@@ -29,6 +33,8 @@ import { getProducts as defaultGetProducts } from "../orders/data.js";
 import { listActiveProducts as defaultListActiveProducts } from "../dashboard/checkout.js";
 
 const STATUS_TONE = { active: "success", inactive: "neutral" };
+// One request key per payment dialog (a retry records it once).
+const newKey = () => (globalThis.crypto && crypto.randomUUID ? crypto.randomUUID() : `k${Date.now()}${Math.random().toString(36).slice(2)}${Math.random().toString(36).slice(2)}`).replace(/[^A-Za-z0-9_-]/g, "");
 
 export function customerRow(c, { timezone } = {}) {
   const s = c.stats || {};
@@ -106,11 +112,34 @@ export function mount(container, session, { data = defaultData, api = defaultApi
   const plural = session.config?.terminology?.customer?.plural ?? "Customers";
   const singular = (session.config?.terminology?.customer?.singular ?? "customer").toLowerCase();
   const editorDeps = orderDeps ?? { listActiveProducts: () => defaultListActiveProducts(businessId), getProducts: (ids) => defaultGetProducts(businessId, ids), searchCustomers: (term) => data.searchCustomers(businessId, term), api };
-  const state = { status: "active", search: "", cursors: [], rows: [], hasMore: false, loading: true, error: null };
+  const fromUrl = new URLSearchParams(typeof location === "undefined" ? "" : location.search);
+  const state = { view: fromUrl.get("view") === "owed" ? "owed" : "all", status: "active", search: "", cursors: [], rows: [], hasMore: false, loading: true, error: null, owed: null };
   let alive = true;
+  const today = () => businessDate(timezone || "Asia/Manila");
+
+  // Who owes us: customers with a balance, their unpaid orders and opening balances.
+  async function loadOwed() {
+    state.loading = true;
+    draw();
+    try {
+      const [customers, orders, openings] = await Promise.all([
+        data.listCustomersWithBalance(businessId),
+        canSeeOrders ? data.listUnpaidOrders(businessId) : [],
+        data.listOpenOpeningBalances ? data.listOpenOpeningBalances(businessId).catch(() => []) : [],
+      ]);
+      state.owed = receivableRows(customers, { orders, openings, today: today() });
+      state.error = null;
+    } catch (err) {
+      console.error("customers: balances failed:", err && (err.code || err.message));
+      state.error = "Couldn't load balances.";
+    }
+    state.loading = false;
+    if (alive) draw();
+  }
 
   const unfiltered = () => !state.search && state.status === "active" && !state.cursors.length;
   async function load() {
+    if (state.view === "owed") return loadOwed();
     state.loading = true;
     draw();
     try {
@@ -131,13 +160,41 @@ export function mount(container, session, { data = defaultData, api = defaultApi
   const menuFor = (r) => rowMenu(r.id, [{ act: "view", label: "View" }, ...(canManage ? [{ act: "edit", label: "Edit" }] : [])], { label: `More for ${r.name}` });
   const addOrderBtn = (r) => (canOrder && r.status === "active" ? html`<button type="button" class="btn btn-compact btn-primary" data-act="add-order" data-id="${r.id}">Add order</button>` : "");
 
+  const oldestText = (r) => (r.oldestDays === null ? "—" : r.oldestDays === 0 ? "Today" : `${r.oldestDays} ${r.oldestDays === 1 ? "day" : "days"}`);
+  function owedView() {
+    const o = state.owed || { rows: [], total: 0 };
+    return html`<section class="card rv-total" data-role="total-unpaid"><span class="kpi-label">Total unpaid</span><b class="kpi-value" data-role="total-unpaid-amount">${formatCentavos(o.total, currency)}</b><span class="stat-hint">${o.rows.length} ${o.rows.length === 1 ? singular : plural.toLowerCase()} with a balance</span></section>
+      <section class="card">
+        ${!o.rows.length
+          ? emptyState({ iconName: "customers", title: "Nobody owes you", body: `When a saved ${singular} has an unpaid or partly paid order, they appear here.` })
+          : html`<div class="table-wrap"><table class="table table-compact rows" data-role="receivables">
+              <thead><tr><th class="m-only"></th><th>${plural.replace(/s$/, "")}</th><th class="num">Balance</th><th>Oldest unpaid</th><th><span class="visually-hidden">View</span></th></tr></thead>
+              <tbody>${o.rows.map(
+                (r) => html`<tr data-receivable="${r.id}">
+                  ${mobileCell({ title: r.name, sub: `Oldest unpaid: ${oldestText(r)}`, end: formatCentavos(r.balance, currency) })}
+                  <td class="cell-strong">${r.name}</td>
+                  <td class="num" data-col="balance"><strong>${formatCentavos(r.balance, currency)}</strong></td>
+                  <td data-col="oldest">${oldestText(r)}</td>
+                  <td class="row-actions" data-m="more"><button type="button" class="btn btn-compact" data-act="view-owed" data-id="${r.id}">View</button></td>
+                </tr>`
+              )}</tbody></table></div>`}
+      </section>
+      <p class="stat-hint page-foot" data-role="walkin-note">Saved ${plural.toLowerCase()} only. Unpaid walk-in orders are in Orders (Payment: Unpaid).</p>`;
+  }
+
   function draw() {
     if (!alive) return;
     const rows = state.rows.map((c) => customerRow(c, { timezone }));
+    const views = html`<div class="wl-tools">${segmented("view", [["all", plural], ["owed", "Who owes us"]], state.view, { label: `${plural} view` })}</div>`;
+    if (state.view === "owed") {
+      render(container, html`${pageHeader({ title: plural, subtitle: "Who owes you, how much, and since when." })}${views}${state.error ? html`<section class="card">${emptyState({ title: "Couldn't load", body: state.error })}</section>` : state.loading ? html`<section class="card">${skeleton(5)}</section>` : owedView()}`);
+      return;
+    }
     render(
       container,
       html`
         ${pageHeader({ title: plural, subtitle: "Save a buyer once; their next orders fill in by themselves.", actions: canManage ? html`<button type="button" class="btn btn-primary" data-act="new">+ New ${singular}</button>` : "" })}
+        ${views}
         ${filterBar({
           fields: [
             { name: "search", label: "Search by name", type: "search", primary: true, value: state.search },
@@ -194,12 +251,13 @@ export function mount(container, session, { data = defaultData, api = defaultApi
     return result;
   }
 
-  async function openView(c) {
+  // owed: what makes up the balance ([{ kind, label, day, due }]), from Who owes us.
+  async function openView(c, { owed = null } = {}) {
     const backdrop = document.createElement("div");
     backdrop.className = "modal-backdrop is-panel";
     document.body.appendChild(backdrop);
     const close = () => backdrop.remove();
-    const view = { orders: null, ordersError: false, all: false };
+    const view = { orders: null, ordersError: false, all: false, prices: null };
     const s = c.stats || {};
     const paint = () =>
       render(
@@ -212,6 +270,12 @@ export function mount(container, session, { data = defaultData, api = defaultApi
               <dt>Delivery address</dt><dd>${c.address || "—"}</dd>
             </dl>
             ${(canOrder && c.status === "active") || canSeeOrders ? html`<div class="page-actions">${canOrder && c.status === "active" ? html`<button type="button" class="btn btn-primary" data-act="add-order">Add order</button>` : ""}${canSeeOrders && (s.orderCount ?? 0) > 5 && !view.all ? html`<button type="button" class="btn" data-act="all-orders">View orders</button>` : ""}</div>` : ""}
+            ${owed
+              ? html`<h3 class="section-title">What makes up the ${formatCentavos(Math.max(0, s.outstandingBalance ?? 0), currency)}</h3>
+                  ${owed.length
+                    ? html`<ul class="cp-orders" data-role="balance-items">${owed.map((i) => html`<li class="cp-order" data-item="${i.kind}:${i.id}"><span class="cp-num">${i.label}</span><b class="cp-total">${formatCentavos(i.due, currency)} due</b><span class="cp-sub">${[i.day ? `${daysBetween(i.day, today())} days ago` : "", i.kind === "order" ? `${formatCentavos(i.paid, currency)} paid of ${formatCentavos(i.total, currency)}` : i.note || "Owed before Luna"].filter(Boolean).join(" · ")}</span>${i.kind === "opening" && canManage ? html`<span class="cp-due"><button type="button" class="btn btn-compact" data-act="ob-pay" data-id="${i.id}">Record payment</button></span>` : ""}</li>`)}</ul>`
+                    : html`<p class="stat-hint">${canSeeOrders ? "No unpaid items found." : "Ask the Owner for access to orders to see which ones are unpaid."}</p>`}`
+              : ""}
             <dl class="dl dl-compact" data-role="customer-stats">
               <dt>Total orders</dt><dd data-role="order-count">${s.orderCount ?? 0}</dd>
               <dt>Total purchased</dt><dd data-role="total-purchased">${formatCentavos(s.totalOrdered ?? 0, currency)}</dd>
@@ -234,6 +298,13 @@ export function mount(container, session, { data = defaultData, api = defaultApi
                               <span class="cp-due" data-role="balance">${due ? `${formatCentavos(due, currency)} due` : ""}</span></li>`;
                           })}</ul>`}</div>`
               : ""}
+            <h3 class="section-title">Special prices</h3>
+            <div data-role="special-prices">${view.prices === null
+              ? html`<p class="stat-hint">Loading…</p>`
+              : html`${view.prices.length
+                  ? html`<ul class="cp-orders">${view.prices.map((p) => html`<li class="cp-order" data-price="${p.productId}"><span class="cp-num">${p.productName}</span><b class="cp-total">${formatCentavos(p.price, currency)}</b><span class="cp-sub">${p.sku || ""}</span>${canManage ? html`<span class="cp-due"><button type="button" class="btn btn-compact btn-ghost" data-act="price-edit" data-product="${p.productId}">Change</button><button type="button" class="btn btn-compact btn-ghost" data-act="price-clear" data-product="${p.productId}">Remove</button></span>` : ""}</li>`)}</ul>`
+                  : html`<p class="stat-hint">None. Their orders use each product's normal price.</p>`}
+                ${canManage ? html`<button type="button" class="btn btn-compact" data-act="price-add">+ Special price</button>` : ""}`}</div>
             <details class="help-details"><summary>Activity</summary><ul class="list activity" data-role="customer-activity">${customerActivity(c, { timezone }).map((line) => html`<li>${line}</li>`)}</ul></details>
           </div>
           <div class="modal-footer">
@@ -249,6 +320,36 @@ export function mount(container, session, { data = defaultData, api = defaultApi
         </div>`
       );
     paint();
+    const loadPrices = () =>
+      (data.listCustomerPrices ? data.listCustomerPrices(businessId, c.id) : Promise.resolve([]))
+        .then((rows) => (view.prices = [...rows].sort((a, b) => (a.productName || "").localeCompare(b.productName || ""))))
+        .catch(() => (view.prices = []))
+        .then(() => backdrop.isConnected && paint());
+    loadPrices();
+    // + Special price / Change: one product and its price for this customer.
+    const priceDialog = async (current = null) => {
+      const products = current ? [] : await editorDeps.listActiveProducts().catch(() => []);
+      const taken = new Set((view.prices || []).map((p) => p.productId));
+      const choices = products.filter((p) => p.status === "active" && !taken.has(p.id));
+      if (!current && !choices.length) {
+        toast("Every active product already has a special price for this customer, or there are no products yet.", "warning");
+        return null;
+      }
+      return formDialog({
+        title: current ? `${current.productName}: special price` : `Special price for ${c.name}`,
+        intro: "Used on this customer's new orders. Orders already made keep their prices.",
+        fields: [
+          ...(current ? [] : [{ name: "productId", label: "Product", type: "select", options: choices.map((p) => ({ value: p.id, label: `${p.name} · normal ${formatCentavos(p.sellingPrice, currency)}` })), value: choices[0].id, required: true }]),
+          { name: "price", label: `Special price (${currency})`, value: current ? (current.price / 100).toFixed(2) : "", inputmode: "decimal", required: true },
+        ],
+        submitLabel: "Save",
+        onSubmit: (v) => {
+          const price = parseCentavos(v.price);
+          if (!(price > 0)) throw new Error("Enter the special price (more than ₱0)");
+          return api("customers", { method: "POST", body: { action: "setPrice", customerId: c.id, productId: current ? current.productId : v.productId, price } });
+        },
+      });
+    };
     if (canSeeOrders) {
       data
         .listCustomerOrders(businessId, c.id)
@@ -265,6 +366,62 @@ export function mount(container, session, { data = defaultData, api = defaultApi
       if (act === "more") {
         const menu = backdrop.querySelector('[data-role="more-menu"]');
         menu.hidden = !menu.hidden;
+        return undefined;
+      }
+      if (act === "ob-pay") {
+        const item = (owed || []).find((x) => x.kind === "opening" && x.id === e.target.closest("[data-id]").dataset.id);
+        if (!item) return undefined;
+        const idempotencyKey = newKey();
+        try {
+          const r = await formDialog({
+            title: `${c.name}: payment on the opening balance`,
+            intro: `${formatCentavos(item.due, currency)} still owed from before Luna.`,
+            fields: [
+              { name: "amount", label: `Amount (${currency})`, value: (item.due / 100).toFixed(2), inputmode: "decimal", required: true },
+              { name: "method", label: "Method", type: "select", options: Object.entries(PAYMENT_METHODS).map(([value, m]) => ({ value, label: m.label })), value: "cash" },
+              { name: "reference", label: "Reference no.", more: true },
+            ],
+            moreLabel: "More details",
+            submitLabel: "Save",
+            onSubmit: (v) => {
+              const amount = parseCentavos(v.amount);
+              if (!(amount > 0)) throw new Error("Enter an amount");
+              if (amount > item.due) throw new Error(`That's more than what's left (${formatCentavos(item.due, currency)})`);
+              return api("customers", { method: "POST", body: { action: "payOpening", idempotencyKey, openingBalanceId: item.id, amount, method: v.method, ...(v.reference ? { reference: v.reference } : {}) } });
+            },
+          });
+          if (r) {
+            toast("Payment recorded", "success");
+            close();
+            load();
+          }
+        } catch (err) {
+          toast(err.message, "danger");
+        }
+        return undefined;
+      }
+      if (act === "price-add" || act === "price-edit") {
+        try {
+          const r = await priceDialog(act === "price-edit" ? view.prices.find((p) => p.productId === e.target.closest("[data-product]").dataset.product) : null);
+          if (r) {
+            toast("Special price saved", "success");
+            loadPrices();
+          }
+        } catch (err) {
+          toast(err.message, "danger");
+        }
+        return undefined;
+      }
+      if (act === "price-clear") {
+        const p = view.prices.find((x) => x.productId === e.target.closest("[data-product]").dataset.product);
+        if (!p || !(await confirmDialog({ title: `Remove ${c.name}'s special price for ${p.productName}?`, body: "Their next orders use the product's normal price. Orders already made keep their prices.", confirmLabel: "Remove" }))) return undefined;
+        try {
+          await api("customers", { method: "POST", body: { action: "clearPrice", customerId: c.id, productId: p.productId } });
+          toast("Special price removed", "success");
+          loadPrices();
+        } catch (err) {
+          toast(err.message, "danger");
+        }
         return undefined;
       }
       if (act === "all-orders") {
@@ -323,6 +480,13 @@ export function mount(container, session, { data = defaultData, api = defaultApi
       case "view":
         closeMenus();
         return openView(row());
+      case "view-owed": {
+        const r = state.owed?.rows.find((x) => x.id === el.dataset.id);
+        return r ? openView(r.customer, { owed: r.items }) : undefined;
+      }
+      case "seg":
+        state.view = el.dataset.value === "owed" ? "owed" : "all";
+        return load();
       case "edit":
         closeMenus();
         return done("Customer updated")(await editCustomerDialog({ customer: row(), api }));

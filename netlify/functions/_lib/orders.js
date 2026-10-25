@@ -109,6 +109,20 @@ function moveCustomerStats(tx, { tenant, FieldValue, order, newCustomerId, newTo
 
 const hashRequest = (value) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 
+// Customer-specific prices (2026-10-25): a saved customer may have a
+// special selling price for a product (customerPrices/{customerId}_{productId},
+// server-written, ./customers.js). A line is priced HERE, when it's added to
+// the order: the customer's special price if there is one, else the
+// product's price. The price is then the order's own (a later price change
+// never rewrites an order). Read inside the order's transaction.
+export const customerPriceId = (customerId, productId) => `${customerId}_${productId}`;
+async function specialPrices(tx, tenant, customerId, productIds) {
+  if (!customerId || !productIds.length) return new Map();
+  const snaps = await Promise.all(productIds.map((id) => tx.get(tenant.doc("customerPrices", customerPriceId(customerId, id)))));
+  return new Map(snaps.flatMap((s, i) => (s.exists && s.data().active !== false && Number.isSafeInteger(s.data().price) ? [[productIds[i], s.data().price]] : [])));
+}
+const priceOf = (special, productId, product) => (special.has(productId) ? { unitPrice: special.get(productId), customerPrice: true } : { unitPrice: product.sellingPrice });
+
 function movementsFor(lines, type, orderId, orderNumber, reason) {
   return lines.map((l) => ({ productId: l.productId, movement: { type, quantity: l.quantity, referenceType: "order", referenceId: orderId, note: orderNumber, reason } }));
 }
@@ -171,6 +185,7 @@ export async function createOrder({ db, tenant, FieldValue, business, entitlemen
       for (const r of plan.results) {
         if (r.product.status !== "active") throw new OrderError("product-inactive", `${r.product.name} is inactive`);
       }
+      const special = await specialPrices(tx, tenant, data.customerId, plan.results.map((r) => r.productId));
       const lines = plan.results.map((r, i) => ({
         lineId: `L${i + 1}`,
         productId: r.productId,
@@ -178,7 +193,7 @@ export async function createOrder({ db, tenant, FieldValue, business, entitlemen
         name: r.product.name,
         unit: r.product.unit,
         quantity: data.items[i].quantity,
-        unitPrice: r.product.sellingPrice,
+        ...priceOf(special, r.productId, r.product),
       }));
       const totals = computeTotals(lines, data.discount);
 
@@ -288,16 +303,17 @@ export async function updateOrder({ db, tenant, FieldValue, business = null, ord
 
     const plan = moves.length ? await prepareMovements(tx, { tenant, items: moves }) : null;
     const fresh = new Map(plan ? plan.results.map((r) => [r.productId, r.product]) : []);
+    const special = await specialPrices(tx, tenant, link.data.customerId, data.items.filter((i) => !oldLines.has(i.productId)).map((i) => i.productId));
     let n = order.items.length;
     const lines = data.items.map((i) => {
       const prior = oldLines.get(i.productId);
-      if (prior) return { lineId: prior.lineId, productId: prior.productId, sku: prior.sku, name: prior.name, unit: prior.unit, quantity: i.quantity, unitPrice: prior.unitPrice };
+      if (prior) return { lineId: prior.lineId, productId: prior.productId, sku: prior.sku, name: prior.name, unit: prior.unit, quantity: i.quantity, unitPrice: prior.unitPrice, ...(prior.customerPrice ? { customerPrice: true } : {}) };
       const p = fresh.get(i.productId);
       if (!p || p.status !== "active") throw new OrderError("product-inactive", "A new product on the order is unavailable");
       n += 1;
-      // New products are added at their current trusted price.
+      // New products are added at their current trusted price (the customer's special one first).
       for (const c of changes) if (c.productId === i.productId) c.sku = p.sku;
-      return { lineId: `L${n}`, productId: i.productId, sku: p.sku, name: p.name, unit: p.unit, quantity: i.quantity, unitPrice: p.sellingPrice };
+      return { lineId: `L${n}`, productId: i.productId, sku: p.sku, name: p.name, unit: p.unit, quantity: i.quantity, ...priceOf(special, i.productId, p) };
     });
     const totals = computeTotals(lines, data.discount);
     const amountPaid = order.amountPaid || 0;
@@ -401,15 +417,16 @@ async function correctFulfilled(tx, { tenant, FieldValue, business, ref, orderId
 
   const plan = moves.length ? await prepareMovements(tx, { tenant, items: moves }) : null;
   const results = new Map(plan ? plan.results.map((r) => [r.productId, r]) : []);
+  const special = await specialPrices(tx, tenant, data.customerId, data.items.filter((i) => !oldLines.has(i.productId)).map((i) => i.productId));
   let n = order.items.length;
   const lines = data.items.map((i) => {
     const prior = oldLines.get(i.productId);
-    if (prior) return { lineId: prior.lineId, productId: prior.productId, sku: prior.sku, name: prior.name, unit: prior.unit, quantity: i.quantity, unitPrice: prior.unitPrice };
+    if (prior) return { lineId: prior.lineId, productId: prior.productId, sku: prior.sku, name: prior.name, unit: prior.unit, quantity: i.quantity, unitPrice: prior.unitPrice, ...(prior.customerPrice ? { customerPrice: true } : {}) };
     const p = results.get(i.productId)?.product;
     if (!p || p.status !== "active") throw new OrderError("product-inactive", "A new product on the order is unavailable");
     n += 1;
     for (const c of changes) if (c.productId === i.productId) c.sku = p.sku;
-    return { lineId: `L${n}`, productId: i.productId, sku: p.sku, name: p.name, unit: p.unit, quantity: i.quantity, unitPrice: p.sellingPrice };
+    return { lineId: `L${n}`, productId: i.productId, sku: p.sku, name: p.name, unit: p.unit, quantity: i.quantity, ...priceOf(special, i.productId, p) };
   });
   const totals = computeTotals(lines, data.discount);
   const amountPaid = order.amountPaid || 0;

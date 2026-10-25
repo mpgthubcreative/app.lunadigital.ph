@@ -92,7 +92,7 @@ describe("Payment ▾", () => {
     form.elements.reference.value = "9182 7364 5";
     form.dispatchEvent(new Event("submit", { cancelable: true }));
     await flush();
-    expect(d.api).toHaveBeenCalledWith("payments", { method: "POST", body: { action: "record", orderId: unpaid.id, payment: { amount: 245000, method: "gcash", reference: "918273645" } } });
+    expect(d.api).toHaveBeenCalledWith("payments", { method: "POST", body: { action: "record", idempotencyKey: expect.stringMatching(/^[A-Za-z0-9_-]{16,64}$/), orderId: unpaid.id, payment: { amount: 245000, method: "gcash", reference: "918273645" } } });
     expect(document.querySelector(".modal-backdrop")).toBeNull();
     expect(d.data.listOrders).toHaveBeenCalledTimes(2); // back on the refreshed list
   });
@@ -218,7 +218,7 @@ describe("Orders row: the latest payment and what to do next (2026-10-22)", () =
     expect(cell(waiting).querySelector(".lp-what").textContent.replace(/\s+/g, " ").trim()).toBe("GCash · Ref 1234567891234 Waiting verification");
     expect([...cell(waiting).querySelectorAll("button")].map((b) => b.textContent.trim())).toEqual(["View screenshot", "Verify", "Not accepted"]);
     expect(cell(refOnly).querySelector(".lp-what").textContent.replace(/\s+/g, " ").trim()).toBe("GCash · Ref 1234567891234 Verified");
-    expect([...cell(refOnly).querySelectorAll("button")].map((b) => b.textContent.trim())).toEqual(["Receipt", "Payment link · Copy"]);
+    expect([...cell(refOnly).querySelectorAll("button")].map((b) => b.textContent.trim())).toEqual(["Confirmation", "Payment link · Copy"]);
     expect(cell(shotOnly).querySelector(".lp-what").textContent.replace(/\s+/g, " ").trim()).toBe("GCash · Screenshot submitted Waiting verification");
   });
 
@@ -284,7 +284,7 @@ describe("Payments page (More → Payments): audit and reconciliation", () => {
     expect(container.querySelector('[data-role="today"]').textContent.replace(/\s+/g, " ").trim()).toBe("Today ₱3,450.00 received · 2 waiting to check");
     expect([...container.querySelectorAll('[data-role="seg-view"] .seg-btn')].map((b) => b.textContent)).toEqual(["All", "Needs checking", "Verified"]);
     const text = (id) => [...container.querySelectorAll(`[data-payment="${id}"] .py-who, [data-payment="${id}"] .py-sub, [data-payment="${id}"] .py-amt, [data-payment="${id}"] .py-state, [data-payment="${id}"] .py-acts button`)].map((x) => x.textContent.replace(/\s+/g, " ").trim()).join(" ");
-    expect(text("pay1")).toMatch(/^ABC Store · ORD-1042 GCash · Ref 918273645 · .* ₱2,450\.00 Verified View proof Receipt$/);
+    expect(text("pay1")).toMatch(/^ABC Store · ORD-1042 GCash · Ref 918273645 · .* ₱2,450\.00 Verified View proof Confirmation$/);
     expect(text("pay2")).toMatch(/^XYZ · ORD-1044 Maya · Screenshot · from the customer · .* ₱1,000\.00 Waiting verification View proof Verify$/);
     expect(text("pay3")).toMatch(/^Walk-in · ORD-1045 Cash · .* ₱500\.00 Waiting verification Verify$/);
     expect(container.querySelector("table")).toBeNull();

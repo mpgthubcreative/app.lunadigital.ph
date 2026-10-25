@@ -18,8 +18,8 @@ const DERIVED = ["metrics", "financialMetrics", "orderCosts", "spendingMetrics",
 export const RESET_PLAN = Object.freeze({
   distributor: {
     label: "Luna Distributor",
-    removes: ["orders", "orderPayLinks", "payments", "paymentRefs", "products", "productCosts", "skuIndex", "inventoryTransactions", "inventoryTransactionCosts", "customers", "expenses", "imports", "reports", ...DERIVED],
-    summary: ["Orders and their payments", "Products, stock and stock movements (and costs)", "Customers", "Expenses", "Dashboard and report totals", "Uploaded files (product photos, payment and expense proofs)"],
+    removes: ["orders", "orderPayLinks", "payments", "paymentRefs", "products", "productCosts", "skuIndex", "inventoryTransactions", "inventoryTransactionCosts", "customers", "customerPrices", "openingBalances", "setupImports", "expenses", "imports", "reports", ...DERIVED],
+    summary: ["Orders and their payments", "Products, stock and stock movements (and costs)", "Customers, their special prices and opening balances", "Expenses", "Dashboard and report totals", "Uploaded files (product photos, payment and expense proofs)"],
   },
   "household-payroll": {
     label: "Luna Household",

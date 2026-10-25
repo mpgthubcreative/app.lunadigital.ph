@@ -193,3 +193,20 @@ describe("proofs on the Storage emulator", () => {
     expect(files).toHaveLength(0);
   });
 });
+
+// 2026-10-25 (pilot readiness): one request key, sent several times at once
+// (double tap / retry storm) on the real emulator → exactly one payment.
+describe("the same Record request sent at once", () => {
+  it("8 identical cash records with one key: one payment, the order and gauges move once", async () => {
+    const w = await world({ total: 1000000 });
+    const key = `conc-same-key-${w.business.id}`.slice(0, 60);
+    const results = await settle(Array.from({ length: 8 }, () => pay.recordPayment({ db, bucket, tenant: w.tenant, FieldValue, business: w.business, orderId: w.orderId, input: { amount: 120000, method: "cash" }, actor, canVerify: true, now: NOW, idempotencyKey: key })));
+    expectExplicit(results);
+    const done = ok(results);
+    expect(done.length).toBeGreaterThan(0);
+    expect(new Set(done.map((r) => r.value.paymentId)).size).toBe(1);
+    const { order, live } = await consistent(w);
+    expect(live).toHaveLength(1);
+    expect(order).toMatchObject({ amountPaid: 120000, paymentCount: 1 });
+  });
+});

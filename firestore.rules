@@ -300,6 +300,11 @@ service cloud.firestore {
       match /productCosts/{id}              { allow read: if canAccessModule(bid, 'inventory', 'inventory.costs'); }
       match /inventoryTransactionCosts/{id} { allow read: if canAccessModule(bid, 'inventory', 'inventory.costs'); }
       match /customers/{id}             { allow read: if canAccessModule(bid, 'customers', 'customers.view'); }
+      // 2026-10-25: a customer's special prices (New Order shows the price
+      // the server will use; linking a saved customer needs customers.view)
+      // and opening balances (Who owes us).
+      match /customerPrices/{id}        { allow read: if canAccessModule(bid, 'customers', 'customers.view'); }
+      match /openingBalances/{id}       { allow read: if canAccessModule(bid, 'customers', 'customers.view'); }
       match /expenses/{id}              { allow read: if canAccessModule(bid, 'expenses', 'expenses.view'); }
       match /orders/{id}                { allow read: if canAccessModule(bid, 'orders', 'orders.view'); }
       // Per-order COGS / gross profit: profitability, so dashboard.financials,

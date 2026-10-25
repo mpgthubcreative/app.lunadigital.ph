@@ -58,7 +58,7 @@ export function latestPaymentCell(o, can) {
     lp.hasProof && lp.id && can.viewPayments ? html`<button type="button" class="btn-linklike" data-act="lp-proof" data-id="${o.id}">View screenshot</button>` : "",
     lp.state === "for_verification" && can.verifyPayment ? html`<button type="button" class="btn btn-compact" data-act="lp-verify" data-id="${o.id}">Verify</button>` : "",
     lp.state === "for_verification" && can.verifyPayment && lp.via === "payment_link" ? html`<button type="button" class="btn-linklike lp-reject" data-act="lp-reject" data-id="${o.id}">Not accepted</button>` : "",
-    lp.state === "verified" ? html`<button type="button" class="btn-linklike" data-act="lp-receipt" data-id="${o.id}">Receipt</button>` : "",
+    lp.state === "verified" ? html`<button type="button" class="btn-linklike" data-act="lp-receipt" data-id="${o.id}">Confirmation</button>` : "",
   ].filter(Boolean);
   return html`<div class="lp" data-role="latest-payment">
     <span class="lp-what">${what || "Payment"}${word ? html` <span class="lp-state" data-tone="${tone}">${word}</span>` : ""}</span>

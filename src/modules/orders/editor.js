@@ -29,6 +29,11 @@ const newKey = () => (globalThis.crypto && crypto.randomUUID ? crypto.randomUUID
 // prefill (a NEW order from Customers → Add order): { customerId, customer:
 // { name, phone }, deliveryAddress } so the saved details aren't retyped.
 // The order keeps its own copy: editing the customer later never changes it.
+// Special prices (2026-10-25): with a saved customer linked, a product's
+// price is that customer's special price when there is one. The server
+// prices every line the same way (and is the authority); lines already on
+// an order keep the price they were added at.
+const defaultCustomerPrices = (businessId, customerId) => import("../customers/data.js").then((m) => m.listCustomerPrices(businessId, customerId));
 export function openOrderEditor({ session, deps, order = null, prefill = null }) {
   const perms = session.member.permissions;
   const canDiscount = perms["orders.discount"] === true;
@@ -54,12 +59,13 @@ export function openOrderEditor({ session, deps, order = null, prefill = null })
     reason: "",
     discountText: order ? (order.discount / 100).toFixed(2) : "0",
     // Open orders hold their quantity in reserve; a fulfilled order holds none.
-    lines: (order?.items || []).map((l) => ({ productId: l.productId, sku: l.sku, name: l.name, unit: l.unit, unitPrice: l.unitPrice, quantityText: formatQuantity(l.quantity), reservedHere: correcting ? 0 : l.quantity, available: null })),
+    lines: (order?.items || []).map((l) => ({ productId: l.productId, sku: l.sku, name: l.name, unit: l.unit, unitPrice: l.unitPrice, special: l.customerPrice === true, quantityText: formatQuantity(l.quantity), reservedHere: correcting ? 0 : l.quantity, available: null })),
     // What this (open) order already holds per product: a row switched back
     // to one of them counts it as available again.
     reservedBy: Object.fromEntries((order?.items || []).map((l) => [l.productId, correcting ? 0 : l.quantity])),
     hint: "",
     products: null, // every active product, for the dropdown (null = loading)
+    prices: new Map(), // the linked customer's special prices (productId → centavos)
     error: "",
     busy: false,
   };
@@ -208,7 +214,7 @@ export function openOrderEditor({ session, deps, order = null, prefill = null })
     const productOptions = (l) => {
       const list = state.products || [];
       const own = l.productId && !list.some((p) => p.id === l.productId) ? [{ id: l.productId, sku: l.sku, name: l.name, sellingPrice: l.unitPrice }] : [];
-      return html`<option value="" ${l.productId ? "" : "selected"}>${list.length || own.length ? "Choose a product…" : state.products === null ? "Loading products…" : "No active products yet"}</option>${[...own, ...list].map((p) => html`<option value="${p.id}" ${p.id === l.productId ? "selected" : ""}>${p.name} · ${formatCentavos(p.sellingPrice, currency)}</option>`)}`;
+      return html`<option value="" ${l.productId ? "" : "selected"}>${list.length || own.length ? "Choose a product…" : state.products === null ? "Loading products…" : "No active products yet"}</option>${[...own, ...list].map((p) => html`<option value="${p.id}" ${p.id === l.productId ? "selected" : ""}>${p.name} · ${formatCentavos(state.prices.get(p.id) ?? p.sellingPrice, currency)}${state.prices.has(p.id) ? " (special)" : ""}</option>`)}`;
     };
     const unitOf = (l) => UNITS[l.unit]?.label ?? l.unit ?? "";
     function paintLines() {
@@ -219,7 +225,7 @@ export function openOrderEditor({ session, deps, order = null, prefill = null })
           (l, i) => html`<div class="oe-item" data-line="${l.productId || ""}" data-index="${i}">
             <select class="select oe-item-product" name="item-${i}" data-item-index="${i}" aria-label="Product for item ${i + 1}">${productOptions(l)}</select>
             <input class="input input-qty oe-item-qty" name="qty-${i}" data-line-index="${i}" value="${state.lines[i].quantityText}" inputmode="${UNITS[l.unit]?.decimals ? "decimal" : "numeric"}" aria-label="Quantity for ${l.name || `item ${i + 1}`}" autocomplete="off" ${l.productId ? "" : "disabled"} />
-            <span class="oe-item-price" data-col="unitPrice">${l.productId ? html`× ${formatCentavos(l.unitPrice, currency)}` : ""}</span>
+            <span class="oe-item-price" data-col="unitPrice">${l.productId ? html`× ${formatCentavos(l.unitPrice, currency)}${state.lines[i].special ? html` <small class="oe-special" data-role="special-price">special</small>` : ""}` : ""}</span>
             <b class="oe-item-total" data-col="lineSubtotal">${l.quantity ? formatCentavos(computeTotals([l]).subtotal, currency) : "—"}</b>
             <button type="button" class="btn btn-compact btn-ghost oe-item-remove" data-act="remove" data-index="${i}" aria-label="Remove ${l.name || `item ${i + 1}`}">✕</button>
             ${l.qtyError ? html`<div class="form-error oe-item-note">${l.qtyError}</div>` : l.productId && l.available !== null && l.available !== undefined ? html`<div class="stat-hint oe-item-note">${formatQuantity(l.available + (l.reservedHere || 0))} ${unitOf(l)} available</div>` : ""}
@@ -248,7 +254,7 @@ export function openOrderEditor({ session, deps, order = null, prefill = null })
         form.elements[`qty-${state.lines.indexOf(row)}`]?.focus();
         return;
       }
-      const line = { productId: p.id, sku: p.sku, name: p.name, unit: p.unit, unitPrice: p.sellingPrice, quantityText: i === null ? addQty : state.lines[i].quantityText || "1", reservedHere: state.reservedBy[p.id] || 0, available: p.available ?? null };
+      const line = { productId: p.id, sku: p.sku, name: p.name, unit: p.unit, unitPrice: state.prices.get(p.id) ?? p.sellingPrice, special: state.prices.has(p.id), quantityText: i === null ? addQty : state.lines[i].quantityText || "1", reservedHere: state.reservedBy[p.id] || 0, available: p.available ?? null };
       if (i === null) state.lines.push(line);
       else state.lines[i] = line;
       state.hint = "";
@@ -291,7 +297,7 @@ export function openOrderEditor({ session, deps, order = null, prefill = null })
         productSelect,
         state.products.length
           ? html`<option value="">Choose a product (${state.products.length})…</option>${state.products.map(
-              (p) => html`<option value="${p.id}">${p.sku} · ${p.name} · ${formatCentavos(p.sellingPrice, currency)} · ${formatQuantity(p.available)} ${UNITS[p.unit]?.label ?? p.unit} left</option>`
+              (p) => html`<option value="${p.id}">${p.sku} · ${p.name} · ${formatCentavos(state.prices.get(p.id) ?? p.sellingPrice, currency)}${state.prices.has(p.id) ? " (special)" : ""} · ${formatQuantity(p.available)} ${UNITS[p.unit]?.label ?? p.unit} left</option>`
             )}`
           : html`<option value="">No active products yet: add them in Inventory</option>`
       );
@@ -305,7 +311,36 @@ export function openOrderEditor({ session, deps, order = null, prefill = null })
       .then(() => {
         paintProducts();
         paintLines(); // the rows' product lists
+        if (state.customerId) loadPrices();
       });
+
+    // The linked customer's special prices; the lines NEW to this order
+    // follow them (a line already on the order keeps its price).
+    const onOrder = new Set((order?.items || []).map((l) => l.productId));
+    let pricesFor;
+    async function loadPrices() {
+      const id = state.customerId;
+      pricesFor = id;
+      let rows = [];
+      if (id) {
+        try {
+          rows = await (deps.listCustomerPrices ? deps.listCustomerPrices(id) : defaultCustomerPrices(session.business.id, id));
+        } catch {
+          rows = [];
+        }
+      }
+      if (pricesFor !== id) return; // a newer pick came first
+      state.prices = new Map(rows.map((r) => [r.productId, r.price]));
+      const byId = new Map((state.products || []).map((p) => [p.id, p]));
+      for (const l of state.lines) {
+        if (!l.productId || onOrder.has(l.productId)) continue;
+        if (state.prices.has(l.productId)) Object.assign(l, { unitPrice: state.prices.get(l.productId), special: true });
+        else if (byId.has(l.productId)) Object.assign(l, { unitPrice: byId.get(l.productId).sellingPrice, special: false });
+      }
+      if (state.products) paintProducts();
+      paintLines();
+    }
+    if (state.customerId) loadPrices();
 
     form.addEventListener("input", (e) => {
       const t = e.target;
@@ -359,11 +394,13 @@ export function openOrderEditor({ session, deps, order = null, prefill = null })
           }
           state.customerMatches = [];
           paintLink();
+          loadPrices();
         }
       }
       if (act === "unlink") {
         state.customerId = null;
         paintLink();
+        loadPrices();
         form.elements.name.focus();
       }
       if (act === "walk-in") {

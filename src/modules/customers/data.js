@@ -38,3 +38,33 @@ export async function listCustomerOrders(businessId, customerId, max = HISTORY_S
   const { collection, query, where, orderBy, limit, getDocs } = lite;
   return docs(await getDocs(query(collection(db, "businesses", businessId, "orders"), where("customerId", "==", customerId), orderBy("createdAt", "desc"), limit(max))));
 }
+
+// A customer's special prices (2026-10-25), active ones: Map(productId → centavos).
+export async function listCustomerPrices(businessId, customerId) {
+  const { db, lite } = await getFirestoreLite();
+  const { collection, query, where, limit, getDocs } = lite;
+  const rows = docs(await getDocs(query(collection(db, "businesses", businessId, "customerPrices"), where("customerId", "==", customerId), limit(1000))));
+  return rows.filter((r) => r.active !== false && Number.isSafeInteger(r.price));
+}
+
+// ---- Who owes us (2026-10-25) ----
+// Saved customers with something unpaid, biggest balance first. The
+// balance is the server's (orders + opening balances, payments off).
+export async function listCustomersWithBalance(businessId, max = 300) {
+  const { db, lite } = await getFirestoreLite();
+  const { collection, query, where, orderBy, limit, getDocs } = lite;
+  return docs(await getDocs(query(collection(db, "businesses", businessId, "customers"), where("stats.outstandingBalance", ">", 0), orderBy("stats.outstandingBalance", "desc"), limit(max))));
+}
+// Orders with something still to pay (needs orders.view): what makes up
+// each balance, and how old the oldest one is.
+export async function listUnpaidOrders(businessId, max = 1000) {
+  const { db, lite } = await getFirestoreLite();
+  const { collection, query, where, limit, getDocs } = lite;
+  return docs(await getDocs(query(collection(db, "businesses", businessId, "orders"), where("balance", ">", 0), limit(max))));
+}
+// Opening balances still owed (what customers already owed at the cutover).
+export async function listOpenOpeningBalances(businessId, max = 1000) {
+  const { db, lite } = await getFirestoreLite();
+  const { collection, query, where, limit, getDocs } = lite;
+  return docs(await getDocs(query(collection(db, "businesses", businessId, "openingBalances"), where("balance", ">", 0), limit(max))));
+}

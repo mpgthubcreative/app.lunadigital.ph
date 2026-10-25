@@ -30,6 +30,9 @@ import { productRow, historyRow, unitLabel, qty } from "./view.js";
 const UNIT_OPTIONS = Object.entries(UNITS).map(([value, u]) => ({ value, label: `${u.label}${u.decimals ? ` (up to ${u.decimals} decimals)` : " (whole numbers)"}` }));
 const REASON_OPTIONS = Object.entries(ADJUSTMENT_REASONS).map(([value, label]) => ({ value, label }));
 const pesos = (centavos) => (centavos / 100).toFixed(2);
+// One request key per stock dialog: Save tapped twice, or sent again after a
+// slow network, changes stock once (the server keeps one movement).
+const newKey = () => (globalThis.crypto && crypto.randomUUID ? crypto.randomUUID() : `k${Date.now()}${Math.random().toString(36).slice(2)}${Math.random().toString(36).slice(2)}`).replace(/[^A-Za-z0-9_-]/g, "");
 
 // Stock count (2026-10-22): the stock on hand the user counted, as a scaled
 // quantity for the product's unit (0 or more; the unit's decimals).
@@ -228,6 +231,7 @@ export function mount(container, session, { data = defaultData, api = defaultApi
   // turns the count into the adjustment (count − on hand) in its own
   // transaction; nobody works out a + or − here.
   async function adjust(p) {
+    const idempotencyKey = newKey();
     const ok = await formDialog({
       title: `Update stock: ${p.name}`,
       intro: `Current stock: ${qty(p.onHand, p.unit)}${p.reserved ? ` (${qty(p.reserved, p.unit)} set aside for orders)` : ""}.`,
@@ -252,7 +256,7 @@ export function mount(container, session, { data = defaultData, api = defaultApi
         if (onHand === p.onHand) throw new Error(`Stock on hand is already ${qty(onHand, p.unit)}. Nothing to change.`);
         if (onHand < (p.reserved || 0)) throw new Error(`${qty(p.reserved, p.unit)} are set aside for open orders, so stock on hand can't be less than that`);
         if (v.reason === "other" && !v.note.trim()) throw new Error("Explain the change in the note (Reason: Other)");
-        return send("inventory", { action: "count", productId: p.id, onHand, reason: v.reason, ...(v.note ? { note: v.note } : {}) });
+        return send("inventory", { action: "count", idempotencyKey, productId: p.id, onHand, reason: v.reason, ...(v.note ? { note: v.note } : {}) });
       },
     });
     if (ok) await done(`Stock updated: ${qty(ok.balance?.onHand ?? 0, p.unit)}`);
@@ -264,6 +268,7 @@ export function mount(container, session, { data = defaultData, api = defaultApi
   // starting stock sets it, a delivery averages into it; fulfilled orders'
   // COGS, Reports and the Costs page all use that same one figure.
   async function stockIn(kind, p) {
+    const idempotencyKey = newKey();
     const ok = await formDialog({
       title: kind === "receipt" ? `Receive ${p.name}` : `Starting stock: ${p.name}`,
       intro: kind === "opening" ? "What you have now and what one unit cost you. Only before any other stock movement." : "",
@@ -276,7 +281,7 @@ export function mount(container, session, { data = defaultData, api = defaultApi
       moreLabel: "More details",
       submitLabel: kind === "receipt" ? "Receive" : "Record",
       onSubmit: (v) => {
-        const body = { action: kind, productId: p.id, quantity: parseQuantity(v.quantity, p.unit), unitCost: parseCentavos(v.unitCost) };
+        const body = { action: kind, idempotencyKey, productId: p.id, quantity: parseQuantity(v.quantity, p.unit), unitCost: parseCentavos(v.unitCost) };
         if (v.reference) body.reference = v.reference;
         if (v.note) body.note = v.note;
         return send("inventory", body);

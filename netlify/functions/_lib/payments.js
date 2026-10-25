@@ -26,7 +26,7 @@
 import { applyRollup, paymentContribution, diffRollup } from "./reports.js";
 import { sniffImageType, STORED_IMAGE_TYPES } from "../../../shared/image-type.js";
 import { applyCustomerStats } from "./customers.js";
-import { randomUUID } from "node:crypto";
+import { randomUUID, createHash } from "node:crypto";
 import {
   PAYMENT_SCHEMA_VERSION,
   PAYMENT_METHODS,
@@ -39,7 +39,7 @@ import {
   validatePaymentInput,
   derivePaymentStatus,
 } from "../../../shared/payments.js";
-import { isValidOrderId, MAX_HISTORY_ENTRIES } from "../../../shared/orders.js";
+import { isValidOrderId, isValidIdempotencyKey, MAX_HISTORY_ENTRIES } from "../../../shared/orders.js";
 import { businessDate } from "../../../shared/metrics.js";
 import { recordDailyMetrics, adjustCurrentMetrics } from "./metrics.js";
 import { prepareNotifications, prepareResolution } from "./notifications.js";
@@ -158,11 +158,30 @@ const lastPaymentOf = (id, p) => ({ id, amount: p.amount, method: p.method, refe
 // link's submit key), so a retry finds the same payment instead of adding a
 // second one (-> { alreadyRecorded: true }). extra: fields stored on the
 // payment as they are (e.g. via: "payment_link", customerId).
-export async function recordPayment({ db, bucket, tenant, FieldValue, business, orderId, input, proof = null, actor, canVerify, now = new Date(), paymentId = null, extra = null }) {
+// idempotencyKey (2026-10-25, Record payment in Luna): the request's key.
+// The payment's id is derived from it, so the same request sent again (a
+// double tap, a slow network, a browser retry, two at once) finds the one
+// payment instead of adding a second; the same key with a different
+// payment is refused.
+export const paymentIdForKey = (key) => `rk${createHash("sha256").update(String(key)).digest("hex").slice(0, 30)}`;
+export async function recordPayment({ db, bucket, tenant, FieldValue, business, orderId, input, proof = null, actor, canVerify, now = new Date(), paymentId = null, extra = null, idempotencyKey = null }) {
   const data = validatePaymentInput(input, { hasProof: Boolean(proof) });
+  if (idempotencyKey !== null && !isValidIdempotencyKey(idempotencyKey)) throw new PaymentError("invalid-input", "A valid request key is required");
+  if (idempotencyKey !== null) paymentId = paymentIdForKey(idempotencyKey);
   const r = refs(tenant, { orderId });
   if (paymentId !== null && !isValidPaymentId(paymentId)) throw new PaymentError("invalid-payment", "Invalid payment");
   const paymentRef = paymentId ? tenant.doc("payments", paymentId) : tenant.collection("payments").doc();
+  // A keyed request already recorded: the same payment, nothing new (and no second screenshot upload).
+  const sameRequest = (p) => p.orderId === orderId && p.amount === data.amount && p.method === data.method;
+  const replay = (p) => {
+    if (idempotencyKey !== null && !sameRequest(p)) throw new PaymentError("idempotency-conflict", "This request was already used for a different payment. Reload and try again.");
+    if (p.orderId !== orderId) throw new PaymentError("invalid-payment", "Invalid payment");
+    return { paymentId: paymentRef.id, orderId, state: p.state, alreadyRecorded: true };
+  };
+  if (idempotencyKey !== null) {
+    const before = await paymentRef.get();
+    if (before.exists) return replay(before.data());
+  }
   const decoded = proof ? decodeProof(proof) : null;
   const day = businessDate(business.timezone, now);
   const key = referenceKey(data.method, data.reference);
@@ -172,10 +191,7 @@ export async function recordPayment({ db, bucket, tenant, FieldValue, business, 
     return await db.runTransaction(async (tx) => {
       if (paymentId) {
         const existing = await tx.get(paymentRef);
-        if (existing.exists) {
-          if (existing.data().orderId !== orderId) throw new PaymentError("invalid-payment", "Invalid payment");
-          return { paymentId, orderId, state: existing.data().state, alreadyRecorded: true };
-        }
+        if (existing.exists) return replay(existing.data());
       }
       const orderSnap = await tx.get(r.order);
       if (!orderSnap.exists) throw new PaymentError("not-found", "Order not found");
@@ -245,10 +261,12 @@ export async function recordPayment({ db, bucket, tenant, FieldValue, business, 
       return { paymentId: paymentRef.id, orderId, state: payment.state, ...fields };
     }, TX_OPTIONS);
   } catch (err) {
-    if (stored) await undoProof({ db, bucket, tenant, FieldValue, stored });
+    // A fixed payment id that appeared meanwhile: the same submit, retried.
+    // Its screenshot is at the same path: keep it (it's the winner's too).
+    const winner = err && err.code === 6 && paymentId ? await paymentRef.get() : null;
+    if (stored && !winner?.exists) await undoProof({ db, bucket, tenant, FieldValue, stored });
     if (err && err.code === 6) {
-      // A fixed payment id that appeared meanwhile: the same submit, retried.
-      if (paymentId && (await paymentRef.get()).exists) return { paymentId, orderId, alreadyRecorded: true };
+      if (winner?.exists) return replay(winner.data());
       throw new PaymentError("duplicate-reference", "This payment reference has already been used.");
     }
     throw err;

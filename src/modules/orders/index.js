@@ -190,7 +190,7 @@ export function mount(container, session, { data = defaultDeps.data, payments = 
     const history = historyRows(order, { currency, timezone });
     const payActions = (p) => [
       ...(p.proof ? [html`<button type="button" class="menu-item" role="menuitem" data-act="p-proof" data-payment="${p.id}">View screenshot</button>`] : []),
-      ...(p.state === "verified" ? [html`<button type="button" class="menu-item" role="menuitem" data-act="p-receipt" data-payment="${p.id}">Receipt</button>`] : []),
+      ...(p.state === "verified" ? [html`<button type="button" class="menu-item" role="menuitem" data-act="p-receipt" data-payment="${p.id}">Confirmation</button>`] : []),
       ...(can.verifyPayment && p.state === "for_verification" ? [html`<button type="button" class="menu-item" role="menuitem" data-act="p-verify" data-payment="${p.id}">Verify</button>`] : []),
       ...(can.verifyPayment && p.state === "for_verification" && p.via === "payment_link" ? [html`<button type="button" class="menu-item" role="menuitem" data-act="p-reject" data-payment="${p.id}">Not accepted / needs correction</button>`] : []),
       ...(can.verifyPayment && p.state !== "voided" ? [html`<button type="button" class="menu-item" role="menuitem" data-act="p-edit" data-payment="${p.id}">Edit</button>`, html`<div class="menu-sep" role="separator"></div><button type="button" class="menu-item menu-danger" role="menuitem" data-act="p-remove" data-payment="${p.id}">Remove</button>`] : []),

@@ -29,6 +29,7 @@ export function optionalText(value, field, max) {
 const STATUS = {
   "not-found": 404,
   "duplicate-sku": 409,
+  "idempotency-conflict": 409,
   "product-in-use": 409,
   "has-reservations": 409,
   "opening-not-allowed": 409,

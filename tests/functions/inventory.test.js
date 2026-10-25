@@ -11,6 +11,19 @@ import { tenantDb } from "../../netlify/functions/_lib/tenant-db.js";
 import { FieldValue } from "../helpers/fake-firebase.js";
 import { buildWorld, request } from "../helpers/tenants.js";
 import { QTY_SCALE, costUnitsToCentavos, inventoryValue } from "../../shared/quantity.js";
+// Stock actions need a request key (2026-10-25): a fresh one per call unless the test sets its own.
+let stockKeyN = 0;
+const withStockKey = (handler) => (event) => {
+  let body = null;
+  try {
+    body = JSON.parse(event.body);
+  } catch {
+    return handler(event);
+  }
+  if (!body || typeof body !== "object" || Array.isArray(body) || "idempotencyKey" in body || !["receipt", "opening", "count", "adjustment_increase", "adjustment_decrease"].includes(body.action)) return handler(event);
+  return handler({ ...event, body: JSON.stringify({ ...body, idempotencyKey: `test-stock-key-${String(++stockKeyN).padStart(6, "0")}` }) });
+};
+
 
 const Q = (n) => n * QTY_SCALE;
 const actor = { uid: "u-owner", name: "Owner A", email: "owner@t.test" };
@@ -164,7 +177,7 @@ describe("POST /api/products and /api/inventory", () => {
     return { status: res.statusCode, body: JSON.parse(res.body) };
   };
   const products = () => createProductsHandler({ getAdmin: async () => world });
-  const inventory = () => createInventoryHandler({ getAdmin: async () => world });
+  const inventory = () => withStockKey(createInventoryHandler({ getAdmin: async () => world }));
   const create = (uid = world.uids.ownera, over = {}) => call(products(), uid, { action: "create", product: { sku: "SKU-1", name: "Item", unit: "pcs", sellingPrice: 1000, reorderLevel: 0, ...over } });
 
   it("401 before anything else (even for a bad body)", async () => {

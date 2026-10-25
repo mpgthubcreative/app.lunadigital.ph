@@ -214,6 +214,10 @@ describe("the Owner's side", () => {
     expect([...r.querySelectorAll("dt")].map((x) => x.textContent)).toEqual(["Business", "Order", "Customer", "Method", "Reference", "Payment date"]);
     expect([...r.querySelectorAll("dd")].map((x) => x.textContent)).toEqual(["Northwind Frozen", "NW-20261022-004", "ABC Store", "Bank transfer", "BDOREF445566", "Oct 22, 2026"]);
     expect(r.querySelector('[data-role="receipt-amount"]').textContent).toBe("₱2,000.00");
+    // 2026-10-25: a payment confirmation, never presented as an official (BIR) receipt.
+    expect(r.querySelector(".pay-receipt-title").textContent).toBe("Payment confirmation");
+    expect(r.querySelector('[data-role="receipt-note"]').textContent).toBe("Not an official receipt.");
+    expect(r.getAttribute("aria-label")).toBe("Payment confirmation");
     const api = vi.fn(async () => ({ voided: true }));
     const done = rejectPaymentDialog({ payment: { ...p, state: "for_verification" }, api });
     const f = [...document.querySelectorAll(".modal-backdrop form")].at(-1);

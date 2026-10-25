@@ -227,3 +227,22 @@ describe("SKU uniqueness and gauges under contention", () => {
     expect(metrics.data().lowStockProducts).toBe(lowProducts.size);
   });
 });
+
+// 2026-10-25 (pilot readiness): one request key, sent several times at once
+// on the real emulator → the stock moves exactly once.
+describe("the same Receive request sent at once", () => {
+  it("8 identical receipts with one key: one movement, stock +10 once, the log still chains", async () => {
+    const tenant = freshTenant();
+    const productId = await product(tenant);
+    await move(tenant, productId, { type: "opening", quantity: Q(20), unitCost: 5000, reason: "opening_balance" });
+    const key = `conc-stock-key-${run}-${Date.now().toString(36)}`;
+    const results = await settle(Array.from({ length: 8 }, () => svc.recordMovement({ db, tenant, FieldValue, productId, movement: { type: "receipt", quantity: Q(10), unitCost: 7000, reason: "receipt" }, actor, idempotencyKey: key })));
+    expectExplicit(results);
+    expect(ok(results).length).toBeGreaterThan(0);
+    expect(new Set(ok(results).map((r) => r.value.transactionId)).size).toBe(1);
+    const s = await state(tenant, productId);
+    expect(s.product.onHand).toBe(Q(30));
+    expect(s.log).toHaveLength(2);
+    expectChained(s);
+  });
+});

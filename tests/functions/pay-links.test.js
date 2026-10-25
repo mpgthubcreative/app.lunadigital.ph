@@ -18,6 +18,10 @@ import { FieldValue } from "../helpers/fake-firebase.js";
 import { buildWorld, request } from "../helpers/tenants.js";
 import { QTY_SCALE } from "../../shared/quantity.js";
 import { payTokenFrom, validatePublicPayment, cleanInstructions } from "../../shared/pay-links.js";
+// A fresh request key per Record call (the API requires one).
+let recordKeyN = 0;
+const rk = () => `test-record-key-${String(++recordKeyN).padStart(6, "0")}`;
+
 
 const Q = (n) => n * QTY_SCALE;
 const actor = { uid: "u-carlo", name: "Carlo", email: "c@t.test" };
@@ -216,7 +220,7 @@ describe("verification, receipts, partial payments and the customer's balance", 
     const id = [...world.db.docs.entries()].find(([p, d]) => p.startsWith("businesses/biz-a/payments/") && d.orderId === orderId)[0].split("/").pop();
     expect((await owner({ action: "void", paymentId: id, reason: "Amount on the screenshot is ₱900, not ₱1,000" })).status).toBe(200);
     // A payment the business recorded and removed itself.
-    const own = await owner({ action: "record", orderId, payment: { amount: 50000, method: "cash" } });
+    const own = await owner({ action: "record", idempotencyKey: rk(), orderId, payment: { amount: 50000, method: "cash" } });
     await owner({ action: "void", paymentId: own.body.paymentId, reason: "Wrong order" });
     const v = (await pub({ action: "view", token })).body;
     expect(v.order).toMatchObject({ pending: 0, paid: 0, due: 500000 });
@@ -238,7 +242,7 @@ describe("the order row's latest payment (2026-10-22)", () => {
     expect(lp()).toMatchObject({ id, state: "verified" });
     await owner({ action: "update", paymentId: id, changes: { reference: "4444555566668" } });
     expect(lp()).toMatchObject({ id, reference: "4444555566668", state: "verified" });
-    const staff = await owner({ action: "record", orderId, payment: { amount: 50000, method: "cash" } });
+    const staff = await owner({ action: "record", idempotencyKey: rk(), orderId, payment: { amount: 50000, method: "cash" } });
     expect(lp()).toMatchObject({ id: staff.body.paymentId, method: "cash", reference: null, hasProof: false, state: "verified", via: null });
     await owner({ action: "void", paymentId: staff.body.paymentId, reason: "Wrong order" });
     expect(lp()).toMatchObject({ id: staff.body.paymentId, state: "voided" });

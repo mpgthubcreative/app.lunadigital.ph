@@ -47,7 +47,9 @@ describe("Reset Workspace Data", () => {
     seed("biz-b");
     const before = structuredClone(world.db.docs.get("businesses/biz-a"));
     const plan = (await reset("biz-a", world.uids.ownera, { action: "plan" })).body;
-    expect(plan.removes).toEqual(expect.arrayContaining(["Orders and their payments", "Customers"]));
+    expect(plan.removes).toEqual(expect.arrayContaining(["Orders and their payments", "Customers, their special prices and opening balances"]));
+    // 2026-10-25: special prices, opening balances and setup-import records go with the customers.
+    expect(RESET_PLAN.distributor.removes).toEqual(expect.arrayContaining(["customerPrices", "openingBalances", "setupImports"]));
     expect(plan.keeps.join(" ")).toMatch(/Members and their sign-in accounts/);
     const r = await reset("biz-a", world.uids.ownera, { action: "reset", confirm: "RESET" });
     expect(r.status, JSON.stringify(r.body)).toBe(200);

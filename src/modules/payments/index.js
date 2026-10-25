@@ -121,7 +121,7 @@ export function mount(container, session, { data = defaultData, api = defaultApi
     const acts = [
       p.proof ? html`<button type="button" class="btn-linklike" data-act="proof" data-id="${p.id}">View proof</button>` : "",
       canVerify && p.state === "for_verification" ? html`<button type="button" class="btn btn-compact" data-act="quick-verify" data-id="${p.id}">Verify</button>` : "",
-      p.state === "verified" ? html`<button type="button" class="btn-linklike" data-act="receipt" data-id="${p.id}">Receipt</button>` : "",
+      p.state === "verified" ? html`<button type="button" class="btn-linklike" data-act="receipt" data-id="${p.id}">Confirmation</button>` : "",
     ].filter(Boolean);
     return html`<li class="py-row" data-payment="${p.id}" data-state="${p.state}">
       <button type="button" class="py-main" data-act="view" data-id="${p.id}" aria-label="View payment for ${r.orderNumber}">

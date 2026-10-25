@@ -14,6 +14,10 @@ import { createReportsHandler } from "../../netlify/functions/reports.js";
 import { createSessionHandler } from "../../netlify/functions/session.js";
 import { createBusiness, addMember, ensureAuthUser, assignWorkspaceTemplate, refreshEntitlements, updateOverrides, assignPlan, describeEntitlements } from "../../netlify/functions/_lib/provisioning.js";
 import { buildWorld, request, roomForTeam } from "../helpers/tenants.js";
+// A fresh request key per Record call (the API requires one).
+let recordKeyN = 0;
+const rk = () => `test-record-key-${String(++recordKeyN).padStart(6, "0")}`;
+
 
 let world;
 const uid = {};
@@ -57,8 +61,8 @@ describe("a bridal workspace can't reach Distributor APIs", () => {
       [createOrdersHandler, { action: "create", idempotencyKey: "ws-test-key-000000001", order: { customer: { name: "x" }, source: "phone", items: [] } }],
       [createOrdersHandler, { action: "fulfill", orderId: "aaaaaaaaaaaaaaaaaaaa" }],
       [createProductsHandler, { action: "create", product: { sku: "X", name: "x", unit: "pcs", sellingPrice: 1, reorderLevel: 0 } }],
-      [createInventoryHandler, { action: "receipt", productId: "aaaaaaaaaaaaaaaaaaaa", quantity: 1000, unitCost: 1 }],
-      [createPaymentsHandler, { action: "record", orderId: "aaaaaaaaaaaaaaaaaaaa", payment: { amount: 1, method: "cash" } }],
+      [createInventoryHandler, { action: "receipt", idempotencyKey: "ws-stock-key-0000001", productId: "aaaaaaaaaaaaaaaaaaaa", quantity: 1000, unitCost: 1 }],
+      [createPaymentsHandler, { action: "record", idempotencyKey: rk(), orderId: "aaaaaaaaaaaaaaaaaaaa", payment: { amount: 1, method: "cash" } }],
       [createPaymentsHandler, { action: "proof", paymentId: "aaaaaaaaaaaaaaaaaaaa" }],
     ];
     for (const who of [uid.owner, uid.manager, uid.staff]) {

@@ -25,6 +25,10 @@ import { FieldValue } from "../helpers/fake-firebase.js";
 import { buildWorld, request, clearInboxes } from "../helpers/tenants.js";
 import { notificationId } from "../../shared/notifications.js";
 import { QTY_SCALE } from "../../shared/quantity.js";
+// A fresh request key per Record call (the API requires one).
+let recordKeyN = 0;
+const rk = () => `test-record-key-${String(++recordKeyN).padStart(6, "0")}`;
+
 
 const Q = (n) => n * QTY_SCALE;
 const NOW = new Date("2026-10-08T02:00:00Z"); // Oct 8, 10:00 Manila
@@ -231,7 +235,7 @@ describe("file storage: reserve -> upload -> finalize; release; delete; exactly 
     await override("storageBytes", 1);
     const pid = await product();
     const o = await order(pid);
-    const res = await createPaymentsHandler({ getAdmin: async () => world, now: () => NOW })({ ...request({ uid: world.uids.ownera, businessId: "biz-a" }), httpMethod: "POST", body: JSON.stringify({ action: "record", orderId: o.orderId, payment: { amount: 100, method: "gcash", reference: "REF-API1" }, proof: proof() }) });
+    const res = await createPaymentsHandler({ getAdmin: async () => world, now: () => NOW })({ ...request({ uid: world.uids.ownera, businessId: "biz-a" }), httpMethod: "POST", body: JSON.stringify({ action: "record", idempotencyKey: rk(), orderId: o.orderId, payment: { amount: 100, method: "gcash", reference: "REF-API1" }, proof: proof() }) });
     expect(res.statusCode).toBe(409);
     expect(JSON.parse(res.body)).toMatchObject({ error: "storage-limit-reached", message: expect.stringMatching(/storage is full/) });
   });

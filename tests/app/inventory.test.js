@@ -180,7 +180,7 @@ describe("Update stock: enter the stock on hand you counted", () => {
     expect(f.querySelector('[data-role="count-preview"]').textContent).toBe("Current: 140 sack · New: 137 sack · Change: −3 sack");
     f.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
     await flush();
-    expect(deps.api).toHaveBeenCalledWith("inventory", { method: "POST", body: { action: "count", productId: "p1", onHand: Q(137), reason: "count_correction" } });
+    expect(deps.api).toHaveBeenCalledWith("inventory", { method: "POST", body: { action: "count", idempotencyKey: expect.stringMatching(/^[A-Za-z0-9_-]{16,64}$/), productId: "p1", onHand: Q(137), reason: "count_correction" } });
   });
 
   it("the same number, a negative, or Other without a note: refused in the dialog, nothing sent; server refusals stay visible", async () => {
@@ -274,7 +274,7 @@ describe("View details", () => {
     await flush();
     fill({ quantity: "50", unitCost: "60", reference: "DR-1001" });
     await flush();
-    expect(deps.api).toHaveBeenCalledWith("inventory", { method: "POST", body: { action: "receipt", productId: "p1", quantity: Q(50), unitCost: 6000, reference: "DR-1001" } });
+    expect(deps.api).toHaveBeenCalledWith("inventory", { method: "POST", body: { action: "receipt", idempotencyKey: expect.stringMatching(/^[A-Za-z0-9_-]{16,64}$/), productId: "p1", quantity: Q(50), unitCost: 6000, reference: "DR-1001" } });
   });
 
   it("a receiver (staff + inventory.receive) can receive but not adjust or edit", async () => {

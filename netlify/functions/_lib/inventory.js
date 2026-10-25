@@ -32,6 +32,8 @@ import {
 } from "../../../shared/inventory.js";
 import { inventoryValue, formatQuantity, UNITS, isCentavos, centavosToCostUnits, costUnitsToCentavos, MAX_CENTAVOS } from "../../../shared/quantity.js";
 import { adjustCurrentMetrics } from "./metrics.js";
+import { createHash } from "node:crypto";
+import { isValidIdempotencyKey } from "../../../shared/orders.js";
 import { prepareNotifications } from "./notifications.js";
 
 const lower = (s) => (s || "").toLocaleLowerCase("en");
@@ -319,11 +321,40 @@ export async function prepareMovements(tx, { tenant, items }) {
 }
 
 // One movement on one product, in its own transaction.
-export async function recordMovement({ db, tenant, FieldValue, productId, movement, actor }) {
-  return db.runTransaction(async (tx) => {
-    const plan = await prepareMovements(tx, { tenant, items: [{ productId, movement }] });
-    return plan.commit({ actor, FieldValue })[0];
-  }, TX_OPTIONS);
+// idempotencyKey (2026-10-25, Receive / Starting stock / Adjust / Count in
+// Luna): the request's key. The same request sent again (double tap, slow
+// network, retry, two at once) moves stock once; the second gets the first
+// movement and the product's stock now. The same key for a different
+// movement is refused. idempotencyKeys/{key} is server-only (as for orders).
+export async function recordMovement({ db, tenant, FieldValue, productId, movement, actor, idempotencyKey = null }) {
+  if (idempotencyKey !== null && !isValidIdempotencyKey(idempotencyKey)) throw new InventoryError("invalid-input", "A valid request key is required");
+  const idemRef = idempotencyKey === null ? null : tenant.doc("idempotencyKeys", idempotencyKey);
+  const requestHash = idempotencyKey === null ? null : createHash("sha256").update(JSON.stringify({ productId, movement, uid: actor?.uid ?? null })).digest("hex");
+  const replay = async (prior, get) => {
+    if (prior.kind !== "stock" || prior.requestHash !== requestHash) throw new InventoryError("idempotency-conflict", "This request was already used for a different stock change. Reload and try again.");
+    const [p, c] = await Promise.all([get(tenant.doc("products", productId)), get(tenant.doc("productCosts", productId))]);
+    const s = p.data();
+    return { productId, transactionId: prior.transactionId, replayed: true, next: { onHand: s.onHand, reserved: s.reserved, available: s.available, isLowStock: s.isLowStock, avgCostUnits: c.exists ? c.data().avgCostUnits ?? null : null } };
+  };
+  try {
+    return await db.runTransaction(async (tx) => {
+      if (idemRef) {
+        const prior = await tx.get(idemRef);
+        if (prior.exists) return replay(prior.data(), (ref) => tx.get(ref));
+      }
+      const plan = await prepareMovements(tx, { tenant, items: [{ productId, movement }] });
+      const result = plan.commit({ actor, FieldValue })[0];
+      if (idemRef) tx.create(idemRef, { kind: "stock", productId, transactionId: result.transactionId, requestHash, uid: actor?.uid ?? null, createdAt: FieldValue.serverTimestamp() });
+      return result;
+    }, TX_OPTIONS);
+  } catch (err) {
+    // Two identical requests raced; the other one recorded it first.
+    if (idemRef && err && err.code === 6) {
+      const prior = await idemRef.get();
+      if (prior.exists) return replay(prior.data(), (ref) => ref.get());
+    }
+    throw err;
+  }
 }
 
 // What a caller may see of a product's cost side.

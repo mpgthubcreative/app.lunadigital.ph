@@ -13,6 +13,10 @@ import { FieldValue } from "../helpers/fake-firebase.js";
 import { buildWorld, request } from "../helpers/tenants.js";
 import { financialSummary } from "../../shared/finance.js";
 import { QTY_SCALE } from "../../shared/quantity.js";
+// A fresh request key per Record call (the API requires one).
+let recordKeyN = 0;
+const rk = () => `test-record-key-${String(++recordKeyN).padStart(6, "0")}`;
+
 
 const Q = (n) => n * QTY_SCALE;
 const actor = { uid: "u-carlo", name: "Carlo", email: "c@t.test" };
@@ -243,10 +247,10 @@ describe("POST /api/payments", () => {
   };
 
   it("a missing or malformed order / payment id is a 400 with a plain message, never a 500", async () => {
-    const missingOrder = await call(world.uids.ownera, { action: "record", payment: { amount: 100, method: "cash" } });
+    const missingOrder = await call(world.uids.ownera, { action: "record", idempotencyKey: rk(), payment: { amount: 100, method: "cash" } });
     expect(missingOrder).toMatchObject({ status: 400, body: { error: "invalid-order", message: "Choose a valid order for this payment" } });
     expect(JSON.stringify(missingOrder.body)).not.toMatch(/stack|at |TypeError|\.js/);
-    expect((await call(world.uids.ownera, { action: "record", orderId: "../x", payment: { amount: 100, method: "cash" } })).status).toBe(400);
+    expect((await call(world.uids.ownera, { action: "record", idempotencyKey: rk(), orderId: "../x", payment: { amount: 100, method: "cash" } })).status).toBe(400);
     for (const action of ["verify", "proof", "void", "update"]) expect((await call(world.uids.ownera, { action, ...(action === "void" ? { reason: "no no" } : action === "update" ? { changes: {} } : {}) })).body.error, action).toBe("invalid-payment");
   });
 
@@ -256,14 +260,14 @@ describe("POST /api/payments", () => {
 
   it("staff record (for verification) but can't verify, edit or remove; owner can", async () => {
     const { orderId } = await orderOf(1000);
-    const rec = await call(world.uids.staffa, { action: "record", orderId, payment: { amount: 50000, method: "gcash", reference: "STAFF001" } });
+    const rec = await call(world.uids.staffa, { action: "record", idempotencyKey: rk(), orderId, payment: { amount: 50000, method: "gcash", reference: "STAFF001" } });
     expect(rec).toMatchObject({ status: 201, body: { state: "for_verification", paymentStatus: "for_verification" } });
     const id = rec.body.paymentId;
     expect((await call(world.uids.staffa, { action: "verify", paymentId: id })).status).toBe(403);
     expect((await call(world.uids.staffa, { action: "update", paymentId: id, changes: { amount: 1 } })).status).toBe(403);
     expect((await call(world.uids.staffa, { action: "void", paymentId: id, reason: "no no" })).status).toBe(403);
     expect((await call(world.uids.ownera, { action: "verify", paymentId: id })).body.paymentStatus).toBe("partial");
-    const own = await call(world.uids.ownera, { action: "record", orderId, payment: { amount: 50000, method: "cash" } });
+    const own = await call(world.uids.ownera, { action: "record", idempotencyKey: rk(), orderId, payment: { amount: 50000, method: "cash" } });
     expect(own.body).toMatchObject({ state: "verified", paymentStatus: "paid" });
   });
 
@@ -271,23 +275,23 @@ describe("POST /api/payments", () => {
     const { orderId } = await orderOf(1000);
     const p = await pay(orderId, { amount: 100, method: "gcash", reference: "VIEWONLY1" }, { proof: { contentType: "image/png", dataBase64: PNG.toString("base64") } });
     world.db.docs.get(`businesses/biz-a/members/${world.uids.staffa}`).permissions["payments.record"] = false;
-    expect((await call(world.uids.staffa, { action: "record", orderId, payment: { amount: 100, method: "cash" } })).status).toBe(403);
+    expect((await call(world.uids.staffa, { action: "record", idempotencyKey: rk(), orderId, payment: { amount: 100, method: "cash" } })).status).toBe(403);
     expect((await call(world.uids.staffa, { action: "proof", paymentId: p.paymentId })).status).toBe(200);
   });
 
   it("strict payloads and friendly duplicate message", async () => {
     const { orderId } = await orderOf(1000);
-    expect((await call(world.uids.ownera, { action: "record", orderId, payment: { amount: 100, method: "cash" }, amountPaid: 1 })).status).toBe(400);
-    await call(world.uids.ownera, { action: "record", orderId, payment: { amount: 100, method: "maya", reference: "DUP-0001" } });
-    const dup = await call(world.uids.ownera, { action: "record", orderId, payment: { amount: 100, method: "maya", reference: "dup 0001" } });
+    expect((await call(world.uids.ownera, { action: "record", idempotencyKey: rk(), orderId, payment: { amount: 100, method: "cash" }, amountPaid: 1 })).status).toBe(400);
+    await call(world.uids.ownera, { action: "record", idempotencyKey: rk(), orderId, payment: { amount: 100, method: "maya", reference: "DUP-0001" } });
+    const dup = await call(world.uids.ownera, { action: "record", idempotencyKey: rk(), orderId, payment: { amount: 100, method: "maya", reference: "dup 0001" } });
     expect(dup).toMatchObject({ status: 409, body: { error: "duplicate-reference", message: "This payment reference has already been used." } });
   });
 
   it("Payments module off -> refused; suspended -> read-only", async () => {
     const { orderId } = await orderOf(1000);
     world.db.docs.get("businesses/biz-a").entitlements.modules.payments = false;
-    expect((await call(world.uids.ownera, { action: "record", orderId, payment: { amount: 100, method: "cash" } })).status).toBe(403);
-    expect((await call(world.uids.owners, { action: "record", orderId, payment: { amount: 100, method: "cash" } })).body.error).toBe("read-only");
+    expect((await call(world.uids.ownera, { action: "record", idempotencyKey: rk(), orderId, payment: { amount: 100, method: "cash" } })).status).toBe(403);
+    expect((await call(world.uids.owners, { action: "record", idempotencyKey: rk(), orderId, payment: { amount: 100, method: "cash" } })).body.error).toBe("read-only");
   });
 
   it("cross-tenant: A can't record on, read, or touch B's payments and proofs", async () => {
@@ -299,7 +303,7 @@ describe("POST /api/payments", () => {
     for (const uid of [world.uids.ownera, world.uids.managera, world.uids.staffa]) {
       expect((await call(uid, { action: "proof", paymentId: bp.paymentId }, "biz-b")).body.error).toBe("business-access-denied");
       expect((await call(uid, { action: "proof", paymentId: bp.paymentId })).status).toBe(404);
-      expect((await call(uid, { action: "record", orderId: bo.orderId, payment: { amount: 100, method: "cash" } })).status).toBe(404);
+      expect((await call(uid, { action: "record", idempotencyKey: rk(), orderId: bo.orderId, payment: { amount: 100, method: "cash" } })).status).toBe(404);
     }
     expect((await call(world.uids.ownera, { action: "void", paymentId: bp.paymentId, reason: "hijack" })).status).toBe(404);
     expect(docAt(`businesses/biz-b/payments/${bp.paymentId}`).state).toBe("verified");

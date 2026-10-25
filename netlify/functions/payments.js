@@ -1,5 +1,6 @@
 // POST /api/payments   (Payments module; writes also need subscription write access)
-//   { action: "record", orderId, payment: { amount, method, reference?, note? }, proof?: { contentType, dataBase64 } }   payments.record
+//   { action: "record", idempotencyKey, orderId, payment: { amount, method, reference?, note? }, proof?: { contentType, dataBase64 } }   payments.record
+//     idempotencyKey: one per Record (a retry of the same request returns the same payment)
 //   { action: "update", paymentId, changes: { amount?, method?, reference?, note? }, proof? }                          payments.verify
 //   { action: "verify", paymentId }                                                                                    payments.verify
 //   { action: "void", paymentId, reason }                                                                              payments.verify
@@ -16,10 +17,11 @@ import { recordPayment, updatePayment, verifyPayment, voidPayment, readProof } f
 import { payLinkFor } from "./_lib/pay-links.js";
 import { actorOf, only } from "./_lib/inventory-http.js";
 import { PaymentError } from "../../shared/payments.js";
+import { isValidIdempotencyKey } from "../../shared/orders.js";
 import { MeteringError } from "../../shared/metering.js";
 
 const ACTIONS = {
-  record: { permission: "payments.record", write: true, fields: ["action", "orderId", "payment", "proof"] },
+  record: { permission: "payments.record", write: true, fields: ["action", "idempotencyKey", "orderId", "payment", "proof"] },
   update: { permission: "payments.verify", write: true, fields: ["action", "paymentId", "changes", "proof"] },
   verify: { permission: "payments.verify", write: true, fields: ["action", "paymentId"] },
   void: { permission: "payments.verify", write: true, fields: ["action", "paymentId", "reason"] },
@@ -31,6 +33,7 @@ const STATUS = {
   "not-found": 404,
   "no-proof": 404,
   "duplicate-reference": 409,
+  "idempotency-conflict": 409,
   overpayment: 409,
   "order-cancelled": 409,
   voided: 409,
@@ -71,7 +74,8 @@ export function createPaymentsHandler({ getAdmin: loadAdmin, now = () => new Dat
     try {
       switch (body.action) {
         case "record":
-          return respond(201, { success: true, ...(await recordPayment({ ...common, orderId: body.orderId, input: body.payment, proof: body.proof ?? null, canVerify: ctx.permissions["payments.verify"] === true, now: now() })) });
+          if (!isValidIdempotencyKey(body.idempotencyKey)) throw new RequestError("invalid-request", "A valid idempotency key is required.", 400);
+          return respond(201, { success: true, ...(await recordPayment({ ...common, orderId: body.orderId, input: body.payment, proof: body.proof ?? null, canVerify: ctx.permissions["payments.verify"] === true, now: now(), idempotencyKey: body.idempotencyKey })) });
         case "update":
           return respond(200, { success: true, ...(await updatePayment({ ...common, paymentId: body.paymentId, changes: body.changes, proof: body.proof ?? null })) });
         case "verify":
