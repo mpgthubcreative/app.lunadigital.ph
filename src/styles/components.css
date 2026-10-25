@@ -4630,3 +4630,76 @@ button.wl-person-name:hover .wl-edit, button.wl-person-name:focus-visible .wl-ed
 .ws-accent input { margin: 0; }
 .ws-accent-dot { width: 18px; height: 18px; border-radius: 50%; background: var(--dot, #ccc); }
 .ws-save { position: sticky; bottom: 0; z-index: 2; padding: var(--space-2) 0; background: var(--bg); }
+
+/* ---------- Wedding Setup: edit the invitation itself (2026-10-25) ----------
+   Phone first: the invitation is the screen; a sticky bar holds Edit /
+   Clean Preview / Guide and Publish. Edit mode adds small Edit / Replace
+   pills on the invitation (never on a guest's page). Desktop: the guide
+   sits beside the invitation. */
+.ie { --ie-bar-h: 56px; }
+.ie-bar { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; min-height: var(--ie-bar-h); padding: 6px 0; background: var(--bg); }
+.ie-modes { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); flex: 1 1 auto; gap: 2px; padding: 3px; background: var(--surface-sunken); border-radius: 999px; min-width: 0; }
+.ie-status { float: right; display: flex; align-items: center; gap: var(--space-2); margin-left: var(--space-2); }
+.ie-mode { min-height: 40px; padding: 0 12px; border: 0; border-radius: 999px; background: transparent; color: var(--text-muted); font: inherit; font-size: 0.875rem; font-weight: 600; white-space: nowrap; cursor: pointer; }
+.ie-mode[aria-selected="true"] { background: var(--surface); color: var(--text); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12); }
+.ie-design { margin: var(--space-1) 0 var(--space-2); }
+.ie-design p { margin: 0 0 4px; }
+.ie-design-name { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.ie-notice { margin: 0 0 var(--space-2); }
+.ie-back { margin: 0 0 var(--space-2); }
+.ie-layout { display: block; }
+.ie-canvas { margin: 0; }
+.ie-canvas .inv-page { min-height: 0; }
+.ie-canvas .sg-nav { top: var(--ie-bar-h); }
+.ie-aside { display: none; }
+.ie[data-mode="guide"] .ie-aside { display: block; }
+
+/* Edit mode: the editable parts and their pills. */
+.ie-target { position: relative; }
+.ie-target.ie-sample { outline: 1px dashed color-mix(in srgb, var(--luna-primary) 45%, transparent); outline-offset: -4px; }
+.ie-edit { position: absolute; top: 8px; right: 8px; z-index: 2; display: inline-flex; align-items: center; min-height: 36px; padding: 0 12px; border: 1px solid rgba(0, 0, 0, 0.12); border-radius: 999px; background: rgba(255, 255, 255, 0.94); color: #1f2430; font: 600 0.8rem/1 var(--font-sans, system-ui, sans-serif); letter-spacing: 0; text-transform: none; text-decoration: none; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12); cursor: pointer; }
+.ie-edit::before { content: "✎"; margin-right: 6px; font-size: 0.85rem; }
+.ie-edit:focus-visible, .ie-replace:focus-visible { outline: 2px solid var(--luna-primary); outline-offset: 2px; }
+.ie-photo { position: relative; display: block; }
+.ie-photo > img, .ie-photo > div { display: block; }
+.ie-replace { position: absolute; right: 8px; bottom: 8px; z-index: 2; min-height: 36px; padding: 0 12px; border: 0; border-radius: 999px; background: rgba(20, 20, 20, 0.72); color: #fff; font: 600 0.8rem/1 var(--font-sans, system-ui, sans-serif); cursor: pointer; }
+.ie-replace::before { content: "📷"; margin-right: 6px; }
+/* The cover photo's button sits at its top (the names card overlaps its foot). */
+.sg-hero .ie-replace, .inv-hero-wrap .ie-replace { top: 12px; bottom: auto; }
+/* Room for the pill above text that starts at the top of its box. */
+.sg-hero-card.ie-target { padding-top: 56px; }
+.sg-schedule.ie-target, .inv-head.ie-target, .inv-message.ie-target { padding-top: 44px; }
+
+/* The guide. */
+.ie-guide-list { list-style: none; margin: var(--space-2) 0; padding: 0; }
+.ie-guide-list li { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); padding: var(--space-2) 0; border-bottom: 1px solid var(--border); }
+.ie-guide-list p { margin: 2px 0 0; }
+.ie-link { margin-top: var(--space-3); }
+.ie-link p { margin: 4px 0; overflow-wrap: anywhere; }
+
+/* Mini editors: one section's fields; the Save stays above the keyboard
+   (the modal fits the visible viewport, src/lib/viewport.js). */
+.ie-sheet .modal-body { display: flex; flex-direction: column; gap: var(--space-1); }
+.ie-sheet-photos { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: var(--space-2); margin-bottom: var(--space-2); }
+.ie-sheet .ws-wording { margin: var(--space-1) 0; }
+
+/* Choosing a design. */
+.ie-choose-title { margin: var(--space-2) 0 4px; font-size: var(--text-lg, 1.25rem); }
+.ie-choose-grid { display: grid; gap: var(--space-3); margin: var(--space-3) 0; }
+.ie-choice { display: flex; flex-direction: column; gap: var(--space-2); padding: 0 0 var(--space-3); border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); color: inherit; font: inherit; text-align: left; overflow: hidden; cursor: pointer; }
+.ie-choice img { display: block; width: 100%; aspect-ratio: 16 / 10; object-fit: cover; }
+.ie-choice[data-choose="monochrome"] img { filter: grayscale(1) contrast(1.1); }
+.ie-choice-text { display: flex; flex-direction: column; gap: 2px; padding: 0 var(--space-3); }
+.ie-choice-go { align-self: flex-start; margin: 0 var(--space-3); }
+.ie-choice.is-current { border-color: var(--luna-primary); box-shadow: 0 0 0 2px var(--luna-primary-soft); }
+
+@media (min-width: 720px) {
+  .ie-choose-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .ie-canvas { margin: 0; border: 1px solid var(--border); border-radius: var(--radius); overflow: clip; }
+}
+@media (min-width: 1100px) {
+  .ie-layout { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: var(--space-4); align-items: start; }
+  .ie-mode-guide { display: none; }
+  .ie[data-mode="edit"] .ie-aside, .ie[data-mode="guide"] .ie-aside { display: block; position: sticky; top: calc(var(--ie-bar-h) + 8px); max-height: calc(100dvh - var(--ie-bar-h) - 32px); overflow: auto; }
+  .ie[data-mode="guide"] .ie-canvas[hidden] { display: block; }
+}

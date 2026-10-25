@@ -20,6 +20,15 @@
 // reword) and accent colours, a version and a preview image. Two kinds of
 // layout: "card" (the original card page) and "signature" (a full page:
 // hero, countdown, story, details, schedule, dress code, RSVP).
+//
+// 2026-10-25 (template-first editing): only the designs marked `offered`
+// (Gold Elegance, Black & White, Rustic Garden) are offered to new
+// invitations; the older ones stay registered so the weddings that use
+// them keep rendering. A design can also bring its own sample content and
+// photos (templates/{id}/sample.js: sampleData / sampleAssets, preview
+// only, never wedding data) and names its editable sections: which
+// visible section edits which Wedding Setup fields, photo slots and
+// wording lines, with a one-line guide (editableSections).
 
 import standard from "./templates/standard/template.js";
 import classic from "./templates/classic/template.js";
@@ -30,6 +39,11 @@ import gold from "./templates/gold/template.js";
 import monochrome from "./templates/monochrome/template.js";
 import rustic from "./templates/rustic/template.js";
 import garden from "./customized/garden/template.js";
+import goldSample from "./templates/gold/sample.js";
+import monochromeSample from "./templates/monochrome/sample.js";
+import rusticSample from "./templates/rustic/sample.js";
+
+const SAMPLES = { gold: goldSample, monochrome: monochromeSample, rustic: rusticSample };
 
 export const CATEGORIES = Object.freeze({
   standard: { label: "Standard", availability: "Luna Bridal: the Owner chooses it in Wedding Setup (free trial: preview only)" },
@@ -53,7 +67,7 @@ const CARD_FIELDS = {
   entourage: [],
   gallery: [],
   faq: ["faq"],
-  rsvp: ["rsvpDeadline", "mealOptions", "askDietary"],
+  rsvp: ["rsvpEnabled", "rsvpDeadline", "closeAfterDeadline", "mealOptions", "askDietary"],
   footer: ["footerNote"],
 };
 const SECTION_FIELDS = Object.freeze({
@@ -75,6 +89,40 @@ const SECTION_FIELDS = Object.freeze({
 export const PHOTO_SLOTS = Object.freeze({ story1: "Story photo 1", story2: "Story photo 2", when: "Date photo", venue: "Venue photo", dressCode: "Dress code photo" });
 // The card layout's wording lines (the same keys a Custom design's texts use).
 const CARD_WORDING = Object.freeze({ scriptLine: "are getting married", rsvpTitle: "RSVP" });
+
+// The Owner's editor, per layout: each editable section (data-edit in the
+// renderer) → the Wedding Setup fields, photo slots ("hero" = the cover
+// photo) and wording lines it edits, the invitation sections it belongs to
+// (it's offered only when the design shows one of them) and its guide line.
+// entourage → Guests (roles); gallery → the gallery photos.
+const ED = (id, label, sections, o) => Object.freeze({ id, label, sections, fields: o.fields ?? [], photos: o.photos ?? [], wording: o.wording ?? [], guide: o.guide, ...(o.link ? { link: o.link } : {}) });
+const SECTION_EDITORS = Object.freeze({
+  signature: [
+    ED("hero", "Names & date", ["hero"], { fields: ["partner1Name", "partner2Name", "coupleNames", "weddingDate", "city"], photos: ["hero"], wording: ["intro", "tagline", "countdownTitle"], guide: "Names · Date · City · Cover photo. Tap the names or the photo." }),
+    ED("welcome", "Welcome & families", ["welcome"], { fields: ["welcomeMessage", "partner1Parents", "partner2Parents"], guide: "Welcome message · Parents. Tap the welcome text." }),
+    ED("story", "Our story", ["story"], { fields: ["story"], photos: ["story1", "story2"], wording: ["storyEyebrow", "storyTitle"], guide: "Your story · Two photos. Tap Our Love Story." }),
+    ED("details", "Wedding details", ["ceremony", "reception", "map"], { fields: ["ceremonyTime", "ceremonyVenue", "ceremonyAddress", "ceremonyMap", "sameVenue", "receptionTime", "receptionVenue", "receptionAddress", "receptionMap", "gettingThere"], photos: ["when", "venue"], wording: ["detailsEyebrow", "detailsTitle"], guide: "Ceremony · Reception · Times · Map · Parking. Tap Wedding Details." }),
+    ED("schedule", "Schedule", ["ceremony"], { fields: ["schedule"], wording: ["scheduleTitle"], guide: "The day's timeline. Tap the schedule." }),
+    ED("dress", "Dress code", ["dressCode"], { fields: ["dressCode", "dressCodeDetails", "palette", "attireNotes"], photos: ["dressCode"], wording: ["dressEyebrow", "dressTitle"], guide: "Attire · Colours · Notes · Photo. Tap Dress Code." }),
+    ED("goodToKnow", "Good to know", ["faq"], { fields: ["reminders", "giftNote", "faq"], guide: "Reminders · Gift note · FAQ. Tap Good to know." }),
+    ED("rsvp", "RSVP", ["rsvp"], { fields: ["rsvpEnabled", "rsvpDeadline", "closeAfterDeadline", "rsvpContact", "mealOptions", "askDietary"], wording: ["rsvpEyebrow", "rsvpTitle"], guide: "Deadline · Meal choices · Dietary question · Contact. Tap RSVP." }),
+    ED("entourage", "Entourage", ["entourage"], { link: "/guests", guide: "Comes from your guests' Roles (Guests → Role)." }),
+    ED("gallery", "Gallery", ["gallery"], { guide: "Up to 6 photos. Tap the gallery." }),
+    ED("closing", "Closing", ["footer"], { fields: ["footerNote"], wording: ["closing"], guide: "Closing line · Closing words. Tap the footer." }),
+  ],
+  card: [
+    ED("hero", "Names & date", ["hero"], { fields: ["partner1Name", "partner2Name", "coupleNames", "weddingDate"], photos: ["hero"], wording: ["scriptLine"], guide: "Names · Date · Cover photo. Tap the names or the photo." }),
+    ED("welcome", "Welcome message", ["welcome"], { fields: ["welcomeMessage"], guide: "Tap the welcome text." }),
+    ED("story", "Our story", ["story"], { fields: ["story"], guide: "Tap Our story." }),
+    ED("details", "Ceremony & reception", ["ceremony", "reception", "map"], { fields: ["ceremonyTime", "ceremonyVenue", "ceremonyAddress", "ceremonyMap", "receptionTime", "receptionVenue", "receptionAddress", "receptionMap"], guide: "Times · Venues · Addresses · Maps. Tap Ceremony or Reception." }),
+    ED("dress", "Dress code", ["dressCode"], { fields: ["dressCode"], guide: "Tap Dress code." }),
+    ED("goodToKnow", "FAQ", ["faq"], { fields: ["faq"], guide: "Questions and answers. Tap Questions." }),
+    ED("rsvp", "RSVP", ["rsvp"], { fields: ["rsvpEnabled", "rsvpDeadline", "closeAfterDeadline", "mealOptions", "askDietary"], wording: ["rsvpTitle"], guide: "Deadline · Meal choices · Dietary question. Tap RSVP." }),
+    ED("entourage", "Entourage", ["entourage"], { link: "/guests", guide: "Comes from your guests' Roles (Guests → Role)." }),
+    ED("gallery", "Gallery", ["gallery"], { guide: "Up to 6 photos. Tap the gallery." }),
+    ED("closing", "Closing line", ["footer"], { fields: ["footerNote"], guide: "Tap the closing line." }),
+  ],
+});
 
 // id · name · category · version · kind · source · preview · availability ·
 // the sections the design shows and the ones it deliberately doesn't (a
@@ -116,6 +164,11 @@ export const TEMPLATE_REGISTRY = Object.freeze(
       photoSlots: Object.freeze([...(file.photoSlots ?? [])]),
       wording: Object.freeze({ ...(file.wording ?? CARD_WORDING) }),
       accents: Object.freeze((file.accents ?? []).map((a) => Object.freeze({ ...a }))),
+      offered: file.offered === true,
+      // Template-owned preview content (templates/{id}/sample.js); null = none.
+      sampleData: SAMPLES[file.id] ? Object.freeze(structuredClone(SAMPLES[file.id].data)) : null,
+      sampleAssets: Object.freeze({ ...(SAMPLES[file.id]?.assets ?? {}) }),
+      editableSections: Object.freeze(SECTION_EDITORS[kind].filter((e) => e.sections.some((s) => sections.includes(s)))),
       file,
     });
   })
@@ -156,3 +209,7 @@ export const CUSTOMIZED_TEMPLATE_IDS = Object.freeze(TEMPLATE_REGISTRY.filter((r
 export const getTemplate = (id) => TEMPLATES[id] ?? TEMPLATES[DEFAULT_TEMPLATE_ID];
 export const getTemplateEntry = (id) => BY_ID[id] ?? BY_ID[DEFAULT_TEMPLATE_ID];
 export const isStandardTemplate = (id) => STANDARD_TEMPLATE_IDS.includes(id);
+// What a new invitation can choose (Wedding Setup); the other Standard
+// designs only keep rendering for the weddings that already use them.
+export const OFFERED_TEMPLATE_IDS = Object.freeze(TEMPLATE_REGISTRY.filter((r) => r.offered).map((r) => r.id));
+export const isOfferedTemplate = (id) => OFFERED_TEMPLATE_IDS.includes(id);

@@ -21,7 +21,7 @@
 // link stops working at once. Every bad / revoked link gets the same answer.
 
 import { createHash, randomBytes } from "node:crypto";
-import { WeddingError, WEDDING_SCHEMA_VERSION, TOTALS_DOC_ID, SEATING_DOC_ID, RSVP_STATUSES, validateRsvp, validateWeddingSetup, rsvpOpen, setupMissing, isWeddingSlug, suggestWeddingSlug, invitePath, coupleDisplayName, WEDDING_SLUG_MIN, WEDDING_SLUG_MAX } from "../../../shared/wedding.js";
+import { WeddingError, WEDDING_SCHEMA_VERSION, TOTALS_DOC_ID, SEATING_DOC_ID, RSVP_STATUSES, validateRsvp, validateWeddingSetup, rsvpOpen, setupMissing, isWeddingSlug, suggestWeddingSlug, invitePath, coupleDisplayName, isInvitationPublished, WEDDING_SLUG_MIN, WEDDING_SLUG_MAX } from "../../../shared/wedding.js";
 import { businessDate, isDayId } from "../../../shared/metrics.js";
 import { prepareNotifications } from "./notifications.js";
 import { tenantDb } from "./tenant-db.js";
@@ -31,7 +31,7 @@ import { accessPolicy } from "../../../shared/subscription.js";
 import { attendingMarksFor } from "./wedding-roles.js";
 import { liveDesignFor, ownerInvitationStatus, previewDesign, TRIAL_PREVIEW_MESSAGE } from "./invitation-design.js";
 import { trialOpen } from "../../../shared/trial.js";
-import { invitationData, PHOTO_SLOTS } from "../../../shared/invitation-design.js";
+import { invitationData, PHOTO_SLOTS, isOfferedTemplate } from "../../../shared/invitation-design.js";
 import { reconcileSeats } from "../../../shared/wedding-seating.js";
 import { dataUrlImageType } from "../../../shared/image-type.js";
 
@@ -149,9 +149,22 @@ async function prepareSlug(tx, { db, tenant, current, wanted, coupleNames, now }
 }
 export async function saveSetup({ db, tenant, FieldValue, input, actor, now = new Date() }) {
   const data = validateWeddingSetup(input || {});
+  // Publishing needs a paid wedding (the trial previews only).
+  if (data.published === true) await requirePaid(tenant);
   await db.runTransaction(async (tx) => {
     const cur = await tx.get(setupRef(tenant));
     const before = cur.exists ? cur.data() : {};
+    // Only the offered designs can be newly chosen; a wedding already on an
+    // older one keeps it (and can save it again).
+    if (Object.hasOwn(data, "templateId") && (data.templateId ?? null) !== (before.templateId ?? null) && !isOfferedTemplate(data.templateId)) throw new WeddingError("invalid-input", "Choose Gold Elegance, Black & White or Rustic Garden");
+    // Publish: the guests' invitation needs the real names and date (never
+    // a template's sample). Unpublished is only for a NEW invitation: a live
+    // one is never taken down by a save.
+    if (data.published === true) {
+      const missing = setupMissing({ ...before, ...data });
+      if (missing.length) throw new WeddingError("setup-incomplete", `Add ${missing.join(" and ")} before publishing.`);
+    }
+    if (data.published === false && cur.exists && before.published !== false) delete data.published;
     const coupleNames = coupleDisplayName({ ...before, ...data });
     // Not sent = keep the current one (or make one); blank = make one from the names.
     const wanted = Object.hasOwn(data, "weddingSlug") ? data.weddingSlug : before.weddingSlug ?? null;
@@ -244,6 +257,7 @@ export async function viewInvite({ db, token, now = new Date() }) {
   const r = await resolve(db, token);
   const [s, h] = await Promise.all([r.biz.collection("weddingSetup").doc("current").get(), r.biz.collection("weddingSetup").doc("hero").get()]);
   const setup = s.exists ? s.data() : {};
+  if (!isInvitationPublished(setup)) throw NOT_PUBLISHED();
   const today = businessDate(r.business.timezone || "Asia/Manila", now);
   // The shared invitation contract (shared/invitation-design.js), as the
   // Owner's and Super Admin's previews use it. Only what this party needs:
@@ -276,6 +290,7 @@ export async function respondInvite({ db, FieldValue, token, rsvp, now = new Dat
     const seatingSnap = await tx.get(tenant.doc("guestTotals", SEATING_DOC_ID));
     if (!link.exists || !snap.exists) throw BAD_LINK();
     const setup = setupSnap.exists ? setupSnap.data() : {};
+    if (!isInvitationPublished(setup)) throw NOT_PUBLISHED();
     const today = businessDate(r.business.timezone || "Asia/Manila", now);
     if (!rsvpOpen(setup, today)) throw new WeddingError("rsvp-closed", isDayId(setup.rsvpDeadline) && setup.rsvpEnabled ? "RSVPs for this wedding are closed. Please contact the couple." : "RSVPs aren't open. Please contact the couple.");
     const g = snap.data();

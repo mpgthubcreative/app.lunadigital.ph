@@ -13,15 +13,18 @@ src/modules/wedding/invitation/
     modern/template.js      Modern
     romantic/template.js    Romantic
     editorial/template.js   Editorial
-    gold/template.js        Gold Elegance   (signature layout)
-    monochrome/template.js  Black & White   (signature layout)
-    rustic/template.js      Rustic Garden   (signature layout)
+    gold/template.js        Gold Elegance   (signature layout; offered)
+    gold/sample.js          its sample content + photos (preview only)
+    monochrome/…            Black & White   (signature layout; offered)
+    rustic/…                Rustic Garden   (signature layout; offered)
   customized/       Customized designs (Luna Bridal Custom): Super Admin assigns one
     garden/template.js      Garden (Custom-only; existing designs use it)
   registry.js       The one list of every design: id, name, category, version, kind,
                     preview, source, availability, the fields it uses, photo slots, wording
   renderer.js       The guest page /w/{slug}/invite/{token} (the card layout)
   signature.js      The signature layout (a full page; Gold / Black & White / Rustic)
+  samples.js        The sample couple's shared words + previewSetup (real values,
+                    the design's samples where empty: the Owner's editor only)
   preview.js        The in-app preview (Owner and Super Admin; Super Admin always with a sample guest)
   README.md         This file
 ```
@@ -73,6 +76,46 @@ in Wedding Setup and is kept for any design that shows it. The Luna Standard pag
 hard-coded invitation in `renderer.js` (`draw()`); the `standard` template
 file is its look for a Custom design that starts from it, with the
 sections listed in that file.
+
+## Template-first editing (2026-10-25)
+
+Wedding Setup (`src/modules/wedding/setup.js`) is the invitation itself:
+choose a design → the complete invitation with the design's own sample
+content and photos → tap a part's **Edit** / a photo's **Replace** → a small
+sheet with only that part's fields → **Clean Preview** (the guest's page,
+no controls) → **Publish**.
+
+- **Offered designs:** only `offered: true` designs (Gold Elegance, Black &
+  White, Rustic Garden) can be newly chosen; the server refuses switching
+  TO any other id. Weddings already on an older design keep it, and it
+  still renders and is edited the same way.
+- **Samples are template-owned:** `templates/{id}/sample.js` (`data` and
+  `assets` under `public/invitations/samples/`) become the registry's
+  `sampleData` / `sampleAssets`. `previewSetup()` merges them over the real
+  record ON THE OWNER'S SCREEN ONLY, a whole group at a time (a real venue
+  is never shown beside a sample address). They are never saved, and a
+  guest's invitation is built by the server from real data only: an empty
+  section is left out.
+- **Editable sections:** the renderer marks parts with `data-edit` (and
+  photos with `data-slot`); the registry's `editableSections` says which
+  Wedding Setup fields, photo slots ("hero" = the cover photo) and wording
+  lines each part edits, plus its one-line guide (the Guide tab). The
+  editor adds its controls only in Edit mode; a guest's page has none.
+  Entourage links to Guests (roles are typed once, there).
+- **Publish:** a new invitation is saved with `published: false`; its links
+  say "not published yet" until Publish, which the server allows only with
+  the real names and date (and not during the free trial). A live
+  invitation is never unpublished by a save. Weddings from before have no
+  flag and stay live.
+- **Per design:** wording / accent in `templateOptions[templateId]`; the
+  couple's photos are per wedding (`weddingPhotos/{slot}`) and every
+  design that has that slot shows them, so switching designs and back
+  keeps everything.
+
+To add a design: its folder (`template.js` + optional `sample.js` and
+photos in `public/invitations/samples/{id}/`), register it, mark it
+`offered: true`. A new layout kind also needs its `data-edit` marks and a
+`SECTION_EDITORS` entry in `registry.js`.
 
 ## One wedding profile, many designs (2026-10-24)
 

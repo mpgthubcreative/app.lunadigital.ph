@@ -96,7 +96,7 @@ const TEXT_LIMITS = { scriptLine: 60, rsvpTitle: 30, footerLine: 120 };
 // (Standard) and customized/{id}/ (Luna Bridal Custom); registry.js is one
 // list for the guest page, Wedding Setup, Super Admin and this validation.
 // Nothing about a template is copied into a wedding.
-export { TEMPLATES, TEMPLATE_IDS, TEMPLATE_REGISTRY, CATEGORIES as TEMPLATE_CATEGORIES, STANDARD_TEMPLATE_IDS, CUSTOMIZED_TEMPLATE_IDS, DEFAULT_TEMPLATE_ID, SECTION_IDS, PHOTO_SLOTS, LAYOUT_KINDS, getTemplate, getTemplateEntry, isStandardTemplate } from "../src/modules/wedding/invitation/registry.js";
+export { TEMPLATES, TEMPLATE_IDS, TEMPLATE_REGISTRY, CATEGORIES as TEMPLATE_CATEGORIES, STANDARD_TEMPLATE_IDS, CUSTOMIZED_TEMPLATE_IDS, DEFAULT_TEMPLATE_ID, SECTION_IDS, PHOTO_SLOTS, LAYOUT_KINDS, OFFERED_TEMPLATE_IDS, getTemplate, getTemplateEntry, isStandardTemplate, isOfferedTemplate } from "../src/modules/wedding/invitation/registry.js";
 import { TEMPLATES, TEMPLATE_IDS, SECTION_IDS, PHOTO_SLOTS, DEFAULT_TEMPLATE_ID, getTemplateEntry } from "../src/modules/wedding/invitation/registry.js";
 import { coupleDisplayName } from "./wedding.js";
 

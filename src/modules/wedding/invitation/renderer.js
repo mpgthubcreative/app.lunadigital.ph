@@ -63,6 +63,8 @@ export function applyDesign(page, design) {
   }
 }
 
+// Card section → the Owner's editable section (registry.js editableSections).
+const CARD_EDIT = { hero: "hero", welcome: "welcome", story: "story", ceremony: "details", reception: "details", map: "details", dressCode: "dress", entourage: "entourage", gallery: "gallery", faq: "goodToKnow", footer: "closing" };
 const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 const longDate = (d) => (d ? `${MONTHS[Number(d.slice(5, 7)) - 1]} ${Number(d.slice(8))}, ${d.slice(0, 4)}` : "");
 const time12 = (t) => {
@@ -147,9 +149,9 @@ export function renderInvitePage(root, { token = inviteTokenFrom(window.location
     // A Standard template: the couple's own wording lines (Wedding Setup).
     const texts = { ...(d.texts || {}), ...(design.standard ? state.inv.options?.wording || {} : {}) };
     const heroPhoto = () =>
-      d.hero.style === "none" ? "" : html`<div class="inv-hero-wrap">${hero ? html`<img class="inv-hero" src="${hero}" alt="">` : html`<div class="inv-hero inv-hero-plain" aria-hidden="true"></div>`}${asset(d.assets.heroOverlay) ? html`<img class="inv-hero-frame" src="${asset(d.assets.heroOverlay)}" alt="" aria-hidden="true">` : ""}</div>`;
+      d.hero.style === "none" ? "" : html`<div class="inv-hero-wrap">${hero ? html`<img class="inv-hero" src="${hero}" alt="" data-slot="hero">` : html`<div class="inv-hero inv-hero-plain" aria-hidden="true" data-slot="hero"></div>`}${asset(d.assets.heroOverlay) ? html`<img class="inv-hero-frame" src="${asset(d.assets.heroOverlay)}" alt="" aria-hidden="true">` : ""}</div>`;
     const head = html`<header class="inv-head"><p class="inv-names">${w.coupleNames || ""}</p><p class="inv-script">${texts.scriptLine || "are getting married"}</p>${w.weddingDate ? html`<p class="inv-date">${longDate(w.weddingDate)}</p>` : ""}</header>`;
-    const block = (id, inner) => (inner ? html`<section class="inv-section inv-sec-${id}" data-section="${id}" ${d.sections.styles?.[id] ? "data-styled" : ""}>${inner}</section>` : "");
+    const block = (id, inner) => (inner ? html`<section class="inv-section inv-sec-${id}" data-section="${id}" data-edit="${CARD_EDIT[id]}" ${d.sections.styles?.[id] ? "data-styled" : ""}>${inner}</section>` : "");
     const parts = {
       hero: () => block("hero", d.hero.style === "photo-above-names" || d.hero.style === "full-bleed" ? html`${heroPhoto()}${head}` : html`${head}${heroPhoto()}`),
       welcome: () => block("welcome", w.welcomeMessage ? html`<p class="inv-message">${w.welcomeMessage}</p>` : ""),
@@ -161,7 +163,7 @@ export function renderInvitePage(root, { token = inviteTokenFrom(window.location
       entourage: () => block("entourage", entourage.length ? html`<h3>The entourage</h3><div class="inv-entourage">${entourage.map((g) => html`<div><p class="inv-quiet">${g.label}</p><p>${g.names.join(" · ")}</p></div>`)}</div>` : ""),
       gallery: () => block("gallery", gallery.length ? html`<div class="inv-gallery" data-style="${d.gallery.style}">${gallery.map((src) => html`<img src="${src}" alt="" loading="lazy">`)}</div>` : ""),
       faq: () => block("faq", Array.isArray(w.faq) && w.faq.length ? html`<h3>Questions</h3><dl class="inv-faq">${w.faq.map((f) => html`<dt>${f.q}</dt><dd>${f.a}</dd>`)}</dl>` : ""),
-      rsvp: () => html`<section class="inv-rsvp inv-section" data-role="rsvp" data-section="rsvp" ${d.sections.styles?.rsvp ? "data-styled" : ""}>
+      rsvp: () => html`<section class="inv-rsvp inv-section" data-role="rsvp" data-section="rsvp" data-edit="rsvp" ${d.sections.styles?.rsvp ? "data-styled" : ""}>
             <h2>${texts.rsvpTitle || "RSVP"}</h2>
             <p class="inv-quiet">This invitation is for</p>
             <p class="inv-guest" data-role="guest-name">${guest.name}</p>
@@ -242,19 +244,19 @@ export function renderInvitePage(root, { token = inviteTokenFrom(window.location
       root,
       html`<main class="inv-page" data-role="invite-page">
         <article class="inv-card">
-          <header class="inv-head">
+          <header class="inv-head" data-edit="hero">
             <p class="inv-names">${w.coupleNames || ""}</p>
             <p class="inv-script">${own.scriptLine || "are getting married"}</p>
             ${w.weddingDate ? html`<p class="inv-date">${longDate(w.weddingDate)}</p>` : ""}
           </header>
-          ${hero ? html`<img class="inv-hero" src="${hero}" alt="">` : html`<div class="inv-hero inv-hero-plain" aria-hidden="true"></div>`}
-          ${w.welcomeMessage ? html`<p class="inv-message">${w.welcomeMessage}</p>` : ""}
-          ${w.story ? html`<section class="inv-section inv-sec-story" data-section="story"><h3>Our story</h3><p class="inv-story">${w.story}</p></section>` : ""}
-          <section class="inv-venues">${venue("Ceremony", w.ceremonyTime, w.ceremonyVenue, w.ceremonyAddress, w.ceremonyMap)}${venue("Reception", w.receptionTime, w.receptionVenue, w.receptionAddress, w.receptionMap)}</section>
-          ${w.dressCode ? html`<section class="inv-venue"><h3>Dress code</h3><p>${w.dressCode}</p></section>` : ""}
-          ${gallery.length ? html`<section class="inv-section inv-sec-gallery" data-section="gallery"><div class="inv-gallery" data-style="grid">${gallery.map((src) => html`<img src="${src}" alt="" loading="lazy">`)}</div></section>` : ""}
-          ${faq.length ? html`<section class="inv-section inv-sec-faq" data-section="faq"><h3>Questions</h3><dl class="inv-faq">${faq.map((f) => html`<dt>${f.q}</dt><dd>${f.a}</dd>`)}</dl></section>` : ""}
-          <section class="inv-rsvp" data-role="rsvp">
+          ${hero ? html`<img class="inv-hero" src="${hero}" alt="" data-slot="hero">` : html`<div class="inv-hero inv-hero-plain" aria-hidden="true" data-slot="hero"></div>`}
+          ${w.welcomeMessage ? html`<p class="inv-message" data-edit="welcome">${w.welcomeMessage}</p>` : ""}
+          ${w.story ? html`<section class="inv-section inv-sec-story" data-section="story" data-edit="story"><h3>Our story</h3><p class="inv-story">${w.story}</p></section>` : ""}
+          <section class="inv-venues" data-edit="details">${venue("Ceremony", w.ceremonyTime, w.ceremonyVenue, w.ceremonyAddress, w.ceremonyMap)}${venue("Reception", w.receptionTime, w.receptionVenue, w.receptionAddress, w.receptionMap)}</section>
+          ${w.dressCode ? html`<section class="inv-venue" data-edit="dress"><h3>Dress code</h3><p>${w.dressCode}</p></section>` : ""}
+          ${gallery.length ? html`<section class="inv-section inv-sec-gallery" data-section="gallery" data-edit="gallery"><div class="inv-gallery" data-style="grid">${gallery.map((src) => html`<img src="${src}" alt="" loading="lazy">`)}</div></section>` : ""}
+          ${faq.length ? html`<section class="inv-section inv-sec-faq" data-section="faq" data-edit="goodToKnow"><h3>Questions</h3><dl class="inv-faq">${faq.map((f) => html`<dt>${f.q}</dt><dd>${f.a}</dd>`)}</dl></section>` : ""}
+          <section class="inv-rsvp" data-role="rsvp" data-edit="rsvp">
             <h2>${own.rsvpTitle || "RSVP"}</h2>
             <p class="inv-quiet">This invitation is for</p>
             <p class="inv-guest" data-role="guest-name">${guest.name}</p>
@@ -262,7 +264,7 @@ export function renderInvitePage(root, { token = inviteTokenFrom(window.location
             ${rsvpBlock()}
             ${state.message ? html`<p class="inv-error" role="alert">${state.message}</p>` : ""}
           </section>
-          ${w.footerNote ? html`<section class="inv-section inv-sec-footer" data-section="footer"><div class="inv-footer"><p>${w.footerNote}</p></div></section>` : ""}
+          ${w.footerNote ? html`<section class="inv-section inv-sec-footer" data-section="footer" data-edit="closing"><div class="inv-footer"><p>${w.footerNote}</p></div></section>` : ""}
         </article>
       </main>`
     );

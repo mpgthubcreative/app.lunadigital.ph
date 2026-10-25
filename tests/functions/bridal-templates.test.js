@@ -64,22 +64,24 @@ describe("the template registry", () => {
 });
 
 describe("Bridal free trial: choose, fill in, preview; publish once paid", () => {
-  it("the Owner picks a Standard template (stored as templateId only); Custom-only templates are refused", async () => {
-    ok(await setup({ action: "save", setup: { coupleNames: "Carlo & Yanie", weddingDate: "2027-02-14", rsvpEnabled: true, weddingSlug: "carloyanieforever", templateId: "romantic" } }));
-    expect(world.db.docs.get(`businesses/${W}/weddingSetup/current`)).toMatchObject({ templateId: "romantic" });
-    // The template source is never copied into the wedding.
-    expect(JSON.stringify(world.db.docs.get(`businesses/${W}/weddingSetup/current`))).not.toMatch(/#b56576|Great Vibes/);
+  it("the Owner picks one of the three offered designs (stored as templateId only); older and Custom-only templates are refused as new choices", async () => {
+    // 2026-10-25: only Gold Elegance, Black & White and Rustic Garden are offered.
+    expect((await setup({ action: "save", setup: { coupleNames: "Carlo & Yanie", templateId: "romantic" } })).status).toBe(400);
+    ok(await setup({ action: "save", setup: { coupleNames: "Carlo & Yanie", weddingDate: "2027-02-14", rsvpEnabled: true, weddingSlug: "carloyanieforever", templateId: "rustic" } }));
+    expect(world.db.docs.get(`businesses/${W}/weddingSetup/current`)).toMatchObject({ templateId: "rustic" });
+    // The template source (and its sample content) is never copied into the wedding.
+    expect(JSON.stringify(world.db.docs.get(`businesses/${W}/weddingSetup/current`))).not.toMatch(/#b4532a|Young Serif|Nicky|Magnolia/);
     expect((await setup({ action: "save", setup: { templateId: "garden" } })).status).toBe(400);
     expect((await setup({ action: "save", setup: { templateId: "<script>" } })).status).toBe(400);
     // Super Admin's Invitation card: the selected template; preview only.
     const inv = ok(await op({ action: "business", businessId: W })).invitation;
-    expect(inv).toMatchObject({ type: "standard", templateId: "romantic", templateLabel: "Romantic", trialPreviewOnly: true });
+    expect(inv).toMatchObject({ type: "standard", templateId: "rustic", templateLabel: "Rustic Garden", trialPreviewOnly: true });
     // Super Admin's sample preview shows the chosen template.
-    expect(ok(await design({ action: "sample", businessId: W, which: "live" })).invitation.design.config).toMatchObject({ templateId: "romantic", theme: { accent: "#b56576" } });
+    expect(ok(await design({ action: "sample", businessId: W, which: "live" })).invitation.design.config).toMatchObject({ templateId: "rustic", theme: { accent: "#b4532a" } });
   });
 
   it("during the trial guest links can't be made or opened (the trial message); after paying, the same flow works and template changes keep each link", async () => {
-    ok(await setup({ action: "save", setup: { coupleNames: "Carlo & Yanie", weddingDate: "2027-02-14", rsvpEnabled: true, weddingSlug: "carloyanieforever", templateId: "classic" } }));
+    ok(await setup({ action: "save", setup: { coupleNames: "Carlo & Yanie", weddingDate: "2027-02-14", rsvpEnabled: true, weddingSlug: "carloyanieforever", templateId: "gold" } }));
     const g = ok(await guests({ action: "create", guest: { name: "Santos Family", side: "bride", partySize: 4 } }), 201).guestId;
     const blocked = await guests({ action: "inviteLink", guestId: g });
     expect(blocked.status).toBe(409);
@@ -95,15 +97,16 @@ describe("Bridal free trial: choose, fill in, preview; publish once paid", () =>
     const token = path.split("/").pop();
     expect(path).toBe(`/w/carloyanieforever/invite/${token}`);
     const v1 = ok(await invite({ action: "view", token })).invitation;
-    expect(v1.design).toMatchObject({ standard: true, config: { templateId: "classic" } });
+    expect(v1.design).toMatchObject({ standard: true, config: { templateId: "gold", kind: "signature" } });
     expect(v1.guest.name).toBe("Santos Family");
     // A new template: the same link shows it.
-    ok(await setup({ action: "save", setup: { templateId: "editorial" } }));
+    ok(await setup({ action: "save", setup: { templateId: "monochrome" } }));
     const v2 = ok(await invite({ action: "view", token })).invitation;
-    expect(v2.design.config.templateId).toBe("editorial");
+    expect(v2.design.config.templateId).toBe("monochrome");
     expect(ok(await guests({ action: "inviteLink", guestId: g })).path).toBe(path);
-    // Luna Standard: the original page (no design).
-    ok(await setup({ action: "save", setup: { templateId: "standard" } }));
+    // An older wedding on Luna Standard (stored before): still the original page, same link.
+    expect((await setup({ action: "save", setup: { templateId: "standard" } })).status).toBe(400);
+    world.db.docs.set(`businesses/${W}/weddingSetup/current`, { ...world.db.docs.get(`businesses/${W}/weddingSetup/current`), templateId: null });
     expect(ok(await invite({ action: "view", token })).invitation.design).toBeNull();
     ok(await invite({ action: "respond", token, rsvp: { status: "attending", confirmed: 3 } }));
   });

@@ -6,6 +6,8 @@ export default {
   label: "Gold Elegance",
   description: "Cream and antique gold, a countdown and the day's schedule.",
   version: 1,
+  // Offered to new invitations (Wedding Setup's design choice).
+  offered: true,
   kind: "signature",
   variant: "gold",
   theme: { background: "#f7f3ec", card: "#ffffff", text: "#363535", muted: "#6f6a63", accent: "#bd9627", accentText: "#ffffff", border: "#e4d8bf", headingFont: "Cormorant Garamond", bodyFont: "Mulish", scriptFont: "Cormorant Garamond" },

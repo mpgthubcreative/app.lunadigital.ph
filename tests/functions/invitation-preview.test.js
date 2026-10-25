@@ -71,7 +71,7 @@ beforeEach(async () => {
 describe("Wedding Setup fields → the invitation (audit)", () => {
   it("every content field the couple fills in reaches the invitation contract; the rest drive RSVP, the link or the template", () => {
     const content = new Set(INVITATION_CONTENT_FIELDS);
-    const notContent = { rsvpEnabled: "rsvpOpen", closeAfterDeadline: "rsvpOpen", weddingSlug: "path", templateId: "design", templateOptions: "design (wording / accent of the design shown: options)", showTable: "not on the form (reserved)" };
+    const notContent = { rsvpEnabled: "rsvpOpen", closeAfterDeadline: "rsvpOpen", weddingSlug: "path", templateId: "design", templateOptions: "design (wording / accent of the design shown: options)", showTable: "not on the form (reserved)", published: "whether guests can open it (Publish)" };
     for (const f of SETUP_FIELDS) expect(content.has(f) || f in notContent, f).toBe(true);
     const out = invitationData({ setup: FULL, guest: {}, rsvpOpen: true });
     for (const f of INVITATION_CONTENT_FIELDS) expect(out.wedding[f], f).toEqual(FULL[f] ?? null);
@@ -127,7 +127,7 @@ describe("Luna Bridal Custom, design not published yet (guests see Luna Standard
 describe("Luna Bridal (Standard templates): the Owner's Preview of the template on screen", () => {
   const setup = () => as(createWeddingSetupHandler, u.basic, "wed-basic");
   it("previews each Standard template before saving; the saved choice and details stay as they are", async () => {
-    ok(await setup()({ action: "save", setup: { ...FULL, story: null, faq: [], footerNote: null, weddingSlug: "carloyanie-basic", templateId: "classic" } }));
+    ok(await setup()({ action: "save", setup: { ...FULL, story: null, faq: [], footerNote: null, weddingSlug: "carloyanie-basic", templateId: "gold" } }));
     const before = JSON.stringify(world.db.docs.get("businesses/wed-basic/weddingSetup/current"));
     for (const id of STANDARD_TEMPLATE_IDS) {
       const look = ok(await setup()({ action: "preview", which: "live", templateId: id }));
@@ -136,6 +136,6 @@ describe("Luna Bridal (Standard templates): the Owner's Preview of the template 
     }
     expect(JSON.stringify(world.db.docs.get("businesses/wed-basic/weddingSetup/current"))).toBe(before);
     // A Custom-only template can't be previewed as a Standard choice.
-    expect(ok(await setup()({ action: "preview", which: "live", templateId: "garden" })).design.config.templateId).toBe("classic");
+    expect(ok(await setup()({ action: "preview", which: "live", templateId: "garden" })).design.config.templateId).toBe("gold");
   });
 });

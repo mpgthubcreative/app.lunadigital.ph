@@ -127,7 +127,11 @@ describe("Wedding Setup → guests' invitations", () => {
     expect(inv.wedding).toMatchObject({ city: "Tagaytay", schedule: [{ time: "15:00", title: "Ceremony" }] });
     // Switch to Rustic (its own wording), then to Classic: nothing is lost.
     ok(await api("setup", { action: "save", setup: { templateId: "rustic", templateOptions: { ...docAt("weddingSetup/current").templateOptions, rustic: { wording: { intro: "With joy" }, accent: "olive" } } } }));
-    ok(await api("setup", { action: "save", setup: { templateId: "classic" } }));
+    // An older design can't be newly chosen (2026-10-25)...
+    expect((await api("setup", { action: "save", setup: { templateId: "classic" } })).status).toBe(400);
+    expect(docAt("weddingSetup/current").templateId).toBe("rustic");
+    // ...but a wedding already on one (stored before) keeps rendering it.
+    world.db.docs.set(`businesses/${W}/weddingSetup/current`, { ...docAt("weddingSetup/current"), templateId: "classic" });
     const s = docAt("weddingSetup/current");
     expect(s.templateOptions.gold).toEqual({ wording: { tagline: "are tying the knot" }, accent: "sage" });
     expect(s.templateOptions.rustic).toEqual({ wording: { intro: "With joy" }, accent: "olive" });

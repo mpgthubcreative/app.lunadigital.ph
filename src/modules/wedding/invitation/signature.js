@@ -51,6 +51,8 @@ export function namesOf(w) {
   const m = /^(.+?)\s+(?:&|and|\+)\s+(.+)$/i.exec(line);
   return m ? [m[1], m[2]] : line ? [line] : [];
 }
+// Invitation section → the Owner's editable section (registry.js).
+const EDIT_OF = { welcome: "welcome", story: "story", ceremony: "details", dressCode: "dress", entourage: "entourage", gallery: "gallery", faq: "goodToKnow" };
 const initial = (n) => (String(n || "").trim()[0] || "").toUpperCase();
 const paragraphsOf = (t) => String(t || "").split(/\n\s*\n/).map((p) => p.replace(/\n/g, " ").trim()).filter(Boolean);
 
@@ -63,7 +65,7 @@ export function signaturePage({ inv, names, wording: W, time12, rsvpBlock, messa
   const [n1, n2] = names;
   const mono = n2 ? html`<span class="sg-mono" aria-hidden="true">${initial(n1)}<i>&amp;</i>${initial(n2)}</span>` : html`<span class="sg-mono" aria-hidden="true">${initial(n1)}</span>`;
   const namesLine = n2 ? `${n1} & ${n2}` : n1 || "";
-  const photo = (slot, cls = "sg-photo") => (photos[slot] ? html`<img class="${cls}" src="${photos[slot]}" alt="" loading="lazy">` : "");
+  const photo = (slot, cls = "sg-photo") => (photos[slot] ? html`<img class="${cls}" src="${photos[slot]}" alt="" loading="lazy" data-slot="${slot}">` : "");
   // Numbered eyebrows (Gold: "01 How it began") follow the sections shown.
   let num = 0;
   const eyebrow = (text) => {
@@ -71,7 +73,9 @@ export function signaturePage({ inv, names, wording: W, time12, rsvpBlock, messa
     num += 1;
     return html`<p class="sg-eyebrow">${variant === "gold" ? html`<span class="sg-num">${String(num).padStart(2, "0")}</span>` : ""}${text}</p>`;
   };
-  const sec = (id, cls, inner) => (inner ? html`<section class="sg-section ${cls}" data-section="${id}" id="sg-${id}"><div class="sg-inner">${inner}</div></section>` : "");
+  // data-edit / data-slot: which editable section / photo slot a part is
+  // (the Owner's editor reads them; a guest's page has no controls).
+  const sec = (id, cls, inner) => (inner ? html`<section class="sg-section ${cls}" data-section="${id}" data-edit="${EDIT_OF[id]}" id="sg-${id}"><div class="sg-inner">${inner}</div></section>` : "");
 
   const target = w.weddingDate ? zonedEpoch(w.weddingDate, w.ceremonyTime, inv.timezone) : null;
   const left = target ? countdown(target, now) : null;
@@ -83,8 +87,8 @@ export function signaturePage({ inv, names, wording: W, time12, rsvpBlock, messa
 
   const heroPart = on("hero")
     ? html`<section class="sg-hero" data-section="hero" data-has-photo="${hero ? "1" : "0"}">
-        ${hero ? html`<img class="sg-hero-photo" src="${hero}" alt="">` : html`<div class="sg-hero-photo sg-hero-plain" aria-hidden="true"></div>`}
-        <div class="sg-hero-card">
+        ${hero ? html`<img class="sg-hero-photo" src="${hero}" alt="" data-slot="hero">` : html`<div class="sg-hero-photo sg-hero-plain" aria-hidden="true" data-slot="hero"></div>`}
+        <div class="sg-hero-card" data-edit="hero">
           ${W.intro ? html`<p class="sg-intro">${W.intro}</p>` : ""}
           <h1 class="sg-names">${n2 ? html`<span>${n1}</span><span class="sg-amp">&amp;</span><span>${n2}</span>` : html`<span>${n1 || ""}</span>`}</h1>
           ${W.tagline ? html`<p class="sg-tagline">${W.tagline}</p>` : ""}
@@ -140,7 +144,7 @@ export function signaturePage({ inv, names, wording: W, time12, rsvpBlock, messa
             ${w.weddingDate || times.length ? html`<article class="sg-card">${photo("when", "sg-card-photo")}<div class="sg-card-body"><p class="sg-kicker">When</p>${w.weddingDate ? html`<h3 class="sg-place-name">${fullDate(w.weddingDate)}</h3>` : ""}${times.length ? html`<dl class="sg-times">${times.map(([l, t]) => html`<div><dt>${l}</dt><dd>${time12(t)}</dd></div>`)}</dl>` : ""}</div></article>` : ""}
             ${hasWhere ? html`<article class="sg-card">${photo("venue", "sg-card-photo")}<div class="sg-card-body"><p class="sg-kicker">Where</p>${places}${w.gettingThere ? html`<p class="sg-quiet sg-pre">${w.gettingThere}</p>` : ""}</div></article>` : ""}
           </div>
-          ${schedule.length ? html`<div class="sg-schedule"><h3 class="sg-subtitle">${W.scheduleTitle}</h3><ol class="sg-timeline">${schedule.map((s) => html`<li><span class="sg-time">${s.time ? time12(s.time) : ""}</span><span>${s.title}</span></li>`)}</ol></div>` : ""}`
+          ${schedule.length ? html`<div class="sg-schedule" data-edit="schedule"><h3 class="sg-subtitle">${W.scheduleTitle}</h3><ol class="sg-timeline">${schedule.map((s) => html`<li><span class="sg-time">${s.time ? time12(s.time) : ""}</span><span>${s.title}</span></li>`)}</ol></div>` : ""}`
       )
     : "";
 
@@ -175,7 +179,7 @@ export function signaturePage({ inv, names, wording: W, time12, rsvpBlock, messa
       )
     : "";
 
-  const rsvpPart = html`<section class="sg-section sg-rsvp inv-rsvp" data-role="rsvp" data-section="rsvp" id="sg-rsvp"><div class="sg-inner">
+  const rsvpPart = html`<section class="sg-section sg-rsvp inv-rsvp" data-role="rsvp" data-section="rsvp" data-edit="rsvp" id="sg-rsvp"><div class="sg-inner">
       ${eyebrow(W.rsvpEyebrow)}<h2 class="sg-title">${W.rsvpTitle}</h2>
       <div class="sg-rsvp-box">
         <p class="inv-quiet">This invitation is for</p>
@@ -188,7 +192,7 @@ export function signaturePage({ inv, names, wording: W, time12, rsvpBlock, messa
     </div></section>`;
 
   const footerPart = on("footer")
-    ? html`<footer class="sg-footer" data-section="footer">${mono}<p class="sg-footer-names">${namesLine}</p><p class="sg-quiet">${[shortDate(w.weddingDate), w.city].filter(Boolean).join(" · ")}</p>${w.footerNote ? html`<p>${w.footerNote}</p>` : ""}${W.closing ? html`<p class="sg-closing">${W.closing}</p>` : ""}</footer>`
+    ? html`<footer class="sg-footer" data-section="footer" data-edit="closing">${mono}<p class="sg-footer-names">${namesLine}</p><p class="sg-quiet">${[shortDate(w.weddingDate), w.city].filter(Boolean).join(" · ")}</p>${w.footerNote ? html`<p>${w.footerNote}</p>` : ""}${W.closing ? html`<p class="sg-closing">${W.closing}</p>` : ""}</footer>`
     : "";
 
   // Ceremony, Reception and Map links are one Details section (at Ceremony's place).

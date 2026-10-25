@@ -5,6 +5,8 @@ export default {
   label: "Rustic Garden",
   description: "Sage and rust with leafy details; your story in chapters.",
   version: 1,
+  // Offered to new invitations (Wedding Setup's design choice).
+  offered: true,
   kind: "signature",
   variant: "rustic",
   theme: { background: "#ffffff", card: "#eef1e9", text: "#1a1a17", muted: "#5b6154", accent: "#b4532a", accentText: "#ffffff", border: "#8fa382", headingFont: "Young Serif", bodyFont: "Nunito Sans", scriptFont: "Pinyon Script" },

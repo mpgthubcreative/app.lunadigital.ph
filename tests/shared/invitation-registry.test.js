@@ -41,7 +41,7 @@ describe("invitation registry", () => {
     for (const r of TEMPLATE_REGISTRY) {
       const src = readFileSync(`${process.cwd()}/${r.source}`, "utf8");
       expect(src, r.id).not.toMatch(/businessId|weddingId|guestId|coupleNames|weddingDate|\b20\d\d-\d\d-\d\d\b/);
-      const ALLOWED = ["description", "gallery", "hero", "id", "label", "layout", "order", "show", "theme", "version", "kind", "variant", "recommended", "photoSlots", "wording", "accents", "showsWhenAdded"];
+      const ALLOWED = ["description", "gallery", "hero", "id", "label", "layout", "order", "show", "theme", "version", "kind", "variant", "recommended", "photoSlots", "wording", "accents", "showsWhenAdded", "offered"];
       for (const k of ["description", "gallery", "hero", "id", "label", "layout", "order", "show", "theme"]) expect(Object.keys(r.file), r.id).toContain(k);
       expect(Object.keys(r.file).filter((k) => !ALLOWED.includes(k)), r.id).toEqual([]);
     }

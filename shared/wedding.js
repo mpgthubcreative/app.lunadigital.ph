@@ -440,7 +440,7 @@ export const MAX_PALETTE = 8;
 // templateId: the Owner's Standard invitation template (2026-10-21; the
 // templates are in src/modules/wedding/invitation/templates/). Null = Luna
 // Standard. A Custom design (Super Admin) has its own template.
-export const SETUP_FIELDS = [...Object.keys(SETUP_TEXT), "weddingDate", "ceremonyTime", "receptionTime", "ceremonyMap", "receptionMap", "rsvpDeadline", "rsvpEnabled", "closeAfterDeadline", "showTable", "weddingSlug", "faq", "templateId", "sameVenue", "askDietary", "schedule", "palette", "templateOptions", ...Object.keys(SETUP_LISTS)];
+export const SETUP_FIELDS = [...Object.keys(SETUP_TEXT), "weddingDate", "ceremonyTime", "receptionTime", "ceremonyMap", "receptionMap", "rsvpDeadline", "rsvpEnabled", "closeAfterDeadline", "showTable", "weddingSlug", "faq", "templateId", "sameVenue", "askDietary", "schedule", "palette", "templateOptions", "published", ...Object.keys(SETUP_LISTS)];
 export const MAX_FAQ = 8;
 
 // The friendly part of a guest's link: /w/{weddingSlug}/invite/{token}.
@@ -562,7 +562,7 @@ export function validateWeddingSetup(input) {
       out.templateOptions[id] = one;
     }
   }
-  for (const k of ["rsvpEnabled", "closeAfterDeadline", "showTable", "sameVenue", "askDietary"]) {
+  for (const k of ["rsvpEnabled", "closeAfterDeadline", "showTable", "sameVenue", "askDietary", "published"]) {
     if (!Object.hasOwn(input, k)) continue;
     if (typeof input[k] !== "boolean") throw new WeddingError("invalid-input", "Invalid setting");
     out[k] = input[k];
@@ -592,6 +592,11 @@ export function coupleNameParts(setup) {
   const m = /^(.+?)\s+(?:&|and|\+)\s+(.+)$/i.exec(line);
   return m ? [m[1], m[2]] : line ? [line] : [];
 }
+// Published (2026-10-25, template-first editing): a new invitation starts
+// unpublished (published: false) while the couple personalizes it; guests'
+// links say "not published yet" until the couple publishes. Weddings set up
+// before have no flag and are live, as they were.
+export const isInvitationPublished = (setup) => setup?.published !== false;
 // Guests can answer while RSVP is on and (if set to close) the deadline
 // hasn't passed. The Owner can always change an RSVP in Luna.
 export function rsvpOpen(setup, today) {

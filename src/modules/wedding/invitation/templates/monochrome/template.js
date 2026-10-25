@@ -5,6 +5,8 @@ export default {
   label: "Black & White",
   description: "A magazine-style page in black and white, photos in monochrome.",
   version: 1,
+  // Offered to new invitations (Wedding Setup's design choice).
+  offered: true,
   kind: "signature",
   variant: "monochrome",
   theme: { background: "#ffffff", card: "#ffffff", text: "#000000", muted: "#4d4d4d", accent: "#000000", accentText: "#ffffff", border: "#d1d1d1", headingFont: "Playfair Display", bodyFont: "Jost", scriptFont: "Playfair Display" },
