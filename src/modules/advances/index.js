@@ -32,6 +32,8 @@ import { prepareProof, PHOTO_OR_PDF_ACCEPT } from "../../lib/image.js";
 import { viewProof } from "../../components/proof-viewer.js";
 import { editPlan, repay, periodText, methodOptions } from "./plan.js";
 
+// One request key per dialog: a double tap or retry records once.
+const newKey = () => (globalThis.crypto && crypto.randomUUID ? crypto.randomUUID() : `k${Date.now()}${Math.random().toString(36).slice(2)}${Math.random().toString(36).slice(2)}`).replace(/[^A-Za-z0-9_-]/g, "");
 const ID = /^[A-Za-z0-9]{8,40}$/;
 const short = (d) => formatDayId(d).replace(/, \d{4}$/, "");
 const planText = (a) => {
@@ -201,6 +203,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     if (!state.staff.length) return toast("Add household staff first.", "danger");
     const chosen = preset || state.staffId || state.staff[0].id;
     const first = state.staff.find((s) => s.id === chosen) || state.staff[0];
+    const idempotencyKey = newKey();
     const r = await formDialog({
       title: "Give an advance",
       intro: state.staff.length === 1 || preset || state.staffId ? (availableFor(first) !== null ? `Available to advance: ${formatCentavos(availableFor(first))}.` : "") : "",
@@ -222,7 +225,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
         const avail = availableFor(s);
         if (avail !== null && amount > avail) throw new Error(`Maximum available is ${formatCentavos(avail)}.`);
         const proof = v.proof ? await prepareProof(v.proof, { pdf: true }) : null;
-        const res = await api({ action: "give", advance: { staffId: v.staffId, date: v.date || today, amount, method: v.method, plan: v.plan === "none" || v.plan === "split" ? "none" : "next", ...(v.description?.trim() ? { description: v.description.trim() } : {}), ...(v.reference?.trim() ? { reference: v.reference.trim() } : {}) }, ...(proof ? { proof } : {}) });
+        const res = await api({ action: "give", advance: { staffId: v.staffId, date: v.date || today, amount, method: v.method, plan: v.plan === "none" || v.plan === "split" ? "none" : "next", ...(v.description?.trim() ? { description: v.description.trim() } : {}), ...(v.reference?.trim() ? { reference: v.reference.trim() } : {}) }, ...(proof ? { proof } : {}), idempotencyKey });
         try {
           localStorage.setItem(METHOD_KEY, v.method);
         } catch {

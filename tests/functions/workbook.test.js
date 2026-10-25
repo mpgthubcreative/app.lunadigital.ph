@@ -38,6 +38,7 @@ import { readXlsx } from "../../shared/xlsx.js";
 import { QTY_SCALE } from "../../shared/quantity.js";
 import { excelSerial } from "../../shared/exports.js";
 import { resolveWorkbookRange, workbookFileName } from "../../shared/workbook.js";
+import { withRequestKey } from "../helpers/request-keys.js";
 
 const H = "biz-home";
 const W = "biz-wed";
@@ -72,7 +73,7 @@ const HANDLERS = {
   products: createProductsHandler,
 };
 async function api(kind, uid, businessId, body) {
-  const res = await HANDLERS[kind](deps())({ ...request({ uid, businessId, method: "POST" }), body: JSON.stringify(body) });
+  const res = await HANDLERS[kind](deps())({ ...request({ uid, businessId, method: "POST" }), body: JSON.stringify(withRequestKey(kind, body)) });
   return { status: res.statusCode, body: JSON.parse(res.body) };
 }
 const ok = (r, status = 200) => {

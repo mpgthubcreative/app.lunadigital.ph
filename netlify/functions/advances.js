@@ -26,15 +26,15 @@ export const createAdvancesHandler = (deps) =>
   payrollActionHandler("advances", {
     ...deps,
     actions: {
-      create: { permission: P, created: true, fields: ["action", "advance"], run: (c, b) => createAdvance({ ...c, input: b.advance }) },
+      create: { permission: P, created: true, keyed: true, fields: ["action", "advance"], run: (c, b) => createAdvance({ ...c, input: b.advance, idempotencyKey: b.idempotencyKey }) },
       update: { permission: P, fields: ["action", "advanceId", "changes"], run: (c, b) => updateAdvance({ ...c, advanceId: b.advanceId, changes: b.changes }) },
       markPaid: { permission: P, fields: ["action", "advanceId", "release", "proof"], run: (c, b) => markAdvancePaid({ ...c, advanceId: b.advanceId, release: b.release ?? {}, proof: b.proof ?? null }) },
       // Owner-pilot change: void a GIVEN advance (reason required; reversals kept).
       void: { permission: P, fields: ["action", "advanceId", "reason"], run: (c, b) => voidAdvance({ ...c, advanceId: b.advanceId, reason: b.reason }) },
       voided: { permission: "advances.view", fields: ["action", "staffId"], run: async (c, b) => ({ voided: await listVoided({ tenant: c.tenant, kind: "advance", staffId: b.staffId ?? null }) }) },
-      give: { permission: P, created: true, fields: ["action", "advance", "proof"], run: (c, b) => giveAdvance({ ...c, input: b.advance, proof: b.proof ?? null }) },
+      give: { permission: P, created: true, keyed: true, fields: ["action", "advance", "proof"], run: (c, b) => giveAdvance({ ...c, input: b.advance, proof: b.proof ?? null, idempotencyKey: b.idempotencyKey }) },
       schedule: { permission: P, fields: ["action", "advanceId", "schedule"], run: (c, b) => setAdvanceSchedule({ ...c, advanceId: b.advanceId, schedule: b.schedule }) },
-      repay: { permission: P, fields: ["action", "advanceId", "repayment"], run: (c, b) => recordAdvanceRepayment({ ...c, advanceId: b.advanceId, repayment: b.repayment }) },
+      repay: { permission: P, keyed: true, fields: ["action", "advanceId", "repayment"], run: (c, b) => recordAdvanceRepayment({ ...c, advanceId: b.advanceId, repayment: b.repayment, idempotencyKey: b.idempotencyKey }) },
       proof: { permission: "advances.view", fields: ["action", "advanceId"], run: async (c, b) => ({ proof: await readAdvanceProof({ ...c, businessId: c.businessId, advanceId: b.advanceId }) }) },
       attachProof: { permission: P, fields: ["action", "advanceId", "proof"], run: (c, b) => attachAdvanceProof({ ...c, advanceId: b.advanceId, proof: b.proof }) },
       delete: { permission: P, fields: ["action", "advanceId"], run: (c, b) => deleteAdvance({ ...c, advanceId: b.advanceId }) },

@@ -20,6 +20,7 @@ import { buildWorld, request, asOperator } from "../helpers/tenants.js";
 import { readXlsx } from "../../shared/xlsx.js";
 import { nextDueDate } from "../../shared/baby.js";
 import { occurrenceId, partExpenseId } from "../../netlify/functions/_lib/baby.js";
+import { withRequestKey } from "../helpers/request-keys.js";
 
 const H = "biz-home";
 const W = 41100;
@@ -44,7 +45,7 @@ beforeEach(async () => {
 const deps = () => ({ getAdmin: async () => world, now: () => clock });
 const HANDLERS = { budget: createBudgetHandler, schedule: createScheduleHandler, expenses: createExpensesHandler, staff: createHouseholdStaffHandler, attendance: createAttendanceHandler, payroll: createPayrollHandler, advances: createAdvancesHandler };
 async function api(kind, uid, body, businessId = H) {
-  const res = await HANDLERS[kind](deps())({ ...request({ uid, businessId, method: "POST" }), body: JSON.stringify(body) });
+  const res = await HANDLERS[kind](deps())({ ...request({ uid, businessId, method: "POST" }), body: JSON.stringify(withRequestKey(kind, body)) });
   return { status: res.statusCode, body: JSON.parse(res.body) };
 }
 const ok = (r, status = 200) => {

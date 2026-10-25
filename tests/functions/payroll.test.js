@@ -17,6 +17,7 @@ import { addDays } from "../../shared/metrics.js";
 import { createExportsHandler } from "../../netlify/functions/exports.js";
 import { readXlsx } from "../../shared/xlsx.js";
 import { reportRows } from "../../shared/exports.js";
+import { withRequestKey } from "../helpers/request-keys.js";
 
 const NOW = new Date("2026-10-16T04:00:00Z"); // Oct 16, 12:00 Manila
 const H = "biz-home";
@@ -39,7 +40,7 @@ beforeEach(async () => {
 const deps = () => ({ getAdmin: async () => world, now: () => clock });
 const HANDLERS = { staff: createHouseholdStaffHandler, attendance: createAttendanceHandler, payroll: createPayrollHandler, advances: createAdvancesHandler };
 async function api(kind, uid, body, businessId = H) {
-  const res = await HANDLERS[kind](deps())({ ...request({ uid, businessId, method: "POST" }), body: JSON.stringify(body) });
+  const res = await HANDLERS[kind](deps())({ ...request({ uid, businessId, method: "POST" }), body: JSON.stringify(withRequestKey(kind, body)) });
   return { status: res.statusCode, body: JSON.parse(res.body) };
 }
 // The receipt link needs the helper signed in (Owner pilot 2026-10-19): uid = who calls (null = signed out).
@@ -358,7 +359,7 @@ describe("salary release and the one-time receipt link", () => {
   it("a receipt token is not a Luna login: it opens nothing in the workspace", async () => {
     const { r } = await released();
     for (const [kind, body] of [["payroll", { action: "prepare", staffId: "aaaaaaaaaaaa", periodStart: "2026-10-01" }], ["staff", { action: "create", staff: { name: "X", dailyWage: 1, payCycle: "weekly" } }]]) {
-      const res = await HANDLERS[kind](deps())({ ...request({ token: r.body.receiptToken, businessId: H, method: "POST" }), body: JSON.stringify(body) });
+      const res = await HANDLERS[kind](deps())({ ...request({ token: r.body.receiptToken, businessId: H, method: "POST" }), body: JSON.stringify(withRequestKey(kind, body)) });
       expect(res.statusCode, kind).toBe(401);
     }
     const ex = await createExportsHandler(deps())({ ...request({ token: r.body.receiptToken, businessId: H, method: "POST" }), body: JSON.stringify({ dataset: "payroll" }) });

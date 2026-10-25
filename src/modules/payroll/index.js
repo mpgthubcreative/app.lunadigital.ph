@@ -42,6 +42,8 @@ const daysText = (p) => [[p.present, "P"], [p.officialLeave, "PL"], [p.unpaidLea
 const short = (d) => formatDayId(d).replace(/, \d{4}$/, "");
 export const periodName = (x) => (x.start.slice(0, 7) === x.end.slice(0, 7) ? `${short(x.start)}–${Number(x.end.slice(8))}` : `${short(x.start)} – ${short(x.end)}`);
 const rowPeriod = (p) => periodName({ start: p.periodStart, end: p.periodEnd });
+// One request key per dialog: a double tap or retry records once.
+const newKey = () => (globalThis.crypto && crypto.randomUUID ? crypto.randomUUID() : `k${Date.now()}${Math.random().toString(36).slice(2)}${Math.random().toString(36).slice(2)}`).replace(/[^A-Za-z0-9_-]/g, "");
 export const receiptUrl = (token, origin = window.location.origin) => `${origin}/receipt#${token}`;
 const ID = /^[A-Za-z0-9]{8,40}$/;
 
@@ -531,20 +533,23 @@ export function mount(container, session, { data = defaultData, toast = defaultT
           refresh();
         }
       } else if (x === "add-bonus") {
-        const r = await formDialog({ title: `Add a bonus for ${p.staffName}`, intro: "Extra pay you choose to give. It's separate from 13th month pay.", fields: [{ name: "amount", label: "Amount (₱)", required: true, inputmode: "decimal" }, { name: "description", label: "What for? (optional)", placeholder: "e.g. Christmas bonus" }], submitLabel: "Add bonus", onSubmit: async (v) => data.payrollApi({ action: "addAddition", payrollId: await ensure(), addition: { type: "bonus", amount: parseCentavos(v.amount), ...(v.description.trim() ? { description: v.description.trim() } : {}) } }) });
+        const idempotencyKey = newKey();
+        const r = await formDialog({ title: `Add a bonus for ${p.staffName}`, intro: "Extra pay you choose to give. It's separate from 13th month pay.", fields: [{ name: "amount", label: "Amount (₱)", required: true, inputmode: "decimal" }, { name: "description", label: "What for? (optional)", placeholder: "e.g. Christmas bonus" }], submitLabel: "Add bonus", onSubmit: async (v) => data.payrollApi({ action: "addAddition", payrollId: await ensure(), addition: { type: "bonus", amount: parseCentavos(v.amount), ...(v.description.trim() ? { description: v.description.trim() } : {}) }, idempotencyKey }) });
         if (r) refresh();
       } else if (x === "add-13th") {
         const left = thm?.remaining;
+        const idempotencyKey = newKey();
         const r = await formDialog({
           title: `Add 13th month pay for ${p.staffName}`,
           intro: thm ? `13th month pay is 1/12 of the basic pay earned in ${thm.year}: ${formatCentavos(thm.entitlement)} so far, ${formatCentavos(thm.onPayrolls)} already given, ${formatCentavos(left)} left.` : "13th month pay is 1/12 of the basic pay earned this year. Luna works out how much is left.",
           fields: [{ name: "amount", label: "Amount (₱)", value: left ? String(left / 100) : "", inputmode: "decimal", hint: "Leave as is to give everything that's left." }],
           submitLabel: "Add 13th month pay",
-          onSubmit: async (v) => data.payrollApi({ action: "addAddition", payrollId: await ensure(), addition: { type: "thirteenth", ...(v.amount.trim() ? { amount: parseCentavos(v.amount) } : {}) } }),
+          onSubmit: async (v) => data.payrollApi({ action: "addAddition", payrollId: await ensure(), addition: { type: "thirteenth", ...(v.amount.trim() ? { amount: parseCentavos(v.amount) } : {}) }, idempotencyKey }),
         });
         if (r) refresh();
       } else if (x === "add") {
-        const r = await formDialog({ title: "Add a deduction", fields: [{ name: "description", label: "What for", required: true, placeholder: "e.g. Broken plate" }, { name: "amount", label: "Amount (₱)", required: true, inputmode: "decimal" }], onSubmit: async (v) => data.payrollApi({ action: "addDeduction", payrollId: await ensure(), deduction: { description: v.description, amount: parseCentavos(v.amount) } }) });
+        const idempotencyKey = newKey();
+        const r = await formDialog({ title: "Add a deduction", fields: [{ name: "description", label: "What for", required: true, placeholder: "e.g. Broken plate" }, { name: "amount", label: "Amount (₱)", required: true, inputmode: "decimal" }], onSubmit: async (v) => data.payrollApi({ action: "addDeduction", payrollId: await ensure(), deduction: { description: v.description, amount: parseCentavos(v.amount) }, idempotencyKey }) });
         if (r) refresh();
       } else if (x === "add-proof") {
         const r = await formDialog({ title: "Add payment proof", intro: "A GCash or bank screenshot, or a PDF. It doesn't change the payment or the helper's confirmation.", fields: [{ name: "proof", label: "Proof", type: "file", accept: PHOTO_OR_PDF_ACCEPT }], submitLabel: "Upload", onSubmit: async (v) => { if (!v.proof) throw new Error("Choose a file"); return data.payrollApi({ action: "attachProof", payrollId, proof: await prepareProof(v.proof, { pdf: true }) }); } });

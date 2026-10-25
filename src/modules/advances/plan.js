@@ -9,6 +9,8 @@ import { formatCentavos, formatDayId } from "../../lib/format.js";
 import { parseCentavos, staffPeriod, addDays, advanceRemaining, SALARY_METHODS } from "@shared/index.js";
 
 const short = (d) => formatDayId(d).replace(/, \d{4}$/, "");
+// One request key per dialog: a double tap or retry records once.
+const newKey = () => (globalThis.crypto && crypto.randomUUID ? crypto.randomUUID() : `k${Date.now()}${Math.random().toString(36).slice(2)}${Math.random().toString(36).slice(2)}`).replace(/[^A-Za-z0-9_-]/g, "");
 export const periodText = (e) => (e.periodStart.slice(0, 7) === e.periodEnd.slice(0, 7) ? `${short(e.periodStart)}–${Number(e.periodEnd.slice(8))}` : `${short(e.periodStart)} – ${short(e.periodEnd)}`);
 
 // The plan as the server takes it: the open entries (planned / not taken).
@@ -71,6 +73,7 @@ export function takeOff({ advance, periodStart, api }) {
 // Mark repaid separately (cash back to the Owner, not through payroll).
 export function repay({ advance, today, api, notTakenPeriod = null, amount = null }) {
   const owed = advanceRemaining(advance);
+  const idempotencyKey = newKey();
   return formDialog({
     title: "Record a repayment",
     intro: `${formatCentavos(owed)} is still owed. A repayment lowers it right away.`,
@@ -82,7 +85,7 @@ export function repay({ advance, today, api, notTakenPeriod = null, amount = nul
       { name: "note", label: "Note (optional)", more: true },
     ],
     submitLabel: "Record repayment",
-    onSubmit: (v) => api({ action: "repay", advanceId: advance.id, repayment: { amount: parseCentavos(v.amount), date: v.date || today, method: v.method, ...(v.reference.trim() ? { reference: v.reference.trim() } : {}), ...(v.note.trim() ? { note: v.note.trim() } : {}), ...(notTakenPeriod ? { notTakenPeriod } : {}) } }),
+    onSubmit: (v) => api({ action: "repay", advanceId: advance.id, repayment: { amount: parseCentavos(v.amount), date: v.date || today, method: v.method, ...(v.reference.trim() ? { reference: v.reference.trim() } : {}), ...(v.note.trim() ? { note: v.note.trim() } : {}), ...(notTakenPeriod ? { notTakenPeriod } : {}) }, idempotencyKey }),
   });
 }
 

@@ -13,6 +13,7 @@ import { PaymentError } from "../../../shared/payments.js";
 import { MeteringError } from "../../../shared/metering.js";
 import { isModuleEnabled } from "../../../shared/modules.js";
 import { moduleForPermission } from "../../../shared/permissions.js";
+import { isValidIdempotencyKey } from "../../../shared/orders.js";
 
 export const PAYROLL_STATUS = {
   "not-found": 404,
@@ -57,10 +58,14 @@ export const PAYROLL_STATUS = {
   "nothing-due": 409,
   "advance-not-released": 409,
   "paid-payroll-deduction": 409,
+  // Duplicate-request protection (2026-10-25)
+  "idempotency-conflict": 409,
 };
 const FORBIDDEN = () => new RequestError("forbidden", "This feature isn't available for your account.", 403);
 
-// actions: { [name]: { permission, also?, fields, run(common, body, ctx) -> { status?, result } } }
+// actions: { [name]: { permission, also?, keyed?, fields, run(common, body, ctx) -> { status?, result } } }
+// `keyed`: the request must carry an idempotencyKey (one per dialog), so a
+// repeat of the same Save records once (_lib/payroll.js keyed()).
 // `also`: extra permissions the action needs (each with its module), e.g.
 // creating a staff login also needs users.manage.
 export function payrollActionHandler(name, { getAdmin: loadAdmin, now = () => new Date(), actions }) {
@@ -80,7 +85,8 @@ export function payrollActionHandler(name, { getAdmin: loadAdmin, now = () => ne
     for (const p of action?.also || []) if (ctx.permissions[p] !== true || !isModuleEnabled(ctx.entitlements, moduleForPermission(p))) throw FORBIDDEN();
     if (bodyError) throw bodyError;
     if (!action) throw new RequestError("invalid-request", "Unknown action.", 400);
-    only(body, action.fields);
+    only(body, action.keyed ? [...action.fields, "idempotencyKey"] : action.fields);
+    if (action.keyed && !isValidIdempotencyKey(body.idempotencyKey)) throw new RequestError("invalid-request", "A valid idempotency key is required.", 400);
     const common = { db, admin, auth, bucket, tenant: ctx.tenant, businessId: ctx.businessId, FieldValue: admin.firestore.FieldValue, business: ctx.business, actor: actorOf(ctx), now: now() };
     try {
       const out = await action.run(common, body, ctx);

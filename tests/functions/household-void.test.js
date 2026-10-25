@@ -22,6 +22,7 @@ import { createActivateHandler } from "../../netlify/functions/activate.js";
 import { createBusiness, addMember, ensureAuthUser } from "../../netlify/functions/_lib/provisioning.js";
 import { advanceCapacity } from "../../shared/payroll.js";
 import { buildWorld, request } from "../helpers/tenants.js";
+import { withRequestKey } from "../helpers/request-keys.js";
 
 const H = "biz-home";
 const PNG = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(200, 7)]).toString("base64");
@@ -45,7 +46,7 @@ beforeEach(async () => {
 const deps = () => ({ getAdmin: async () => world, now: () => clock });
 const HANDLERS = { staff: createHouseholdStaffHandler, attendance: createAttendanceHandler, payroll: createPayrollHandler, advances: createAdvancesHandler };
 async function api(kind, uid, body) {
-  const res = await HANDLERS[kind](deps())({ ...request({ uid, businessId: H, method: "POST" }), body: JSON.stringify(body) });
+  const res = await HANDLERS[kind](deps())({ ...request({ uid, businessId: H, method: "POST" }), body: JSON.stringify(withRequestKey(kind, body)) });
   return { status: res.statusCode, body: JSON.parse(res.body) };
 }
 async function me(uid, body = null) {

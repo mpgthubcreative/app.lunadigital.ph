@@ -169,6 +169,49 @@ describe("advances: deducted exactly once", () => {
   });
 });
 
+// Duplicate-request protection (2026-10-25): 8 copies of one Save (same
+// request key) at once record once; every copy that answers gets the same
+// result (a contended copy may fail with ABORTED; its retry replays).
+describe("the same request key sent 8 times at once: recorded once", () => {
+  const same = (r, field) => expect(new Set(ok(r).map((x) => x.value[field])).size).toBe(1);
+  const k = (w, what) => `emu-${what}-${w.staffId}`.slice(0, 64);
+  it("Give advance and Record advance", async () => {
+    const w = await world();
+    let r = await Promise.allSettled(Array.from({ length: 8 }, () => pay.giveAdvance({ ...w.c, input: { staffId: w.staffId, date: "2026-10-10", amount: 20000, method: "cash" }, idempotencyKey: k(w, "give") })));
+    expectExplicit(r);
+    same(r, "advanceId");
+    expect((await w.tenant.collection("advances").get()).size).toBe(1);
+    r = await Promise.allSettled(Array.from({ length: 8 }, () => pay.createAdvance({ ...w.c, input: { staffId: w.staffId, date: "2026-10-11", amount: 30000 }, idempotencyKey: k(w, "create") })));
+    expectExplicit(r);
+    same(r, "advanceId");
+    expect((await w.tenant.collection("advances").get()).size).toBe(2);
+  });
+  it("Record advance repayment", async () => {
+    const w = await world();
+    const { advanceId } = await pay.giveAdvance({ ...w.c, input: { staffId: w.staffId, date: "2026-10-02", amount: 50000, method: "cash" }, idempotencyKey: k(w, "g") });
+    const r = await Promise.allSettled(Array.from({ length: 8 }, () => pay.recordAdvanceRepayment({ ...w.c, advanceId, repayment: { amount: 20000, method: "cash" }, idempotencyKey: k(w, "repay") })));
+    expectExplicit(r);
+    const a = (await w.tenant.doc("advances", advanceId).get()).data();
+    expect(a.repaidAmount).toBe(20000);
+    expect(a.repayments).toHaveLength(1);
+    expect(ok(r).every((x) => x.value.remaining === 30000)).toBe(true);
+  });
+  it("Add bonus and Add deduction", async () => {
+    const w = await world();
+    for (const d of daysIn({ start: "2026-10-01", end: "2026-10-05" })) await pay.setAttendance({ ...w.c, input: { staffId: w.staffId, date: d, status: "present" } });
+    const { payrollId } = await pay.preparePayroll({ ...w.c, staffId: w.staffId, periodStart: "2026-10-01" });
+    let r = await Promise.allSettled(Array.from({ length: 8 }, () => pay.addAddition({ ...w.c, payrollId, addition: { type: "bonus", amount: 15000 }, idempotencyKey: k(w, "bonus") })));
+    expectExplicit(r);
+    same(r, "additionId");
+    r = await Promise.allSettled(Array.from({ length: 8 }, () => pay.addDeduction({ ...w.c, payrollId, deduction: { description: "Broken plate", amount: 5000 }, idempotencyKey: k(w, "ded") })));
+    expectExplicit(r);
+    same(r, "deductionId");
+    const p = (await w.tenant.doc("payrolls", payrollId).get()).data();
+    expect(p.additions).toHaveLength(1);
+    expect(p.deductions.filter((d) => d.type === "manual")).toHaveLength(1);
+  });
+});
+
 describe("receipt confirmation", () => {
   it("the same link confirmed 6 times at once by the signed-in helper: confirmed once, one notification, one audit entry", async () => {
     const w = await world();

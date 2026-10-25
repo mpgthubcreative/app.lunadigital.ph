@@ -49,7 +49,7 @@ export const createPayrollHandler = (deps) =>
       prepare: { permission: M, created: true, fields: ["action", "staffId", "periodStart"], run: (c, b) => preparePayroll({ ...c, staffId: b.staffId, periodStart: b.periodStart }) },
       // Owner-pilot fix: everyone on payroll for the period that includes asOf.
       prepareAll: { permission: M, fields: ["action", "asOf"], run: (c, b) => prepareEligible({ ...c, asOf: b.asOf ?? null }) },
-      addDeduction: { permission: M, fields: ["action", "payrollId", "deduction"], run: (c, b) => addDeduction({ ...c, payrollId: b.payrollId, deduction: b.deduction }) },
+      addDeduction: { permission: M, keyed: true, fields: ["action", "payrollId", "deduction"], run: (c, b) => addDeduction({ ...c, payrollId: b.payrollId, deduction: b.deduction, idempotencyKey: b.idempotencyKey }) },
       removeDeduction: { permission: M, fields: ["action", "payrollId", "deductionId"], run: (c, b) => removeDeduction({ ...c, payrollId: b.payrollId, deductionId: b.deductionId }) },
       deferAdvance: { permission: M, fields: ["action", "payrollId", "advanceId"], run: (c, b) => deferAdvance({ ...c, payrollId: b.payrollId, advanceId: b.advanceId }) },
       deleteDraft: { permission: M, fields: ["action", "payrollId"], run: (c, b) => deleteDraftPayroll({ ...c, payrollId: b.payrollId }) },
@@ -68,7 +68,7 @@ export const createPayrollHandler = (deps) =>
         fields: ["action", "payrollId", "staffId", "periodStart", "payment", "proof", "expectedNetPay"],
         run: (c, b) => releaseSalary({ ...c, payrollId: b.payrollId ?? null, staffId: b.payrollId ? null : b.staffId ?? null, periodStart: b.periodStart ?? null, release: b.payment, proof: b.proof ?? null, expectedNetPay: b.expectedNetPay ?? null }),
       },
-      addAddition: { permission: M, fields: ["action", "payrollId", "addition"], run: (c, b) => addAddition({ ...c, payrollId: b.payrollId, addition: b.addition }) },
+      addAddition: { permission: M, keyed: true, fields: ["action", "payrollId", "addition"], run: (c, b) => addAddition({ ...c, payrollId: b.payrollId, addition: b.addition, idempotencyKey: b.idempotencyKey }) },
       removeAddition: { permission: M, fields: ["action", "payrollId", "additionId"], run: (c, b) => removeAddition({ ...c, payrollId: b.payrollId, additionId: b.additionId }) },
       thirteenth: { permission: "payroll.view", fields: ["action", "staffId", "year"], run: (c, b) => thirteenthMonthSummary({ ...c, staffId: b.staffId, year: b.year }) },
       attachProof: { permission: R, fields: ["action", "payrollId", "proof"], run: (c, b) => attachSalaryProof({ ...c, businessId: c.businessId, payrollId: b.payrollId, proof: b.proof }) },

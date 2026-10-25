@@ -21,6 +21,7 @@ import { householdSummary } from "../../netlify/functions/_lib/household-summary
 import { tenantDb } from "../../netlify/functions/_lib/tenant-db.js";
 import { advanceRemaining, advanceCapacity, advanceSummary } from "../../shared/payroll.js";
 import { buildWorld, request } from "../helpers/tenants.js";
+import { withRequestKey } from "../helpers/request-keys.js";
 
 const H = "biz-home";
 const PNG = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(200, 7)]).toString("base64");
@@ -45,7 +46,7 @@ beforeEach(async () => {
 const deps = () => ({ getAdmin: async () => world, now: () => clock });
 const HANDLERS = { staff: createHouseholdStaffHandler, attendance: createAttendanceHandler, payroll: createPayrollHandler, advances: createAdvancesHandler };
 async function api(kind, uid, body) {
-  const res = await HANDLERS[kind](deps())({ ...request({ uid, businessId: H, method: "POST" }), body: JSON.stringify(body) });
+  const res = await HANDLERS[kind](deps())({ ...request({ uid, businessId: H, method: "POST" }), body: JSON.stringify(withRequestKey(kind, body)) });
   return { status: res.statusCode, body: JSON.parse(res.body) };
 }
 async function me(uid, body = null, period = null) {
@@ -139,7 +140,9 @@ describe("advance repayment plan: the exact pilot scenario", () => {
     at("2026-11-01");
     await markDays(y, [16, 17, 19, 20, 21, 22, 23, 24, 26, 27].map(OCT));
     v = await view(OCT(16), OCT(31), y);
-    expect(v.rows[0].deductions.map((d) => [d.advanceId, d.amount])).toEqual([[a1, 110000], [a2, 50000]]);
+    // One line per advance (their order follows the advance ids, which are random).
+    expect(v.rows[0].deductions.map((d) => [d.advanceId, d.amount])).toEqual(expect.arrayContaining([[a1, 110000], [a2, 50000]]));
+    expect(v.rows[0].deductions).toHaveLength(2);
     // 13. Paying that payroll is the actual repayment.
     expect((await api("payroll", u.mom, { action: "release", staffId: y, periodStart: OCT(16), payment: { method: "cash" } })).status).toBe(200);
     expect(advanceRemaining(adv(a1))).toBe(0);

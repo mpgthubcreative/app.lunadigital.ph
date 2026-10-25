@@ -15,6 +15,7 @@ import { createOperatorHandler } from "../../netlify/functions/operator.js";
 import { createBusiness, addMember, ensureAuthUser } from "../../netlify/functions/_lib/provisioning.js";
 import { buildWorld, request } from "../helpers/tenants.js";
 import { payrollEligibility } from "../../shared/payroll.js";
+import { withRequestKey } from "../helpers/request-keys.js";
 
 const NOW = new Date("2026-10-16T04:00:00Z"); // Oct 16, Manila
 const H = "biz-home";
@@ -37,7 +38,7 @@ beforeEach(async () => {
 const deps = () => ({ getAdmin: async () => world, now: () => clock });
 const HANDLERS = { staff: createHouseholdStaffHandler, attendance: createAttendanceHandler, payroll: createPayrollHandler, advances: createAdvancesHandler, members: createMembersHandler };
 async function api(kind, uid, body, businessId = H) {
-  const res = await HANDLERS[kind](deps())({ ...request({ uid, businessId, method: body ? "POST" : "GET" }), ...(body ? { body: JSON.stringify(body) } : {}) });
+  const res = await HANDLERS[kind](deps())({ ...request({ uid, businessId, method: body ? "POST" : "GET" }), ...(body ? { body: JSON.stringify(withRequestKey(kind, body)) } : {}) });
   return { status: res.statusCode, body: JSON.parse(res.body) };
 }
 async function me(uid, body = null, businessId = H) {

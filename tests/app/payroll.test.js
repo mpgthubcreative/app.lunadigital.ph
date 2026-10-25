@@ -12,6 +12,8 @@ import { renderReceiptPage } from "../../src/app/receipt.js";
 import { buildRoutes } from "../../src/app/routes.js";
 import { resolvePermissions } from "../../shared/permissions.js";
 import { sessionFixture } from "../helpers/session-fixture.js";
+// One request key per dialog (duplicate-request protection, 2026-10-25).
+const KEY = /^[A-Za-z0-9_-]{16,64}$/;
 
 const flush = async () => {
   for (let i = 0; i < 8; i++) await new Promise((r) => setTimeout(r, 0));
@@ -244,7 +246,7 @@ describe("Payroll", () => {
     form = lastForm();
     submit(form);
     await flush();
-    expect(data.payrollApi).toHaveBeenCalledWith({ action: "addAddition", payrollId: "staffMaria0001_2026-10-01", addition: { type: "thirteenth", amount: 600000 } });
+    expect(data.payrollApi).toHaveBeenCalledWith({ action: "addAddition", payrollId: "staffMaria0001_2026-10-01", addition: { type: "thirteenth", amount: 600000 }, idempotencyKey: expect.stringMatching(KEY) });
     document.querySelector('[data-role="payroll-view"] [data-x="release"]').click();
     document.querySelector('[data-role="payroll-review"] [data-x="continue-pay"]').click();
     form = lastForm();
@@ -443,10 +445,40 @@ describe("Advances", () => {
     f.elements.method.value = "gcash";
     submit(f);
     await flush();
-    expect(data.advancesApi).toHaveBeenCalledWith({ action: "give", advance: { staffId: maria.id, date: "2026-10-16", amount: 200000, method: "gcash", plan: "next" } });
+    expect(data.advancesApi).toHaveBeenCalledWith({ action: "give", advance: { staffId: maria.id, date: "2026-10-16", amount: 200000, method: "gcash", plan: "next" }, idempotencyKey: expect.stringMatching(KEY) });
     // The quick result.
     const res = document.querySelector('[data-role="advance-result"]');
     expect(res.textContent.replace(/\s+/g, " ")).toMatch(/Advance given\s*₱2,000\.00[\s\S]*Next deduction\s*₱2,000\.00\s*Oct 16–31[\s\S]*Waiting for confirmation/);
+  });
+
+  it("duplicate-request protection: a retry from the same dialog sends the same request key; a new dialog a new one", async () => {
+    localStorage.clear();
+    let fails = 1;
+    const data = fakeData({ activeStaff: vi.fn(async () => [maria]), listAdvances: vi.fn(async () => ({ rows: [], hasMore: false })), advancesApi: vi.fn(async () => {
+      if (fails-- > 0) throw new Error("Network error");
+      return { advanceId: "x", schedule: [], outstanding: 50000, available: null };
+    }) });
+    mountAdvances(container, home(), { data, now: NOW, toast: () => {} });
+    await until(() => container.querySelector('[data-act="give"]'));
+    container.querySelector('[data-act="give"]').click();
+    const f = lastForm();
+    f.elements.amount.value = "500";
+    submit(f); // the network drops: the dialog stays open
+    await flush();
+    submit(f); // Save again (the retry)
+    await flush();
+    const keys = data.advancesApi.mock.calls.map(([b]) => b.idempotencyKey);
+    expect(keys).toHaveLength(2);
+    expect(keys[0]).toMatch(KEY);
+    expect(keys[1]).toBe(keys[0]);
+    // A new Give dialog: a new key.
+    document.querySelector('[data-role="advance-result"]')?.closest(".modal-backdrop")?.querySelector('[data-act="close"], [data-act="done"], .modal-close')?.click();
+    container.querySelector('[data-act="give"]').click();
+    const g = lastForm();
+    g.elements.amount.value = "300";
+    submit(g);
+    await flush();
+    expect(data.advancesApi.mock.calls.at(-1)[0].idempotencyKey).not.toBe(keys[0]);
   });
 
   it("Give an advance: the limit is shown and checked before sending; No payroll deduction; ?give=1&staff opens it preselected", async () => {
@@ -469,7 +501,7 @@ describe("Advances", () => {
     f.elements.plan.value = "none";
     submit(f);
     await flush();
-    expect(data.advancesApi).toHaveBeenCalledWith({ action: "give", advance: { staffId: maria.id, date: "2026-10-16", amount: 50000, method: "cash", plan: "none" } });
+    expect(data.advancesApi).toHaveBeenCalledWith({ action: "give", advance: { staffId: maria.id, date: "2026-10-16", amount: 50000, method: "cash", plan: "none" }, idempotencyKey: expect.stringMatching(KEY) });
     expect(document.querySelector('[data-role="advance-result"]').textContent).toMatch(/None planned/);
     window.history.replaceState({}, "", "/");
   });
@@ -491,7 +523,7 @@ describe("Advances", () => {
     f.elements.amount.value = "500";
     submit(f);
     await flush();
-    expect(data.advancesApi).toHaveBeenLastCalledWith({ action: "repay", advanceId: "adv0000000009", repayment: { amount: 50000, date: "2026-10-16", method: "cash" } });
+    expect(data.advancesApi).toHaveBeenLastCalledWith({ action: "repay", advanceId: "adv0000000009", repayment: { amount: 50000, date: "2026-10-16", method: "cash" }, idempotencyKey: expect.stringMatching(KEY) });
   });
 });
 
@@ -799,7 +831,7 @@ describe("Payroll: automatic pay periods (Owner-pilot batch)", () => {
     await until(() => data.payrollApi.mock.calls.some((c) => c[0].action === "addAddition"));
     const actions = data.payrollApi.mock.calls.map((c) => c[0].action).filter((x) => x !== "period" && x !== "thirteenth");
     expect(actions).toEqual(["prepare", "addAddition"]);
-    expect(data.payrollApi).toHaveBeenCalledWith({ action: "addAddition", payrollId: "staffMaria0001_2026-10-16", addition: { type: "bonus", amount: 20000 } });
+    expect(data.payrollApi).toHaveBeenCalledWith({ action: "addAddition", payrollId: "staffMaria0001_2026-10-16", addition: { type: "bonus", amount: 20000 }, idempotencyKey: expect.stringMatching(KEY) });
   });
   it("a salary paid early shows earned + prepaid = paid, the final salary, and the difference (additional salary due)", async () => {
     const paid = payroll({ status: "released", paymentTiming: "early", ownerPayment: "paid", receiptStatus: "awaiting", netPay: 730000, salary: { amount: 670000, earned: 610000, prepaid: { days: 1, from: "2026-10-12", to: "2026-10-12", amount: 60000 }, paidDate: "2026-10-11", method: "cash", timing: "early" }, reconcile: { ended: true, waiting: false, paid: 670000, final: 730000, diff: 60000, overpaid: 0, outstanding: 0, additionalDue: 60000, settled: false, carriedTo: [] }, receiptView: { status: "awaiting", openedAt: null, confirmedAt: null, confirmedBy: null, verifiedVia: null } });

@@ -18,6 +18,7 @@ import { createAttendanceHandler } from "../../netlify/functions/attendance.js";
 import { createAdvancesHandler } from "../../netlify/functions/advances.js";
 import { createBusiness, addMember, ensureAuthUser } from "../../netlify/functions/_lib/provisioning.js";
 import { buildWorld, request, roomForTeam } from "../helpers/tenants.js";
+import { withRequestKey } from "../helpers/request-keys.js";
 
 const NOW = new Date("2026-10-16T04:00:00Z");
 const W = "biz-wed";
@@ -51,7 +52,7 @@ beforeEach(async () => {
 
 const HANDLERS = { budget: createBudgetHandler, expenses: createExpensesHandler, suppliers: createWeddingSuppliersHandler, payments: createSupplierPaymentsHandler, tasks: createWeddingTasksHandler, providers: createProvidersHandler, schedule: createScheduleHandler, staff: createHouseholdStaffHandler, attendance: createAttendanceHandler, advances: createAdvancesHandler };
 async function api(kind, uid, businessId, body) {
-  const res = await HANDLERS[kind]({ getAdmin: async () => world, now: () => NOW })({ ...request({ uid, businessId, method: "POST" }), body: JSON.stringify(body) });
+  const res = await HANDLERS[kind]({ getAdmin: async () => world, now: () => NOW })({ ...request({ uid, businessId, method: "POST" }), body: JSON.stringify(withRequestKey(kind, body)) });
   return { status: res.statusCode, body: JSON.parse(res.body) };
 }
 const doc = (p) => world.db.docs.get(p);
