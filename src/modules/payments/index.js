@@ -14,6 +14,7 @@
 
 import { html, render } from "../../lib/html.js";
 import { pageHeader, emptyState, skeleton, segmented } from "../../components/ui.js";
+import { examplesState } from "../../components/examples.js";
 import { confirmDialog, toast as defaultToast } from "../../components/feedback.js";
 import { api as defaultApi } from "../../lib/api.js";
 import { formatCentavos } from "../../lib/format.js";
@@ -52,6 +53,13 @@ export function paymentActivity(p, { currency = "PHP", timezone } = {}) {
     return [when(h.at, timezone), h.actor?.name ?? "", text + (h.reason ? ` · Reason: ${h.reason}` : "")].filter(Boolean).join(" • ");
   });
 }
+
+// What an empty Payments page shows (examples only: never a payment record).
+export const PAYMENT_EXAMPLES = Object.freeze([
+  { name: "Maria's Mini Mart · ORD-001", sub: "GCash · Ref 1234 567 890 · Partial payment", end: "₱1,500" },
+  { name: "ABC Restaurant · ORD-002", sub: "Bank transfer · Verified", end: "₱6,200" },
+  { name: "Juan Store · ORD-003", sub: "GCash · Waiting to check", end: "₱1,850" },
+]);
 
 export function mount(container, session, { data = defaultData, api = defaultApi, toast = defaultToast, exportDeps = {}, now = () => new Date() } = {}) {
   const perms = session.member.permissions;
@@ -159,7 +167,9 @@ export function mount(container, session, { data = defaultData, api = defaultApi
             : state.loading
               ? skeleton(6)
               : !list.length
-                ? emptyState({ iconName: "payments", title: state.view === "check" && !filtered ? "Nothing to check" : filtered ? "No payments match" : "No payments", body: state.view === "check" ? "Payments waiting for verification appear here." : filtered ? "Change the filters to see more." : "Payments recorded on orders appear here." })
+                ? filtered || state.cursors.length
+                  ? emptyState({ iconName: "payments", title: state.view === "check" && !Object.values(state.more).some(Boolean) ? "Nothing to check" : "No payments match", body: state.view === "check" ? "Payments waiting for verification appear here." : "Change the filters to see more." })
+                  : examplesState({ title: "No payments yet", body: "Payments you record on orders, or customers send by link, appear here:", items: PAYMENT_EXAMPLES, helper: "Record a payment from its order in Orders.", role: "payment-examples", wrap: true })
                 : html`<ul class="py-list" data-role="payments">${list.map(row)}</ul>
                   <div class="pager">
                     <button type="button" class="btn btn-ghost" data-act="prev" ${state.cursors.length ? "" : "disabled"}>‹ Previous</button>

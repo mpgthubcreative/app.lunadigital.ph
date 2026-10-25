@@ -21,6 +21,7 @@
 
 import { html, render } from "../../lib/html.js";
 import { pageHeader, emptyState, badge, skeleton } from "../../components/ui.js";
+import { examplesState } from "../../components/examples.js";
 import { formDialog } from "../../components/form-dialog.js";
 import { confirmDialog, toast as defaultToast } from "../../components/feedback.js";
 import { formatCentavos, formatDayId } from "../../lib/format.js";
@@ -37,6 +38,12 @@ const planText = (a) => {
   const open = (a.schedule || []).filter((e) => e.state === "planned");
   return open.length ? open.map((e) => `${formatCentavos(e.amount)} ${periodText(e)}`).join(" · ") : "No deduction planned";
 };
+
+// What an empty Advances page shows (examples only: nothing is ever deducted).
+export const ADVANCE_EXAMPLES = Object.freeze([
+  { name: "Maria Santos", sub: "Given Oct 15 · Deduct next cutoff", end: "₱1,000" },
+  { name: "Ana Reyes", sub: "Asked Oct 18 · Waiting for you", end: "₱500" },
+]);
 
 export function mount(container, session, { data = defaultData, toast = defaultToast, now = () => new Date(), exportDeps = {} } = {}) {
   const canManage = session.member.permissions["advances.manage"] === true;
@@ -173,7 +180,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
             ? html`<section class="card section">${skeleton(4)}</section>`
             : list.length
               ? html`<div data-role="summaries">${list.map(helperCard)}</div>`
-              : html`<section class="card section">${emptyState({ iconName: "advance", title: "No household staff yet", body: "Add the people you pay on the Household Staff page." })}</section>`}
+              : html`<section class="card section">${examplesState({ title: "No advances yet", body: "An advance you give is taken from the next payroll:", items: ADVANCE_EXAMPLES, helper: "Add the people you pay on the Household Staff page first.", role: "advance-examples", wrap: true })}<p class="ex-add"><a class="btn btn-primary" href="/household-staff" data-link>+ Add staff</a></p></section>`}
         <p class="voided-link page-foot"><button type="button" class="btn-linklike" data-act="voided">Voided records ›</button></p>`
     );
     for (const btn of container.querySelectorAll('[data-act="export"]')) btn.classList.add("btn-ghost");

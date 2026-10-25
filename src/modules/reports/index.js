@@ -83,7 +83,10 @@ export function mount(container, session, { api = defaultApi, now = () => new Da
     const series = (r.series || []).filter((s) => s.netProfit !== null && s.netProfit !== undefined);
     const sku = r.skuMargins;
     const profit = o.estimatedOperatingProfit;
+    // No orders in the range: say what this page will show (never example figures).
+    const none = !o.ordersCreated && !o.grossSales;
     return html`
+      ${none ? html`<p class="banner banner-info rp-empty" role="note" data-role="report-empty">No orders in this period yet. Once you take and fulfill orders, this page shows your total sales, profit by day and each product's margin.</p>` : ""}
       <div class="rp-totals" data-role="totals">
         ${total("sales", "Total Sales", money(o.grossSales))}
         ${total("orders", "Total Orders", o.ordersCreated === null || o.ordersCreated === undefined ? NO_DATA : o.ordersCreated.toLocaleString("en-PH"), { note: o.fulfilledOrders ? `${o.fulfilledOrders.toLocaleString("en-PH")} fulfilled` : "" })}

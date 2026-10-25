@@ -16,6 +16,7 @@
 import { html, render } from "../../lib/html.js";
 import { bindExport } from "../../lib/export.js";
 import { pageHeader, emptyState, badge, filterBar, bindFilterBar, rowMenu, bindRowOpen, skeleton } from "../../components/ui.js";
+import { examplesState } from "../../components/examples.js";
 import { formDialog } from "../../components/form-dialog.js";
 import { confirmDialog, toast as defaultToast } from "../../components/feedback.js";
 import { api as defaultApi } from "../../lib/api.js";
@@ -87,6 +88,13 @@ export function addOrderFor(customer, { session, deps }) {
   return openOrderEditor({ session, deps, prefill: { customerId: customer.id, customer: { name: customer.name, phone: customer.phone || "" }, deliveryAddress: customer.address || "" } });
 }
 
+// What an empty buyers page shows (examples only: never saved, never in receivables).
+export const CUSTOMER_EXAMPLES = Object.freeze([
+  { name: "Maria's Mini Mart", sub: "0917 123 4567 · Quezon City", end: "Owes ₱950" },
+  { name: "ABC Restaurant", sub: "0928 555 0198 · Makati", end: "No balance" },
+  { name: "Juan Store", sub: "0939 222 0147 · Pasig", end: "Owes ₱1,850" },
+]);
+
 export function mount(container, session, { data = defaultData, api = defaultApi, toast = defaultToast, exportDeps = {}, orderDeps = null } = {}) {
   const perms = session.member.permissions;
   const canManage = perms["customers.manage"] === true;
@@ -101,6 +109,7 @@ export function mount(container, session, { data = defaultData, api = defaultApi
   const state = { status: "active", search: "", cursors: [], rows: [], hasMore: false, loading: true, error: null };
   let alive = true;
 
+  const unfiltered = () => !state.search && state.status === "active" && !state.cursors.length;
   async function load() {
     state.loading = true;
     draw();
@@ -108,6 +117,8 @@ export function mount(container, session, { data = defaultData, api = defaultApi
       const page = await data.listCustomers(businessId, { status: state.status, search: state.search, cursor: state.cursors.at(-1) || null });
       state.rows = page.rows;
       state.hasMore = page.hasMore;
+      // No active buyers and no search: examples, unless inactive ones exist.
+      state.others = page.rows.length || !unfiltered() ? null : await data.listCustomers(businessId, { status: "inactive", pageSize: 1 }).then((p) => p.rows.length > 0, () => true);
       state.error = null;
     } catch (err) {
       console.error("customers: load failed:", err && (err.code || err.message));
@@ -140,7 +151,9 @@ export function mount(container, session, { data = defaultData, api = defaultApi
             : state.loading
               ? skeleton(6)
               : !rows.length
-                ? emptyState({ iconName: "customers", title: state.search ? "No match" : `No ${plural.toLowerCase()} yet`, body: state.search ? "Try another name." : "Save the buyers who order again, so you don't retype their details." })
+                ? !unfiltered() || state.others !== false
+                  ? emptyState({ iconName: "customers", title: state.search ? "No match" : `No ${plural.toLowerCase()} yet`, body: state.search ? "Try another name." : "Save the buyers who order again, so you don't retype their details." })
+                  : examplesState({ title: `No ${plural.toLowerCase()} yet`, body: "Each buyer, with what they still owe:", items: CUSTOMER_EXAMPLES, helper: canManage ? `Tap + New ${singular} to save your first one, so you don't retype their details.` : "Buyers saved by your team appear here.", role: "customer-examples", wrap: true })
                 : html`<div class="table-wrap"><table class="table table-compact rows cust-rows" data-role="customers">
                     <thead><tr><th class="m-only"></th><th>Customer</th><th>Contact</th><th>Delivery address</th><th class="num col-secondary">Orders</th><th><span class="visually-hidden">Actions</span></th></tr></thead>
                     <tbody>${rows.map(

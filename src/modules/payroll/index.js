@@ -24,6 +24,7 @@
 
 import { html, render } from "../../lib/html.js";
 import { pageHeader, emptyState, badge, mobileCell, openButton, bindRowOpen, skeleton } from "../../components/ui.js";
+import { examplesState } from "../../components/examples.js";
 import { formDialog } from "../../components/form-dialog.js";
 import { confirmDialog, toast as defaultToast } from "../../components/feedback.js";
 import { formatCentavos, formatDayId } from "../../lib/format.js";
@@ -67,6 +68,13 @@ const lineMenu = (label, items) =>
   items.length
     ? html`<details class="line-menu"><summary class="btn btn-compact btn-ghost" aria-label="${label}">⋯</summary><div class="line-menu-list" role="menu">${items.map((i) => html`${i.sep ? html`<div class="menu-sep" role="separator"></div>` : ""}<button type="button" class="menu-item${i.danger ? " is-danger" : ""}" role="menuitem" data-x="${i.x}" data-id="${i.data?.id ?? ""}" data-kind="${i.data?.kind ?? ""}" data-amount="${i.data?.amount ?? ""}">${i.label}</button>`)}</div></details>`
     : "";
+
+// What an empty Payroll page shows (examples only: never a payroll, total or export).
+const PROOF = "With GCash or a bank transfer, the screenshot you attach shows on the payslip. Paid in cash? Your helper confirms they received it.";
+export const PAYROLL_EXAMPLES = Object.freeze([
+  { name: "Maria Santos", sub: "Basic pay ₱8,000 · Advance deduction −₱1,000", end: "Net ₱7,000" },
+  { name: "Ana Reyes", sub: "Basic pay ₱9,000 · Bonus ₱500", end: "Net ₱9,500" },
+]);
 
 export function mount(container, session, { data = defaultData, toast = defaultToast, now = () => new Date(), exportDeps = {}, copy = (t) => navigator.clipboard?.writeText(t) } = {}) {
   const perms = session.member.permissions;
@@ -168,7 +176,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
   }
 
   function table() {
-    if (!state.period) return emptyState({ iconName: "payroll", title: "No pay periods yet", body: "Add household staff with a start date and pay cycle. Their pay periods appear here by themselves." });
+    if (!state.period) return html`${examplesState({ title: "No pay periods yet", body: "Each cutoff, Luna works out every helper's pay:", items: PAYROLL_EXAMPLES, helper: `Add household staff with a start date and pay cycle; their pay periods appear here by themselves. ${PROOF}`, role: "payroll-examples", wrap: true })}<p class="ex-add"><a class="btn btn-primary" href="/household-staff" data-link>+ Add staff</a></p>`;
     const mixed = state.period.mixed === true;
     const rows = state.rows;
     const toPay = rows.filter((p) => p.status !== "released").reduce((t, p) => t + Math.max(0, p.netPay), 0);

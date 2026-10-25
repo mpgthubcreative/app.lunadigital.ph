@@ -18,6 +18,7 @@
 import { html, render } from "../../lib/html.js";
 import { exportButton, bindExport, mayExport, exportHint } from "../../lib/export.js";
 import { pageHeader, emptyState, badge, filterBar, bindFilterBar, mobileCell, openButton, bindRowOpen, skeleton } from "../../components/ui.js";
+import { examplesState } from "../../components/examples.js";
 import { formDialog } from "../../components/form-dialog.js";
 import { confirmDialog, toast as defaultToast } from "../../components/feedback.js";
 import { api as defaultApi } from "../../lib/api.js";
@@ -55,6 +56,13 @@ export function countPreview(current, text, unit) {
   return `Current: ${qty(current, unit)} · New: ${qty(next, unit)} · Change: ${d === 0 ? "none" : `${d > 0 ? "+" : "−"}${qty(Math.abs(d), unit)}`}`;
 }
 
+// What an empty Products page shows (examples only: no stock, no movements).
+export const PRODUCT_EXAMPLES = Object.freeze([
+  { name: "Chicken Siomai", sub: "SIO-001 · ₱55 each", end: "Available 24" },
+  { name: "Pork Tocino", sub: "TOC-001 · ₱120 each", end: "Available 8 · Low stock" },
+  { name: "Beef Tapa", sub: "TAP-001 · ₱145 each", end: "Out of stock" },
+]);
+
 export function mount(container, session, { data = defaultData, api = defaultApi, toast = defaultToast, exportDeps = {} } = {}) {
   const perms = session.member.permissions;
   const can = {
@@ -70,6 +78,7 @@ export function mount(container, session, { data = defaultData, api = defaultApi
   const state = { status: "active", lowOnly: lowFromUrl, search: "", category: "", cursors: [], rows: [], costs: {}, hasMore: false, loading: true, error: null };
   let alive = true;
 
+  const unfiltered = () => !state.search && !state.lowOnly && state.status !== "inactive" && !state.category && !state.cursors.length;
   async function load() {
     state.loading = true;
     state.error = null;
@@ -79,6 +88,8 @@ export function mount(container, session, { data = defaultData, api = defaultApi
       state.rows = page.rows;
       state.hasMore = page.hasMore;
       state.costs = can.costs ? await data.loadCostDocs(businessId, "productCosts", page.rows.map((r) => r.id)) : {};
+      // No active products and no filter: examples, unless inactive products exist.
+      state.others = page.rows.length || unfiltered() === false ? null : await data.listProducts(businessId, { status: "inactive", pageSize: 1 }).then((p) => p.rows.length > 0, () => true);
     } catch (err) {
       console.error("inventory: load failed:", err && (err.code || err.message));
       state.error = "Couldn't load products. Check your connection and try again.";
@@ -143,7 +154,9 @@ export function mount(container, session, { data = defaultData, api = defaultApi
             : state.loading
               ? skeleton(6)
               : !rows.length
-                ? emptyState({ iconName: "inventory", title: "No products", body: state.search ? "Nothing matches that search." : can.manage ? "Add your first product to start tracking stock." : "Products added by your team appear here." })
+                ? !unfiltered() || state.others !== false
+                  ? emptyState({ iconName: "inventory", title: "No products", body: "Nothing matches that search." })
+                  : examplesState({ title: "No products yet", body: "Each product, with the stock you have left:", items: PRODUCT_EXAMPLES, helper: can.manage ? "Tap + New product to add your first one and its starting stock." : "Products added by your team appear here.", role: "product-examples", wrap: true })
                 : html`<div class="table-wrap"><table class="table table-compact rows" data-role="products">
                     <thead><tr>
                       <th class="m-only"></th><th>SKU</th><th>Product</th><th class="col-secondary">Category</th><th class="col-secondary">Unit</th>

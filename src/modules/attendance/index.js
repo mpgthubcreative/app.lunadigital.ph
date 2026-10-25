@@ -18,6 +18,7 @@
 
 import { html, render } from "../../lib/html.js";
 import { pageHeader, emptyState, skeleton, badge } from "../../components/ui.js";
+import { examplesState } from "../../components/examples.js";
 import { toast as defaultToast, confirmDialog } from "../../components/feedback.js";
 import { formatCentavos, formatDayId } from "../../lib/format.js";
 import { exportButton, bindExport, mayExport, exportHint } from "../../lib/export.js";
@@ -39,6 +40,13 @@ export function periodsOf(staff, today) {
   const to = staff.endDate && staff.endDate < current.end ? staff.endDate : current.end;
   return staffPeriods(staff, from, to, 26);
 }
+
+// What an empty Attendance page shows (examples only: never enters payroll).
+export const ATTENDANCE_EXAMPLES = Object.freeze([
+  { name: "Maria Santos", sub: "Mon, Oct 20", end: "Present" },
+  { name: "Ana Reyes", sub: "Mon, Oct 20", end: "Rest Day" },
+  { name: "Maria Santos", sub: "Tue, Oct 21", end: "Paid Leave" },
+]);
 
 export function mount(container, session, { data = defaultData, toast = defaultToast, now = () => new Date(), exportDeps = {}, confirm = confirmDialog } = {}) {
   const businessId = session.business.id;
@@ -129,7 +137,8 @@ export function mount(container, session, { data = defaultData, toast = defaultT
 
   function sheet() {
     const s = person();
-    if (!s) return emptyState({ iconName: "staff", title: "No household staff yet", body: "Add the people you pay on the Household Staff page first.", action: html`<a class="btn btn-primary" href="/household-staff" data-link>Add staff</a>` });
+    if (!s)
+      return html`${examplesState({ title: "No household staff yet", body: "Each day, you mark who worked:", items: ATTENDANCE_EXAMPLES, helper: "Add the people you pay on Household Staff first; their days appear here.", role: "attendance-examples", wrap: true })}<p class="ex-add"><a class="btn btn-primary" href="/household-staff" data-link>+ Add staff</a></p>`;
     const p = period();
     if (!p) return emptyState({ iconName: "calendar", title: "No pay period", body: `${s.name}'s start date is after today.` });
     const days = visibleDays(s, p);

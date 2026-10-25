@@ -4730,6 +4730,7 @@ button.wl-person-name:hover .wl-edit, button.wl-person-name:focus-visible .wl-ed
 .ex-tag { flex: none; padding: 2px 8px; border-radius: 999px; background: var(--surface-sunken); color: var(--text-muted); font-size: 0.72rem; font-weight: 600; }
 .ex-add { margin: var(--space-3) 0 var(--space-1); }
 .ex-helper { margin: 0; }
+.ex-wrap .ex-row .wl-sub { white-space: normal; overflow: visible; text-overflow: clip; }
 
 /* Guests: the invitation line under a party (link Copy · Sent ▾). */
 .wl-guest.has-invite { flex-wrap: wrap; row-gap: 0; }

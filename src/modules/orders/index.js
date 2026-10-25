@@ -17,6 +17,7 @@
 
 import { html, render } from "../../lib/html.js";
 import { pageHeader, emptyState, badge, filterBar, bindFilterBar, mobileCell, openButton, bindRowOpen, skeleton } from "../../components/ui.js";
+import { examplesState } from "../../components/examples.js";
 import { orderPermissions, paymentCell, fulfillmentCell, latestPaymentCell, copyPending, inlineOrderActions } from "./inline.js";
 import { formDialog } from "../../components/form-dialog.js";
 import { confirmDialog, toast as defaultToast } from "../../components/feedback.js";
@@ -51,6 +52,13 @@ const defaultDeps = {
   },
   searchCustomers: defaultSearchCustomers,
 };
+
+// What an empty Orders page shows (examples only: never saved, never counted).
+export const ORDER_EXAMPLES = Object.freeze([
+  { name: "Maria's Mini Mart", sub: "3 items · ₱2,450 · Partially paid · ₱950 balance", end: "For fulfillment" },
+  { name: "ABC Restaurant", sub: "5 items · ₱6,200 · Paid", end: "Completed" },
+  { name: "Juan Store", sub: "2 items · ₱1,850 · Unpaid", end: "New" },
+]);
 
 export function mount(container, session, { data = defaultDeps.data, payments = { listOrderPayments: defaultDeps.listOrderPayments }, listActiveProducts = defaultDeps.listActiveProducts, searchCustomers = defaultDeps.searchCustomers, api = defaultApi, toast = defaultToast, exportDeps = {} } = {}) {
   const perms = session.member.permissions;
@@ -105,7 +113,9 @@ export function mount(container, session, { data = defaultDeps.data, payments = 
             : state.loading
               ? skeleton(6)
               : !state.rows.length
-                ? emptyState({ iconName: "orders", title: filtered ? "No orders match these filters" : "No orders", body: filtered ? "Remove a filter to see more." : can.create ? "Create the first order from a chat or call." : "Orders appear here as your team enters them." })
+                ? filtered || state.cursors.length
+                  ? emptyState({ iconName: "orders", title: "No orders match these filters", body: "Remove a filter to see more." })
+                  : examplesState({ title: "No orders yet", body: "Here's how your orders will look:", items: ORDER_EXAMPLES, helper: can.create ? "Tap + New order to add your first one (from a chat, a call or a walk-in)." : "Orders appear here as your team enters them.", role: "order-examples", wrap: true })
                 : html`<div class="table-wrap"><table class="table table-compact rows" data-role="orders">
                     <thead><tr><th class="m-only"></th><th>Order #</th><th>Customer</th><th class="num">Total</th><th>Latest payment</th><th>Payment</th><th>Fulfillment</th><th><span class="visually-hidden">Details</span></th></tr></thead>
                     <tbody>${state.rows.map((o) => {

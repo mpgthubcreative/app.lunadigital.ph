@@ -11,6 +11,7 @@
 
 import { html, render } from "../../lib/html.js";
 import { pageHeader, emptyState, badge, filterBar, bindFilterBar, mobileCell, rowMenu, bindRowMenus, skeleton } from "../../components/ui.js";
+import { examplesState } from "../../components/examples.js";
 import { formDialog } from "../../components/form-dialog.js";
 import { toast as defaultToast, confirmDialog } from "../../components/feedback.js";
 import { formatCentavos } from "../../lib/format.js";
@@ -64,6 +65,12 @@ function toInput(v) {
 
 const LOGIN = { pending: ["Waiting to set up", "warning"], active: ["Active", "success"], disabled: ["Off", "neutral"] };
 
+// What an empty Household Staff page shows (examples only: nobody is added).
+export const STAFF_EXAMPLES = Object.freeze([
+  { name: "Maria Santos", sub: "Kasambahay · Twice a month", end: "Active" },
+  { name: "Ana Reyes", sub: "Yaya · Twice a month", end: "Active" },
+]);
+
 export function mount(container, session, { data = defaultData, toast = defaultToast, exportDeps = {}, confirm = confirmDialog, share = shareLinkDialog } = {}) {
   const perms = session.member.permissions;
   const canManage = perms["household.manage"] === true;
@@ -78,6 +85,8 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     draw();
     try {
       state.rows = (await data.listStaff(businessId, { status: state.status })).rows;
+      // Nobody active: examples, unless inactive staff exist.
+      state.others = state.rows.length || state.status !== "active" ? null : await data.listStaff(businessId, { status: "inactive" }, { pageSize: 1 }).then((p) => p.rows.length > 0, () => true);
       if (canManage && !state.settingsAsked) {
         state.settingsAsked = true;
         state.settings = (await data.staffApi({ action: "settings" }).catch(() => null))?.settings ?? null;
@@ -108,7 +117,9 @@ export function mount(container, session, { data = defaultData, toast = defaultT
             : state.loading
               ? skeleton(4)
               : !state.rows.length
-                ? emptyState({ iconName: "staff", title: state.status === "active" ? "No household staff yet" : "No inactive staff", body: "Add the people you pay to start marking attendance." })
+                ? state.status !== "active" || state.others !== false
+                  ? emptyState({ iconName: "staff", title: state.status === "active" ? "No household staff yet" : "No inactive staff", body: "Add the people you pay to start marking attendance." })
+                  : examplesState({ title: "No household staff yet", body: "Each person you pay, with their role:", items: STAFF_EXAMPLES, helper: canManage ? "Tap + Add staff to add the first person you pay." : "People your household adds appear here.", role: "staff-examples", wrap: true })
                 : html`<div class="table-wrap"><table class="table table-compact rows" data-role="staff">
                     <thead><tr><th class="m-only"></th><th>Name</th><th class="col-secondary">Position</th><th class="num">Daily wage</th><th class="col-secondary">Pay cycle</th><th>Luna login</th><th>Status</th><th><span class="visually-hidden">Actions</span></th></tr></thead>
                     <tbody>${state.rows.map(
