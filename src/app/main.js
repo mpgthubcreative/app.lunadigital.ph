@@ -45,6 +45,7 @@ const ACCESS_PROBLEM_TITLES = {
   "account-cancelled": "Account cancelled",
   "business-misconfigured": "Business not ready",
   "account-disabled": "Account disabled",
+  "deployment-mismatch": "Configuration problem",
 };
 
 let router = null;

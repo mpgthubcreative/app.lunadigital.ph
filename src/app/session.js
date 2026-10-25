@@ -8,6 +8,19 @@
 // only shapes the UI; security is enforced server-side on every request.
 
 import { api, setBusinessSelector } from "../lib/api.js";
+import { deploymentMismatches } from "@shared/environment.js";
+
+// Environment consistency (2026-10-25): this build and the server must be
+// the same deployment (environment, Firebase project, and in production
+// the site address). A mismatch stops the app before any business data shows.
+export function checkDeployment(server, client = { environment: import.meta.env.VITE_LUNA_ENV, projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID, origin: globalThis.location?.origin }) {
+  const wrong = deploymentMismatches(client, server);
+  if (!wrong.length) return;
+  const err = new Error(`This version of Luna doesn't match its server (${wrong.join(", ")}). Nothing was loaded. Please contact Luna support.`);
+  err.code = "deployment-mismatch";
+  err.status = 503;
+  throw err;
+}
 
 const SELECTED_BUSINESS_KEY = "luna.selectedBusinessId";
 
@@ -34,6 +47,7 @@ export function setPreferredBusinessId(businessId) {
 async function fetchSession(businessId) {
   setBusinessSelector(() => businessId);
   const data = await api("session");
+  checkDeployment(data.deployment);
   return {
     environment: data.environment,
     user: data.user,
