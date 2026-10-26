@@ -11,6 +11,15 @@
 [functions]
   node_bundler = "esbuild"
 
+# ---- Production address (2026-10-26): the old Netlify hostname sends
+# everyone to app.lunadigitalsystem.com, keeping the path (old shared links still work).
+# Matches only that host, so app.lunadigitalsystem.com itself is never redirected (no loop).
+[[redirects]]
+  from = "https://luna-business-os.netlify.app/*"
+  to = "https://app.lunadigitalsystem.com/:splat"
+  status = 301
+  force = true
+
 # ---- API ----
 [[redirects]]
   from = "/api/*"

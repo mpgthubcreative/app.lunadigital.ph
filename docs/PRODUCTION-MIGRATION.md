@@ -1,6 +1,6 @@
 # Luna production migration plan
 
-> **Superseded 2026-10-25:** there is no new Firebase project and no new Netlify site. The current ones are hardened in place and become production by configuration, on `app.luna.ph`. See [PRODUCTION-READINESS.md](PRODUCTION-READINESS.md) and [RELEASE.md](RELEASE.md). The checklists below (rules, Storage, Super Admin, public routes, what not to copy) still apply; the "new project", "Singapore" and `app.lunadigital.ph` parts don't.
+> **Superseded 2026-10-25:** there is no new Firebase project and no new Netlify site. The current ones are hardened in place and become production by configuration, on `app.lunadigitalsystem.com`. See [PRODUCTION-READINESS.md](PRODUCTION-READINESS.md) and [RELEASE.md](RELEASE.md). The checklists below (rules, Storage, Super Admin, public routes, what not to copy) still apply; the "new project", "Singapore" and `app.lunadigital.ph` parts don't.
 
 Prepared 2026-10-19. **Status: PLAN ONLY. Nothing here has been created or deployed.** Execution needs the owner's explicit approval, step by step.
 
