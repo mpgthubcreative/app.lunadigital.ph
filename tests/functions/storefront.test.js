@@ -101,12 +101,13 @@ describe("the public menu", () => {
     await openStore({ hiddenProductIds: [secret] });
     const v = ok(await pub({ action: "view", slug: "biz-a" }));
     expect(v.store).toMatchObject({ name: "Biz A", open: true, pickup: true, delivery: true, paymentMethods: ["cod", "gcash"], currency: "PHP" });
-    expect(v.products.map((p) => p.name)).toEqual(["Beans", "Hayst Choco", "Hayst Kopi", "Matcha"]);
+    // 2026-10-26: nothing left (0, or 0.4 kg: less than one to order) = off the public menu.
+    expect(v.products.map((p) => p.name)).toEqual(["Hayst Choco", "Hayst Kopi"]);
     const by = Object.fromEntries(v.products.map((p) => [p.id, p]));
     expect(by[kopi]).toEqual({ id: kopi, name: "Hayst Kopi", category: "Coffee", unit: "pcs", unitLabel: by[kopi].unitLabel, price: 7500, soldOut: false, left: null, max: Q(99) });
     expect(by[choco]).toMatchObject({ soldOut: false, left: Q(3), max: Q(3) }); // "Only 3 left"
-    expect(by[gone]).toMatchObject({ soldOut: true, max: 0 });
-    expect(by[scrap]).toMatchObject({ soldOut: true, left: null, max: 0 }); // 0.4 kg: less than one to order
+    expect(by[gone]).toBeUndefined();
+    expect(by[scrap]).toBeUndefined();
     const text = JSON.stringify(v);
     for (const leak of ["HAYST-KOPI", "onHand", "reserved", "averageCost", "5000", "Staff meal", "biz-b", "ownera"]) expect(text).not.toContain(leak);
   });
@@ -205,5 +206,46 @@ describe("shared rules", () => {
     expect(o).toMatchObject({ source: "online_store", sourceNote: "Pickup", deliveryAddress: "", customer: { name: "Ana", phone: "09171234567" } });
     expect(() => publicOrderInput({ name: "Ana", phone: "09171234567", fulfillment: "delivery", address: "x", items: [{ productId: "abcdefgh12", quantity: 1000 }] }, s)).toThrow(/pickup only/);
     expect(() => validateStoreSettings({ paymentMethods: ["other"] }, s)).toThrow();
+  });
+});
+
+describe("Show on Menu (2026-10-26): what customers can order today, apart from stock and Active", () => {
+  const menu = (uid, body) => owner(uid, body);
+  it("ON shows, OFF hides; stock, the product and its orders stay; nothing is deleted", async () => {
+    const adobo = await stocked("biz-a", { sku: "ADOBO", name: "Adobo", qty: 5, category: "Ulam" });
+    const kare = await stocked("biz-a", { sku: "KARE", name: "Kare-Kare", qty: 8, category: "Ulam" });
+    const slug = await openStore();
+    const names = async () => ok(await pub({ action: "view", slug })).products.map((p) => p.name);
+    expect(await names()).toEqual(["Adobo", "Kare-Kare"]); // a new product is ON
+    const before = structuredClone(docAt(`businesses/biz-a/products/${adobo}`));
+    expect(ok(await menu(world.uids.ownera, { action: "showOnMenu", productId: adobo, show: false }))).toMatchObject({ productId: adobo, show: false });
+    expect(await names()).toEqual(["Kare-Kare"]);
+    expect(docAt(`businesses/biz-a/products/${adobo}`)).toEqual(before); // stock, cost, status untouched
+    expect(ok(await menu(world.uids.ownera, { action: "menu" })).hiddenProductIds).toEqual([adobo]);
+    // An OFF product can't be ordered from the public link.
+    expect((await pub({ action: "order", slug, idempotencyKey: key(), order: ORDER([{ productId: adobo, quantity: Q(1) }]) })).status).toBe(400);
+    ok(await menu(world.uids.ownera, { action: "showOnMenu", productId: adobo, show: true }));
+    expect(await names()).toEqual(["Adobo", "Kare-Kare"]);
+    // Again: no change, no extra audit entry.
+    expect(ok(await menu(world.uids.ownera, { action: "showOnMenu", productId: kare, show: true })).unchanged).toBe(true);
+  });
+
+  it("ON with 0 left is hidden but stays ON; receiving stock brings it back", async () => {
+    const menudo = await stocked("biz-a", { sku: "MENUDO", name: "Menudo", qty: 0, category: "Ulam" });
+    const slug = await openStore();
+    expect(ok(await pub({ action: "view", slug })).products.map((p) => p.name)).not.toContain("Menudo");
+    expect(ok(await menu(world.uids.ownera, { action: "menu" })).hiddenProductIds).not.toContain(menudo);
+    await recordMovement({ db: world.db, tenant: tenantDb(world.db, "biz-a"), FieldValue, productId: menudo, actor, movement: { type: "opening", quantity: Q(6), unitCost: 4000, note: "cooked" } });
+    expect(ok(await pub({ action: "view", slug })).products.map((p) => p.name)).toContain("Menudo");
+  });
+
+  it("permissions and tenants: staff can't change it; another business's product is not found", async () => {
+    const adobo = await stocked("biz-a", { sku: "ADOBO", name: "Adobo", qty: 5 });
+    const other = await stocked("biz-b", { sku: "OTHER", name: "Other", qty: 5 });
+    expect((await menu(world.uids.staffa, { action: "showOnMenu", productId: adobo, show: false })).status).toBe(403);
+    ok(await menu(world.uids.managera, { action: "showOnMenu", productId: adobo, show: false }));
+    expect((await menu(world.uids.ownera, { action: "showOnMenu", productId: other, show: false })).status).toBe(404);
+    expect((await menu(world.uids.ownera, { action: "showOnMenu", productId: adobo, show: "no" })).status).toBe(400);
+    expect(docAt("businesses/biz-b/storefront/settings")?.hiddenProductIds ?? []).toEqual([]);
   });
 });

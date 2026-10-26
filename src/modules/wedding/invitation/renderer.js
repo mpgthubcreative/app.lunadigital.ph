@@ -84,7 +84,7 @@ async function call(body, fetchImpl) {
 // The token is the credential; the wedding slug is only the friendly part
 // of the address (never sent, never trusted). A link with an old slug or no
 // slug moves to the wedding's current address once the token checks out.
-export const inviteTokenFrom = (path) => (/^(?:\/w\/[a-z0-9-]{1,60})?\/invite\/([A-Za-z0-9_-]{32})\/?$/.exec(path) || [])[1] || "";
+export const inviteTokenFrom = (path) => (/^(?:\/w\/[a-z0-9-]{1,60})?\/(?:invite|rsvp)\/([A-Za-z0-9_-]{32})\/?$/.exec(path) || [])[1] || "";
 
 // The wedding link alone (/w/{slug}): invitations are personal, so nothing
 // about the wedding is shown without a guest's private code.

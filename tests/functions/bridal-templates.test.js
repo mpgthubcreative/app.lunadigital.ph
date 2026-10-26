@@ -1,9 +1,9 @@
 // Bridal invitation templates + the free trial (2026-10-21). Templates live
 // in src/modules/wedding/invitation/templates/{id}/ and customized/{id}/ (registry.js); a wedding
 // stores only its templateId. During the free trial the couple chooses a
-// Standard template, fills in the details and previews; guest links are
-// made and opened once Luna Bridal is paid. Switching template never
-// changes a guest's link.
+// Standard template, fills in the details, publishes and sends real RSVP
+// links to up to 20 guests (2026-10-26; tests/functions/trial-rsvp.test.js).
+// Switching template never changes a guest's link.
 
 import { describe, it, expect, beforeEach } from "vitest";
 import { buildWorld, request } from "../helpers/tenants.js";
@@ -80,22 +80,20 @@ describe("Bridal free trial: choose, fill in, preview; publish once paid", () =>
     expect(ok(await design({ action: "sample", businessId: W, which: "live" })).invitation.design.config).toMatchObject({ templateId: "rustic", theme: { accent: "#b4532a" } });
   });
 
-  it("during the trial guest links can't be made or opened (the trial message); after paying, the same flow works and template changes keep each link", async () => {
+  it("during the trial a guest link works (RSVP trial); after paying, the same link stays and template changes keep it", async () => {
     ok(await setup({ action: "save", setup: { coupleNames: "Carlo & Yanie", weddingDate: "2027-02-14", rsvpEnabled: true, weddingSlug: "carloyanieforever", templateId: "gold" } }));
     const g = ok(await guests({ action: "create", guest: { name: "Santos Family", side: "bride", partySize: 4 } }), 201).guestId;
-    const blocked = await guests({ action: "inviteLink", guestId: g });
-    expect(blocked.status).toBe(409);
-    expect(blocked.body).toMatchObject({ error: "trial-preview", message: "Preview your invitation during your free trial. Publish it when you continue with Luna Bridal." });
-    expect((await guests({ action: "regenerateInvite", guestId: g })).body.error).toBe("trial-preview");
-    expect([...world.db.docs.keys()].some((k) => k.startsWith("invitations/"))).toBe(false);
-    // Continue with Luna Bridal (₱499): choose, Luna records the payment.
-    const chosen = ok(await sub({ action: "choose", termMonths: 12 }));
+    const first = ok(await guests({ action: "inviteLink", guestId: g }));
+    expect(first.trialRsvp).toEqual({ used: 4, limit: 20 });
+    // Continue with Luna Bridal (₱499 for 3 months): choose, Luna records the payment.
+    const chosen = ok(await sub({ action: "choose", termMonths: 3 }));
     expect(chosen.invoice.amountDue).toBe(49900);
     ok(await op({ action: "recordPayment", businessId: W, payment: { paymentDate: TODAY } }));
     expect(world.db.docs.get(`businesses/${W}`).subscription.trialStatus).toBe("converted");
     const path = ok(await guests({ action: "inviteLink", guestId: g })).path;
     const token = path.split("/").pop();
-    expect(path).toBe(`/w/carloyanieforever/invite/${token}`);
+    expect(path).toBe(first.path);
+    expect(path).toBe(`/w/carloyanieforever/rsvp/${token}`);
     const v1 = ok(await invite({ action: "view", token })).invitation;
     expect(v1.design).toMatchObject({ standard: true, config: { templateId: "gold", kind: "signature" } });
     expect(v1.guest.name).toBe("Santos Family");
@@ -111,14 +109,13 @@ describe("Bridal free trial: choose, fill in, preview; publish once paid", () =>
     ok(await invite({ action: "respond", token, rsvp: { status: "attending", confirmed: 3 } }));
   });
 
-  it("a link to a workspace still on its free trial isn't opened (not published yet)", async () => {
-    ok(await setup({ action: "save", setup: { coupleNames: "Carlo & Yanie", weddingDate: "2027-02-14", rsvpEnabled: true } }));
+  it("a link of a free trial that ENDED unpaid isn't opened (not published yet) until it's paid", async () => {
+    ok(await setup({ action: "save", setup: { coupleNames: "Carlo & Yanie", weddingDate: "2027-02-14", rsvpEnabled: true, published: true } }));
     const g = ok(await guests({ action: "create", guest: { name: "Reyes Family", side: "groom", partySize: 2 } }), 201).guestId;
-    // A link made before a trial restart (Super Admin): it stops opening during the trial.
-    const b = world.db.docs.get(`businesses/${W}`);
-    world.db.docs.set(`businesses/${W}`, { ...b, subscription: { ...b.subscription, trialStatus: "converted" } });
     const token = ok(await guests({ action: "inviteLink", guestId: g })).path.split("/").pop();
-    world.db.docs.set(`businesses/${W}`, { ...b, subscription: { ...b.subscription, trialStatus: "reset" } });
+    ok(await invite({ action: "view", token }));
+    const b = world.db.docs.get(`businesses/${W}`);
+    world.db.docs.set(`businesses/${W}`, { ...b, subscription: { ...b.subscription, trialStartedAt: "2020-01-01", trialEndsAt: "2020-01-30" } });
     const r = await invite({ action: "view", token });
     expect(r.status).toBe(404);
     expect(r.body.message).toBe("This invitation isn't published yet. Please check back soon.");

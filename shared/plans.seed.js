@@ -9,7 +9,9 @@
 //   Luna Distributor     6 months ₱1,299 · 12 months ₱2,390 (Best Value)
 //                        + ₱250 one-time setup (first paid bill only); no
 //                        monthly option; 2 users, 500 MB
-//   Luna Bridal          ₱499 one-time for 12 months (was ₱1,490 until
+//   Luna Bridal          ₱499 for 3 months · ₱799 for 6 months (2026-10-26;
+//                        was ₱499 for 12 months, ₱1,490 before that); optional
+//                        Premium wedding link (own address) +₱499 once (was ₱1,490 until
 //                        2026-10-21; earlier bills / weddings keep theirs);
 //                        30-day trial; 1 planner, 500 MB, the Standard
 //                        invitation templates
@@ -322,19 +324,31 @@ export const PLAN_SEED = Object.freeze({
   "household-plus": personalPlan({ id: "household-plus", name: "Luna Household+", workspace: "household-payroll", sortOrder: 112, users: 3, storage: 1 * GB, modules: HOUSEHOLD_MODULES, plus: true, legacy: true, billing: { billingType: "annual", price: 199000, termMonths: 12, autoRenew: true, terms: [{ months: 12, price: 199000, kind: "main" }] } }),
   "baby-basic": personalPlan({ id: "baby-basic", name: "Baby Basic", workspace: "baby-expense", monthly: 14900, sortOrder: 21, users: 2, storage: 500 * MB, modules: BABY_MODULES }),
   "baby-plus": personalPlan({ id: "baby-plus", name: "Baby Plus", workspace: "baby-expense", monthly: 24900, sortOrder: 22, users: 5, storage: 2 * GB, modules: BABY_MODULES, plus: true }),
-  // Bridal: 12-month wedding access only (no trials), bought once, no
-  // automatic renewal. Users = planning users (guests and invitation
-  // visitors aren't users). Extra capacity: Super Admin limit overrides.
+  // Bridal (2026-10-26): wedding access for 3 months (₱499) or 6 months
+  // (₱799), the same features; bought once, no automatic renewal; a free
+  // trial first. Both include an editable wedding link on Luna's address
+  // (/w/{name}). Optional: the Premium wedding link, the wedding's own
+  // address (name.lunadigitalsystem.com), +₱499 once (a flat add-on that
+  // grants the custom link; billed on its own bill). Users = planning users
+  // (guests and invitation visitors aren't users).
   "bridal-basic": personalPlan({
     id: "bridal-basic",
     name: "Luna Bridal",
-    tagline: "Your wedding planner, RSVP tracker and website invitation for the whole year.",
+    tagline: "Your wedding planner, RSVP tracker and website invitation.",
     workspace: "bridal-expense",
     sortOrder: 31,
     users: 1,
     storage: 500 * MB,
     modules: BRIDAL_MODULES,
-    billing: { billingType: "term", price: 49900, termMonths: 12, autoRenew: false, trialDays: 30, terms: [{ months: 12, price: 49900, kind: "main" }] },
+    billing: {
+      billingType: "term",
+      price: 49900,
+      termMonths: 3,
+      autoRenew: false,
+      trialDays: 30,
+      terms: [{ months: 3, price: 49900, kind: "main" }, { months: 6, price: 79900, kind: "main", label: "For longer planning" }],
+      addOns: [{ id: "premium-link", label: "Premium wedding link", price: 49900, flat: true, grants: "customLink" }],
+    },
   }),
   // LEGACY (2026-10-25): Luna Bridal Custom, the customized invitation
   // website + designer work. Kept only for the weddings already on it.

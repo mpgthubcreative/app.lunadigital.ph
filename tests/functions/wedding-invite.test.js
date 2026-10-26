@@ -78,7 +78,7 @@ describe("Wedding Setup", () => {
 describe("invitation links: secure, revocable, tenant-safe", () => {
   it("a high-entropy token (not the guest id) opens THIS party only; only its hash is the lookup; Staff can't make links", async () => {
     const { g, token, path } = await maria();
-    expect(path).toBe(`/w/camille-and-carlo-wedding/invite/${token}`); // friendly slug from the couple names
+    expect(path).toBe(`/w/camille-and-carlo-wedding/rsvp/${token}`); // friendly slug from the couple names
     expect(token).toMatch(/^[A-Za-z0-9_-]{32}$/);
     expect(token).not.toContain(g);
     expect(world.db.docs.get(`invitations/${hashInviteToken(token)}`)).toMatchObject({ businessId: W, guestId: g });

@@ -35,6 +35,7 @@ import { openPayLinkSheet } from "../payments/link-sheet.js";
 import { STATE_TONE } from "../payments/index.js";
 import { searchCustomers as defaultSearchCustomers } from "../customers/data.js";
 import { exportButton, bindExport, mayExport, exportHint } from "../../lib/export.js";
+import { publicUrl } from "@shared/custom-links.js";
 
 const defaultDeps = {
   data: ordersData,
@@ -335,7 +336,7 @@ export function mount(container, session, { data = defaultDeps.data, payments = 
       // The row's latest payment and payment link (2026-10-22).
       case "copy-pay-link": {
         const o = find(el.dataset.id);
-        const link = api("payments", { method: "POST", body: { action: "payLink", orderId: o.id } }).then((r) => `${location.origin}${r.path}`);
+        const link = api("payments", { method: "POST", body: { action: "payLink", orderId: o.id } }).then((r) => publicUrl(session, r.path));
         try {
           await copyPending(link);
           toast(`Payment link for ${o.orderNumber} copied ✓`, "success");

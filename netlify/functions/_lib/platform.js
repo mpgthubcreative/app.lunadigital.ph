@@ -14,6 +14,7 @@ import { subscriptionTerms, attentionOf, accessState, BILLING_TYPES } from "../.
 import { trialState } from "../../../shared/trial.js";
 import { businessDate } from "../../../shared/metrics.js";
 import { BILLING_TIMEZONE } from "../../../shared/billing.js";
+import { linkAddOnOf } from "../../../shared/custom-links.js";
 
 const TX = { maxAttempts: 10 };
 const int = (v) => (Number.isSafeInteger(v) ? v : 0);
@@ -190,6 +191,53 @@ export async function economics({ db, period }) {
   return { period, byWorkspace: roll("workspaceTemplateId"), byPlan: roll("planId"), topConsumers: top, estimatedTotal: all.reduce((s, r) => s + r.estimate.total, 0) };
 }
 
+// ---------- Collected money, from the records (2026-10-26) ----------
+//
+// "Collected" = PAID subscription payments (a confirmed customer payment or
+// one Luna recorded), counted in the month Luna confirmed it (Manila).
+// Nothing else is income: choosing or granting access, a plan change, the
+// Premium wedding link entitlement and unpaid bills never count. Still to
+// collect = the open bills' balances; awaiting = payments waiting for
+// verification. All recounted from the records on every load, so a
+// deleted test business's payments can never linger in a running counter
+// (the platformMetrics counters kept ₱196,007 of deleted probe / seed
+// payments in 2026-10; they're no longer read for money).
+const MONEY_SCAN = 5000;
+const monthOf = (ts) => {
+  const d = ts?.toDate ? ts.toDate() : ts instanceof Date ? ts : null;
+  return d ? businessDate(BILLING_TIMEZONE, d).slice(0, 7) : null;
+};
+export async function moneyFromRecords({ db, months }) {
+  const want = new Set(months);
+  const [paid, waiting, open] = await Promise.all([
+    db.collection("subscriptionPayments").where("status", "==", "paid").limit(MONEY_SCAN).get(),
+    db.collection("subscriptionPayments").where("status", "==", "for_verification").limit(MONEY_SCAN).get(),
+    db.collection("subscriptionInvoices").where("status", "in", ["due", "for_verification"]).limit(MONEY_SCAN).get(),
+  ]);
+  const rows = paid.docs.map((d) => d.data()).filter((p) => want.has(monthOf(p.verifiedAt)));
+  // The bill tells what the money was for: access by billing type, or an add-on.
+  const billIds = [...new Set(rows.map((p) => p.invoiceId).filter((x) => typeof x === "string"))];
+  const bills = Object.fromEntries((await Promise.all(billIds.map((id) => db.collection("subscriptionInvoices").doc(id).get()))).filter((b) => b.exists).map((b) => [b.id, b.data()]));
+  const byMonth = Object.fromEntries(months.map((m) => [m, { collected: 0, payments: 0, byWorkspace: {}, byPlan: {}, byBillingType: {} }]));
+  for (const p of rows) {
+    const m = byMonth[monthOf(p.verifiedAt)];
+    const amount = int(p.amountReceived ?? p.amountSubmitted);
+    const bill = bills[p.invoiceId] || {};
+    const type = bill.kind === "addon" ? "addon" : bill.billingType || "monthly";
+    const add = (o, k) => (o[k || "unknown"] = int(o[k || "unknown"]) + amount);
+    m.collected += amount;
+    m.payments += 1;
+    add(m.byWorkspace, p.workspaceTemplateId);
+    add(m.byPlan, p.planId);
+    add(m.byBillingType, type);
+  }
+  return {
+    byMonth,
+    awaiting: { count: waiting.size, amount: waiting.docs.reduce((t, d) => t + int(d.data().amountSubmitted), 0) },
+    outstanding: open.docs.reduce((t, d) => t + Math.max(0, int(d.data().amountDue) - int(d.data().amountPaid)), 0),
+  };
+}
+
 // ---------- Overview (the money story) ----------
 
 async function sumMrr(db, AggregateField, extra = null) {
@@ -203,19 +251,16 @@ export async function platformOverview({ db, FieldValue, AggregateField, now = n
   const period = currentPeriod(now);
   await billingRun({ db, FieldValue, period });
   const months = lastPeriods(period, 12);
-  const [metricSnaps, current, expenses, totals, pastDue, ...byWs] = await Promise.all([
-    Promise.all(months.map((m) => db.collection("platformMetrics").doc(m).get())),
-    db.collection("platformMetrics").doc("current").get(),
+  const [money, expenses, totals, pastDue, ...byWs] = await Promise.all([
+    moneyFromRecords({ db, months }),
     expensesForMonths(db, months),
     sumMrr(db, AggregateField),
     db.collection("businesses").where("subscription.status", "==", "past_due").limit(10).get(),
     ...WORKSPACE_TEMPLATE_IDS.map((w) => sumMrr(db, AggregateField, w)),
   ]);
-  const metrics = Object.fromEntries(months.map((m, i) => [m, metricSnaps[i].exists ? metricSnaps[i].data() : {}]));
   const costs = costsByMonth(expenses);
-  const c = current.exists ? current.data() : {};
-  const thisMonth = metrics[period];
-  const collected = int(thisMonth.verifiedRevenue);
+  const thisMonth = money.byMonth[period];
+  const collected = thisMonth.collected;
   const platformCosts = costs[period]?.total ?? 0;
   const gp = grossProfit(collected, platformCosts);
   const dueOpen = await db.collection("subscriptionInvoices").where("period", "==", period).where("status", "in", ["due", "for_verification"]).limit(50).get();
@@ -224,21 +269,21 @@ export async function platformOverview({ db, FieldValue, AggregateField, now = n
     collected,
     mrr: totals.mrr,
     activeSubscriptions: totals.subscriptions,
-    stillToCollect: Math.max(0, int(c.outstanding) - Math.max(0, int(c.awaitingAmount))),
-    outstanding: Math.max(0, int(c.outstanding)),
-    awaiting: { count: Math.max(0, int(c.awaitingCount)), amount: Math.max(0, int(c.awaitingAmount)) },
+    stillToCollect: Math.max(0, money.outstanding - money.awaiting.amount),
+    outstanding: money.outstanding,
+    awaiting: money.awaiting,
     pastDueCount: pastDue.size,
     platformCosts,
     infraCosts: costs[period]?.infra ?? 0,
     estimatedGrossProfit: gp,
     estimatedGrossMargin: grossMarginPct(gp, collected),
     trend: months.map((m) => {
-      const rev = int(metrics[m].verifiedRevenue);
+      const rev = money.byMonth[m].collected;
       const cost = costs[m]?.total ?? 0;
       return { period: m, revenue: rev, costs: cost, grossProfit: grossProfit(rev, cost) };
     }),
-    revenueByWorkspace: WORKSPACE_TEMPLATE_IDS.map((w, i) => ({ workspaceTemplateId: w, revenue: int(thisMonth.revenueByWorkspace?.[w]), mrr: byWs[i].mrr, subscriptions: byWs[i].subscriptions })),
-    revenueByPlan: Object.entries(thisMonth.revenueByPlan || {}).map(([planId, revenue]) => ({ planId, revenue: int(revenue) })),
+    revenueByWorkspace: WORKSPACE_TEMPLATE_IDS.map((w, i) => ({ workspaceTemplateId: w, revenue: int(thisMonth.byWorkspace[w]), mrr: byWs[i].mrr, subscriptions: byWs[i].subscriptions })),
+    revenueByPlan: Object.entries(thisMonth.byPlan).map(([planId, revenue]) => ({ planId, revenue: int(revenue) })),
     dueThisMonth: dueOpen.docs.map((d) => ({ businessId: d.data().businessId, businessName: d.data().businessName, workspaceTemplateId: d.data().workspaceTemplateId, planName: d.data().planName, amountDue: d.data().amountDue, amountPaid: d.data().amountPaid, status: d.data().status, dueDate: d.data().dueDate })),
     pastDue: pastDue.docs.map((d) => ({ businessId: d.id, name: d.data().name, workspaceTemplateId: d.data().workspaceTemplateId, planId: d.data().subscription?.planId, paidThrough: d.data().subscription?.paidThrough ?? null })),
   };
@@ -264,7 +309,8 @@ const ATTENTION_ORDER = { overdue: 0, expired: 1, trial_ended: 2, due: 3, trial:
 const createdDayOf = (b) => (b.createdAt?.toDate ? businessDate(BILLING_TIMEZONE, b.createdAt.toDate()) : null);
 
 // One business's billing state as the console shows it.
-export function billingRow(id, b, planNames = {}, today) {
+// planDocs: { [planId]: plan } when the caller has the plan (the business page).
+export function billingRow(id, b, planNames = {}, today, planDocs = {}) {
   const sub = b.subscription || {};
   const terms = subscriptionTerms(sub, { createdDay: createdDayOf(b) });
   const trial = today ? trialState(sub, today) : null;
@@ -284,7 +330,17 @@ export function billingRow(id, b, planNames = {}, today) {
     termMonths: terms.termMonths,
     prepaidNext: terms.prepaidNext,
     priceOverride: terms.priceOverride,
-    addOns: terms.addOns.map((a) => ({ id: a.id, label: a.label, qty: a.qty })),
+    addOns: terms.addOns.map((a) => ({ id: a.id, label: a.label, qty: a.qty, ...(a.flat ? { flat: true, price: a.price, paid: (sub.addOnsPaid || []).includes(a.id) } : {}) })),
+    // Custom workspace link (2026-10-26): the plan's link add-on (Bridal) and the claimed name.
+    linkAddOn: (() => {
+      const a = planDocs[sub.planId] ? linkAddOnOf(planDocs[sub.planId]) : null;
+      return a ? { id: a.id, label: a.label, price: a.price, paid: (sub.addOnsPaid || []).includes(a.id) } : null;
+    })(),
+    customLink: b.customLink?.label ? { label: b.customLink.label, setup: b.customLink.setup || "pending" } : null,
+    customLinkDomain: process.env.VITE_CUSTOM_LINK_DOMAIN || null,
+    // Wedding access granted by Super Admin (setTermAccess): access, not payment.
+    accessGrant: sub.accessGrant ?? null,
+    accessPaid: int(sub.accessPaid),
     startDate: terms.startDate,
     dueDate: terms.dueDate,
     renewal: terms.renewal,
@@ -300,20 +356,14 @@ export async function lunaOverview({ db, FieldValue, now = new Date() }) {
   const period = currentPeriod(now);
   const today = businessDate(BILLING_TIMEZONE, now);
   await billingRun({ db, FieldValue, period });
-  const [snap, metric, current, plans] = await Promise.all([
-    db.collection("businesses").limit(OVERVIEW_LIMIT).get(),
-    db.collection("platformMetrics").doc(period).get(),
-    db.collection("platformMetrics").doc("current").get(),
-    db.collection("plans").get(),
-  ]);
+  const [snap, money, plans] = await Promise.all([db.collection("businesses").limit(OVERVIEW_LIMIT).get(), moneyFromRecords({ db, months: [period] }), db.collection("plans").get()]);
   const planNames = Object.fromEntries(plans.docs.map((d) => [d.id, d.data().name]));
   const rows = snap.docs.map((d) => billingRow(d.id, d.data(), planNames, today)).filter((r) => r.status !== "deleted");
-  const m = metric.exists ? metric.data() : {};
-  const c = current.exists ? current.data() : {};
+  const m = money.byMonth[period];
   // Paying access; free trials are counted on their own (never income).
   const live = rows.filter((r) => BILLABLE_STATUSES.includes(r.status) && !["expired", "trial", "trial_ended"].includes(r.state));
   const trials = rows.filter((r) => ["trial", "trial_ended"].includes(r.state) && r.status !== "cancelled");
-  const byType = m.revenueByBillingType || {};
+  const byType = m.byBillingType;
   const workspaces = WORKSPACE_TEMPLATE_IDS.filter((w) => rows.some((r) => r.workspaceTemplateId === w));
   return {
     period,
@@ -324,8 +374,10 @@ export async function lunaOverview({ db, FieldValue, now = new Date() }) {
     // old monthly terms (before billing types) isn't recurring income.
     recurringIncome: live.filter((r) => r.billingType === "monthly" && MONTHLY_WORKSPACES.has(r.workspaceTemplateId)).reduce((t, r) => t + (Number.isSafeInteger(r.amount) ? r.amount : 0), 0),
     annualIncomeThisMonth: int(byType.annual) + int(byType.term),
-    collectedThisMonth: int(m.verifiedRevenue),
-    awaiting: { count: Math.max(0, int(c.awaitingCount)), amount: Math.max(0, int(c.awaitingAmount)) },
+    collectedThisMonth: m.collected,
+    // The Premium wedding link (+₱499 once) and other flat add-ons, when paid.
+    addOnIncomeThisMonth: int(byType.addon),
+    awaiting: money.awaiting,
     needsAttention: rows
       .filter((r) => r.attention && !r.attention.quiet && r.status !== "cancelled")
       .sort((a, b) => ATTENTION_ORDER[a.attention.kind] - ATTENTION_ORDER[b.attention.kind] || (a.attention.kind === "overdue" ? b.attention.days - a.attention.days : a.attention.date < b.attention.date ? -1 : 1))
@@ -334,7 +386,7 @@ export async function lunaOverview({ db, FieldValue, now = new Date() }) {
       const mine = live.filter((r) => r.workspaceTemplateId === w);
       // How the workspace is sold (businesses from before billing types still pay monthly).
       const type = WORKSPACE_BILLING[w] ?? "monthly";
-      return { workspaceTemplateId: w, billingType: type, billingLabel: BILLING_TYPES[type].label, collected: int(m.revenueByWorkspace?.[w]), recurring: type === "monthly" ? mine.filter((r) => r.billingType === "monthly").reduce((t, r) => t + (Number.isSafeInteger(r.amount) ? r.amount : 0), 0) : null, active: mine.length };
+      return { workspaceTemplateId: w, billingType: type, billingLabel: BILLING_TYPES[type].label, collected: int(m.byWorkspace[w]), recurring: type === "monthly" ? mine.filter((r) => r.billingType === "monthly").reduce((t, r) => t + (Number.isSafeInteger(r.amount) ? r.amount : 0), 0) : null, active: mine.length };
     }),
   };
 }

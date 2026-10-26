@@ -62,7 +62,7 @@ describe("one Bridal product: Luna Bridal Custom is legacy", () => {
     const r = await sub({ action: "choose", planId: "bridal-plus", termMonths: 12 }, T);
     expect(r.status).toBe(400);
     expect(world.db.docs.get(`businesses/${T}`).subscription.planId).toBe("bridal-basic");
-    expect(ok(await sub({ action: "choose", planId: "bridal-basic", termMonths: 12 }, T)).invoice.amountDue).toBe(49900);
+    expect(ok(await sub({ action: "choose", planId: "bridal-basic", termMonths: 3 }, T)).invoice.amountDue).toBe(49900);
   });
 });
 
@@ -151,5 +151,36 @@ describe("+1 / +2: one link per party; companion names at RSVP", () => {
     expect(doc(`guests/${decl.g}`).members ?? []).toEqual([]);
     // One private link per party: three parties, three links.
     expect([...world.db.docs.keys()].filter((k) => k.startsWith("invitations/")).length).toBe(3);
+  });
+});
+
+// Custom wedding address (2026-10-26): the address only locates the wedding;
+// the guest's private token still decides, and a token from another wedding
+// is refused on this address (one generic answer, nothing recorded).
+describe("custom wedding address: the token is checked against the address", () => {
+  it("own address: works; another wedding's address or an unknown one: the same 'not valid' answer; RSVP refused there", async () => {
+    await live();
+    const { g, token } = await linkFor("Tita Nena", 1);
+    world.db.docs.set("publicLinks/camillecarlo", { businessId: W, kind: "current", current: "camillecarlo", setup: "active" });
+    world.db.docs.set("publicLinks/otherwedding", { businessId: X, kind: "current", current: "otherwedding", setup: "active" });
+    expect(ok(await invite({ action: "view", token, host: "camillecarlo" })).invitation.guest.name).toBe("Tita Nena");
+    expect(ok(await invite({ action: "view", token })).invitation.guest.name).toBe("Tita Nena"); // the app address: unchanged
+    const foreign = await invite({ action: "view", token, host: "otherwedding" });
+    const unknown = await invite({ action: "view", token, host: "nobody" });
+    expect(foreign.status).toBe(404);
+    expect(unknown.body).toEqual(foreign.body);
+    expect((await invite({ action: "respond", token, host: "otherwedding", rsvp: { status: "attending", confirmed: 1 } })).status).toBe(404);
+    expect(doc(`guests/${g}`).rsvp).not.toBe("attending");
+    ok(await invite({ action: "respond", token, host: "camillecarlo", rsvp: { status: "attending", confirmed: 1 } }));
+    expect(doc(`guests/${g}`).rsvp).toBe("attending");
+  });
+  it("Wedding Setup's Check: the name is free for this wedding, or taken by another", async () => {
+    await live();
+    const mine = doc("weddingSetup/current").weddingSlug;
+    expect(ok(await setup({ action: "checkSlug", slug: mine })).available).toBe(true);
+    world.db.docs.set("weddingSlugs/carlo-yanie", { businessId: X });
+    expect(ok(await setup({ action: "checkSlug", slug: "carlo-yanie" })).available).toBe(false);
+    expect(ok(await setup({ action: "checkSlug", slug: "free-name-here" })).available).toBe(true);
+    expect((await setup({ action: "checkSlug", slug: "Bad Name!" })).status).toBe(400);
   });
 });

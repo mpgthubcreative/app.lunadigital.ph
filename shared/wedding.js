@@ -55,6 +55,15 @@ export class WeddingError extends Error {
 
 export const MAX_AGREED_CENTAVOS = 10_000_000_000; // ₱100,000,000 (typo guard)
 export const MAX_PARTY_SIZE = 50;
+// Free trial RSVP (2026-10-26): a trial wedding may give RSVP access (a
+// personal invitation link) to at most 20 invited people. One guest record
+// = one party; it counts as its party size (John, Mary and their child = 3),
+// once: copying, resending or replacing the same guest's link counts
+// nothing more. The guest list itself may be any size; the rest wait,
+// ready, until Luna Bridal is paid (then there's no limit; links stay).
+export const TRIAL_RSVP_GUESTS = 20;
+export const TRIAL_RSVP_LIMIT_MESSAGE = "You've used the 20-guest RSVP limit included in your free trial. Upgrade to continue sending invitations.";
+export const trialRsvpSeats = (guest) => (Number.isSafeInteger(guest?.partySize) && guest.partySize > 0 ? guest.partySize : 1);
 
 function text(value, { field, max, required = false }) {
   if (value === undefined || value === null || value === "") {
@@ -476,7 +485,8 @@ export function suggestWeddingSlug(coupleNames) {
   return base ? `${base}-wedding` : "";
 }
 // A guest's link path (the plain /invite/{token} when there's no slug).
-export const invitePath = (slug, token) => (isWeddingSlug(slug) ? `/w/${slug}/invite/${token}` : `/invite/${token}`);
+// New links (2026-10-26): /w/{slug}/rsvp/{token}; the older /invite/ forms keep opening.
+export const invitePath = (slug, token) => (isWeddingSlug(slug) ? `/w/${slug}/rsvp/${token}` : `/rsvp/${token}`);
 const TIME = /^([01]\d|2[0-3]):[0-5]\d$/;
 const HEX6 = /^#[0-9a-fA-F]{6}$/;
 export function validateWeddingSetup(input) {

@@ -21,7 +21,7 @@
 // link stops working at once. Every bad / revoked link gets the same answer.
 
 import { createHash, randomBytes } from "node:crypto";
-import { WeddingError, WEDDING_SCHEMA_VERSION, TOTALS_DOC_ID, SEATING_DOC_ID, RSVP_STATUSES, validateRsvp, validateWeddingSetup, rsvpOpen, setupMissing, isWeddingSlug, suggestWeddingSlug, invitePath, coupleDisplayName, isInvitationPublished, WEDDING_SLUG_MIN, WEDDING_SLUG_MAX } from "../../../shared/wedding.js";
+import { WeddingError, WEDDING_SCHEMA_VERSION, TOTALS_DOC_ID, SEATING_DOC_ID, RSVP_STATUSES, validateRsvp, validateWeddingSetup, rsvpOpen, setupMissing, isWeddingSlug, suggestWeddingSlug, invitePath, coupleDisplayName, isInvitationPublished, trialRsvpSeats, WEDDING_SLUG_MIN, WEDDING_SLUG_MAX } from "../../../shared/wedding.js";
 import { businessDate, isDayId } from "../../../shared/metrics.js";
 import { prepareNotifications } from "./notifications.js";
 import { tenantDb } from "./tenant-db.js";
@@ -29,11 +29,13 @@ import { guestTotalsWrite, releasedText } from "./wedding.js";
 import { roleLabel, rolesPlan, membersOf } from "../../../shared/wedding-roles.js";
 import { accessPolicy } from "../../../shared/subscription.js";
 import { attendingMarksFor, nameCompanions } from "./wedding-roles.js";
-import { liveDesignFor, ownerInvitationStatus, previewDesign, TRIAL_PREVIEW_MESSAGE } from "./invitation-design.js";
-import { trialOpen } from "../../../shared/trial.js";
+import { liveDesignFor, ownerInvitationStatus, previewDesign } from "./invitation-design.js";
+import { trialLocked } from "../../../shared/trial.js";
+import { readTrialRsvp, claimTrialRsvp } from "./trial-rsvp.js";
 import { invitationData, PHOTO_SLOTS, isOfferedTemplate } from "../../../shared/invitation-design.js";
 import { reconcileSeats } from "../../../shared/wedding-seating.js";
 import { dataUrlImageType } from "../../../shared/image-type.js";
+import { linkBusinessId } from "./custom-links.js";
 
 const TX_OPTIONS = { maxAttempts: 10 };
 const MAX_HISTORY = 200;
@@ -67,13 +69,11 @@ const setupRef = (tenant) => tenant.doc("weddingSetup", "current");
 const heroRef = (tenant) => tenant.doc("weddingSetup", "hero");
 const totalsRef = (tenant) => tenant.doc("guestTotals", TOTALS_DOC_ID);
 const BAD_LINK = () => new WeddingError("invalid-link", "This invitation link isn't valid. Please ask the couple for a new one.");
-// A free trial (2026-10-21): the couple previews; guest links are made and
-// opened once Luna Bridal is paid (the trial converts). Same links after.
+// A free trial (2026-10-26): the couple publishes and sends real RSVP links
+// to up to 20 invited people (./trial-rsvp.js); the same links keep working
+// after Luna Bridal is paid. When a trial ENDS unpaid, links stop opening
+// until it's paid (the workspace is locked; nothing is deleted).
 const NOT_PUBLISHED = () => new WeddingError("not-published", "This invitation isn't published yet. Please check back soon.");
-async function requirePaid(tenant) {
-  const b = await tenant.ref.get();
-  if (b.exists && trialOpen(b.data().subscription)) throw new WeddingError("trial-preview", TRIAL_PREVIEW_MESSAGE);
-}
 
 // ---- Wedding Setup (Owner side, guests.manage) ----
 export async function readSetup({ tenant, business }) {
@@ -132,6 +132,12 @@ async function freeSlugFor(tx, db, businessId, base) {
   }
   return `${base.slice(0, WEDDING_SLUG_MAX - 7)}-${randomBytes(3).toString("hex")}`;
 }
+// Wedding Setup's "Check": is this wedding link name free for this wedding?
+export async function checkWeddingSlug({ db, tenant, slug }) {
+  if (!isWeddingSlug(slug)) throw new WeddingError("invalid-input", "Use 3 to 60 lowercase letters, numbers or hyphens.");
+  const snap = await slugRef(db, slug).get();
+  return { slug, available: !snap.exists || snap.data().businessId === tenant.businessId };
+}
 // In the caller's transaction (reads first): the slug to store, and the commit.
 async function prepareSlug(tx, { db, tenant, current, wanted, coupleNames, now }) {
   const businessId = tenant.businessId;
@@ -155,7 +161,6 @@ async function prepareSlug(tx, { db, tenant, current, wanted, coupleNames, now }
 export async function saveSetup({ db, tenant, FieldValue, input, actor, now = new Date() }) {
   const data = validateWeddingSetup(input || {});
   // Publishing needs a paid wedding (the trial previews only).
-  if (data.published === true) await requirePaid(tenant);
   await db.runTransaction(async (tx) => {
     const cur = await tx.get(setupRef(tenant));
     const before = cur.exists ? cur.data() : {};
@@ -245,47 +250,52 @@ export async function issueInvite({ db, tenant, guestId, actor, now = new Date()
   const gRef = tenant.doc("guests", guestId);
   const iRef = tenant.doc("guestInvites", guestId);
   if (!(await gRef.get()).exists) throw new WeddingError("not-found", "Guest not found");
-  await requirePaid(tenant);
   await requireSetup(tenant);
   const token = newToken();
   const hash = hashInviteToken(token);
-  await db.runTransaction(async (tx) => {
+  const trialRsvp = await db.runTransaction(async (tx) => {
     const [g, prev] = [await tx.get(gRef), await tx.get(iRef)];
     if (!g.exists) throw new WeddingError("not-found", "Guest not found");
+    // Free trial: this guest takes its places (once; a replaced link takes none).
+    const trial = await readTrialRsvp(tx, tenant);
+    const usage = claimTrialRsvp(tx, tenant, trial, guestId, trialRsvpSeats(g.data()));
     if (prev.exists && prev.data().hash) tx.delete(db.collection("invitations").doc(prev.data().hash));
     tx.create(db.collection("invitations").doc(hash), { businessId: tenant.businessId, guestId, createdAt: now });
     tx.set(iRef, { token, hash, createdAt: now, createdBy: who(actor) });
     const gd = g.data();
     tx.update(gRef, { invitation: { status: "active", issuedAt: now, regenerated: prev.exists }, history: append(gd.history, { at: now, actor: who(actor), label: prev.exists ? "Invitation link replaced (the old link no longer works)" : "Invitation link created" }) });
+    return usage;
   }, TX_OPTIONS);
-  return { token, path: invitePath(await slugOf({ db, tenant, now }), token), created: true };
+  return { token, path: invitePath(await slugOf({ db, tenant, now }), token), created: true, trialRsvp };
 }
 // The current link (made on first use), under the wedding's current slug.
 export async function inviteLink({ db, tenant, guestId, actor, now }) {
-  await requirePaid(tenant);
   const i = await tenant.doc("guestInvites", guestId).get();
   if (i.exists && i.data().token) return { token: i.data().token, path: invitePath(await slugOf({ db, tenant, now }), i.data().token), created: false };
   return issueInvite({ db, tenant, guestId, actor, now });
 }
 
 // ---- Public (the guest; no login) ----
-async function resolve(db, token) {
+// host: the custom wedding address the page is on (its label), if any:
+// an invitation only opens on its own wedding's address (2026-10-26).
+async function resolve(db, token, host = null) {
   if (typeof token !== "string" || !TOKEN.test(token)) throw BAD_LINK();
   const link = await db.collection("invitations").doc(hashInviteToken(token)).get();
   if (!link.exists) throw BAD_LINK();
   const { businessId, guestId } = link.data();
+  if (host !== null && (await linkBusinessId(db, host)) !== businessId) throw BAD_LINK();
   const biz = db.collection("businesses").doc(businessId);
   const [b, g] = await Promise.all([biz.get(), biz.collection("guests").doc(guestId).get()]);
   if (!b.exists || !g.exists || b.data().entitlements?.workspaceTemplateId !== "bridal-expense") throw BAD_LINK();
   // A deleted business (Super Admin, recoverable) or an unknown status: the link stops working at once.
   if (!accessPolicy(b.data().subscription?.status).canRead) throw BAD_LINK();
-  if (trialOpen(b.data().subscription)) throw NOT_PUBLISHED();
+  if (trialLocked(b.data().subscription, businessDate(b.data().timezone || "Asia/Manila", new Date()))) throw NOT_PUBLISHED();
   return { businessId, guestId, biz, business: b.data(), guest: g.data(), linkRef: link.ref };
 }
 // What a guest sees of the Wedding Setup (shared/invitation-design.js).
 
-export async function viewInvite({ db, token, now = new Date() }) {
-  const r = await resolve(db, token);
+export async function viewInvite({ db, token, now = new Date(), host = null }) {
+  const r = await resolve(db, token, host);
   const [s, h] = await Promise.all([r.biz.collection("weddingSetup").doc("current").get(), r.biz.collection("weddingSetup").doc("hero").get()]);
   const setup = s.exists ? s.data() : {};
   if (!isInvitationPublished(setup)) throw NOT_PUBLISHED();
@@ -312,8 +322,8 @@ export async function viewInvite({ db, token, now = new Date() }) {
   });
 }
 
-export async function respondInvite({ db, FieldValue, token, rsvp, now = new Date() }) {
-  const r = await resolve(db, token);
+export async function respondInvite({ db, FieldValue, token, rsvp, now = new Date(), host = null }) {
+  const r = await resolve(db, token, host);
   const gRef = r.biz.collection("guests").doc(r.guestId);
   const sRef = r.biz.collection("weddingSetup").doc("current");
   const tenant = tenantDb(db, r.businessId);

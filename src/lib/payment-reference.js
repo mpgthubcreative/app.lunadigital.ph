@@ -36,6 +36,61 @@ export function extractReference(text) {
   return g ? `${g[1]}${g[2]}${g[3]}` : null;
 }
 
+// The whole payment off a confirmation screenshot (2026-10-26): amount,
+// reference, and the method / date when they're clear. Only a suggestion:
+// the customer checks and edits it, and the server and the business decide.
+//   { amount: centavos | null, reference, method: "gcash" | "maya" | "bank_transfer" | null, date: "YYYY-MM-DD" | null }
+const MONEY = /(?:₱|php|p)\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.(\d{2}))?\b/gi;
+const LABELLED_AMOUNT = /\b(total\s+amount(?:\s+sent|\s+paid)?|amount(?:\s+sent|\s+paid|\s+transferred)?|total|you\s+sent|sent)\b\s*[:\-]?\s*(?:₱|php|p)?\s?(\d{1,3}(?:,\d{3})+|\d+)\.(\d{2})\b/i;
+const toCentavos = (whole, cents) => {
+  const n = Number(String(whole).replace(/,/g, "")) * 100 + Number(cents || 0);
+  return Number.isSafeInteger(n) && n > 0 && n < 100_000_000_00 ? n : null;
+};
+export function extractAmount(text) {
+  if (typeof text !== "string" || !text.trim()) return null;
+  const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  // A labelled amount wins ("Total Amount Sent ₱145.00"), on its line or the next.
+  for (let i = 0; i < lines.length; i += 1) {
+    if (/\bfee\b|\bbalance\b|\bcharge\b/i.test(lines[i])) continue;
+    const m = LABELLED_AMOUNT.exec(lines[i]) || (/^(total\s+amount|amount)(\s+sent|\s+paid)?\s*:?$/i.test(lines[i]) ? LABELLED_AMOUNT.exec(`${lines[i]} ${lines[i + 1] ?? ""}`) : null);
+    const v = m ? toCentavos(m[2], m[3]) : null;
+    if (v) return v;
+  }
+  // Else the first peso amount that isn't a fee / balance line.
+  for (const line of lines) {
+    if (/\bfee\b|\bbalance\b|\bcharge\b/i.test(line)) continue;
+    for (const m of line.matchAll(MONEY)) {
+      const v = toCentavos(m[1], m[2]);
+      if (v) return v;
+    }
+  }
+  return null;
+}
+export function extractMethod(text) {
+  if (typeof text !== "string") return null;
+  const gcash = /\bg\s?cash\b/i.test(text);
+  const maya = /\b(?:pay)?maya\b/i.test(text);
+  if (gcash && !maya) return "gcash";
+  if (maya && !gcash) return "maya";
+  if (!gcash && !maya && /\b(?:instapay|pesonet|bdo|bpi|metrobank|landbank|unionbank|security\s?bank|rcbc|chinabank|pnb|eastwest|bank\s+transfer|fund\s+transfer)\b/i.test(text)) return "bank_transfer";
+  return null;
+}
+const MONTHS = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12 };
+export function extractDate(text) {
+  if (typeof text !== "string") return null;
+  const day = (y, m, d) => (m >= 1 && m <= 12 && d >= 1 && d <= 31 && y >= 2020 && y <= 2100 ? `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}` : null);
+  const w = /\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+(\d{1,2}),?\s+(\d{4})\b/i.exec(text);
+  if (w) return day(Number(w[3]), MONTHS[w[1].toLowerCase()], Number(w[2]));
+  const n = /\b(\d{1,2})\/(\d{1,2})\/(\d{4})\b/.exec(text); // Philippine apps: MM/DD/YYYY
+  if (n) return day(Number(n[3]), Number(n[1]), Number(n[2]));
+  const iso = /\b(\d{4})-(\d{2})-(\d{2})\b/.exec(text);
+  return iso ? day(Number(iso[1]), Number(iso[2]), Number(iso[3])) : null;
+}
+export function extractPayment(text) {
+  const out = { amount: extractAmount(text), reference: extractReference(text), method: extractMethod(text), date: extractDate(text) };
+  return out.amount || out.reference ? out : null;
+}
+
 let reader = null;
 async function getReader() {
   if (!reader) {
@@ -64,6 +119,18 @@ export async function detectReference(file, { timeoutMs = 60000, recognize = nul
     const run = recognize ? recognize(file) : getReader().then((w) => w.recognize(file)).then((r) => r.data.text);
     const text = await Promise.race([run, new Promise((resolve) => setTimeout(() => resolve(""), timeoutMs))]);
     return extractReference(text);
+  } catch {
+    return null;
+  }
+}
+
+// The payment read from an image file, or null (never throws).
+export async function detectPayment(file, { timeoutMs = 60000, recognize = null } = {}) {
+  if (!file || !/^image\/(jpeg|png|webp)$/.test(file.type || "")) return null;
+  try {
+    const run = recognize ? recognize(file) : getReader().then((w) => w.recognize(file)).then((r) => r.data.text);
+    const text = await Promise.race([run, new Promise((resolve) => setTimeout(() => resolve(""), timeoutMs))]);
+    return extractPayment(text);
   } catch {
     return null;
   }

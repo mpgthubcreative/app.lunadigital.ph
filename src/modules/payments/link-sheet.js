@@ -10,8 +10,9 @@ import { formDialog } from "../../components/form-dialog.js";
 import { confirmDialog } from "../../components/feedback.js";
 import { formatCentavos } from "../../lib/format.js";
 import { MAX_PAYMENT_INSTRUCTIONS } from "@shared/index.js";
+import { publicUrl } from "@shared/custom-links.js";
 
-export function openPayLinkSheet({ order, api, toast, session, origin = window.location.origin, copy = (t) => navigator.clipboard?.writeText(t), confirm = confirmDialog }) {
+export function openPayLinkSheet({ order, api, toast, session, origin = null, copy = (t) => navigator.clipboard?.writeText(t), confirm = confirmDialog }) {
   const perms = session.member.permissions;
   const canEditInstructions = perms["settings.manage"] === true;
   const canReplace = perms["payments.verify"] === true;
@@ -20,7 +21,8 @@ export function openPayLinkSheet({ order, api, toast, session, origin = window.l
   const backdrop = document.createElement("div");
   backdrop.className = "modal-backdrop";
   document.body.appendChild(backdrop);
-  const url = () => `${origin}${state.path}`;
+  // The workspace's own address when it has one (custom workspace link).
+  const url = () => (origin ? `${origin}${state.path}` : publicUrl(session, state.path));
   return new Promise((resolve) => {
     const close = () => {
       backdrop.remove();

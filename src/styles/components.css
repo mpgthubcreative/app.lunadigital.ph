@@ -4743,3 +4743,59 @@ button.wl-person-name:hover .wl-edit, button.wl-person-name:focus-visible .wl-ed
 .wl-invite .btn { min-height: 36px; }
 .wl-invite .select.select-compact { width: auto; min-height: 36px; }
 .wl-invite .wl-invite-done { color: var(--success, #2f7d4f); font-weight: 600; }
+
+/* Custom workspace link (2026-10-26): [ name ] .domain on one line. */
+.cl-input { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; min-width: 0; }
+.cl-input .input { flex: 1 1 10rem; min-width: 0; }
+/* The domain stays whole: on a narrow phone it moves under the name. */
+.cl-domain { flex: 0 0 auto; color: var(--text-muted); white-space: nowrap; font-size: 0.95em; }
+.cl-form { display: grid; gap: var(--space-2); }
+.cl-ok { color: var(--success, #1f7a3d); margin: 0; }
+.cl-bad { color: var(--danger, #b42318); margin: 0; }
+.cl-muted { color: var(--text-muted); }
+
+/* Show on Menu (Inventory, 2026-10-26): one tap per product, ON / OFF. */
+.menu-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-right: var(--space-2);
+}
+.menu-toggle-label {
+  font-size: var(--text-xs, 0.75rem);
+  color: var(--text-muted);
+}
+.menu-switch {
+  min-width: 3.25rem;
+  min-height: 32px;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text-muted);
+  font-weight: 600;
+  font-size: var(--text-sm, 0.875rem);
+  cursor: pointer;
+}
+.menu-switch[aria-checked="true"] {
+  border-color: var(--success);
+  background: var(--success-bg);
+  color: var(--success);
+}
+.menu-switch:disabled {
+  cursor: default;
+  opacity: 0.7;
+}
+/* Desktop: the switch sits under the product name (the table is wide);
+   phones: in the row's controls, beside Update stock. */
+.menu-toggle-d {
+  margin-top: var(--space-1, 4px);
+}
+.menu-toggle-m {
+  display: none;
+}
+@media (max-width: 719px) {
+  .menu-toggle-m {
+    display: inline-flex;
+  }
+}

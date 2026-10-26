@@ -39,7 +39,7 @@ export function invitationCard(inv, b, ctx) {
         <dt>Template</dt><dd data-role="inv-template">${inv.templateLabel ?? "Luna Standard"}${inv.draftTemplateId && inv.draftTemplateId !== inv.templateId ? html`<span class="cell-sub">Draft: ${inv.draftTemplateId}</span>` : ""}</dd>
         <dt>Guests see</dt><dd data-role="inv-live">${inv.live === "custom" ? `Custom design v${inv.publishedVersion}` : "Standard invitation"}${inv.unpublishedChanges ? html`<span class="cell-sub tone-warning">Draft changes not published yet</span>` : ""}</dd>
         <dt>Last updated</dt><dd>${at(inv.lastUpdated)}</dd>
-        ${inv.trialPreviewOnly ? html`<dt>Free trial</dt><dd data-role="inv-trial">Preview only: guest links open once Luna Bridal is paid</dd>` : ""}
+        ${inv.trialPreviewOnly ? html`<dt>RSVP trial</dt><dd data-role="inv-trial">${inv.trialRsvp?.used ?? 0} / ${inv.trialRsvp?.limit ?? 20} guests<span class="cell-sub">Free trial: up to 20 invited guests get RSVP links</span></dd>` : ""}
       </dl>
       <div class="page-actions" data-role="inv-actions">
         <button type="button" class="btn btn-compact" data-act="inv-preview" data-which="draft">Preview draft</button>

@@ -61,7 +61,8 @@ describe("products: one per workspace, terms, add-ons, users and storage limits"
     expect(by("distributor")).toEqual([["Luna Distributor", "₱2,390 / 12 months + ₱250 setup", 2, 500 * MB]]);
     expect(by("household-payroll")).toEqual([["Luna Household", "₱2,390 / 12 months", 1, 500 * MB]]);
     // 2026-10-25: one Bridal product; Custom kept only for weddings already on it.
-    expect(by("bridal-expense")).toEqual([["Luna Bridal", "₱499 / 12 months", 1, 500 * MB]]);
+    // 2026-10-26: ₱499 for 3 months (₱799 for 6 months is the other term).
+    expect(by("bridal-expense")).toEqual([["Luna Bridal", "₱499 / 3 months", 1, 500 * MB]]);
     expect(["distributor-plus", "household-plus", "starter", "growth", "pro", "bridal-plus"].map((id) => PLAN_SEED[id].legacy)).toEqual([true, true, true, true, true, true]);
     // Terms are data on the product, not separate plans.
     const h = PLAN_SEED["household-basic"];
@@ -75,7 +76,7 @@ describe("products: one per workspace, terms, add-ons, users and storage limits"
     expect(planBilling(PLAN_SEED["bridal-plus"]).trialDays).toBe(0);
     // ₱999 is gone from the sold catalog (only the legacy monthly Distributor+ keeps it).
     expect(sold.filter((p) => planBilling(p).setupFee === 99900)).toEqual([]);
-    expect(planBilling(PLAN_SEED["bridal-basic"]).terms.map((t) => t.months)).toEqual([12]);
+    expect(planBilling(PLAN_SEED["bridal-basic"]).terms.map((t) => [t.months, t.price])).toEqual([[3, 49900], [6, 79900]]);
     expect(planBilling(PLAN_SEED["bridal-plus"])).toMatchObject({ autoRenew: false, priceIsMinimum: true, terms: [{ months: 12, price: 299000 }] });
     // Add-ons: Household per year, Distributor per month; Bridal: Super Admin overrides.
     expect(planBilling(h).addOns.map((a) => [a.id, a.users, a.storageMb, a.price, a.perMonths])).toEqual([["user", 1, 0, 19900, 12], ["storage", 0, 500, 19900, 12]]);
@@ -196,7 +197,7 @@ describe("billing by workspace", () => {
     expect(world.db.docs.get("platformMetrics/2026-10").revenueByBillingType).toMatchObject({ annual: 129900 });
     // A term the product doesn't sell is refused (no 1- or 3-month option).
     for (const termMonths of [1, 3]) await expect(createBusiness({ ...world, name: "X", planId: "household-basic", workspaceTemplateId: "household-payroll", businessId: `home-x${termMonths}`, termMonths })).rejects.toMatchObject({ code: "invalid-input" });
-    await expect(createBusiness({ ...world, name: "Y", planId: "bridal-basic", workspaceTemplateId: "bridal-expense", businessId: "wed-y", termMonths: 3 })).rejects.toMatchObject({ code: "invalid-input" });
+    await expect(createBusiness({ ...world, name: "Y", planId: "bridal-basic", workspaceTemplateId: "bridal-expense", businessId: "wed-y", termMonths: 12 })).rejects.toMatchObject({ code: "invalid-input" });
   });
 
   it("Household: annual access, first payment at the start, then 'Renewal due' a year later", async () => {

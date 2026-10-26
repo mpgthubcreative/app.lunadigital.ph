@@ -11,7 +11,10 @@
 //   Term     how long one payment covers (pricing.terms). The product stays
 //            the same; only the term changes.
 //   Add-ons  extra capacity bought only when needed (pricing.addOns), added
-//            on top of the product's included users / storage.
+//            on top of the product's included users / storage. A FLAT add-on
+//            (flat: true) is one price, bought once and billed on its own
+//            bill, never prorated or repeated on term bills; `grants` names
+//            what it unlocks (Bridal's Premium wedding link: "customLink").
 //
 // Billing types:
 //   monthly  Distributor: a recurring monthly subscription (+ one-time setup
@@ -20,7 +23,7 @@
 //   annual   Luna Household: prepaid access for the chosen term (1, 3 or
 //            12 months; 12 is the main offer). Access until a date, then
 //            "Renewal due".
-//   term     Luna Bridal: 12-month wedding access, bought once. Access ends
+//   term     Luna Bridal: wedding access for 3 or 6 months, bought once. Access ends
 //            on a date, NO automatic renewal; Active / Expiring soon /
 //            Expired / Extended, never monthly Past Due logic.
 //
@@ -33,7 +36,7 @@ import { newTrial, trialOpen } from "./trial.js";
 export const BILLING_TYPES = Object.freeze({
   monthly: { label: "Monthly subscription", per: "month", recurring: true },
   annual: { label: "Prepaid access", per: "12 months", recurring: false },
-  term: { label: "12-month access", per: "12 months", recurring: false },
+  term: { label: "Wedding access", per: "term", recurring: false },
 });
 export const BILLING_TYPE_IDS = Object.freeze(Object.keys(BILLING_TYPES));
 
@@ -65,7 +68,7 @@ export function planBilling(plan) {
     .sort((a, b) => a.months - b.months);
   const addOns = (Array.isArray(p.addOns) ? p.addOns : [])
     .filter((a) => a && typeof a.id === "string" && Number.isSafeInteger(a.price))
-    .map((a) => ({ id: a.id, label: String(a.label || a.id), users: int(a.users), storageMb: int(a.storageMb), price: a.price, perMonths: Number.isSafeInteger(a.perMonths) && a.perMonths > 0 ? a.perMonths : type === "monthly" ? 1 : 12 }));
+    .map((a) => ({ id: a.id, label: String(a.label || a.id), users: int(a.users), storageMb: int(a.storageMb), price: a.price, perMonths: Number.isSafeInteger(a.perMonths) && a.perMonths > 0 ? a.perMonths : type === "monthly" ? 1 : 12, ...(a.flat === true ? { flat: true } : {}), ...(typeof a.grants === "string" && a.grants ? { grants: a.grants } : {}) }));
   return {
     type,
     price,
@@ -97,7 +100,7 @@ export function termLabel(plan, months) {
   return [monthsText(t.months), `${b.priceIsMinimum && t.kind === "main" ? "from " : ""}${price}`, tag].filter(Boolean).join(" · ");
 }
 // "Additional family/admin user · ₱199 / 12 months".
-export const addOnLabel = (a) => `${a.label} · ${pesos(a.price)} / ${a.perMonths === 1 ? "month" : monthsText(a.perMonths)}`;
+export const addOnLabel = (a) => (a.flat ? `${a.label} · ${pesos(a.price)} once` : `${a.label} · ${pesos(a.price)} / ${a.perMonths === 1 ? "month" : monthsText(a.perMonths)}`);
 
 // ---------- Dates ----------
 
@@ -146,9 +149,10 @@ export function addOnCapacity(addOns) {
   const list = Array.isArray(addOns) ? addOns : [];
   return { users: list.reduce((t, a) => t + int(a.users) * int(a.qty), 0), storageBytes: list.reduce((t, a) => t + int(a.storageMb) * MB * int(a.qty), 0) };
 }
-// What the add-ons cost for a bill covering `months`.
+// What the add-ons cost for a bill covering `months` (flat add-ons are
+// billed once on their own bill, never here).
 export function addOnAmount(addOns, months) {
-  const list = Array.isArray(addOns) ? addOns : [];
+  const list = (Array.isArray(addOns) ? addOns : []).filter((a) => a?.flat !== true);
   return list.reduce((t, a) => t + Math.round((int(a.price) * int(a.qty) * months) / (Number.isSafeInteger(a.perMonths) && a.perMonths > 0 ? a.perMonths : 1)), 0);
 }
 
@@ -247,7 +251,7 @@ export function billLines(sub, { prepaid = false, setup = false, planName = null
   const base = type === "monthly" ? (prepaid && sub.prepaidTerm ? sub.prepaidTerm.price : Number.isSafeInteger(sub.priceOverride) ? sub.priceOverride : int(sub.amount ?? sub.monthlyAmount)) : Number.isSafeInteger(sub.priceOverride) ? sub.priceOverride : int(sub.amount);
   const what = type === "monthly" && f.months === 1 ? "Monthly access" : `${f.months}-month access`;
   const lines = [{ kind: "base", label: `${planName ? `${planName} · ` : ""}${what}${Number.isSafeInteger(sub.priceOverride) && !(prepaid && sub.prepaidTerm) ? " (agreed price)" : ""}`, amount: base }];
-  for (const a of Array.isArray(sub.addOns) ? sub.addOns : []) lines.push({ kind: "addon", label: `${a.qty} × ${a.label}`, amount: addOnAmount([a], f.months) });
+  for (const a of Array.isArray(sub.addOns) ? sub.addOns : []) if (a?.flat !== true) lines.push({ kind: "addon", addOnId: a.id, label: `${a.qty} × ${a.label}`, amount: addOnAmount([a], f.months) });
   if (setup && int(sub.setupFee) > 0) lines.push({ kind: "setup", label: "One-time setup fee", amount: int(sub.setupFee) });
   return lines;
 }

@@ -9,17 +9,21 @@
 //   Amount · Payment screenshot · Reference number · [Submit payment]
 //   Your payments: waiting / verified (receipt) / not accepted (why)
 // A screenshot is converted in the browser (HEIC → JPEG, turned upright,
-// shrunk: src/lib/image.js), then Luna tries to read the reference from it
-// and fills it in for the customer to check and correct. A screenshot OR
-// the reference number is enough. The server (/api/pay) checks everything
-// again; a payment counts only when the business verifies it.
+// shrunk: src/lib/image.js), then Luna tries to read the payment from it
+// (2026-10-26: amount, reference, and the method / date when clear) and
+// fills them in for the customer to check and correct, comparing the amount
+// with what's STILL due (not the order total). What was read is sent apart
+// from what the customer confirmed (detected vs amount / reference). A
+// screenshot OR the reference number is enough; if nothing can be read, the
+// customer types it. The server (/api/pay) checks everything again; every
+// payment is its own record and counts only when the business verifies it.
 
 import { html, render } from "../lib/html.js";
 import { lunaMark } from "../components/icons.js";
 import { formatCentavos, formatDayId } from "../lib/format.js";
 import { receiptHtml } from "../components/payment-receipt.js";
 import { prepareProof as defaultPrepareProof, PHOTO_ACCEPT } from "../lib/image.js";
-import { detectReference as defaultDetect, warmReader } from "../lib/payment-reference.js";
+import { detectPayment as defaultDetect, warmReader } from "../lib/payment-reference.js";
 import { parseCentavos, normalizeReference, payTokenFrom } from "@shared/index.js";
 
 const newKey = () => (globalThis.crypto && crypto.randomUUID ? crypto.randomUUID() : `k${Date.now()}${Math.random().toString(36).slice(2)}${Math.random().toString(36).slice(2)}`).replace(/[^A-Za-z0-9_-]/g, "");
@@ -37,7 +41,7 @@ const blobOf = (proof) => {
 };
 
 export function renderPayPage(root, { token = payTokenFrom(window.location.pathname), fetchImpl = (...a) => window.fetch(...a), prepareProof = defaultPrepareProof, detect = defaultDetect, warm = warmReader } = {}) {
-  const state = { status: "loading", message: "", view: null, method: "gcash", amount: "", reference: "", refAuto: false, refHint: "", proof: null, proofName: "", proofBusy: false, website: "", key: newKey(), busy: false, error: "", sent: "" };
+  const state = { status: "loading", message: "", view: null, method: "gcash", methodPicked: false, amount: "", amountTyped: false, detected: null, reference: "", refAuto: false, refHint: "", proof: null, proofName: "", proofBusy: false, website: "", key: newKey(), busy: false, error: "", sent: "" };
   const money = (c) => formatCentavos(c, state.view?.currency || "PHP");
 
   function paymentsList(list) {
@@ -52,13 +56,34 @@ export function renderPayPage(root, { token = payTokenFrom(window.location.pathn
       )}</ul></section>`;
   }
 
+  // The amount read from the screenshot against what's still due.
+  function balanceCheck(v) {
+    if (!state.detected?.amount) return "";
+    let amount = null;
+    try {
+      amount = parseCentavos(state.amount);
+    } catch {
+      amount = null;
+    }
+    const due = v.order.due;
+    const outcome =
+      !(amount > 0)
+        ? ""
+        : amount === due
+          ? html`<p class="pay-check-ok" data-role="check-complete">✓ This payment will complete the order.</p>`
+          : amount < due
+            ? html`<p data-role="check-left">Remaining after payment: <b>${money(due - amount)}</b></p>`
+            : html`<p class="pay-check-warn" role="alert" data-role="check-over">That's more than the ${money(due)} still due. Check the amount: only what's due can be sent here.</p>`;
+    return html`<div class="pay-check" data-role="balance-check"><p>Detected payment: <b data-role="detected-amount">${money(state.detected.amount)}</b></p><p>Remaining balance: <b>${money(due)}</b></p>${outcome}</div>`;
+  }
+
   function form(v) {
     return html`<form class="pay-card pay-form" data-role="pay-form" novalidate>
       <h2 class="pay-h2">Send your payment</h2>
       <fieldset class="pay-methods"><legend>Payment method</legend>
         ${v.methods.map((m) => html`<label class="pay-method${state.method === m.id ? " is-on" : ""}"><input type="radio" name="method" value="${m.id}" ${state.method === m.id ? "checked" : ""} /> ${m.label}</label>`)}
       </fieldset>
-      <div class="field"><label for="pay-amount">Amount (₱)</label><input class="input" id="pay-amount" name="amount" inputmode="decimal" autocomplete="off" value="${state.amount}" /><div class="stat-hint">Up to ${money(v.order.due)}. You can pay part now and the rest later.</div></div>
+      <div class="field"><label for="pay-amount">Amount (₱)</label><input class="input" id="pay-amount" name="amount" inputmode="decimal" autocomplete="off" value="${state.amount}" /><div class="stat-hint">Up to ${money(v.order.due)}. You can pay part now and the rest later.</div>${balanceCheck(v)}</div>
       <div class="field"><span class="pay-label">Payment screenshot</span>
         <div class="pay-file-row">${state.proof ? html`<img class="pay-thumb" data-role="proof-thumb" alt="Your screenshot" src="data:${state.proof.contentType};base64,${state.proof.dataBase64}" />` : ""}<label class="btn pay-file">${state.proof ? "Change screenshot" : "Choose screenshot"}<input class="pay-file-input" id="pay-proof" name="proof" type="file" accept="${PHOTO_ACCEPT}" /></label></div>
         <div class="stat-hint" data-role="proof-state">${state.proofBusy ? "Preparing the screenshot…" : state.proof ? `Added ✓ ${state.proofName}` : "A screenshot of the GCash, Maya or bank confirmation."}</div></div>
@@ -90,7 +115,7 @@ export function renderPayPage(root, { token = payTokenFrom(window.location.pathn
                     ${v.order.pending ? html`<dt>Waiting for verification</dt><dd data-role="pending">${money(v.order.pending)}</dd>` : ""}
                   </dl>
                   <p class="pay-due" data-role="due"><span>Amount due</span><b>${money(v.order.due)}</b></p>
-                  ${v.order.cancelled ? html`<p class="pay-note" data-role="cancelled">This order was cancelled. Please message ${v.business.name} if you have questions.</p>` : !v.order.payable ? html`<p class="pay-done" data-role="paid-full">${v.order.pending ? "Thank you! Your payment is waiting for verification." : "Fully paid. Thank you!"}</p>` : ""}
+                  ${v.order.cancelled ? html`<p class="pay-note" data-role="cancelled">This order was cancelled. Please message ${v.business.name} if you have questions.</p>` : !v.order.payable ? html`<p class="pay-done" data-role="paid-full">${v.order.pending ? "Thank you! Your payment is waiting for verification." : "Fully paid. Thank you!"}</p>${v.order.pending ? "" : html`<p class="pay-note" data-role="paid-full-warn">This order is already fully paid. Please verify this payment before continuing: message ${v.business.name} if you sent another one.</p>`}` : ""}
                 </section>
                 ${state.sent ? html`<p class="pay-sent" role="status" data-role="sent">${state.sent}</p>` : ""}
                 ${v.order.payable && v.instructions ? html`<section class="pay-card" data-role="instructions"><h2 class="pay-h2">How to pay</h2><p class="pay-instructions">${v.instructions}</p></section>` : ""}
@@ -133,16 +158,20 @@ export function renderPayPage(root, { token = payTokenFrom(window.location.pathn
       state.error = err.message || "That file couldn't be used. Choose a screenshot.";
     }
     state.proofBusy = false;
-    if (state.proof && (!state.reference.trim() || state.refAuto)) {
-      state.refHint = "Reading the reference from the screenshot…";
+    if (state.proof) {
+      state.refHint = "Reading the payment from the screenshot…";
       draw();
-      const ref = await detect(blobOf(state.proof)).catch(() => null);
-      // Never overwrite what the customer typed meanwhile.
-      if (ref && (!state.reference.trim() || state.refAuto)) {
-        state.reference = ref;
+      const raw = await detect(blobOf(state.proof)).catch(() => null);
+      const found = typeof raw === "string" ? { reference: raw } : raw || null;
+      state.detected = found ? { amount: found.amount ?? null, reference: found.reference ?? null, method: found.method ?? null, date: found.date ?? null } : null;
+      // Never overwrite what the customer typed or picked meanwhile.
+      if (found?.reference && (!state.reference.trim() || state.refAuto)) {
+        state.reference = found.reference;
         state.refAuto = true;
-        state.refHint = "Read from the screenshot: check it and correct it if needed.";
-      } else if (!ref) state.refHint = "Couldn't read a reference. The screenshot alone is enough, or type the reference.";
+      }
+      if (found?.amount && !state.amountTyped) state.amount = (found.amount / 100).toFixed(2);
+      if (found?.method && !state.methodPicked && state.view?.methods.some((m) => m.id === found.method)) state.method = found.method;
+      state.refHint = found?.reference ? "Read from the screenshot: check it and correct it if needed." : found?.amount ? "Couldn't read a reference. The screenshot alone is enough, or type the reference." : "Couldn't read a reference. The screenshot alone is enough, or type the reference.";
     }
     draw();
   }
@@ -167,7 +196,9 @@ export function renderPayPage(root, { token = payTokenFrom(window.location.pathn
         throw new Error("Check the reference number: 4 to 40 letters or digits");
       }
       if (!reference && !state.proof) throw new Error("Add the payment screenshot or the reference number");
-      payment = { amount, method: state.method, ...(reference ? { reference } : {}) };
+      // What the screenshot reader found goes along apart: never the confirmed figures.
+      const d = state.detected && Object.fromEntries(Object.entries(state.detected).filter(([, x]) => x !== null && x !== undefined));
+      payment = { amount, method: state.method, ...(reference ? { reference } : {}), ...(d && Object.keys(d).length ? { detected: d } : {}) };
     } catch (err) {
       state.error = err.message;
       return draw();
@@ -177,7 +208,7 @@ export function renderPayPage(root, { token = payTokenFrom(window.location.pathn
     try {
       await call({ action: "submit", token, idempotencyKey: state.key, payment, ...(state.proof ? { proof: state.proof } : {}), website: state.website }, fetchImpl);
       state.sent = `Payment sent ✓ ${money(payment.amount)} via ${v.methods.find((m) => m.id === payment.method)?.label}. ${v.business.name} will verify it; this page shows it once verified.`;
-      Object.assign(state, { key: newKey(), amount: "", reference: "", refAuto: false, refHint: "", proof: null, proofName: "" });
+      Object.assign(state, { key: newKey(), amount: "", amountTyped: false, detected: null, methodPicked: false, reference: "", refAuto: false, refHint: "", proof: null, proofName: "" });
       state.busy = false;
       await load();
       return undefined;
@@ -192,12 +223,23 @@ export function renderPayPage(root, { token = payTokenFrom(window.location.pathn
     const t = e.target;
     if (t.name === "method") {
       state.method = t.value;
+      state.methodPicked = true;
       draw();
     } else if (t.name === "proof") onProof(t.files?.[0] ?? null);
   });
   root.addEventListener("input", (e) => {
     const t = e.target;
-    if (t.name === "amount") state.amount = t.value;
+    if (t.name === "amount") {
+      state.amount = t.value;
+      state.amountTyped = true;
+      // The balance check follows the corrected amount (redrawn without losing the field).
+      const box = root.querySelector('[data-role="balance-check"]');
+      if (box && state.view) {
+        const holder = document.createElement("div");
+        render(holder, balanceCheck(state.view));
+        box.replaceWith(...holder.childNodes);
+      }
+    }
     if (t.name === "reference") {
       state.reference = t.value;
       state.refAuto = false; // the customer's own correction stays

@@ -379,7 +379,15 @@ export async function confirmPayment({ db, FieldValue, paymentId, operator, now 
     const sub = business.subscription || {};
     const before = { status: sub.status, paidThrough: sub.paidThrough ?? null, nextRenewal: sub.nextRenewal ?? null };
     const subChanges = {};
-    if (fullyPaid) {
+    // A flat add-on's own bill (Bridal's Premium wedding link): paid = the
+    // add-on is paid (what it grants unlocks). Access dates don't move.
+    const addOnBill = i.kind === "addon";
+    if (fullyPaid && addOnBill) {
+      const ids = (i.lines || []).filter((l) => l.kind === "addon" && typeof l.addOnId === "string").map((l) => l.addOnId);
+      subChanges["subscription.addOnsPaid"] = [...new Set([...(Array.isArray(sub.addOnsPaid) ? sub.addOnsPaid : []), ...ids])];
+      if (sub.addOnDue?.invoiceId === invRef.id) subChanges["subscription.addOnDue"] = null;
+    }
+    if (fullyPaid && !addOnBill) {
       // What the bill covers (its billing type's term), else the month.
       const end = i.coverTo || periodEnd(i.period);
       const paidThrough = sub.paidThrough && sub.paidThrough > end ? sub.paidThrough : end;
@@ -403,12 +411,13 @@ export async function confirmPayment({ db, FieldValue, paymentId, operator, now 
     tx.update(payRef, { status: "paid", amountReceived: amount, verifiedBy: operator, verifiedAt: stamp, updatedAt: stamp });
     tx.update(invRef, { amountPaid, status: fullyPaid ? "paid" : pendingLeft ? "for_verification" : "due", paidAt: fullyPaid ? stamp : null, updatedAt: stamp });
     // 12-month access: what's been paid toward it (an upgrade charges only the difference).
-    if ((i.billingType || sub.billingType) === "term") subChanges["subscription.accessPaid"] = FieldValue.increment(amount);
+    if ((i.billingType || sub.billingType) === "term" && !addOnBill) subChanges["subscription.accessPaid"] = FieldValue.increment(amount);
     if (Object.keys(subChanges).length) tx.update(bizRef, { ...subChanges, updatedAt: stamp });
     const ws = pay.workspaceTemplateId || "unknown";
     // Revenue by workspace, plan and billing type (recurring monthly vs
     // annual / 12-month access): Bridal is never counted as monthly income.
-    const btype = i.billingType || sub.billingType || "monthly";
+    // Add-on money is its own kind ("addon"), never access income.
+    const btype = addOnBill ? "addon" : i.billingType || sub.billingType || "monthly";
     tx.set(metricsRef(db, verifiedMonth), { period: verifiedMonth, verifiedRevenue: FieldValue.increment(amount), paymentsVerified: FieldValue.increment(1), revenueByWorkspace: { [ws]: FieldValue.increment(amount) }, revenueByPlan: { [pay.planId || "unknown"]: FieldValue.increment(amount) }, revenueByBillingType: { [btype]: FieldValue.increment(amount) }, updatedAt: stamp }, { merge: true });
     tx.set(metricsRef(db, "current"), { awaitingCount: FieldValue.increment(-1), awaitingAmount: FieldValue.increment(-amount), outstanding: FieldValue.increment(-Math.min(amount, Math.max(0, i.amountDue - i.amountPaid))), updatedAt: stamp }, { merge: true });
     const after = { status: subChanges["subscription.status"] ?? sub.status, paidThrough: subChanges["subscription.paidThrough"] ?? before.paidThrough, nextRenewal: subChanges["subscription.nextRenewal"] ?? before.nextRenewal };
@@ -694,15 +703,32 @@ export async function assertNoPendingPayment({ db, businessId }) {
   if (!pending.empty) throw new BillingError("payment-pending", "A payment is waiting for verification. Luna will confirm it shortly.");
 }
 
+// Unpaid access bills (no money on them) that no longer apply after an
+// access change: removed, and "still to collect" / the month's invoiced total
+// shrink by them (they were never income). Add-on and upgrade bills stay.
+export async function dropOpenAccessBills({ db, FieldValue, businessId, keepPeriod = null, operator }) {
+  const open = await invoices(db).where("businessId", "==", businessId).where("status", "==", "due").get();
+  for (const d of open.docs) {
+    if (d.data().period === keepPeriod || ["upgrade", "addon"].includes(d.data().kind) || !isEditable(d.data())) continue;
+    await db.runTransaction(async (tx) => {
+      const snap = await tx.get(d.ref);
+      if (!snap.exists || !isEditable(snap.data()) || (snap.data().paymentIds || []).length) return;
+      const inv = snap.data();
+      const stamp = FieldValue.serverTimestamp();
+      tx.delete(d.ref);
+      tx.set(metricsRef(db, inv.period), { amountInvoiced: FieldValue.increment(-int(inv.amountDue)), updatedAt: stamp }, { merge: true });
+      tx.set(metricsRef(db, "current"), { outstanding: FieldValue.increment(-int(inv.amountDue)), updatedAt: stamp }, { merge: true });
+      tx.set(audit(db), { type: "billing.bill-removed", summary: `Unpaid ${inv.period} bill (${peso(inv.amountDue)}) removed after an access change`, businessId, invoiceId: d.id, amount: inv.amountDue, actor: operator ?? "luna-billing", at: stamp });
+    }, TX);
+  }
+}
+
 export async function conversionBill({ db, FieldValue, businessId, operator }) {
   const b = (await db.collection("businesses").doc(businessId).get()).data();
   const conv = b.subscription?.conversion;
   if (!conv?.startDate) throw new BillingError("no-invoice", "Choose a plan first");
   const period = periodOfDay(conv.startDate);
-  const open = await invoices(db).where("businessId", "==", businessId).where("status", "==", "due").get();
-  for (const d of open.docs) {
-    if (d.data().period !== period && d.data().kind !== "upgrade" && isEditable(d.data())) await d.ref.delete();
-  }
+  await dropOpenAccessBills({ db, FieldValue, businessId, keepPeriod: period, operator });
   await repriceOpenBill({ db, FieldValue, businessId, operator });
   const inv = await ensureInvoice({ db, FieldValue, businessId, period });
   return invoiceView(inv, invoiceId(businessId, period));
@@ -764,6 +790,46 @@ export async function createUpgradeBill({ db, FieldValue, businessId, before, op
     tx.set(audit(db), record);
     tx.set(tenantDb(db, businessId).collection("auditLog").doc(), record);
     return { invoiceId: ref.id, upgradeDue: due };
+  }, TX);
+}
+
+// A flat add-on bought by the Owner (2026-10-26: Bridal's Premium wedding
+// link, +₱499 once): its own bill, paid like any bill (the Owner submits,
+// Luna confirms). Only a CONFIRMED payment unlocks it (confirmPayment);
+// creating the bill unlocks nothing and counts as no income. Paid access
+// only (not during a free trial). Repeating returns the same bill.
+export async function createAddOnBill({ db, FieldValue, businessId, addOnId, actor, now = new Date() }) {
+  const bRef = db.collection("businesses").doc(businessId);
+  return db.runTransaction(async (tx) => {
+    const b = await tx.get(bRef);
+    if (!b.exists) throw new BillingError("not-found", "Business not found");
+    const business = b.data();
+    const sub = business.subscription || {};
+    if (!BILLABLE_STATUSES.includes(sub.status) || trialOpen(sub)) throw new BillingError("paid-only", "Add-ons are available once your plan is paid.");
+    const planSnap = await tx.get(db.collection("plans").doc(sub.planId || "none"));
+    const offered = planSnap.exists ? planBilling(planSnap.data()).addOns.find((a) => a.id === addOnId && a.flat === true) : null;
+    if (!offered) throw new BillingError("invalid-input", "That add-on isn't offered for this plan");
+    if (Array.isArray(sub.addOnsPaid) && sub.addOnsPaid.includes(addOnId)) return { addOnId, paid: true };
+    if (sub.addOnDue?.addOnId === addOnId && sub.addOnDue.invoiceId) {
+      const open = await tx.get(invoices(db).doc(sub.addOnDue.invoiceId));
+      if (open.exists && open.data().status !== "paid") return { addOnId, invoiceId: open.id, amountDue: open.data().amountDue, status: open.data().status };
+    }
+    const today = businessDate(BILLING_TIMEZONE, now);
+    const period = periodOfDay(today);
+    let ref = invoices(db).doc(`${invoiceId(businessId, period)}-addon`);
+    for (let n = 2; (await tx.get(ref)).exists && n < 10; n += 1) ref = invoices(db).doc(`${invoiceId(businessId, period)}-addon-${n}`);
+    const planName = business.entitlements?.planName ?? sub.planId;
+    const lines = [{ kind: "addon", addOnId, label: offered.label, amount: offered.price }];
+    const stamp = FieldValue.serverTimestamp();
+    tx.create(ref, { schemaVersion: BILLING_SCHEMA_VERSION, kind: "addon", businessId, businessName: business.name ?? businessId, workspaceTemplateId: business.workspaceTemplateId ?? null, planId: sub.planId ?? null, planName, period, billingType: sub.billingType ?? null, dueDate: today, coverFrom: today, coverTo: sub.accessUntil ?? null, months: 0, lines, adjustments: [], amountDue: offered.price, amountPaid: 0, status: "due", paymentIds: [], createdAt: stamp, updatedAt: stamp });
+    tx.set(metricsRef(db, period), { period, amountInvoiced: FieldValue.increment(offered.price), invoicesCreated: FieldValue.increment(1), updatedAt: stamp }, { merge: true });
+    tx.set(metricsRef(db, "current"), { outstanding: FieldValue.increment(offered.price), updatedAt: stamp }, { merge: true });
+    const addOns = [...(Array.isArray(sub.addOns) ? sub.addOns.filter((a) => a.id !== addOnId) : []), { ...offered, qty: 1 }];
+    tx.update(bRef, { "subscription.addOns": addOns, "subscription.addOnDue": { invoiceId: ref.id, addOnId, amount: offered.price, dueDate: today }, updatedAt: stamp });
+    const record = { type: "billing.addon-billed", summary: `${offered.label}: ${peso(offered.price)} billed (unlocks when paid)`, businessId, invoiceId: ref.id, addOnId, amount: offered.price, actor: actor ?? null, at: stamp };
+    tx.set(audit(db), record);
+    tx.set(tenantDb(db, businessId).collection("auditLog").doc(), record);
+    return { addOnId, invoiceId: ref.id, amountDue: offered.price, status: "due" };
   }, TX);
 }
 

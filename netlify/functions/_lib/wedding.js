@@ -23,6 +23,7 @@
 // the wedding sink applies the same cap to the expenses themselves.
 
 import { BUDGET_DOC_ID, isValidRecordId } from "../../../shared/baby.js";
+import { readTrialRsvp, claimTrialRsvp } from "./trial-rsvp.js";
 import { WeddingError, WEDDING_SCHEMA_VERSION, TOTALS_DOC_ID, SUPPLIER_SERVICES, SUPPLIER_STATUSES, TASK_STATUSES, TASK_PRIORITIES, TASK_FOR, RSVP_STATUSES, GUEST_SIDES, isOpenStatus, keyOf, validateSupplierInput, validateSupplierPaymentInput, validateTaskInput, validateGuestInput, validateRsvp, taskTotalsDelta, guestDelta, guestCategoryDelta, supplierBalance, SEATING_DOC_ID, MAX_TABLES, TABLE_ID, validateTableInput } from "../../../shared/wedding.js";
 import { EXPENSE_METHODS } from "../../../shared/expenses.js";
 import { businessDate, isDayId } from "../../../shared/metrics.js";
@@ -518,6 +519,8 @@ export async function updateGuest({ db, tenant, FieldValue, guestId, changes, ex
   return db.runTransaction(async (tx) => {
     const snap = await tx.get(gRef);
     await tx.get(guestTotalsRef(tenant));
+    // Free trial: a guest with RSVP access counts for its party size.
+    const trial = "partySize" in data ? await readTrialRsvp(tx, tenant) : null;
     if (!snap.exists) throw new WeddingError("not-found", "Guest not found");
     const g = snap.data();
     checkRevision(expectedRevision, g.revision);
@@ -526,6 +529,7 @@ export async function updateGuest({ db, tenant, FieldValue, guestId, changes, ex
     if ("partySize" in diff && diff.partySize < int(g.confirmed)) throw new WeddingError("invalid-input", `The party size can't be less than the ${g.confirmed} confirmed guests`);
     const named = 1 + (Array.isArray(g.members) ? g.members.length : 0);
     if ("partySize" in diff && diff.partySize < named) throw new WeddingError("invalid-input", `The party has ${named} named people; remove a name first or keep at least ${named} seats`);
+    if ("partySize" in diff && trial && guestId in trial.guests) claimTrialRsvp(tx, tenant, trial, guestId, diff.partySize);
     const next = { ...g, ...diff, invited: "invitationSent" in diff ? Boolean(diff.invitationSent) : Boolean(g.invitationSent) };
     const names = { name: "Name", group: "Group", side: "Side", contact: "Contact", partySize: "Party size", invitationSent: "Invitation sent" };
     const show = (k, v) => (k === "side" ? label(GUEST_SIDES, v) : v === null || v === undefined || v === "" ? "—" : String(v));

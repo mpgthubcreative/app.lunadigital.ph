@@ -49,7 +49,7 @@ export async function overviewView(el, ctx) {
             [
               { id: "active", label: "Active subscriptions", value: formatNumber(o.activeAccess), hint: "Paying or with access now" },
               { id: "trials", label: "Free trials", value: formatNumber(o.trials?.active ?? 0), hint: `${formatNumber(o.trials?.endingSoon ?? 0)} ending this week · ${formatNumber(o.trials?.ended ?? 0)} ended` },
-              { id: "annual", label: "6 / 12-month income", value: peso(o.annualIncomeThisMonth), hint: "Collected this month" },
+              { id: "annual", label: "Collected this month", value: peso(o.collectedThisMonth ?? o.annualIncomeThisMonth), hint: "Paid payments only (access and add-ons)" },
               ...(o.recurringIncome ? [{ id: "recurring", label: "Recurring income", value: `${peso(o.recurringIncome)}`, hint: "Older monthly plans, per month" }] : []),
             ],
             { role: "kpis" }
@@ -76,13 +76,30 @@ export async function overviewView(el, ctx) {
           <div class="card-header"><h2 class="card-title">Income by workspace</h2></div>
           <div class="card-body"><ul class="sa-income">${o.incomeByWorkspace.map(
             (w) => html`<li data-workspace="${w.workspaceTemplateId}">
-              <span class="sa-income-name">${ctx.workspaceName(w.workspaceTemplateId)}<small>${w.billingType === "monthly" ? `Recurring · ${formatNumber(w.active)} active` : w.billingType === "annual" ? `6 / 12-month access collected this month · ${formatNumber(w.active)} active` : `12-month access collected this month · ${formatNumber(w.active)} active`}</small></span>
+              <span class="sa-income-name">${ctx.workspaceName(w.workspaceTemplateId)}<small>${w.billingType === "monthly" ? `Recurring · ${formatNumber(w.active)} active` : w.billingType === "annual" ? `6 / 12-month access collected this month · ${formatNumber(w.active)} active` : `Wedding access collected this month · ${formatNumber(w.active)} active`}</small></span>
               <strong class="sa-income-value">${w.billingType === "monthly" ? html`${peso(w.recurring)}<small>/ month</small>` : peso(w.collected)}</strong>
             </li>`
           )}</ul></div>
-        </section>`
+        </section>
+        <section class="card section" data-role="custom-links"></section>`
     );
   draw();
+  // Custom workspace links: names, setup and how many site addresses are used.
+  ctx
+    .call("customLinks")
+    .then(({ customLinks: c }) => {
+      const box = el.querySelector('[data-role="custom-links"]');
+      if (!box || !c.rows.length) return;
+      const near = c.names >= c.warnAt;
+      render(
+        box,
+        html`<div class="card-header"><h2 class="card-title">Custom links</h2><span class="stat-hint" data-role="link-count">${formatNumber(c.names)} of ${formatNumber(c.limit)} addresses${near ? " · plan the wildcard domain" : ""}</span></div>
+          <div class="card-body"><table class="table table-compact"><tbody>${c.rows.map(
+            (r) => html`<tr data-link="${r.label}"><td>${r.host}<span class="cell-sub">${r.businessName}${r.kind === "previous" ? ` · old name → ${r.current}` : ""}</span></td><td>${r.setup === "active" ? "Ready" : `Pending${r.setupError ? ` (${r.setupError})` : ""}`}<span class="cell-sub">${r.state === "live" ? "Live" : r.state === "unavailable" ? "Suspended: held" : "Retained (held)"} · ${r.subscriptionStatus ?? "deleted"}</span></td></tr>`
+          )}</tbody></table></div>`
+      );
+    })
+    .catch(() => {});
   el.onclick = async (e) => {
     if (toggleMenus(e, el)) return;
     const t = e.target.closest("[data-act]");
@@ -318,9 +335,13 @@ export async function businessDetailView(el, ctx, businessId) {
           <div class="card-header"><h2 class="card-title">Subscription</h2></div>
           <div class="card-body"><dl class="dl dl-compact">
             <dt>Product</dt><dd>${b.planName ?? b.planId}${plan ? html`<span class="cell-sub">${priceLabel(plan)}${plan.legacy ? " · older plan" : ""}</span>` : ""}</dd>
-            <dt>Term</dt><dd data-role="term">${termText(r)}${r.amount ? html`<span class="cell-sub">${peso(r.amount)} per bill${r.priceOverride ? " · agreed price" : ""}</span>` : ""}</dd>
-            ${r.addOns?.length ? html`<dt>Add-ons</dt><dd data-role="addons">${r.addOns.map((a) => html`<span class="cell-sub-line">${a.qty} × ${a.label}</span>`)}</dd>` : ""}
-            <dt>${r.billingType === "term" ? "Access" : "Next"}</dt><dd data-role="when">${whenText(r)}</dd>
+            ${r.billingType === "term"
+              ? html`<dt>Access</dt><dd data-role="term">${r.trial?.open ? "Free Trial" : `${monthsText(r.termMonths)} — ${peso(r.priceOverride ?? r.amount)}`}<span class="cell-sub" data-role="access-paid">${r.trial?.open ? `Trial ends ${dateText(r.trial.endsAt)}` : r.paidThrough ? "Paid" : `Not paid yet · nothing collected${r.accessGrant ? " · set by Luna" : ""}`}</span></dd>`
+              : html`<dt>Term</dt><dd data-role="term">${termText(r)}${r.amount ? html`<span class="cell-sub">${peso(r.amount)} per bill${r.priceOverride ? " · agreed price" : ""}</span>` : ""}</dd>`}
+            ${r.addOns?.length ? html`<dt>Add-ons</dt><dd data-role="addons">${r.addOns.map((a) => html`<span class="cell-sub-line">${a.flat ? html`${a.label} · ${peso(a.price)} · <strong data-role="addon-paid">${a.paid ? "Paid" : "Not paid yet"}</strong>` : `${a.qty} × ${a.label}`}</span>`)}</dd>` : ""}
+            ${r.linkAddOn ? html`<dt>${r.linkAddOn.label}</dt><dd data-role="link-addon">${r.linkAddOn.paid ? "Yes" : r.addOns?.some((a) => a.id === r.linkAddOn.id) ? "Billed, not paid" : "No"} <span class="cell-sub">${peso(r.linkAddOn.price)} once</span></dd>` : ""}
+            ${r.customLink ? html`<dt>Own link</dt><dd data-role="custom-link">${r.customLink.label}${r.customLinkDomain ? `.${r.customLinkDomain}` : ""}<span class="cell-sub">${r.customLink.setup === "active" ? "Ready" : "Being set up"}</span></dd>` : ""}
+            <dt>${r.billingType === "term" ? "Ends" : "Next"}</dt><dd data-role="when">${whenText(r)}</dd>
             ${r.paidThrough ? html`<dt>Paid through</dt><dd>${dateText(r.paidThrough)}</dd>` : ""}
             <dt>Started</dt><dd>${dateText(r.startDate)}</dd>
           </dl></div>
@@ -486,7 +507,7 @@ export async function businessDetailView(el, ctx, businessId) {
 // deduction until a payment is recorded; a paid bill keeps its breakdown.
 function billsCard(bills, b) {
   if (!bills.length) return "";
-  const title = (i) => (i.kind === "upgrade" ? `Upgrade · ${dateText(i.dueDate)}` : `${i.period} · due ${dateText(i.dueDate)}`);
+  const title = (i) => (i.kind === "upgrade" ? `Upgrade · ${dateText(i.dueDate)}` : i.kind === "addon" ? `Add-on: ${i.lines?.[0]?.label ?? "add-on"} · ${dateText(i.dueDate)}` : `${i.period} · due ${dateText(i.dueDate)}`);
   const status = (i) => (i.status === "paid" ? badge("Paid", "success") : i.status === "for_verification" ? badge("For verification", "info") : badge("Due", "warning"));
   return html`<section class="section card" data-role="bills">
     <div class="card-header"><h2 class="card-title">Bills</h2></div>

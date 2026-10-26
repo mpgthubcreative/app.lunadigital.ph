@@ -50,6 +50,8 @@ async function fetchSession(businessId) {
   checkDeployment(data.deployment);
   return {
     environment: data.environment,
+    // This workspace's own public address (custom workspace link), when claimed.
+    publicLink: data.publicLink ?? null,
     user: data.user,
     business: data.business,
     member: { ...data.member, permissions: data.permissions },

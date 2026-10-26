@@ -17,13 +17,15 @@
 import { html, render } from "../../lib/html.js";
 import { pageHeader } from "../../components/ui.js";
 import { STORE_PAYMENT_METHOD_IDS, PAYMENT_METHODS, STORE_FULFILLMENT } from "@shared/index.js";
+import { publicUrl } from "@shared/custom-links.js";
 
-export function openShareMenu({ session, api, toast, listActiveProducts, origin = window.location.origin, share = typeof navigator !== "undefined" && navigator.share ? (d) => navigator.share(d) : null, copy = (t) => navigator.clipboard?.writeText(t), host = null }) {
+export function openShareMenu({ session, api, toast, listActiveProducts, origin = null, share = typeof navigator !== "undefined" && navigator.share ? (d) => navigator.share(d) : null, copy = (t) => navigator.clipboard?.writeText(t), host = null }) {
   return new Promise((resolve) => {
     const state = { status: "loading", message: "", settings: null, path: "", canManage: false, busy: false, error: "", products: null };
     const backdrop = host || document.createElement("div");
     if (!host) backdrop.className = "modal-backdrop";
-    const link = () => `${origin}${state.path}`;
+    // The workspace's own address when it has one (custom workspace link).
+    const link = () => (origin ? `${origin}${state.path}` : publicUrl(session, state.path));
 
     function settingsForm(s) {
       const hidden = new Set(s.hiddenProductIds);
@@ -32,12 +34,12 @@ export function openShareMenu({ session, api, toast, listActiveProducts, origin 
         <form data-role="settings-form" novalidate>
           <div class="field"><label for="sm-name">Store name</label><input class="input" id="sm-name" name="displayName" maxlength="80" value="${s.displayName}" /></div>
           <div class="field"><label for="sm-note">Note to customers <span class="co-optional">optional</span></label><input class="input" id="sm-note" name="note" maxlength="200" value="${s.note}" placeholder="e.g. Orders before 3pm are delivered today" /></div>
-          <div class="field"><label for="sm-slug">Link name</label><input class="input" id="sm-slug" name="slug" maxlength="50" value="${s.slug}" autocomplete="off" /><div class="stat-hint">${origin}/store/<b>${s.slug}</b> · changing it stops the old link.</div></div>
+          <div class="field"><label for="sm-slug">Link name</label><input class="input" id="sm-slug" name="slug" maxlength="50" value="${s.slug}" autocomplete="off" /><div class="stat-hint">${origin || window.location.origin}/store/<b>${s.slug}</b> · changing it stops the old link.</div></div>
           <fieldset class="field"><legend>How customers get their order</legend>${Object.keys(STORE_FULFILLMENT).map((k) => html`<label class="sm-check"><input type="checkbox" name="${k}" ${s[k] ? "checked" : ""} /> ${STORE_FULFILLMENT[k].label}</label>`)}</fieldset>
           <div class="field"><label for="sm-pay">Payment instructions <span class="co-optional">shown on order payment links</span></label><textarea class="input" id="sm-pay" name="paymentInstructions" rows="3" maxlength="500" placeholder="e.g. GCash 0917 123 4567 (Ana R.)">${s.paymentInstructions || ""}</textarea></div>
           <fieldset class="field"><legend>Payment choices shown</legend>${STORE_PAYMENT_METHOD_IDS.map((m) => html`<label class="sm-check"><input type="checkbox" name="pm" value="${m}" ${s.paymentMethods.includes(m) ? "checked" : ""} /> ${PAYMENT_METHODS[m].label}</label>`)}</fieldset>
           <details class="sm-products" data-role="products-fold">
-            <summary>Products shown <span class="co-optional">${hidden.size ? `${hidden.size} hidden` : "all active products with a price"}</span></summary>
+            <summary>Show on Menu <span class="co-optional">${hidden.size ? `${hidden.size} off` : "all active products with a price and stock left"}</span></summary>
             <div data-role="products">${state.products === null ? html`<p class="stat-hint">Loading…</p>` : state.products.length ? state.products.map((p) => html`<label class="sm-check"><input type="checkbox" name="show" value="${p.id}" ${hidden.has(p.id) ? "" : "checked"} /> ${p.name}</label>`) : html`<p class="stat-hint">No active products yet.</p>`}</div>
           </details>
           <p class="form-error" data-role="settings-error" role="alert" ${state.error ? "" : "hidden"}>${state.error}</p>

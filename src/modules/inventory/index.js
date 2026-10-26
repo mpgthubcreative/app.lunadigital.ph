@@ -14,6 +14,11 @@
 //   inventory.adjust   adjustments and opening balances
 // Every write goes to /api/products or /api/inventory, which re-check all
 // of this server-side and compute the balances; the screen only asks.
+//
+// Show on Menu (2026-10-26, with Orders): one tap per active product, ON =
+// customers can order it from the store link today (it still needs stock
+// left). It isn't stock and it isn't Active: OFF keeps the product, its
+// stock, costs and history. Saved through /api/storefront (products.manage).
 
 import { html, render } from "../../lib/html.js";
 import { exportButton, bindExport, mayExport, exportHint } from "../../lib/export.js";
@@ -23,7 +28,7 @@ import { formDialog } from "../../components/form-dialog.js";
 import { confirmDialog, toast as defaultToast } from "../../components/feedback.js";
 import { api as defaultApi } from "../../lib/api.js";
 import { formatCentavos } from "../../lib/format.js";
-import { UNITS, ADJUSTMENT_REASONS, parseQuantity, parseCentavos, formatQuantity } from "@shared/index.js";
+import { UNITS, ADJUSTMENT_REASONS, parseQuantity, parseCentavos, formatQuantity, isModuleEnabled } from "@shared/index.js";
 import * as defaultData from "./data.js";
 import { productRow, historyRow, unitLabel, qty } from "./view.js";
 
@@ -78,8 +83,14 @@ export function mount(container, session, { data = defaultData, api = defaultApi
   const currency = session.business.currency || "PHP";
   // The Dashboard links here as ?low=1 (low stock only).
   const lowFromUrl = new URLSearchParams(typeof location === "undefined" ? "" : location.search).get("low") === "1";
-  const state = { status: "active", lowOnly: lowFromUrl, search: "", category: "", cursors: [], rows: [], costs: {}, hasMore: false, loading: true, error: null };
+  const state = { status: "active", lowOnly: lowFromUrl, search: "", category: "", cursors: [], rows: [], costs: {}, hasMore: false, loading: true, error: null, menuHidden: null };
   let alive = true;
+  // Show on Menu: only where there's a store link (the Orders module).
+  const menuApplies = isModuleEnabled(session.entitlements, "orders");
+  const loadMenu = () =>
+    menuApplies && state.menuHidden === null
+      ? api("storefront", { method: "POST", body: { action: "menu" } }).then((r) => (state.menuHidden = new Set(r.hiddenProductIds || [])), () => null)
+      : null;
 
   const unfiltered = () => !state.search && !state.lowOnly && state.status !== "inactive" && !state.category && !state.cursors.length;
   async function load() {
@@ -87,7 +98,7 @@ export function mount(container, session, { data = defaultData, api = defaultApi
     state.error = null;
     draw();
     try {
-      const page = await data.listProducts(businessId, { status: state.status, lowOnly: state.lowOnly, search: state.search, category: state.category, cursor: state.cursors.at(-1) || null });
+      const [page] = await Promise.all([data.listProducts(businessId, { status: state.status, lowOnly: state.lowOnly, search: state.search, category: state.category, cursor: state.cursors.at(-1) || null }), loadMenu()]);
       state.rows = page.rows;
       state.hasMore = page.hasMore;
       state.costs = can.costs ? await data.loadCostDocs(businessId, "productCosts", page.rows.map((r) => r.id)) : {};
@@ -111,12 +122,17 @@ export function mount(container, session, { data = defaultData, api = defaultApi
           <option value="inactive" ${p.status === "inactive" ? "selected" : ""}>Inactive</option>
         </select>`
       : r.status === "active" ? badge("Active", "success") : badge("Inactive", "neutral");
+    const onMenu = state.menuHidden && p.status === "active" ? !state.menuHidden.has(r.id) : null;
+    const menuSwitch =
+      onMenu === null
+        ? ""
+        : html`<span class="menu-toggle" data-role="menu-toggle"><span class="menu-toggle-label">Menu</span>${can.manage ? html`<button type="button" class="menu-switch" role="switch" aria-checked="${onMenu}" data-act="menu" data-id="${r.id}" aria-label="Show ${r.name} on menu">${onMenu ? "ON" : "OFF"}</button>` : html`<b class="menu-state">${onMenu ? "ON" : "OFF"}</b>`}</span>`;
     const primary = can.adjust ? html`<button type="button" class="btn btn-compact" data-act="${r.hasMovements ? "adjust" : "opening"}" data-id="${r.id}">${r.hasMovements ? "Update stock" : "Starting stock"}</button>` : "";
     const low = r.isLowStock ? html` ${badge("Low stock", "warning")}` : "";
     return html`<tr data-product="${r.id}" class="${r.isLowStock ? "row-warning" : ""}" data-open>
       ${mobileCell({ title: r.name, sub: `${r.sku} · ${r.reserved} set aside · ${r.price}`, end: html`${r.available} <small>${r.unit} left</small>` })}
       <td class="cell-strong">${r.sku}</td>
-      <td>${r.name}${low}</td>
+      <td>${r.name}${low}${menuSwitch ? html`<div class="menu-toggle-d">${menuSwitch}</div>` : ""}</td>
       <td class="col-secondary">${r.category}</td>
       <td class="col-secondary">${r.unit}</td>
       <td class="num cell-strong" data-col="available">${r.available}</td>
@@ -126,7 +142,7 @@ export function mount(container, session, { data = defaultData, api = defaultApi
       <td class="num col-secondary" data-col="reorder">${editable("edit-reorder", r.id, r.reorderLevel, `Edit reorder level of ${r.name}`)}</td>
       <td class="num" data-col="price">${editable("edit-price", r.id, r.price, `Edit selling price of ${r.name}`)}</td>
       <td data-col="status">${statusCell}</td>
-      <td class="row-actions" data-m="ctl">${primary}</td>
+      <td class="row-actions" data-m="ctl">${menuSwitch ? html`<span class="menu-toggle-m">${menuSwitch}</span>` : ""}${primary}</td>
       <td class="row-actions" data-m="more">${openButton(r.id, `View details of ${r.name}`, { act: "details" })}</td>
     </tr>`;
   }
@@ -223,6 +239,26 @@ export function mount(container, session, { data = defaultData, api = defaultApi
     } catch (err) {
       if (selectEl) selectEl.value = p.status;
       toast(err.message, "danger");
+    }
+  }
+
+  // Show on Menu ON / OFF: flips at once, saved in the background (put back
+  // if the server refuses).
+  async function toggleMenu(p) {
+    if (!p || !state.menuHidden || !can.manage) return;
+    const show = state.menuHidden.has(p.id);
+    const apply = (on) => {
+      if (on) state.menuHidden.delete(p.id);
+      else state.menuHidden.add(p.id);
+      draw();
+    };
+    apply(show);
+    try {
+      await api("storefront", { method: "POST", body: { action: "showOnMenu", productId: p.id, show } });
+      toast(show ? `${p.name} is on the menu` : `${p.name} is off the menu`, "success");
+    } catch (err) {
+      apply(!show);
+      toast(err.message || "Couldn't change the menu", "danger");
     }
   }
 
@@ -433,6 +469,8 @@ export function mount(container, session, { data = defaultData, api = defaultApi
         return stockIn("opening", p);
       case "details":
         return openDetails(p);
+      case "menu":
+        return toggleMenu(p);
       case "next":
         state.cursors.push(state.rows.at(-1));
         return load();

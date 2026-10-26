@@ -84,3 +84,13 @@ describe("order source is optional", () => {
     expect(() => validateOrderInput({ customer: { name: "Yanie" }, source: "pigeon", items: [item] })).toThrow(/Source must be one of/);
   });
 });
+
+describe("extractPayment (2026-10-26): amount, reference, method, date", () => {
+  it("GCash, Maya and bank confirmations; fees and balances are never the amount; nothing readable → null", async () => {
+    const { extractPayment } = await import("../../src/lib/payment-reference.js");
+    expect(extractPayment("GCash\nSent via GCash\nAmount\n145.00\nTotal Amount Sent\n₱145.00\nRef No. 1012 345 678901\nOct 26, 2026 3:45 PM")).toEqual({ amount: 14500, reference: "1012345678901", method: "gcash", date: "2026-10-26" });
+    expect(extractPayment("Maya\nYou sent P5.00\nReference ID 4F2A99K12B\n10/26/2026")).toEqual({ amount: 500, reference: "4F2A99K12B", method: "maya", date: "2026-10-26" });
+    expect(extractPayment("BDO Fund Transfer\nTransfer fee PHP 25.00\nAmount: PHP 1,250.50\nAvailable balance PHP 9,999.00\nReference Number: 99887766")).toEqual({ amount: 125050, reference: "99887766", method: "bank_transfer", date: null });
+    expect(extractPayment("a photo of a cat")).toBeNull();
+  });
+});

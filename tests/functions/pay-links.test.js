@@ -258,3 +258,62 @@ describe("shared rules", () => {
     expect(cleanInstructions("  GCash  0917 \r\n\r\n\r\n BDO 1 ")).toBe("GCash 0917\n\nBDO 1");
   });
 });
+
+// Custom workspace address (2026-10-26): a payment link opens only on its
+// own business's address (or the main app); another business's address
+// gets the same answer as a bad link, and nothing is recorded.
+describe("payment link on a custom address", () => {
+  it("own address works; another business's address is refused for view and submit", async () => {
+    const orderId = await orderOf();
+    const token = await linkFor(orderId);
+    world.db.docs.set("publicLinks/abcfrozen", { businessId: "biz-a", kind: "current", current: "abcfrozen", setup: "active" });
+    world.db.docs.set("publicLinks/otherstore", { businessId: "biz-b", kind: "current", current: "otherstore", setup: "active" });
+    expect((await pub({ action: "view", token, host: "abcfrozen" })).status).toBe(200);
+    const foreign = await pub({ action: "view", token, host: "otherstore" });
+    const bad = await pub({ action: "view", token: "x".repeat(32) });
+    expect(foreign.status).toBe(bad.status);
+    expect(foreign.body).toEqual(bad.body);
+    expect((await submit(token, { amount: 10000, method: "gcash", reference: "GC-1" }, { host: "otherstore" })).status).toBe(bad.status);
+    expect(paymentsOf(orderId)).toHaveLength(0);
+  });
+});
+
+describe("partial payments + screenshot detection (2026-10-26)", () => {
+  const idOf = (p) => [...world.db.docs.entries()].find(([, d]) => d === p)[0].split("/").pop();
+  it("₱150 order: ₱145 then ₱5 are two records (Payment 1 never replaced); detected figures are kept apart from the confirmed ones", async () => {
+    const orderId = await orderOf(150);
+    const token = await linkFor(orderId);
+    const r1 = await submit(token, { amount: 14500, method: "gcash", reference: "1012345678901", detected: { amount: 14500, reference: "1012345678901", method: "gcash", date: "2026-10-22" } }, { proof });
+    expect(r1.status).toBe(201);
+    const p1 = paymentsOf(orderId)[0];
+    await owner({ action: "verify", paymentId: idOf(p1) });
+    expect(order(orderId)).toMatchObject({ verifiedPaid: 14500, balance: 500, paymentStatus: "partial" });
+    expect((await pub({ action: "view", token })).body.order).toMatchObject({ total: 15000, paid: 14500, due: 500 });
+    // The customer corrected what was read (₱50 → ₱5): the confirmed ₱5 is what counts.
+    await submit(token, { amount: 500, method: "maya", reference: "4F2A99K12B", detected: { amount: 5000, reference: "4F2A99K12B", method: "maya" } });
+    const list = paymentsOf(orderId);
+    expect(list).toHaveLength(2);
+    const p2 = list.find((p) => p.method === "maya");
+    expect(p2).toMatchObject({ amount: 500, reference: "4F2A99K12B", detected: { amount: 5000, reference: "4F2A99K12B", method: "maya" } });
+    expect(list.find((p) => p.method === "gcash")).toMatchObject({ amount: 14500, reference: "1012345678901", detected: { amount: 14500, date: "2026-10-22" } });
+    await owner({ action: "verify", paymentId: idOf(p2) });
+    expect(order(orderId)).toMatchObject({ verifiedPaid: 15000, balance: 0, paymentStatus: "paid" });
+    // Already fully paid: refused with a clear note, nothing recorded.
+    const extra = await submit(token, { amount: 100, method: "gcash", reference: "9999999999999" });
+    expect([extra.status, extra.body.error, extra.body.message]).toEqual([409, "nothing-due", "This order is already fully paid. Please verify this payment before continuing."]);
+    expect(paymentsOf(orderId)).toHaveLength(2);
+  });
+
+  it("more than what's still due is refused (no credit); a retried submit is the same payment; junk in 'detected' is dropped, never trusted", async () => {
+    const orderId = await orderOf(150);
+    const token = await linkFor(orderId);
+    expect((await submit(token, { amount: 15100, method: "gcash", reference: "1111111111111" })).body.error).toBe("overpayment");
+    const body = { action: "submit", token, idempotencyKey: "same-key-0000000001", payment: { amount: 500, method: "gcash", reference: "2222222222222", detected: { amount: -5, reference: "<script>", method: "cash", date: "yesterday" } } };
+    expect((await pub(body)).status).toBe(201);
+    expect((await pub(body)).body.alreadyRecorded).toBe(true);
+    const list = paymentsOf(orderId);
+    expect(list).toHaveLength(1);
+    expect(list[0]).not.toHaveProperty("detected");
+    expect(validatePublicPayment({ amount: 500, method: "gcash", reference: "ABCD1234", detected: { amount: 500 } })).toEqual({ amount: 500, method: "gcash", reference: "ABCD1234", detected: { amount: 500 } });
+  });
+});

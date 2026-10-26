@@ -93,9 +93,10 @@ export function subscriptionMenu(r, { detail = false, ctx = null } = {}) {
   const items = [
     ...(detail ? [] : [{ act: "s-view", label: "Open" }]),
     ...(awaiting ? [] : [{ act: "s-pay", label: "Record payment" }]),
-    ...(trial ? [{ act: "s-convert", label: r.trial.conversion ? "Change chosen plan" : "Choose plan for customer" }, { act: "s-trial", label: "Restart free trial" }] : []),
+    // Wedding access: the Access choice covers the trial and the terms.
+    ...(trial && r.billingType !== "term" ? [{ act: "s-convert", label: r.trial.conversion ? "Change chosen plan" : "Choose plan for customer" }, { act: "s-trial", label: "Restart free trial" }] : []),
     { act: "s-remind", label: "Send notification" },
-    ...(!ctx || sold(cur) ? [{ act: "s-access", label: "Change access" }] : []),
+    ...(!ctx || sold(cur) ? [{ act: "s-access", label: r.billingType === "term" ? "Access" : "Change access" }] : []),
     { act: "s-adjust", label: "Add discount / deduction" },
     { act: "s-date", label: r.billingType === "term" && r.paidThrough ? "Change access end" : "Change due date" },
     ...(!ctx || productChoice(ctx, r) ? [{ act: "s-plan", label: "Change product" }] : []),
@@ -125,8 +126,31 @@ export function toggleMenus(e, root) {
   return false;
 }
 
+// Wedding access (Luna Bridal): one Access choice, Free Trial / 3 Months —
+// ₱499 / 6 Months — ₱799. It sets the authoritative entitlement on the server
+// (badge, term, access end, upgrade rules all follow). Access is not payment.
+async function termAccessDialog(ctx, r) {
+  const plan = planOf(ctx, r.planId);
+  const b = planBilling(plan);
+  const current = r.trial?.open ? "trial" : String(r.termMonths ?? "");
+  return formDialog({
+    title: `Access · ${r.name}`,
+    intro: "Access is not payment: a term's price becomes a bill to pay. Record the payment when you receive it.",
+    fields: [
+      { name: "access", label: "Access", type: "select", options: [{ value: "trial", label: "Free Trial" }, ...b.terms.map((t) => ({ value: String(t.months), label: `${monthsText(t.months)} — ${peso(t.price)}` }))], value: current },
+      { name: "reason", label: "Reason", required: true },
+    ],
+    submitLabel: "Save",
+    onSubmit: (x) => {
+      if (x.access === current) throw new Error("Nothing changed");
+      return ctx.call("setTermAccess", { businessId: r.id, access: x.access === "trial" ? "trial" : Number(x.access), reason: x.reason });
+    },
+  });
+}
+
 // Change access: term, paid through, add-ons, price. Sends only what changed.
 async function changeAccessDialog(ctx, r) {
+  if (r.billingType === "term") return termAccessDialog(ctx, r);
   const plan = planOf(ctx, r.planId);
   if (!sold(plan)) throw new Error(`${plan?.name ?? "This plan"} is an older plan: change the product first.`);
   const b = planBilling(plan);
@@ -136,7 +160,8 @@ async function changeAccessDialog(ctx, r) {
   const fields = [
     ...(b.terms.length > 1 ? [{ name: "termMonths", label: r.billingType === "monthly" ? "Next bill covers" : "Term", type: "select", options: b.terms.map((t) => ({ value: String(t.months), label: termLabel(plan, t.months) })), value: String(currentTerm ?? b.defaultTermMonths) }] : []),
     ...(term ? [] : [{ name: "paidThrough", label: "Paid through", type: "date", value: r.paidThrough ?? "", hint: "The last day already paid for. The next bill is due the day after." }]),
-    ...b.addOns.map((a) => ({ name: `addon-${a.id}`, label: addOnLabel(a), value: String(qty(a.id)), inputmode: "numeric", hint: "How many (0 for none)" })),
+    // A flat add-on (Bridal Premium wedding link) is bought by the Owner and paid on its own bill.
+    ...b.addOns.filter((a) => !a.flat).map((a) => ({ name: `addon-${a.id}`, label: addOnLabel(a), value: String(qty(a.id)), inputmode: "numeric", hint: "How many (0 for none)" })),
     { name: "price", label: `Price (₱ per ${r.billingType === "monthly" ? "month" : monthsText(r.termMonths ?? b.termMonths)})`, value: r.priceOverride ? String(r.priceOverride / 100) : "", inputmode: "decimal", hint: `Empty: the product's price (${priceLabel(plan)})` },
     { name: "reason", label: "Reason", required: true },
   ];
@@ -235,7 +260,7 @@ export async function runSubscriptionAction(ctx, act, r) {
     }
     if (act === "s-access") {
       const v = await changeAccessDialog(ctx, r);
-      return v ? done(v.warnings?.length ? `Saved. ${v.warnings[0]}` : "Access changed.") : false;
+      return v ? done(v.warnings?.length ? `Saved. ${v.warnings[0]}` : v.amountDue ? `Access changed. ${peso(v.amountDue)} to collect (not counted until paid).` : "Access changed.") : false;
     }
     if (act === "s-date") {
       const term = r.billingType === "term" && r.paidThrough;
@@ -285,8 +310,8 @@ export async function runSubscriptionAction(ctx, act, r) {
 }
 
 export const billingTypeLabel = (t) => BILLING_TYPES[t]?.label ?? "";
-// "Monthly subscription", "3-month access" (Household's chosen term), "12-month access".
-export const billingText = (r) => (r.billingType === "annual" ? `${r.termMonths || 12}-month access` : billingTypeLabel(r.billingType));
+// "Monthly subscription", "3-month access" (Household's or Bridal's chosen term), "12-month access".
+export const billingText = (r) => (r.billingType === "annual" || r.billingType === "term" ? `${r.termMonths || 12}-month access` : billingTypeLabel(r.billingType));
 // "12 months · ₱1,190", "Monthly · ₱499 (next bill: 3 months prepaid)".
 export function termText(r) {
   if (r.billingType === "monthly") return `Monthly${r.prepaidNext ? ` · next bill covers ${monthsText(r.termMonths)}` : ""}`;

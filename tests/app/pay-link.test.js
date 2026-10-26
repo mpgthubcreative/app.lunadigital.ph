@@ -311,3 +311,60 @@ describe("Customer profile: the recurring customer hub", () => {
     expect(document.querySelectorAll('[data-role="customer-orders"] .cp-order')).toHaveLength(7);
   });
 });
+
+describe("payment screenshot detection (2026-10-26): prefill, compare with what's still due, never final", () => {
+  const remaining = (due, paid = 15000 - due) => ({ ...VIEW, order: { ...VIEW.order, total: 15000, paid, pending: 0, due }, payments: [] });
+  const read = (found) => vi.fn(async () => found);
+
+  it("₱150 order, ₱145 paid, ₱5 left: a ₱5 screenshot fills amount, reference and method and says it completes the order", async () => {
+    const s = server(remaining(500));
+    await page(s, { detect: read({ amount: 500, reference: "1012345678901", method: "maya", date: "2026-10-26" }) });
+    await pick(shot());
+    expect(root.querySelector('[name="amount"]').value).toBe("5.00");
+    expect(root.querySelector('[name="reference"]').value).toBe("1012345678901");
+    expect(root.querySelector('[name="method"]:checked').value).toBe("maya");
+    expect([...root.querySelectorAll('[data-role="balance-check"] p')].map((p) => p.textContent)).toEqual(["Detected payment: ₱5.00", "Remaining balance: ₱5.00", "✓ This payment will complete the order."]);
+    await send();
+    // Confirmed figures and what was read travel apart.
+    expect(s.submits()[0].payment).toEqual({ amount: 500, method: "maya", reference: "1012345678901", detected: { amount: 500, reference: "1012345678901", method: "maya", date: "2026-10-26" } });
+  });
+
+  it("less than due: what will be left; more than due: a warning (no credit), and the server refuses it", async () => {
+    const s = server(remaining(500));
+    await page(s, { detect: read({ amount: 300, reference: null, method: null, date: null }) });
+    await pick(shot());
+    expect(text('[data-role="check-left"]')).toBe("Remaining after payment: ₱2.00");
+    type("amount", "10");
+    expect(text('[data-role="check-over"]')).toBe("That's more than the ₱5.00 still due. Check the amount: only what's due can be sent here.");
+    await send();
+    expect(s.submits()).toHaveLength(0);
+  });
+
+  it("the customer's correction wins and is what's sent; nothing read: type it by hand", async () => {
+    const s = server(remaining(500));
+    await page(s, { detect: read({ amount: 900, reference: "AB123456", method: "gcash", date: null }) });
+    type("amount", "5");
+    await pick(shot());
+    expect(root.querySelector('[name="amount"]').value).toBe("5"); // typed before the read: kept
+    await send();
+    expect(s.submits()[0].payment).toMatchObject({ amount: 500, detected: { amount: 900 } });
+
+    const t = server(remaining(500));
+    root.innerHTML = "";
+    await page(t, { detect: read(null) });
+    await pick(shot());
+    expect(text('[data-role="ref-hint"]')).toMatch(/Couldn't read a reference/);
+    expect($('[data-role="balance-check"]')).toBeNull();
+    type("amount", "5");
+    type("reference", "MANUAL123");
+    await send();
+    expect(t.submits()[0].payment).toEqual({ amount: 500, method: "gcash", reference: "MANUAL123" });
+  });
+
+  it("a fully paid order: no form, and a clear note to verify any other payment first", async () => {
+    const s = server({ ...remaining(0, 15000), order: { ...VIEW.order, total: 15000, paid: 15000, pending: 0, due: 0, payable: false, cancelled: false } });
+    await page(s);
+    expect($('[data-role="pay-form"]')).toBeNull();
+    expect(text('[data-role="paid-full-warn"]')).toMatch(/^This order is already fully paid\. Please verify this payment before continuing/);
+  });
+});

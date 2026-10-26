@@ -176,7 +176,7 @@ export async function businessDetail({ db, businessId }) {
     limits: b.entitlements?.limits ?? null,
     // seat: uses a paid seat (a kasambahay's own login doesn't).
     members: members.docs.map((d) => ({ uid: d.id, email: d.data().email, name: d.data().name, roleTemplate: d.data().roleTemplate, status: d.data().status, isAccountOwner: d.data().isAccountOwner === true, seat: usesSeat(d.data()) })),
-    billing: billingRow(businessId, b, plan ? { [planId]: plan.name } : {}, todayManila()),
+    billing: billingRow(businessId, b, plan ? { [planId]: plan.name } : {}, todayManila(), plan ? { [planId]: plan } : {}),
     plan: plan ? { id: plan.id, name: plan.name, pricing: plan.pricing, limits: plan.limits, legacy: plan.legacy === true } : null,
     current: { users: current.values.activeUsers, storageBytes: current.values.storageBytes, downloads: current.values.exportsGenerated, transferBytes: current.values.exportBytes, orders: meterApplies("ordersCreated", b.entitlements) ? current.values.ordersCreated : null },
     usage: { period: monthKey(b.timezone || "Asia/Manila"), activeUsers: activeMembers, userLimit: b.entitlements?.limits?.users ?? null, ordersThisMonth: int(u.ordersCreated), importsThisMonth: int(u.excelImports), exportsGenerated: int(u.exportsGenerated), rowsExported: int(u.rowsExported) },

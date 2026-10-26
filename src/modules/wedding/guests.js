@@ -34,10 +34,12 @@ import { formDialog } from "../../components/form-dialog.js";
 import { confirmDialog, toast as defaultToast } from "../../components/feedback.js";
 import { formatDayId } from "../../lib/format.js";
 import { RSVP_STATUSES, businessDate, GUEST_SIDES, GUEST_CATEGORIES, GUEST_CATEGORY_IDS, rsvpSummary, seatingPlan, seatablePeople, seatsOf, MAX_TABLE_CAPACITY, setupMissing } from "@shared/index.js";
+import { TRIAL_RSVP_LIMIT_MESSAGE } from "@shared/wedding.js";
 import { activityLines, detailsDialog } from "../baby/common.js";
 import * as defaultData from "./data.js";
 import { openInvitePreview, copyText, canShare } from "./invitation/preview.js";
 import { WEDDING_ROLES, WEDDING_ROLE_IDS, rolesPlan, roleLabel, roleKey, categoryForRole, peopleOf, peopleWithoutRole, parsePersonKey, personKey, membersOf, attendingNames } from "@shared/wedding-roles.js";
+import { publicUrl } from "@shared/custom-links.js";
 
 const SIDE_OPTIONS = Object.entries(GUEST_SIDES).map(([value, s]) => ({ value, label: s.label }));
 // Simple words for the stored RSVP statuses.
@@ -96,14 +98,27 @@ export function mount(container, session, { data = defaultData, toast = defaultT
   const canManage = session.member.permissions["guests.manage"] === true;
   const businessId = session.business.id;
   const timezone = session.business.timezone;
-  const state = { view: "rsvp", filter: "all", search: "", rows: [], totals: null, seating: null, loading: true, error: null, setupMissing: null };
+  const state = { view: "rsvp", filter: "all", search: "", rows: [], totals: null, seating: null, loading: true, error: null, setupMissing: null, trialRsvp: null };
   let alive = true;
+  // Free trial RSVP: "RSVP trial: 12 / 20" (the server decides; this only explains).
+  const trial = session.subscription?.trial?.open === true;
+  const overTrial = (g) => Boolean(trial && state.trialRsvp && g.invitation?.status !== "active" && state.trialRsvp.used + (g.partySize || 1) > state.trialRsvp.limit);
+  const noteTrial = (r) => {
+    if (r?.trialRsvp && trial) state.trialRsvp = r.trialRsvp;
+    return r;
+  };
+  const refreshTrial = () =>
+    data.guestsApi({ action: "trialRsvp" }).then((r) => {
+      state.trialRsvp = r?.trialRsvp ?? null;
+      draw();
+    }, () => {});
 
   async function load() {
     state.loading = !state.rows.length;
     draw();
     try {
-      const [totals, page, seating, setup] = await Promise.all([data.getGuestTotals(businessId), data.listGuests(businessId, {}, { pageSize: MAX_GUESTS }), data.getSeating ? data.getSeating(businessId).catch(() => null) : null, canManage && data.getWeddingSetup ? data.getWeddingSetup().catch(() => null) : null]);
+      const [totals, page, seating, setup, usage] = await Promise.all([data.getGuestTotals(businessId), data.listGuests(businessId, {}, { pageSize: MAX_GUESTS }), data.getSeating ? data.getSeating(businessId).catch(() => null) : null, canManage && data.getWeddingSetup ? data.getWeddingSetup().catch(() => null) : null, canManage && trial && data.guestsApi ? data.guestsApi({ action: "trialRsvp" }).catch(() => null) : null]);
+      state.trialRsvp = usage?.trialRsvp ?? null;
       // What Wedding Setup still needs before links can be made ([] = ready;
       // null = couldn't tell: the server decides and explains).
       state.setupMissing = setup?.setup ? setupMissing(setup.setup) : null;
@@ -131,10 +146,10 @@ export function mount(container, session, { data = defaultData, toast = defaultT
   const seats = (g, text = seatsText(g)) => html`<span class="wl-seats" data-role="seats" aria-label="${text} seats">${text}</span>`;
   // Invitation link actions, always visible to the Owner: Create (no link
   // yet), View / Copy / Regenerate (a link exists), or why not yet. During
-  // the free trial there are no guest links: Preview is in Wedding Setup.
-  const trial = session.subscription?.trial?.open === true;
+  // the free trial up to 20 invited people get links (the server counts);
+  // a party that doesn't fit any more waits, ready, for the upgrade.
   const inviteItems = (g) => {
-    if (trial) return [{ act: "invite-setup", id: g.id, href: "/wedding-setup", label: "Invitation: preview in Wedding Setup (free trial) →" }];
+    if (overTrial(g)) return [{ act: "invite-upgrade", id: g.id, href: "/subscription", label: "Upgrade to send this invitation →" }];
     if (state.setupMissing?.length) return [{ act: "invite-setup", id: g.id, href: "/wedding-setup", label: "Invitation: complete Wedding Setup first →" }];
     if (g.invitation?.status !== "active") return [{ act: "invite-create", id: g.id, label: "Create invitation link" }];
     return [{ act: "invite-view", id: g.id, label: "View invitation" }, { act: "invite-copy", id: g.id, label: "Copy invitation link" }, ...(canShare() ? [{ act: "invite-share", id: g.id, label: "Share invitation" }] : []), { act: "invite-new", id: g.id, label: "Regenerate link" }];
@@ -169,13 +184,14 @@ export function mount(container, session, { data = defaultData, toast = defaultT
   // Invitation link [Copy] · Sent ▾ (· RSVP received), right on the row.
   const inviteLine = (g) => {
     if (!canManage) return "";
-    if (trial || state.setupMissing?.length) return "";
+    if (state.setupMissing?.length) return "";
+    if (overTrial(g)) return html`<div class="wl-invite" data-role="invite-line"><span>Not sent · RSVP trial full</span><a class="btn btn-compact" href="/subscription" data-link data-role="trial-upgrade">Upgrade</a></div>`;
     const sent = Boolean(g.invitationSent);
     return html`<div class="wl-invite" data-role="invite-line"><span>Invitation link</span><button type="button" class="btn btn-compact" data-act="invite-copy-row" data-id="${g.id}" aria-label="Copy ${g.name}'s invitation link">Copy</button>
       <select class="select select-compact" data-role="sent" data-id="${g.id}" aria-label="Invitation sent to ${g.name}"><option value="" ${sent ? "" : "selected"}>Not sent</option><option value="sent" ${sent ? "selected" : ""}>${sent ? `Sent ✓ ${formatDayId(g.invitationSent)}` : "Sent ✓"}</option></select>
       ${g.rsvp !== "awaiting" ? html`<span class="wl-invite-done" data-role="rsvp-received">RSVP received</span>` : ""}</div>`;
   };
-  const rsvpRow = (g) => html`<li class="wl-row wl-guest${canManage && !trial && !state.setupMissing?.length ? " has-invite" : ""}" data-guest="${g.id}"><button type="button" class="wl-main" data-act="view" data-id="${g.id}"><span class="wl-name">${g.name}</span>${rowSub(g) ? html`<span class="wl-sub" data-role="guest-sub">${rowSub(g)}</span>` : ""}</button>${seats(g)}${rsvpControl(g)}${guestMenu(g)}${inviteLine(g)}</li>`;
+  const rsvpRow = (g) => html`<li class="wl-row wl-guest${canManage && !state.setupMissing?.length ? " has-invite" : ""}" data-guest="${g.id}"><button type="button" class="wl-main" data-act="view" data-id="${g.id}"><span class="wl-name">${g.name}</span>${rowSub(g) ? html`<span class="wl-sub" data-role="guest-sub">${rowSub(g)}</span>` : ""}</button>${seats(g)}${rsvpControl(g)}${guestMenu(g)}${inviteLine(g)}</li>`;
 
   const shown = () => {
     const q = state.search.toLowerCase();
@@ -297,6 +313,14 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     });
   const roleFromKey = (key) => (key.startsWith("custom:") ? peopleOf(state.rows).flatMap((pp) => pp.roles).find((r) => roleKey(r) === key) : { id: key });
 
+  // "RSVP trial: 12 / 20"; at the limit, why and the two plans (no popup).
+  const trialLine = () => {
+    const u = state.trialRsvp;
+    if (!trial || !u) return "";
+    if (u.used < u.limit) return html`<p class="wl-count wl-trial" data-role="trial-rsvp">RSVP trial: ${fmt(u.used)} / ${fmt(u.limit)}</p>`;
+    return html`<div class="banner banner-info" role="note" data-role="trial-rsvp-full"><span>RSVP trial: ${fmt(u.used)} / ${fmt(u.limit)}. ${TRIAL_RSVP_LIMIT_MESSAGE}</span> <a class="btn btn-compact" href="/subscription" data-link>₱499 — 3 Months · ₱799 — 6 Months</a></div>`;
+  };
+
   function draw() {
     if (!alive) return;
     const t = rsvpSummary(state.totals);
@@ -314,7 +338,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
             ? html`<p class="wl-count" data-role="roles-summary">${fmt(new Set(roles.flatMap((r) => r.people.map((pp) => pp.key))).size)} people · ${fmt(roles.length)} roles</p>`
           : seatingOn
             ? html`<p class="wl-count" data-role="seating-summary">${fmt(plan.attendingSeats)} attending · ${fmt(plan.seatedSeats)} seated · <strong class="${plan.unassignedSeats ? "is-warn" : ""}">${fmt(plan.unassignedSeats)} unassigned</strong></p>`
-            : html`<p class="wl-count" data-role="rsvp-summary" title="People (seats), not invitations">${fmt(t.invitedSeats)} invited · ${fmt(t.attendingSeats)} attending · ${fmt(seatingPlan(state.rows, state.seating).seatedSeats)} seated</p>`}
+            : html`<p class="wl-count" data-role="rsvp-summary" title="People (seats), not invitations">${fmt(t.invitedSeats)} invited · ${fmt(t.attendingSeats)} attending · ${fmt(seatingPlan(state.rows, state.seating).seatedSeats)} seated</p>${trialLine()}`}
         <div class="wl-tools">${segmented("view", [["rsvp", "All Guests"], ["seating", "Seating"], ["roles", "Roles"]], state.view, { label: "Guests view" })}</div>
         ${seatingOn || rolesOn || !state.rows.length
           ? ""
@@ -464,7 +488,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
       const memberMenu = (m) => (canManage ? menu(`More for ${m.name}`, [{ act: "member-remove", id: m.id, label: "Remove from party", danger: true }]) : "");
       const linkCell = () => {
         if (!canManage) return g.invitation?.status === "active" ? "Created" : "Not created yet";
-        if (trial) return html`<a class="btn btn-compact btn-ghost" href="/wedding-setup" data-link data-act="close">Preview in Wedding Setup (free trial)</a>`;
+        if (overTrial(g)) return html`<a class="btn btn-compact btn-ghost" href="/subscription" data-link data-act="close">Upgrade to send</a>`;
         if (state.setupMissing?.length) return html`<a class="btn btn-compact btn-ghost" href="/wedding-setup" data-link data-act="close">Complete Wedding Setup first</a>`;
         if (g.invitation?.status !== "active") return html`<button type="button" class="btn btn-compact" data-act="invite-create">Create link</button>`;
         return html`<span class="wl-link-actions" data-role="link-actions"><button type="button" class="btn btn-compact" data-act="invite-view">View</button><button type="button" class="btn btn-compact" data-act="invite-copy">Copy</button></span>`;
@@ -529,8 +553,8 @@ export function mount(container, session, { data = defaultData, toast = defaultT
         if (act === "invite-view") return viewInvite(g);
         if (act === "invite-copy") return copyLink(await linkOf(g), g.name);
         if (act === "invite-create") {
-          const r = await data.guestsApi({ action: "inviteLink", guestId: g.id });
-          await copyLink(`${location.origin}${r.path}`, g.name, false, true);
+          const r = noteTrial(await data.guestsApi({ action: "inviteLink", guestId: g.id }));
+          await copyLink(publicUrl(session, r.path), g.name, false, true);
           return refresh();
         }
         if (act === "edit") {
@@ -596,6 +620,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
         }
       } catch (err) {
         toast(err.message || "Something went wrong", "danger");
+        if (err?.code === "trial-rsvp-limit") refreshTrial();
       }
       return undefined;
     });
@@ -616,7 +641,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
       await copyLink(url, name); // sharing not allowed here: copy instead
     }
   }
-  const linkOf = async (g) => `${location.origin}${(await data.guestsApi({ action: "inviteLink", guestId: g.id })).path}`;
+  const linkOf = async (g) => publicUrl(session, noteTrial(await data.guestsApi({ action: "inviteLink", guestId: g.id })).path);
   // One tap: the party's private link (made on first use) straight to the
   // clipboard. The copy starts inside the tap (Safari needs that), with the
   // link arriving a moment later; no clipboard = a small sheet to copy it.
@@ -717,8 +742,8 @@ export function mount(container, session, { data = defaultData, toast = defaultT
       }
       else if (a === "history") openHistory(g);
       else if (a === "invite-create") {
-        const r = await data.guestsApi({ action: "inviteLink", guestId: g.id });
-        await copyLink(`${location.origin}${r.path}`, g.name, false, true);
+        const r = noteTrial(await data.guestsApi({ action: "inviteLink", guestId: g.id }));
+        await copyLink(publicUrl(session, r.path), g.name, false, true);
         load();
       } else if (a === "invite-copy-row") await copyRowLink(g);
       else if (a === "invite-view") await viewInvite(g);
@@ -727,10 +752,11 @@ export function mount(container, session, { data = defaultData, toast = defaultT
       else if (a === "invite-new") {
         if (!(await confirm({ title: `New invitation link for ${g.name}?`, body: "The link you sent before stops working. Send them the new one.", confirmLabel: "Make a new link" }))) return;
         const r = await data.guestsApi({ action: "regenerateInvite", guestId: g.id });
-        await copyLink(`${location.origin}${r.path}`, g.name, true);
+        await copyLink(publicUrl(session, r.path), g.name, true);
       }
     } catch (err) {
       toast(err.message || "Something went wrong", "danger");
+      if (err?.code === "trial-rsvp-limit") refreshTrial();
     }
   };
   // RSVP ▾ in the row. Attending asks how many when more than one is invited.

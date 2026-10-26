@@ -67,7 +67,7 @@ describe("console views", () => {
     await flush();
     expect(call).toHaveBeenCalledWith("overview");
     const kpis = [...el.querySelectorAll('[data-role="kpis"] .kpi')].map((k) => `${k.querySelector(".kpi-label").textContent}: ${k.querySelector(".kpi-value").textContent}`);
-    expect(kpis).toEqual(["Active subscriptions: 14", "Free trials: 5", "6 / 12-month income: ₱12,970", "Recurring income: ₱12,000"]);
+    expect(kpis).toEqual(["Active subscriptions: 14", "Free trials: 5", "Collected this month: ₱24,850", "Recurring income: ₱12,000"]);
     expect(el.querySelector('[data-role="kpis"]').textContent).toMatch(/2 ending this week · 1 ended/);
     const rows = [...el.querySelectorAll('[data-role="attention-rows"] tbody tr')];
     expect(rows.map((r) => [...r.querySelector('[data-role="when"]').childNodes].map((n) => n.textContent.trim()).filter(Boolean).join(" | "))).toEqual(["Due Oct 12, 2026 | 7 days overdue", "Payment due Oct 25, 2026", "Trial ends Oct 22, 2026", "Access ends Nov 2, 2026"]);
@@ -75,7 +75,7 @@ describe("console views", () => {
     const income = [...el.querySelectorAll('[data-role="income"] li')].map((li) => li.textContent.replace(/\s+/g, " ").trim());
     expect(income[0]).toMatch(/^Distributor ?6 \/ 12-month access collected this month · 20 active ₱9,000$/);
     expect(income[1]).toMatch(/^Household ?6 \/ 12-month access collected this month · 4 active ₱4,000$/);
-    expect(income[2]).toMatch(/^Bridal ?12-month access collected this month · 3 active ₱8,970$/);
+    expect(income[2]).toMatch(/^Bridal ?Wedding access collected this month · 3 active ₱8,970$/);
     expect(el.textContent).not.toMatch(/profit|margin|operating cost|Subscription mix|Total businesses/i);
     // ⋯ → Send notification on a row.
     rows[0].querySelector('[data-act="row-menu"]').click();
@@ -136,17 +136,18 @@ describe("console views", () => {
     const [action, body] = call.mock.calls[0];
     expect(action).toBe("createBusiness");
     expect(body.business).toEqual({ name: "Prado Home", businessId: "prado-home", workspaceTemplateId: "household-payroll", planId: "household-basic", termMonths: 6, trial: true, ownerName: "Mon Prado", ownerEmail: "mon@prado.test", timezone: "Asia/Manila" });
-    // Bridal: one product, one term (nothing to choose), the free trial by default.
+    // Bridal (2026-10-26): one product, 3 or 6 months (3 by default), the free trial by default.
     const p2 = createBusinessDialog(ctxWith(call));
     const g = lastForm();
     g.elements.planId.value = "bridal-basic";
     g.elements.planId.dispatchEvent(new Event("change", { bubbles: true }));
-    expect(g.elements.termMonths.closest(".field").hidden).toBe(true);
+    expect(g.elements.termMonths.closest(".field").hidden).toBe(false);
+    expect([...g.elements.termMonths.options].map((o) => o.value)).toEqual(["3", "6"]);
     for (const [k, v] of Object.entries({ name: "Carlo & Yanie", ownerEmail: "c@y.test", ownerName: "Carlo" })) g.elements[k].value = v;
     g.elements.name.dispatchEvent(new Event("change", { bubbles: true }));
     submit(g);
     await p2;
-    expect(call.mock.calls[1][1].business).toMatchObject({ planId: "bridal-basic", workspaceTemplateId: "bridal-expense", termMonths: 12, businessId: "carlo-yanie" });
+    expect(call.mock.calls[1][1].business).toMatchObject({ planId: "bridal-basic", workspaceTemplateId: "bridal-expense", termMonths: 3, businessId: "carlo-yanie" });
   });
 
   it("Change access: term, paid through, add-ons and price, sent as changes only; the product menu only where there's a choice", async () => {

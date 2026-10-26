@@ -66,15 +66,15 @@ describe("friendly wedding link", () => {
     expect([isWeddingSlug("carloyanieforever"), isWeddingSlug("carlo-and-yanie-wedding"), isWeddingSlug("Carlo"), isWeddingSlug("a--b"), isWeddingSlug("-ab"), isWeddingSlug("ab"), isWeddingSlug("x".repeat(61))]).toEqual([true, true, false, false, false, false, false]);
     expect(validateWeddingSetup({ weddingSlug: " CarloYanieForever " })).toEqual({ weddingSlug: "carloyanieforever" });
     expect(() => validateWeddingSetup({ weddingSlug: "carlo/../yanie" })).toThrow(/lowercase letters, numbers and hyphens/);
-    expect(invitePath("carloyanieforever", "T".repeat(32))).toBe(`/w/carloyanieforever/invite/${"T".repeat(32)}`);
-    expect(invitePath(null, "T".repeat(32))).toBe(`/invite/${"T".repeat(32)}`);
+    expect(invitePath("carloyanieforever", "T".repeat(32))).toBe(`/w/carloyanieforever/rsvp/${"T".repeat(32)}`);
+    expect(invitePath(null, "T".repeat(32))).toBe(`/rsvp/${"T".repeat(32)}`);
   });
 
-  it("blank → made from the couple names; links use /w/{slug}/invite/{token}; the slug is reserved for this wedding (server-only registry)", async () => {
+  it("blank → made from the couple names; links use /w/{slug}/rsvp/{token}; the slug is reserved for this wedding (server-only registry)", async () => {
     expect(ok(await save(SETUP)).setup.weddingSlug).toBe("carlo-and-yanie-wedding");
     expect(world.db.docs.get("weddingSlugs/carlo-and-yanie-wedding")).toMatchObject({ businessId: W });
     const { path, token } = await party();
-    expect(path).toBe(`/w/carlo-and-yanie-wedding/invite/${token}`);
+    expect(path).toBe(`/w/carlo-and-yanie-wedding/rsvp/${token}`);
     expect(token).toMatch(/^[A-Za-z0-9_-]{32}$/);
     // Saving again keeps the same slug (no -2 for itself).
     expect(ok(await save({ ...SETUP, dressCode: "Formal" })).setup.weddingSlug).toBe("carlo-and-yanie-wedding");
@@ -103,9 +103,9 @@ describe("friendly wedding link", () => {
     expect(world.db.docs.has("weddingSlugs/carloyanieforever")).toBe(false);
     expect(world.db.docs.get("weddingSlugs/carlo-yanie-2027").businessId).toBe(W);
     const v = ok(await guest({ action: "view", token })).invitation;
-    expect(v.path).toBe(`/w/carlo-yanie-2027/invite/${token}`);
+    expect(v.path).toBe(`/w/carlo-yanie-2027/rsvp/${token}`);
     expect(v.guest.name).toBe("Maria Santos");
-    expect(ok(await api("guests", u.carlo, { action: "inviteLink", guestId: g })).path).toBe(`/w/carlo-yanie-2027/invite/${token}`);
+    expect(ok(await api("guests", u.carlo, { action: "inviteLink", guestId: g })).path).toBe(`/w/carlo-yanie-2027/rsvp/${token}`);
     expect(JSON.stringify(v)).not.toContain(W);
   });
 
@@ -124,13 +124,13 @@ describe("friendly wedding link", () => {
     const t2 = ok(await api("guests", u.other, { action: "inviteLink", guestId: g2 }, W2)).path.split("/").pop();
     const v2 = ok(await guest({ action: "view", token: t2 })).invitation;
     expect(v2.wedding.coupleNames).toBe("Ana & Ben");
-    expect(v2.path).toBe(`/w/ana-and-ben-wedding/invite/${t2}`);
+    expect(v2.path).toBe(`/w/ana-and-ben-wedding/rsvp/${t2}`);
   });
 
   it("a wedding set up before slugs gets one on its next link; old /invite/{token} links keep working", async () => {
     world.db.docs.set(`businesses/${W}/weddingSetup/current`, { ...SETUP, schemaVersion: 1 });
     const { path, token } = await party();
-    expect(path).toBe(`/w/carlo-and-yanie-wedding/invite/${token}`);
+    expect(path).toBe(`/w/carlo-and-yanie-wedding/rsvp/${token}`);
     expect(ok(await guest({ action: "view", token })).invitation.path).toBe(path);
   });
 });

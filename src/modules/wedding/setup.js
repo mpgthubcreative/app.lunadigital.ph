@@ -33,10 +33,11 @@ import { isWeddingSlug, rsvpOpen, businessDate, coupleDisplayName, setupMissing,
 import { openInvitePreview, copyText } from "./invitation/preview.js";
 import { TEMPLATE_REGISTRY, OFFERED_TEMPLATE_IDS, STANDARD_TEMPLATE_IDS, DEFAULT_TEMPLATE_ID, PHOTO_SLOTS, resolveDesign, invitationData, getTemplateEntry, isOfferedTemplate } from "@shared/invitation-design.js";
 import { previewSetup, isEmptyValue } from "./invitation/samples.js";
+import { mountCustomLink } from "../../components/custom-link.js";
 
 // The guest the Owner's previews show (never a real guest or link).
 const OWNER_SAMPLE_GUEST = Object.freeze({ name: "Your guest's name", seats: 2, rsvp: "awaiting", confirmed: 0, roles: [] });
-export const TRIAL_PREVIEW_MESSAGE = "Preview your invitation during your free trial. Publish it when you continue with Luna Bridal.";
+export const TRIAL_PREVIEW_MESSAGE = "Free trial: publish your invitation and send RSVP links to up to 20 guests. Upgrade for your whole guest list.";
 // The chosen Standard template as a design (Luna Standard: the original page).
 export const standardPreviewDesign = (templateId) => (STANDARD_TEMPLATE_IDS.includes(templateId) && templateId !== DEFAULT_TEMPLATE_ID ? { config: resolveDesign({ templateId }), assets: {}, standard: true } : null);
 
@@ -260,7 +261,7 @@ export function mount(container, session, { api = defaultApi, toast = defaultToa
     return html`<div class="ie-guide" data-role="guide">
       <p class="stat-hint">${entry().name}: what each part shows. Personalize it right on the invitation.</p>
       <ul class="ie-guide-list">${entry().editableSections.map((e) => html`<li data-guide="${e.id}"><div><strong>${e.label}</strong><p class="ie-guide-shows">${e.id === "entourage" && n ? `${n} ${n === 1 ? "person" : "people"} · ${e.shows}` : e.shows}</p><p class="stat-hint">${e.tap}</p></div>${e.link ? html`<a class="btn btn-compact" href="${e.link}" data-link>Open Guests</a>` : canEdit ? html`<button type="button" class="btn btn-compact" data-ie-edit="${e.id}">Edit</button>` : ""}</li>`)}</ul>
-      <div class="ie-link" data-role="wedding-link"><strong>Wedding link</strong>
+      <div class="ie-link" data-role="wedding-link"><strong>Your wedding link</strong>
         ${isWeddingSlug(slug) ? html`<p class="ws-link-url" data-role="wedding-url">${origin()}/w/${slug}</p>` : html`<p class="stat-hint" data-role="wedding-url-none">Your link is made from your names when you save them.</p>`}
         <div class="ws-link-actions">${isWeddingSlug(slug) ? html`<button type="button" class="btn btn-compact" data-act="copy-wedding-link">Copy link</button>` : ""}${canEdit ? html`<button type="button" class="btn btn-compact btn-ghost" data-ie-edit="link">Change link</button>` : ""}<span class="ws-link-copied" data-role="copied" aria-live="polite"></span></div>
         <p class="stat-hint">Each guest gets a personal link from Guests → ⋯; only that party can open it and RSVP.</p>
@@ -304,7 +305,19 @@ export function mount(container, session, { api = defaultApi, toast = defaultToa
         </div>`
     );
     if (state.mode !== "guide") drawInvitation(m);
+    // The Premium wedding link (own address, an add-on): one section that
+    // keeps its state across redraws.
+    const aside = container.querySelector('[data-role="aside"]');
+    if (aside) {
+      if (!linkBox) {
+        linkBox = document.createElement("div");
+        linkBox.dataset.role = "custom-link-host";
+        mountCustomLink(linkBox, session, { api, toast });
+      }
+      aside.appendChild(linkBox);
+    }
   }
+  let linkBox = null;
 
   // The invitation itself: the guest renderer (preview mode), then in Edit
   // mode the Edit / Replace controls on top. Clean Preview: none.
@@ -544,7 +557,11 @@ export function mount(container, session, { api = defaultApi, toast = defaultToa
           ${ed.photos.length ? photoRow(ed.photos) : ""}
           ${gallery ? html`<div data-role="gallery-box">${galleryBox()}</div>` : ""}
           ${ed.fields.map((n) => fieldHtml(n, s, sample))}
-          ${id === "link" ? html`<p class="stat-hint">Lowercase letters, numbers and hyphens, e.g. carloyanieforever. Leave blank to make it from your names. Links already sent keep working.</p>` : ""}
+          ${id === "link"
+            ? html`<p class="stat-hint" data-role="slug-prefix">Your link: ${origin()}/w/<strong>your-name</strong></p>
+                <div class="ws-link-actions"><button type="button" class="btn btn-compact" data-act="slug-check">Check</button><span class="ws-link-copied" data-role="slug-check" aria-live="polite"></span></div>
+                <p class="stat-hint">Lowercase letters, numbers and hyphens, e.g. carlo-yanie. Leave blank to make it from your names. Links already sent keep working.</p>`
+            : ""}
           ${id === "hero" && wordingOn && e.accents.length ? html`<div class="field"><span class="field-label">Accent colour</span><div class="ws-accents">${e.accents.map((a) => html`<label class="ws-accent"><input type="radio" name="accent" value="${a.id}" ${a.id === (own.accent ?? e.accents[0].id) ? "checked" : ""}><span class="ws-accent-dot" data-hex="${a.hex}" aria-hidden="true"></span>${a.label}</label>`)}</div></div>` : ""}
           ${wordingOn ? html`<details class="ws-wording" data-role="wording"><summary>Wording</summary><input type="hidden" name="wordingFor" value="${templateId()}">${ed.wording.map((k) => html`<div class="field"><label for="ie-w-${k}">${WORDING_LABELS[k] || k}</label><input class="input" id="ie-w-${k}" name="wording-${k}" maxlength="80" placeholder="${e.wording[k]}" value="${own.wording?.[k] ?? ""}"></div>`)}<p class="stat-hint">Blank = the design's own words.</p></details>` : ""}
           <p class="form-error" data-role="sheet-error" role="alert" hidden></p>
@@ -613,10 +630,30 @@ export function mount(container, session, { api = defaultApi, toast = defaultToa
     if (event.target.name === "sameVenue") for (const el of sheet.backdrop.querySelectorAll('[data-field="receptionVenue"], [data-field="receptionAddress"], [data-field="receptionMap"]')) el.hidden = event.target.checked;
     if (event.target.dataset?.role === "gallery-add") addGallery(event.target.files[0]);
   }
+  // The wedding link name: free or taken (the save decides; this only tells).
+  async function checkSlug() {
+    const box = sheet?.backdrop.querySelector('[data-role="slug-check"]');
+    const input = sheet?.backdrop.querySelector('input[name="weddingSlug"]');
+    if (!box || !input) return;
+    const slug = cleanSlugInput(input.value).replace(/^-+|-+$/g, "");
+    if (!isWeddingSlug(slug)) {
+      box.textContent = "Use 3 to 60 lowercase letters, numbers or hyphens.";
+      return;
+    }
+    input.value = slug;
+    box.textContent = "Checking…";
+    try {
+      const r = await api("wedding-setup", { method: "POST", body: { action: "checkSlug", slug } });
+      box.textContent = r.available ? `✓ Available: ${origin()}/w/${slug}` : "Already taken by another wedding. Try another.";
+    } catch (err) {
+      box.textContent = err.message || "Couldn't check. Try again.";
+    }
+  }
   function onSheetClick(event) {
     const el = event.target.closest("[data-sheet], [data-act], [data-ie-photo]");
     if (event.target === sheet?.backdrop) return closeSheet();
     if (!el) return;
+    if (el.dataset.act === "slug-check") return checkSlug();
     if (el.dataset.sheet === "cancel") return closeSheet();
     if (el.dataset.iePhoto) return pickPhoto(el.dataset.iePhoto);
     const act = el.dataset.act;

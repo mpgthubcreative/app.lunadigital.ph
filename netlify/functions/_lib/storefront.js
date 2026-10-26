@@ -40,6 +40,7 @@ import {
   STORE_MAX_LINE_QTY,
   STORE_ORDER_LIMITS,
   STORE_PAYMENT_METHOD_IDS,
+  MAX_HIDDEN_PRODUCTS,
 } from "../../../shared/storefront.js";
 import { UNITS, QTY_SCALE } from "../../../shared/quantity.js";
 
@@ -125,6 +126,34 @@ export async function saveStoreSettings({ db, tenant, FieldValue, business, inpu
   return { settings, path: storePath(settings.slug) };
 }
 
+// Show on Menu (2026-10-26): what customers can order NOW, per product,
+// separate from stock and from Active. Stored as the store's existing
+// hiddenProductIds (OFF = listed there); a new product is ON. Turning it off
+// only hides the product from the public menu: stock, costs, reports,
+// history and open orders stay exactly as they are.
+export async function readMenu({ tenant, business }) {
+  const s = settingsOf(await settingsRef(tenant).get(), business);
+  return { hiddenProductIds: s.hiddenProductIds, open: s.open === true };
+}
+export async function setShowOnMenu({ db, tenant, FieldValue, business, productId, show, actor }) {
+  if (typeof productId !== "string" || !/^[A-Za-z0-9]{8,40}$/.test(productId)) throw new StorefrontError("invalid-input", "Invalid product");
+  if (typeof show !== "boolean") throw new StorefrontError("invalid-input", "Choose on or off");
+  return db.runTransaction(async (tx) => {
+    const [snap, product] = await Promise.all([tx.get(settingsRef(tenant)), tx.get(tenant.doc("products", productId))]);
+    // Only this business's own products (another tenant's id is "not found").
+    if (!product.exists) throw new StorefrontError("not-found", "Product not found");
+    const before = settingsOf(snap, business);
+    const hidden = new Set(before.hiddenProductIds);
+    if (show === !hidden.has(productId)) return { productId, show, unchanged: true };
+    if (show) hidden.delete(productId);
+    else hidden.add(productId);
+    if (hidden.size > MAX_HIDDEN_PRODUCTS) throw new StorefrontError("invalid-input", "Too many products are off the menu");
+    tx.set(settingsRef(tenant), { schemaVersion: STOREFRONT_SCHEMA_VERSION, hiddenProductIds: [...hidden], updatedBy: { uid: actor.uid, name: actor.name }, updatedAt: FieldValue.serverTimestamp() }, { merge: true });
+    tx.set(tenant.collection("auditLog").doc(), { type: "storefront.menu_changed", productId, productName: product.data().name ?? null, show, actor, at: FieldValue.serverTimestamp() });
+    return { productId, show };
+  }, TX_OPTIONS);
+}
+
 // ---- Public side (/api/store) ----
 
 // slug -> the ONE business it belongs to, or NOT_FOUND. The store must be
@@ -189,6 +218,9 @@ export async function viewStore({ db, slug }) {
   const products = snap.docs
     .filter((d) => !hidden.has(d.id) && Number.isSafeInteger(d.data().sellingPrice) && d.data().sellingPrice > 0)
     .map((d) => publicProduct(d.id, d.data()))
+    // Show on Menu ON with nothing left: off the public menu (its Show on
+    // Menu choice is kept, so it's back once stock is received).
+    .filter((p) => !p.soldOut)
     .sort((a, b) => a.category.localeCompare(b.category) || a.name.localeCompare(b.name));
   return { store, products };
 }

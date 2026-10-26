@@ -3,6 +3,8 @@
 //                                      (a link name is made on first use)
 //   { action: "save", settings: { open?, displayName?, slug?, note?, pickup?,
 //       delivery?, paymentMethods?, hiddenProductIds? } }   settings.manage
+//   { action: "menu" }                 inventory.view: which products are off the menu
+//   { action: "showOnMenu", productId, show }   products.manage: Show on Menu ON / OFF
 // Changing the link name frees the old one (it stops working at once).
 // The public page itself is /api/store (no login).
 
@@ -10,14 +12,17 @@ import { respond, withErrorHandling, requireMethod, parseJsonBody, RequestError 
 import { getAdmin } from "./_lib/firebase-admin.js";
 import { requireTenant } from "./_lib/tenant.js";
 import { actorOf, only } from "./_lib/inventory-http.js";
-import { readStoreSettings, saveStoreSettings } from "./_lib/storefront.js";
+import { readStoreSettings, saveStoreSettings, readMenu, setShowOnMenu } from "./_lib/storefront.js";
 import { StorefrontError } from "../../shared/storefront.js";
 
 const ACTIONS = {
   get: { permission: "orders.view", fields: ["action"], write: true },
   save: { permission: "settings.manage", fields: ["action", "settings"], write: true },
+  // Show on Menu (Inventory's inline ON / OFF): read, and one product at a time.
+  menu: { permission: "inventory.view", fields: ["action"], write: false },
+  showOnMenu: { permission: "products.manage", fields: ["action", "productId", "show"], write: true },
 };
-const STATUS = { "slug-taken": 409, "invalid-input": 400 };
+const STATUS = { "slug-taken": 409, "invalid-input": 400, "not-found": 404 };
 
 export function createStorefrontHandler({ getAdmin: loadAdmin, now = () => new Date() }) {
   return withErrorHandling("storefront", async (event) => {
@@ -37,6 +42,9 @@ export function createStorefrontHandler({ getAdmin: loadAdmin, now = () => new D
     if (!action) throw new RequestError("invalid-request", "Unknown action.", 400);
     only(body, action.fields);
     try {
+      const FieldValue = admin.firestore.FieldValue;
+      if (body.action === "menu") return respond(200, { success: true, ...(await readMenu({ tenant: ctx.tenant, business: ctx.business })) });
+      if (body.action === "showOnMenu") return respond(200, { success: true, ...(await setShowOnMenu({ db, tenant: ctx.tenant, FieldValue, business: ctx.business, productId: body.productId, show: body.show, actor: actorOf(ctx) })) });
       const result =
         body.action === "get"
           ? await readStoreSettings({ db, tenant: ctx.tenant, business: ctx.business, now: now() })

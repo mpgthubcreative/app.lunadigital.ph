@@ -27,6 +27,7 @@ export const WEDDING_STATUS = {
   removed: 409,
   "setup-incomplete": 409,
   "trial-preview": 409,
+  "trial-rsvp-limit": 409,
   "slug-taken": 409,
   "role-taken": 409,
   "member-linked": 409,

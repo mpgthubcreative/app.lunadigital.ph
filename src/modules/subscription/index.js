@@ -120,7 +120,7 @@ export function mount(container, session, { api = defaultApi, toast = defaultToa
   }
 
   // A bill: what it's for, then its breakdown (charges, then what's taken off).
-  const billTitle = (inv) => (inv.kind === "upgrade" ? "Upgrade" : monthName(inv.period));
+  const billTitle = (inv) => (inv.kind === "upgrade" ? "Upgrade" : inv.kind === "addon" ? inv.lines?.[0]?.label ?? "Add-on" : monthName(inv.period));
   function billRow(inv) {
     const waiting = inv.status === "for_verification";
     const lines = inv.lines || [];
@@ -206,7 +206,7 @@ export function mount(container, session, { api = defaultApi, toast = defaultToa
     const idempotencyKey = newKey();
     const today = businessDate(BILLING_TIMEZONE, now());
     return formDialog({
-      title: `Pay ${inv.kind === "upgrade" ? "the upgrade" : monthName(inv.period)}`,
+      title: `Pay ${inv.kind === "upgrade" ? "the upgrade" : inv.kind === "addon" ? `the ${inv.lines?.[0]?.label ?? "add-on"}` : monthName(inv.period)}`,
       intro: `Transfer ${money(inv.balance)} to Luna's account, then add your screenshot or the reference number (one is enough). Luna confirms it; until then it shows For Verification.`,
       fields: [
         { name: "amount", label: "Amount you sent (₱)", value: (inv.balance / 100).toFixed(2), inputmode: "decimal", required: true },

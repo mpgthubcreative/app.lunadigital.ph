@@ -30,6 +30,7 @@ import { isStaffPortalSession } from "../staff/is-staff.js";
 import { installMenuBehavior } from "../components/menus.js";
 import { installViewport } from "../lib/viewport.js";
 import { scheduleFeedbackPrompt } from "./feedback.js";
+import { linkLabelFromHost } from "@shared/custom-links.js";
 
 // Pages a member can still open once a free trial has ended.
 const TRIAL_ENDED_PATHS = new Set(["/subscription", "/settings", "/export"]);
@@ -269,6 +270,13 @@ function boot() {
   window.addEventListener("vite:preloadError", (event) => {
     if (reloadForFreshFiles()) event.preventDefault();
   });
+  // A workspace's own address (custom workspace link): public pages only,
+  // never the signed-in app (./public-host.js).
+  const customLabel = linkLabelFromHost(window.location.hostname, import.meta.env.VITE_CUSTOM_LINK_DOMAIN);
+  if (customLabel) {
+    import("./public-host.js").then((m) => m.mountPublicHost(root, { label: customLabel }));
+    return;
+  }
   // The helper's salary receipt link (Owner pilot 2026-10-19): its own page,
   // which asks the helper to sign in and comes back to the same receipt.
   if (window.location.pathname === "/receipt") {
@@ -279,7 +287,8 @@ function boot() {
   // token in the link is the only credential, checked by the server).
   // Also /w/{weddingSlug}/invite/{token}: the slug is only the friendly part.
   // /w/{weddingSlug} alone shows a "personal links only" note (nothing about the wedding).
-  if (window.location.pathname.startsWith("/invite/") || /^\/w\/[^/]+(\/invite\/|\/?$)/.test(window.location.pathname)) {
+  // /rsvp/{token} (and /w/{slug}/rsvp/{token}) open the same invitation.
+  if (window.location.pathname.startsWith("/invite/") || window.location.pathname.startsWith("/rsvp/") || /^\/w\/[^/]+(\/(?:invite|rsvp)\/|\/?$)/.test(window.location.pathname)) {
     import("./invite.js").then((m) => m.renderInvitePage(root));
     return;
   }

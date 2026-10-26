@@ -37,15 +37,17 @@ export function createPayHandler({ getAdmin: loadAdmin, now = () => new Date() }
     requireMethod(event, "POST");
     const body = parseJsonBody(event, MAX_BODY);
     const keys = body && typeof body === "object" && !Array.isArray(body) ? Object.keys(body) : null;
-    const allowed = body?.action === "view" ? ["action", "token"] : ["action", "token", "idempotencyKey", "payment", "proof", "website"];
-    if (!keys || !["view", "submit"].includes(body.action) || keys.some((k) => !allowed.includes(k)) || typeof body.token !== "string") {
+    // host: the custom workspace address the page is on (2026-10-26).
+    const allowed = body?.action === "view" ? ["action", "token", "host"] : ["action", "token", "idempotencyKey", "payment", "proof", "website", "host"];
+    if (!keys || !["view", "submit"].includes(body.action) || keys.some((k) => !allowed.includes(k)) || typeof body.token !== "string" || ("host" in body && typeof body.host !== "string")) {
       throw new RequestError("invalid-request", "Invalid request.", 400);
     }
     const { db, admin, bucket } = await loadAdmin();
     try {
-      if (body.action === "view") return respond(200, { success: true, ...(await viewPayLink({ db, token: body.token })) });
+      const host = typeof body.host === "string" ? body.host.toLowerCase() : null;
+      if (body.action === "view") return respond(200, { success: true, ...(await viewPayLink({ db, token: body.token, host })) });
       if (body.website !== undefined && body.website !== "") throw new PaymentError("invalid-input", "Please refresh the page and try again.");
-      const r = await submitPayLink({ db, bucket, FieldValue: admin.firestore.FieldValue, token: body.token, idempotencyKey: body.idempotencyKey, input: body.payment, proof: body.proof ?? null, clientKey: clientKeyOf(event), now: now() });
+      const r = await submitPayLink({ db, bucket, FieldValue: admin.firestore.FieldValue, token: body.token, idempotencyKey: body.idempotencyKey, input: body.payment, proof: body.proof ?? null, clientKey: clientKeyOf(event), now: now(), host });
       return respond(r.alreadyRecorded ? 200 : 201, { success: true, ...r });
     } catch (err) {
       if (err instanceof PaymentError) throw new RequestError(err.code, err.message, STATUS[err.code] || 400);

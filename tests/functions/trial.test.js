@@ -107,7 +107,7 @@ describe("a free trial is never a bill", () => {
     expect(ok(await sub("home-trial", h)).subscription.options[0]).toMatchObject({ name: "Luna Household", setupFee: 0, terms: [{ months: 6, price: 129900 }, { months: 12, price: 239000, bestValue: true }] });
     const w = await trialBusiness("wed-trial", "bridal-basic", "bridal-expense");
     const opts = ok(await sub("wed-trial", w)).subscription.options;
-    expect(opts.map((o) => [o.name, o.priceIsMinimum, o.terms.map((t) => t.price)])).toEqual([["Luna Bridal", false, [49900]]]);
+    expect(opts.map((o) => [o.name, o.priceIsMinimum, o.terms.map((t) => t.price)])).toEqual([["Luna Bridal", false, [49900, 79900]]]);
     await createBusiness({ ...world, name: "Custom", planId: "bridal-plus", workspaceTemplateId: "bridal-expense", businessId: "wed-custom", trial: true, clock: NOW });
     expect(biz("wed-custom").subscription.trialStatus).toBeUndefined();
   });
@@ -181,5 +181,27 @@ describe("Super Admin: convert and restart a trial", () => {
     expect((await op({ action: "restartTrial", businessId: "home-op", days: 30, reason: "Try again please" })).status).toBe(400);
     const audits = [...world.db.docs.values()].filter((v) => v?.businessId === "home-op" && /trial-restarted|conversion-chosen/.test(v.type ?? ""));
     expect(audits.length).toBeGreaterThanOrEqual(2);
+  });
+});
+
+// Bridal pricing (2026-10-26): 3 months ₱499 or 6 months ₱799, the same
+// features; the Premium wedding link (+₱499) is a flat add-on billed once
+// on its own bill, never inside a term bill.
+import { planBilling, billLines, addOnAmount } from "../../shared/plan-billing.js";
+import { PLAN_SEED } from "../../shared/plans.seed.js";
+describe("Bridal pricing 2026-10-26", () => {
+  it("3 months ₱499 · 6 months ₱799; the Premium wedding link is +₱499 once and grants the custom link", () => {
+    const b = planBilling(PLAN_SEED["bridal-basic"]);
+    expect(b.type).toBe("term");
+    expect(b.terms.map((t) => [t.months, t.price])).toEqual([[3, 49900], [6, 79900]]);
+    expect(b.defaultTermMonths).toBe(3);
+    expect(b.addOns).toEqual([expect.objectContaining({ id: "premium-link", price: 49900, flat: true, grants: "customLink" })]);
+  });
+  it("a flat add-on is never prorated or added to a term bill", () => {
+    const premium = { id: "premium-link", label: "Premium wedding link", price: 49900, qty: 1, flat: true, grants: "customLink" };
+    expect(addOnAmount([premium], 6)).toBe(0);
+    const lines = billLines({ billingType: "term", amount: 79900, termMonths: 6, addOns: [premium] }, { planName: "Luna Bridal" });
+    expect(lines.map((l) => l.kind)).toEqual(["base"]);
+    expect(lines[0].amount).toBe(79900);
   });
 });

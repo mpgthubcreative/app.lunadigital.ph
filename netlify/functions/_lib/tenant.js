@@ -108,6 +108,8 @@ async function evaluateCandidate(db, uid, businessId) {
         timezone: business.timezone || "UTC",
         currency: business.currency || "PHP",
         orderPrefix: business.orderPrefix || null,
+        // The workspace's own public address (shared/custom-links.js), if claimed.
+        customLink: business.customLink?.label ? { label: business.customLink.label, setup: business.customLink.setup || "pending" } : null,
       },
       workspace: { templateId: workspace.id, templateVersion: workspace.version, name: workspace.name },
       member: {

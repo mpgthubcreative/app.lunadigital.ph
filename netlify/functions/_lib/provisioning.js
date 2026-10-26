@@ -12,7 +12,7 @@
 // validates, recomputes the snapshot and writes an audit record to
 // businesses/{bid}/auditLog and platformAudit.
 
-import { newSubscriptionTerms, recurringAmount, addOnSnapshot, addOnCapacity, planBilling, isDayString, shiftDay, monthsText, isUnlimited, usesSeat, BILLING_TYPE_IDS } from "../../../shared/plan-billing.js";
+import { newSubscriptionTerms, recurringAmount, addOnSnapshot, addOnCapacity, planBilling, isDayString, shiftDay, addMonths, monthsText, isUnlimited, usesSeat, BILLING_TYPE_IDS } from "../../../shared/plan-billing.js";
 import { trialState, trialOpen, newTrial, TRIAL_DAYS } from "../../../shared/trial.js";
 import { businessDate as seatDay } from "../../../shared/metrics.js";
 import { planWorkspace, PLAN_SEED, isLegacyPlan } from "../../../shared/plans.seed.js";
@@ -407,6 +407,9 @@ export async function setAccess({ db, admin, businessId, changes, actor, reason,
       if (!BILLING_TYPE_IDS.includes(plan.pricing?.billingType) || !BILLING_TYPE_IDS.includes(sub.billingType)) throw new ProvisioningError("legacy-plan", `${plan.name} is an older plan: change the product first.`);
       const next = { ...sub };
       if ("termMonths" in changes) {
+        // Wedding access: the term is the Access choice (setTermAccess), which
+        // also converts the trial and sets the dates; never just the price.
+        if (b.type === "term") throw new ProvisioningError("invalid-input", "Wedding access: choose it with Access (Free trial / 3 months / 6 months)");
         const t = b.terms.find((x) => x.months === changes.termMonths);
         if (!t) throw new ProvisioningError("invalid-input", `${plan.name} is sold for ${b.terms.map((x) => monthsText(x.months)).join(", ")}`);
         if (b.type === "monthly") next.prepaidTerm = t.months > 1 ? { months: t.months, price: t.price } : null;
@@ -496,6 +499,69 @@ export async function restartTrial({ db, admin, businessId, days = TRIAL_DAYS, a
       return { "subscription.trialStatus": fresh.trialStatus, "subscription.trialStartedAt": fresh.trialStartedAt, "subscription.trialEndsAt": fresh.trialEndsAt, "subscription.conversion": null };
     },
   });
+}
+
+// Super Admin → Access (2026-10-26): wedding access (billing type "term",
+// Luna Bridal) is ONE choice: "trial", or a term the product sells (3 / 6
+// months). A term is the authoritative entitlement in one write: the trial
+// converts, access runs from today for the term, the status is Active, and
+// the term's price becomes the amount due. ACCESS IS NOT PAYMENT: nothing is
+// recorded as paid or collected here; the bill for the term is made after
+// (operator.js) and only a recorded / confirmed payment counts as income.
+//   unpaid (trial or granted, nothing paid yet): any term, or back to the trial
+//   paid:  a longer term only (the access end moves; the difference is billed
+//          as an upgrade); never back to the trial or a shorter term
+// subscription.accessGrant records who granted it (the console shows it).
+export async function setTermAccess({ db, admin, businessId, access, actor, reason, now = new Date() }) {
+  const before = {};
+  return changeEntitlements({
+    db,
+    admin,
+    businessId,
+    actor,
+    reason,
+    action: "access-set",
+    summary: () => `Access: ${access === "trial" ? "Free trial" : monthsText(access)}`,
+    mutate: (state) => state,
+    subscriptionPatch: (business, plan) => {
+      const sub = business.subscription || {};
+      Object.assign(before, structuredClone(sub));
+      const b = planBilling(plan);
+      if (sub.billingType !== "term" || b.type !== "term") throw new ProvisioningError("invalid-input", "Access is chosen this way for wedding access only");
+      const today = seatDay(business.timezone || "Asia/Manila", now);
+      const paid = isDayString(sub.paidThrough) || (Number.isSafeInteger(sub.accessPaid) && sub.accessPaid > 0);
+      if (access === "trial") {
+        if (paid) throw new ProvisioningError("invalid-input", "This wedding has paid access: it can't go back to the free trial");
+        if (trialOpen(sub)) throw new ProvisioningError("invalid-input", "Already on the free trial");
+        // Back to the trial it had (when its dates haven't passed), else a fresh one.
+        const t = isDayString(sub.trialEndsAt) && sub.trialEndsAt >= today ? { trialStatus: "trial_active", trialStartedAt: sub.trialStartedAt, trialEndsAt: sub.trialEndsAt } : newTrial(today, b.trialDays || TRIAL_DAYS, "reset");
+        const fresh = newSubscriptionTerms(plan, today, { termMonths: b.defaultTermMonths });
+        return { "subscription.trialStatus": t.trialStatus, "subscription.trialStartedAt": t.trialStartedAt, "subscription.trialEndsAt": t.trialEndsAt, "subscription.conversion": null, "subscription.accessGrant": null, "subscription.termMonths": fresh.termMonths, "subscription.amount": fresh.amount, "subscription.startDate": today, "subscription.accessUntil": fresh.accessUntil, "subscription.dueDate": null, "subscription.extended": false, "subscription.status": "active" };
+      }
+      const t = b.terms.find((x) => x.months === access);
+      if (!t) throw new ProvisioningError("invalid-input", `${plan.name} is sold for ${b.terms.map((x) => monthsText(x.months)).join(" or ")}`);
+      if (paid) {
+        if (t.months <= (sub.termMonths ?? 0)) throw new ProvisioningError("invalid-input", `Already paid for ${monthsText(sub.termMonths)}: choose a longer term, or change the access end`);
+        const start = isDayString(sub.startDate) ? sub.startDate : today;
+        return { "subscription.termMonths": t.months, "subscription.amount": t.price, "subscription.priceOverride": null, "subscription.accessUntil": shiftDay(addMonths(start, t.months), -1), "subscription.status": "active", "subscription.accessGrant": { months: t.months, grantedAt: today, by: actor ?? "cli" } };
+      }
+      const accessUntil = shiftDay(addMonths(today, t.months), -1);
+      return {
+        "subscription.termMonths": t.months,
+        "subscription.amount": t.price,
+        "subscription.priceOverride": null,
+        "subscription.startDate": today,
+        "subscription.accessUntil": accessUntil,
+        "subscription.paidThrough": null,
+        "subscription.dueDate": null,
+        "subscription.extended": false,
+        "subscription.status": "active",
+        ...(sub.trialStatus ? { "subscription.trialStatus": "converted" } : {}),
+        "subscription.conversion": null,
+        "subscription.accessGrant": { months: t.months, grantedAt: today, by: actor ?? "cli" },
+      };
+    },
+  }).then((r) => ({ ...r, before }));
 }
 
 const adminRevisionOf = (business) => (Number.isSafeInteger(business.adminRevision) ? business.adminRevision : 0);
@@ -952,7 +1018,8 @@ export async function setSubscriptionStatus({ db, admin, businessId, status, act
     const previous = business.subscription?.status ?? null;
     if (previous === status) return { businessId, status, unchanged: true, adminRevision: adminRevisionOf(business) };
     const now = FieldValue.serverTimestamp();
-    tx.update(tenant.ref, { "subscription.status": status, adminRevision: adminRevisionOf(business) + 1, updatedAt: now });
+    // statusChangedAt: when a cancellation started (a custom link's 90-day hold counts from it).
+    tx.update(tenant.ref, { "subscription.status": status, "subscription.statusChangedAt": now, adminRevision: adminRevisionOf(business) + 1, updatedAt: now });
     writeAudit(tx, db, tenant, { type: "subscription.status-changed", summary: `Subscription ${previous} → ${status}`, businessId, actor: actor || "cli", reason: why, before: { status: previous }, after: { status }, at: now });
     return { businessId, status, previous, adminRevision: adminRevisionOf(business) + 1 };
   });

@@ -15,6 +15,7 @@
 import { randomBytes } from "node:crypto";
 import { validateDesignConfig, resolveDesign, assetIdsOf, invitationLevelOf, invitationStatus, invitationContent, invitationData, SAMPLE_GUEST, PLAN_MARKETING_NAMES, TEMPLATES, SECTION_IDS, DEFAULT_TEMPLATE_ID, isStandardTemplate, DesignError } from "../../../shared/invitation-design.js";
 import { trialOpen } from "../../../shared/trial.js";
+import { trialRsvpRef, trialRsvpUsage } from "./trial-rsvp.js";
 import { rsvpOpen, coupleDisplayName } from "../../../shared/wedding.js";
 import { sniffImageType } from "../../../shared/image-type.js";
 import { businessDate } from "../../../shared/metrics.js";
@@ -145,6 +146,7 @@ export async function invitationSummary({ tenant, business }) {
   const doc = await readDesign(tenant);
   const setup = await tenant.doc("weddingSetup", "current").get();
   const s = setup.exists ? setup.data() : {};
+  const trialRsvp = trialOpen(business?.subscription) ? trialRsvpUsage(await trialRsvpRef(tenant).get()) : null;
   const st = invitationStatus({ planId: planOf(business), design: doc });
   const draftAt = tsIso(doc?.draft?.updatedAt);
   const publishedAt = tsIso(doc?.published?.publishedAt);
@@ -166,8 +168,9 @@ export async function invitationSummary({ tenant, business }) {
     templateId: selectedTemplate({ custom, live: st.live, doc, setup: s }),
     templateLabel: TEMPLATES[selectedTemplate({ custom, live: st.live, doc, setup: s })]?.label ?? null,
     draftTemplateId: custom && doc?.draft?.config?.templateId ? doc.draft.config.templateId : null,
-    // A free trial: preview only (guest links open once Luna Bridal is paid).
+    // A free trial: real RSVP for up to 20 invited people (./trial-rsvp.js).
     trialPreviewOnly: trialOpen(business?.subscription),
+    trialRsvp: trialRsvp ? { used: trialRsvp.used, limit: trialRsvp.limit } : null,
   };
 }
 function selectedTemplate({ custom, live, doc, setup }) {

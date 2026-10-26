@@ -17,6 +17,9 @@ import { authenticate } from "./_lib/auth.js";
 import { resolveTenantContext, requestedBusinessId, listActiveMemberships } from "./_lib/tenant.js";
 import { readUsageSummary } from "./_lib/usage.js";
 import { normalizeEnvironment, serverDeployment } from "../../shared/environment.js";
+import { customLinkHost } from "../../shared/custom-links.js";
+
+const publicLinkOf = (link, domain) => (link?.label && domain ? { label: link.label, host: customLinkHost(link.label, domain), setup: link.setup } : null);
 import { resolveTenantConfig, TENANT_CONFIG_DOC_ID } from "../../shared/tenant-config.js";
 
 function toIso(value) {
@@ -47,6 +50,8 @@ export function createSessionHandler({ getAdmin: loadAdmin }) {
       environment: normalizeEnvironment(process.env.LUNA_ENV),
       // The browser checks it runs against the same deployment (shared/environment.js).
       deployment: serverDeployment(process.env),
+      // Public links use this workspace's own address when it's ready.
+      publicLink: publicLinkOf(context.business.customLink, process.env.VITE_CUSTOM_LINK_DOMAIN || null),
       user: { uid: user.uid, email: user.email, name: user.name },
       business: context.business,
       workspace: context.workspace,

@@ -92,13 +92,11 @@ describe("a new invitation: choose → personalize → Publish", () => {
     expect(stored().published).toBeUndefined();
     expect(ok(await invite({ action: "view", token })).invitation.design.config.templateId).toBe("monochrome");
   });
-  it("the free trial previews only: Publish is refused with the trial message", async () => {
+  it("the free trial can Publish (2026-10-26: real RSVP for up to 20 guests)", async () => {
     ok(await setup({ action: "save", setup: { templateId: "rustic", published: false } }, u.trial, T));
     ok(await setup({ action: "save", setup: { coupleNames: "Ana & Ben", weddingDate: "2027-03-01" } }, u.trial, T));
-    const r = await setup({ action: "save", setup: { published: true } }, u.trial, T);
-    expect(r.status).toBe(409);
-    expect(r.body.error).toBe("trial-preview");
-    expect(stored(T).published).toBe(false);
+    ok(await setup({ action: "save", setup: { published: true } }, u.trial, T));
+    expect(stored(T).published).toBe(true);
   });
 });
 

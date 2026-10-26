@@ -26,6 +26,7 @@ import { recordPayment } from "./payments.js";
 import { paymentInstructionsOf } from "./storefront.js";
 import { accessPolicy } from "../../../shared/subscription.js";
 import { validateEntitlementsSnapshot } from "../../../shared/entitlements.js";
+import { linkBusinessId } from "./custom-links.js";
 import { isModuleEnabled } from "../../../shared/modules.js";
 import { isValidOrderId, isValidIdempotencyKey } from "../../../shared/orders.js";
 import { PaymentError, PAYMENT_METHODS } from "../../../shared/payments.js";
@@ -72,13 +73,16 @@ export async function dropPayLink({ db, tenant, orderId }) {
 
 // ---------- Public side (/api/pay) ----------
 
-export async function resolvePayLink({ db, token }) {
+// host: the custom workspace address the page is on (its label), if any:
+// a link only opens on its own workspace's address (2026-10-26).
+export async function resolvePayLink({ db, token, host = null }) {
   if (!isPayToken(token)) throw NOT_FOUND();
   const hash = hashPayToken(token);
   const link = await linkRef(db, hash).get();
   if (!link.exists) throw NOT_FOUND();
   const { businessId, orderId } = link.data();
   if (typeof businessId !== "string" || !isValidOrderId(orderId)) throw NOT_FOUND();
+  if (host !== null && (await linkBusinessId(db, host)) !== businessId) throw NOT_FOUND();
   let tenant;
   try {
     tenant = tenantDb(db, businessId);
@@ -107,8 +111,8 @@ function publicPayment(p, { business, order }) {
   return out;
 }
 
-export async function viewPayLink({ db, token }) {
-  const { tenant, business, order, orderId } = await resolvePayLink({ db, token });
+export async function viewPayLink({ db, token, host = null }) {
+  const { tenant, business, order, orderId } = await resolvePayLink({ db, token, host });
   const [instructions, snap] = await Promise.all([paymentInstructionsOf(tenant, business), tenant.collection("payments").where("orderId", "==", orderId).limit(50).get()]);
   const at = (p) => (p.receivedAt && typeof p.receivedAt.toMillis === "function" ? p.receivedAt.toMillis() : new Date(p.receivedAt || 0).getTime());
   // Oldest first; the order's own history settles payments made the same moment.
@@ -172,8 +176,8 @@ const PUBLIC_MESSAGES = {
   "history-full": "This order can't take more payments online. Please message the business directly.",
 };
 
-export async function submitPayLink({ db, bucket, FieldValue, token, idempotencyKey, input, proof = null, clientKey = "unknown", now = new Date() }) {
-  const link = await resolvePayLink({ db, token });
+export async function submitPayLink({ db, bucket, FieldValue, token, idempotencyKey, input, proof = null, clientKey = "unknown", now = new Date(), host = null }) {
+  const link = await resolvePayLink({ db, token, host });
   const { tenant, business, orderId, order, hash } = link;
   if (!isValidIdempotencyKey(idempotencyKey)) throw new PaymentError("invalid-input", "Please refresh the page and try again.");
   // The same submit again (a double tap, a retry): the payment it made.
@@ -185,7 +189,7 @@ export async function submitPayLink({ db, bucket, FieldValue, token, idempotency
   // Never more than what's due (paid and awaiting verification both count);
   // ./payments.js checks again inside its transaction.
   const due = order.total - (order.verifiedPaid || 0) - (order.pendingPaid || 0);
-  if (due <= 0) throw new PaymentError("nothing-due", "Nothing is due on this order. Thank you!");
+  if (due <= 0) throw new PaymentError("nothing-due", "This order is already fully paid. Please verify this payment before continuing.");
   if (data.amount > due) throw new PaymentError("overpayment", `That's more than the amount due (₱${(due / 100).toLocaleString("en-PH", { minimumFractionDigits: 2 })}).`);
   await throttle({ db, hash, clientKey, now });
   try {
@@ -202,7 +206,8 @@ export async function submitPayLink({ db, bucket, FieldValue, token, idempotency
       canVerify: false,
       now,
       paymentId,
-      extra: { via: "payment_link", customerId: order.customerId || null },
+      // detected: what the screenshot reader found (shared/pay-links.js), apart from the confirmed amount / reference.
+      extra: { via: "payment_link", customerId: order.customerId || null, ...(data.detected ? { detected: data.detected } : {}) },
     });
     return { alreadyRecorded: Boolean(r.alreadyRecorded), state: r.state ?? "for_verification" };
   } catch (err) {

@@ -96,8 +96,8 @@ describe("row actions follow permissions", () => {
   it("owner: inline price / reorder / status, Adjust (moved) or Starting stock (unused), View details", async () => {
     await show(session("owner"));
     // inline reorder + price cells are buttons too, in column order
-    expect(rowButtons("p1")).toEqual(["20", "₱1,250.00", "Update stock", "View details"]);
-    expect(rowButtons("p2")).toEqual(["0", "₱50.00", "Starting stock", "View details"]);
+    expect(rowButtons("p1")).toEqual(["ON", "20", "₱1,250.00", "ON", "Update stock", "View details"]);
+    expect(rowButtons("p2")).toEqual(["ON", "0", "₱50.00", "ON", "Starting stock", "View details"]);
     expect(row("p1").querySelector('[data-act="adjust"]')).not.toBeNull();
     expect(row("p2").querySelector('[data-act="opening"]')).not.toBeNull();
     expect(row("p1").querySelector('[data-act="edit-price"]').textContent).toBe("₱1,250.00");
@@ -301,5 +301,45 @@ describe("pagination and filters", () => {
     form.dispatchEvent(new Event("submit", { cancelable: true, bubbles: true }));
     await flush();
     expect(deps.data.listProducts.mock.calls.at(-1)[1]).toMatchObject({ search: "rice", lowOnly: true, status: "active", cursor: null });
+  });
+});
+
+describe("Show on Menu (2026-10-26)", () => {
+  it("one tap per product: OFF hides from the store link, ON shows; nothing else about the product changes", async () => {
+    const deps = fakes();
+    deps.api = vi.fn(async (path, { body }) => (body.action === "menu" ? { success: true, hiddenProductIds: ["p2"] } : { success: true, productId: body.productId, show: body.show }));
+    await show(session("owner"), deps);
+    const sw = (id) => row(id).querySelector('[data-act="menu"]');
+    expect(sw("p1").textContent).toBe("ON");
+    expect(sw("p1").getAttribute("aria-checked")).toBe("true");
+    expect(sw("p2").textContent).toBe("OFF");
+    sw("p1").click();
+    await flush();
+    expect(deps.api).toHaveBeenCalledWith("storefront", { method: "POST", body: { action: "showOnMenu", productId: "p1", show: false } });
+    expect(sw("p1").textContent).toBe("OFF");
+    expect(deps.api.mock.calls.filter(([p]) => p === "products")).toHaveLength(0); // no product edit
+    sw("p2").click();
+    await flush();
+    expect(deps.api).toHaveBeenCalledWith("storefront", { method: "POST", body: { action: "showOnMenu", productId: "p2", show: true } });
+    expect(sw("p2").textContent).toBe("ON");
+  });
+
+  it("a refused change flips back with the reason; staff see ON / OFF without a switch", async () => {
+    const deps = fakes();
+    deps.api = vi.fn(async (path, { body }) => {
+      if (body.action === "menu") return { success: true, hiddenProductIds: [] };
+      throw new Error("Product not found");
+    });
+    await show(session("owner"), deps);
+    row("p1").querySelector('[data-act="menu"]').click();
+    await flush();
+    expect(row("p1").querySelector('[data-act="menu"]').textContent).toBe("ON");
+    expect(deps.toast).toHaveBeenCalledWith("Product not found", "danger");
+    container.innerHTML = "";
+    const staff = fakes();
+    staff.api = vi.fn(async () => ({ success: true, hiddenProductIds: ["p1"] }));
+    await show(session("staff"), staff);
+    expect(row("p1").querySelector('[data-act="menu"]')).toBeNull();
+    expect(row("p1").querySelector(".menu-state").textContent).toBe("OFF");
   });
 });

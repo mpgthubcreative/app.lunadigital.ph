@@ -17,7 +17,7 @@
 
 import { getAdmin } from "./_lib/firebase-admin.js";
 import { weddingActionHandler } from "./_lib/wedding-http.js";
-import { readSetup, saveSetup, saveHero, savePhoto, addGalleryPhoto, removeGalleryPhoto, previewInvitation, resetInvitation } from "./_lib/invitations.js";
+import { readSetup, saveSetup, saveHero, savePhoto, addGalleryPhoto, removeGalleryPhoto, previewInvitation, resetInvitation, checkWeddingSlug } from "./_lib/invitations.js";
 
 export const createWeddingSetupHandler = (deps) =>
   weddingActionHandler("wedding-setup", {
@@ -29,6 +29,8 @@ export const createWeddingSetupHandler = (deps) =>
       galleryRemove: { permission: "guests.manage", fields: ["action", "photoId"], run: (c, b) => removeGalleryPhoto({ ...c, photoId: b.photoId }) },
       preview: { permission: "guests.view", fields: ["action", "which", "templateId"], run: (c, b) => previewInvitation({ ...c, which: b.which, templateId: b.templateId }) },
       save: { permission: "guests.manage", fields: ["action", "setup"], run: (c, b) => saveSetup({ ...c, input: b.setup }) },
+      // The wedding link name: free for this wedding? (informational; save decides)
+      checkSlug: { permission: "guests.manage", fields: ["action", "slug"], run: (c, b) => checkWeddingSlug({ ...c, slug: b.slug }) },
       hero: { permission: "guests.manage", fields: ["action", "dataUrl"], run: (c, b) => saveHero({ ...c, dataUrl: b.dataUrl ?? null }) },
       photo: { permission: "guests.manage", fields: ["action", "slot", "dataUrl"], run: (c, b) => savePhoto({ ...c, slot: b.slot, dataUrl: b.dataUrl ?? null }) },
       resetInvitation: { permission: "guests.manage", fields: ["action"], run: (c) => resetInvitation(c) },

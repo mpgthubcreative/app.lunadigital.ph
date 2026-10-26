@@ -27,6 +27,7 @@ import { formDialog } from "../../components/form-dialog.js";
 import { toast } from "../../components/feedback.js";
 import { resetPlanFor, RESET_KEEPS, RESET_CONFIRM_WORD } from "@shared/reset.js";
 import { showExportPage } from "../../app/routes.js";
+import { mountCustomLink } from "../../components/custom-link.js";
 
 const STATUS_TONE = { active: "success", past_due: "warning", suspended: "danger", cancelled: "danger" };
 const STATUS_LABEL = { active: "Active", past_due: "Past due", suspended: "Suspended", cancelled: "Cancelled" };
@@ -178,10 +179,14 @@ export function mount(container, session) {
           `,
         })}
         ${dataCard(session)}
+        <div data-role="custom-link-host"></div>
         <div data-role="package" class="grid-span">${seesPackage ? packageCards(session) : ""}</div>
       </div>
     `
   );
+  // The workspace's own public address (paid; Bridal has it in Wedding Setup).
+  const linkHost = container.querySelector('[data-role="custom-link-host"]');
+  if (linkHost && (session.workspace?.templateId ?? session.entitlements?.workspaceTemplateId) !== "bridal-expense") mountCustomLink(linkHost, session, { api, toast });
   // Settings → Arrange navigation (this person's phone tabs).
   const arrangeHost = container.querySelector('[data-role="arrange-host"]');
   if (arrangeHost && canArrange(session)) mountArrangeNav(arrangeHost, session);

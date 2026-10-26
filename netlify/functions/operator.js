@@ -26,13 +26,13 @@
 import { respond, withErrorHandling, requireMethod, parseJsonBody, RequestError } from "./_lib/http.js";
 import { getAdmin } from "./_lib/firebase-admin.js";
 import { requireOperator, overview, listBusinesses, businessDetail, listAudit, listPlans, planSubscribers, creatableWorkspaces, usageOverview } from "./_lib/operator.js";
-import { provisionBusiness, assignPlan, setAccess, chooseConversion, restartTrial, updateOverrides, setLimitOverride, setSubscriptionStatus, addMember, setMemberStatus, updateBusinessGeneral, setTenantTerminology, ensureAuthUser, passwordSetupLink, ProvisioningError } from "./_lib/provisioning.js";
+import { provisionBusiness, assignPlan, setAccess, chooseConversion, restartTrial, setTermAccess, updateOverrides, setLimitOverride, setSubscriptionStatus, addMember, setMemberStatus, updateBusinessGeneral, setTenantTerminology, ensureAuthUser, passwordSetupLink, ProvisioningError } from "./_lib/provisioning.js";
 import { tenantDb } from "./_lib/tenant-db.js";
 import { OperatorError, validateCreateBusinessInput, validateSubscriptionStatus, validateReason, overrideChange } from "../../shared/operators.js";
 import { ROLE_TEMPLATES } from "../../shared/permissions.js";
 import { isValidBusinessId } from "../../shared/tenancy.js";
-import { BillingError } from "../../shared/billing.js";
-import { confirmPayment, rejectPayment, readPaymentProof, getBillingSettings, setBillingSettings, recordOperatorPayment, setBillingDate, sendBillingReminder, addBillAdjustment, removeBillAdjustment, repriceOpenBill, createUpgradeBill, businessBills, conversionBill, assertNoPendingPayment } from "./_lib/billing.js";
+import { BillingError, periodOfDay } from "../../shared/billing.js";
+import { confirmPayment, rejectPayment, readPaymentProof, getBillingSettings, setBillingSettings, recordOperatorPayment, setBillingDate, sendBillingReminder, addBillAdjustment, removeBillAdjustment, repriceOpenBill, createUpgradeBill, businessBills, conversionBill, assertNoPendingPayment, dropOpenAccessBills, ensureInvoice } from "./_lib/billing.js";
 import { removeMember } from "./_lib/provisioning.js";
 import { unlinkStaffLogin } from "./_lib/members.js";
 import { deleteBusiness, restoreBusiness } from "./_lib/lifecycle.js";
@@ -41,6 +41,7 @@ import { startSupport, supportRead, endSupport, openSupportSession, supportAreas
 import { invitationSummary } from "./_lib/invitation-design.js";
 import { listFeedback, setFeedbackStatus } from "./_lib/feedback.js";
 import { FeedbackError } from "../../shared/feedback.js";
+import { listCustomLinks, customLinkDomain } from "./_lib/custom-links.js";
 import { lunaOverview, platformOverview, listSubscriptionPayments, paymentDetail, listSubscriptions, listPlatformExpenses, createPlatformExpense, updatePlatformExpense, removePlatformExpense, copyRecurringExpenses, listCostRates, addCostRate, usageCost, economics } from "./_lib/platform.js";
 
 const STATUS = {
@@ -98,6 +99,8 @@ const ACTIONS = {
   session: { fields: [], run: async ({ op }) => ({ operator: { email: op.email, name: op.name, role: op.role }, workspaces: creatableWorkspaces() }) },
   // The short Overview: active access, recurring and annual income, Needs Attention, Income by Workspace.
   overview: { fields: [], run: async ({ db, admin }) => ({ overview: await lunaOverview({ db, FieldValue: admin.firestore.FieldValue }) }) },
+  // Custom workspace links (2026-10-26): every name, its workspace, setup and the site address count.
+  customLinks: { fields: [], run: async ({ db }) => ({ customLinks: await listCustomLinks({ db, domain: customLinkDomain() }) }) },
   counts: { fields: [], run: async ({ db }) => ({ overview: await overview({ db, planIds: (await listPlans({ db })).map((p) => p.id) }) }) },
   plans: {
     fields: [],
@@ -170,6 +173,34 @@ const ACTIONS = {
       const r = await setAccess({ db, admin, businessId: bid(b.businessId), changes: obj(b.changes), actor: actorOf(op), reason: validateReason(b.reason), expectedRevision: rev(b.expectedRevision) });
       await repriceOpenBill({ db, FieldValue: admin.firestore.FieldValue, businessId: bid(b.businessId), operator: actorOf(op) });
       return { warnings: r.warnings, limits: r.entitlements.limits, adminRevision: r.adminRevision };
+    },
+  },
+  // Access (2026-10-26, wedding access): Free trial / 3 months / 6 months.
+  // The entitlement changes in one write (provisioning.js setTermAccess); a
+  // term's price becomes a bill to pay. No payment is recorded: income
+  // counts only when a payment is recorded or confirmed.
+  setTermAccess: {
+    fields: ["businessId", "access", "reason"],
+    run: async ({ db, admin, op }, b) => {
+      const businessId = bid(b.businessId);
+      const access = b.access === "trial" ? "trial" : Number.isSafeInteger(b.access) ? b.access : null;
+      if (access === null) throw new RequestError("invalid-input", "Choose Free trial or a term.", 400);
+      const FieldValue = admin.firestore.FieldValue;
+      const operator = actorOf(op);
+      await assertNoPendingPayment({ db, businessId });
+      const r = await setTermAccess({ db, admin, businessId, access, actor: operator, reason: validateReason(b.reason) });
+      const wasPaid = Boolean(r.before.paidThrough) || (r.before.accessPaid ?? 0) > 0;
+      let bill = null;
+      if (wasPaid) bill = await createUpgradeBill({ db, FieldValue, businessId, before: r.before, operator });
+      else {
+        const sub = (await db.collection("businesses").doc(businessId).get()).data().subscription;
+        await dropOpenAccessBills({ db, FieldValue, businessId, keepPeriod: access === "trial" ? null : periodOfDay(sub.startDate), operator });
+        if (access !== "trial") {
+          await repriceOpenBill({ db, FieldValue, businessId, operator });
+          bill = await ensureInvoice({ db, FieldValue, businessId, period: periodOfDay(sub.startDate) });
+        }
+      }
+      return { access, adminRevision: r.adminRevision, amountDue: bill?.upgradeDue ?? bill?.amountDue ?? null };
     },
   },
   // + Add discount / deduction on a bill (default: the next one), and remove

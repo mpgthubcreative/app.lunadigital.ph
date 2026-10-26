@@ -22,14 +22,16 @@ export function createInviteHandler({ getAdmin: loadAdmin, now = () => new Date(
     requireMethod(event, "POST");
     const body = parseJsonBody(event, 4000);
     const keys = body && typeof body === "object" && !Array.isArray(body) ? Object.keys(body) : null;
-    if (!keys || keys.some((k) => !["action", "token", "rsvp"].includes(k)) || !["view", "respond"].includes(body.action) || (body.action === "view" && "rsvp" in body)) {
+    // host: the custom wedding address the page is on (2026-10-26).
+    if (!keys || keys.some((k) => !["action", "token", "rsvp", "host"].includes(k)) || !["view", "respond"].includes(body.action) || (body.action === "view" && "rsvp" in body) || ("host" in body && typeof body.host !== "string")) {
       throw new RequestError("invalid-request", "Invalid request.", 400);
     }
     if (body.action === "respond" && (!body.rsvp || typeof body.rsvp !== "object" || Object.keys(body.rsvp).some((k) => !["status", "confirmed", "meal", "note", "companions"].includes(k)))) throw new RequestError("invalid-request", "Invalid request.", 400);
     const { db, admin } = await loadAdmin();
     try {
-      if (body.action === "view") return respond(200, { success: true, invitation: await viewInvite({ db, token: body.token, now: now() }) });
-      return respond(200, { success: true, ...(await respondInvite({ db, FieldValue: admin.firestore.FieldValue, token: body.token, rsvp: body.rsvp, now: now() })) });
+      const host = typeof body.host === "string" ? body.host.toLowerCase() : null;
+      if (body.action === "view") return respond(200, { success: true, invitation: await viewInvite({ db, token: body.token, now: now(), host }) });
+      return respond(200, { success: true, ...(await respondInvite({ db, FieldValue: admin.firestore.FieldValue, token: body.token, rsvp: body.rsvp, now: now(), host })) });
     } catch (err) {
       if (err instanceof WeddingError) throw new RequestError(err.code, err.message, STATUS[err.code] || 400);
       throw err;
