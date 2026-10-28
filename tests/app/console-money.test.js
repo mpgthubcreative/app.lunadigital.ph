@@ -24,9 +24,9 @@ describe("Payments", () => {
   it("lists For Verification first; Review shows expected vs submitted, proof and history; Confirm needs the explicit step", async () => {
     const call = vi.fn(async (action) => {
       if (action === "payments") return { rows: [PAY], next: null };
-      if (action === "payment") return { payment: { ...PAY, method: "bank_transfer", hasProof: true, proofType: "image/png", submittedBy: "owner@abc.test" }, invoice: { period: "2026-10", amountDue: 199000, amountPaid: 0, status: "for_verification", dueDate: "2026-10-07" }, history: [{ ...PAY, id: "sp0", period: "2026-09", status: "paid" }] };
+      if (action === "payment") return { payment: { ...PAY, method: "bank_transfer", hasProof: true, proofType: "image/png", submittedBy: "owner@abc.test" }, product: { kind: "monthly", label: "Growth — monthly", months: 1, does: "credit" }, access: { status: "active", billingType: "monthly", planName: "Growth", trial: null, paidThrough: "2026-09-30" }, invoice: { period: "2026-10", amountDue: 199000, amountPaid: 0, status: "for_verification", dueDate: "2026-10-07" }, history: [{ ...PAY, id: "sp0", period: "2026-09", status: "paid" }] };
       if (action === "paymentProof") return { proof: { contentType: "image/png", dataBase64: "iVBORw0KGgo=" } };
-      if (action === "confirmPayment") return { paymentId: "sp1", status: "paid", invoiceStatus: "paid", paidThrough: "2026-10-31" };
+      if (action === "confirmPayment") return { paymentId: "sp1", status: "paid", invoiceStatus: "paid", paidThrough: "2026-10-31", changed: { does: "credit", label: "Growth — monthly", until: "2026-10-31" } };
       return {};
     });
     const ctx = ctxWith(call);
@@ -40,6 +40,10 @@ describe("Payments", () => {
     expect(review.querySelector('[data-role="submitted"]').textContent).toMatch(/₱1,990\.00/);
     expect(review.querySelector(".proof-img").getAttribute("src")).toMatch(/^data:image\/png;base64,/);
     expect(review.querySelector('[data-role="history"]').textContent).toMatch(/September 2026/);
+    expect(review.querySelector('[data-role="product"]').textContent).toMatch(/Growth — monthly/);
+    expect(review.querySelector('[data-role="method"]').textContent).toBe("Bank transfer");
+    expect(review.querySelector('[data-role="reference"]').textContent).toBe("BT-9");
+    expect(review.querySelector('[data-role="access-now"]').textContent).toBe("Growth · paid through Sep 30, 2026");
     // Cancel on the confirmation: nothing is confirmed.
     review.querySelector('[data-act="confirm"]').click();
     await flush();
@@ -49,11 +53,86 @@ describe("Payments", () => {
     expect(call).not.toHaveBeenCalledWith("confirmPayment", expect.anything());
     review.querySelector('[data-act="confirm"]').click();
     await flush();
-    const confirmBtn = [...lastBackdrop().querySelectorAll("button")].find((b) => /Confirm payment/.test(b.textContent));
+    const confirmBtn = [...lastBackdrop().querySelectorAll(".modal-footer button")].find((b) => /Verify payment/.test(b.textContent) && !b.closest('[data-role="payment-review"]'));
     confirmBtn.click();
     await flush();
     expect(call).toHaveBeenCalledWith("confirmPayment", { paymentId: "sp1" });
-    expect(ctx.toast).toHaveBeenCalledWith(expect.stringMatching(/Paid through/), "success");
+    // Verified: said in place, with what changed; Done leaves the queue refreshed.
+    const done = document.querySelector('[data-role="payment-review"]');
+    expect(done.querySelector('[data-role="review-result"]').textContent).toMatch(/Payment verified ✓.*Growth — monthly: paid through Oct 31, 2026/s);
+    expect(done.querySelector('[data-act="confirm"]')).toBeNull();
+    const loads = call.mock.calls.filter(([a]) => a === "payments").length;
+    done.querySelector('[data-act="close"]').click();
+    await flush();
+    expect(call.mock.calls.filter(([a]) => a === "payments").length).toBe(loads + 1);
+  });
+
+  it("what a payment is for comes from its bill: Luna Bridal — 3 Months → Verify + activate 3 Months; the ₱499 add-on → Verify + unlock add-on (never 3 months)", async () => {
+    const BRIDAL = { ...PAY, id: "spB", businessId: "yanie", businessName: "Yanie Bridal", workspaceTemplateId: "bridal-expense", planId: "bridal-basic", planName: "Luna Bridal", amountDue: 49900, amountSubmitted: 49900, method: "gcash", reference: "GC-77" };
+    let product = { kind: "access", label: "Luna Bridal — 3 Months", months: 3, does: "activate", coverFrom: "2026-10-28", coverTo: "2027-01-27" };
+    const call = vi.fn(async (action) => {
+      if (action === "payments") return { rows: [BRIDAL], next: null };
+      if (action === "payment") return { payment: { ...BRIDAL, hasProof: false }, product, access: { status: "active", billingType: "term", planName: "Luna Bridal", trial: { ended: false, endsAt: "2026-11-23" }, termMonths: 3 }, invoice: { period: "2026-10", amountDue: 49900, amountPaid: 0, status: "for_verification" }, history: [] };
+      if (action === "confirmPayment") return { paymentId: "spB", status: "paid", invoiceStatus: "paid", changed: { does: "activate", label: "Luna Bridal — 3 Months", until: "2027-01-27" } };
+      return {};
+    });
+    const ctx = ctxWith(call);
+    paymentsView(el, ctx);
+    await flush();
+    el.querySelector('[data-act="review"]').click();
+    await flush();
+    let review = lastBackdrop().querySelector('[data-role="payment-review"]');
+    expect(review.querySelector('[data-role="product"]').textContent).toMatch(/Luna Bridal — 3 Months.*Oct 28, 2026 – Jan 27, 2027/s);
+    expect(review.querySelector('[data-role="method"]').textContent).toBe("GCash");
+    expect(review.querySelector('[data-role="access-now"]').textContent).toBe("Free trial · ends Nov 23, 2026");
+    expect(review.querySelector('[data-act="confirm"]').textContent).toBe("Verify + activate 3 Months");
+    review.querySelector('[data-act="confirm"]').click();
+    await flush();
+    expect(lastBackdrop().textContent).toMatch(/records ₱499\.00 as collected and activates Luna Bridal — 3 Months/);
+    [...lastBackdrop().querySelectorAll("button")].find((b) => b.textContent === "Verify + activate 3 Months").click();
+    await flush();
+    expect(call.mock.calls.filter(([a]) => a === "confirmPayment")).toEqual([["confirmPayment", { paymentId: "spB" }]]);
+    review = document.querySelector('[data-role="payment-review"]');
+    expect(review.querySelector('[data-role="review-changed"]').textContent).toBe("Access active: Luna Bridal — 3 Months · until Jan 27, 2027");
+    expect(review.querySelector('[data-act="open-business"]').getAttribute("href")).toBe("/console/businesses?b=yanie");
+    review.querySelector('[data-act="close"]').click();
+    await flush();
+    // The same ₱499 for the Premium wedding link: named from its bill, unlocks the add-on.
+    product = { kind: "addon", label: "Premium wedding link add-on", months: 0, addOnId: "premium-link", does: "unlock" };
+    el.querySelector('[data-act="review"]').click();
+    await flush();
+    review = lastBackdrop().querySelector('[data-role="payment-review"]');
+    expect(review.querySelector('[data-role="product"]').textContent).toBe("Premium wedding link add-on");
+    expect(review.querySelector('[data-act="confirm"]').textContent).toBe("Verify + unlock add-on");
+    expect(review.textContent).not.toMatch(/3 Months/);
+  });
+
+  it("a payment for part of the bill only verifies the money: nothing is activated until the bill is paid in full", async () => {
+    const call = vi.fn(async (action) => {
+      if (action === "payments") return { rows: [{ ...PAY, amountSubmitted: 20000, amountDue: 49900 }], next: null };
+      if (action === "payment") return { payment: { ...PAY, amountSubmitted: 20000, amountDue: 49900, hasProof: false }, product: { kind: "access", label: "Luna Bridal — 3 Months", months: 3, does: "activate" }, access: null, invoice: { period: "2026-10", amountDue: 49900, amountPaid: 0, status: "for_verification" }, history: [] };
+      if (action === "confirmPayment") return { paymentId: "sp1", status: "paid", invoiceStatus: "due", changed: null };
+      return {};
+    });
+    paymentsView(el, ctxWith(call));
+    await flush();
+    el.querySelector('[data-act="review"]').click();
+    await flush();
+    const review = lastBackdrop().querySelector('[data-role="payment-review"]');
+    expect(review.querySelector('[data-act="confirm"]').textContent).toBe("Verify payment");
+    review.querySelector('[data-act="confirm"]').click();
+    await flush();
+    [...lastBackdrop().querySelectorAll("button")].find((b) => b.textContent === "Verify payment" && !b.closest('[data-role="payment-review"]')).click();
+    await flush();
+    expect(document.querySelector('[data-role="review-changed"]').textContent).toBe("Part of the bill is still due: nothing is activated until it's paid in full.");
+  });
+
+  it("?review=<id> (from Overview / Business detail) opens that payment directly", async () => {
+    const call = vi.fn(async (action) => (action === "payments" ? { rows: [], next: null } : action === "payment" ? { payment: { ...PAY, id: "sp9", hasProof: false }, product: null, access: null, invoice: null, history: [] } : {}));
+    paymentsView(el, ctxWith(call, { search: "?review=sp9" }));
+    await flush();
+    expect(call).toHaveBeenCalledWith("payment", { paymentId: "sp9" });
+    expect(document.querySelector('[data-role="payment-review"]').dataset.payment).toBe("sp9");
   });
 
   it("Reject asks for the reason the business will see; Payment settings saves one bank account for every workspace", async () => {

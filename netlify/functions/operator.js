@@ -42,7 +42,7 @@ import { invitationSummary } from "./_lib/invitation-design.js";
 import { listFeedback, setFeedbackStatus } from "./_lib/feedback.js";
 import { FeedbackError } from "../../shared/feedback.js";
 import { listCustomLinks, customLinkDomain } from "./_lib/custom-links.js";
-import { lunaOverview, platformOverview, listSubscriptionPayments, paymentDetail, listSubscriptions, listPlatformExpenses, createPlatformExpense, updatePlatformExpense, removePlatformExpense, copyRecurringExpenses, listCostRates, addCostRate, usageCost, economics } from "./_lib/platform.js";
+import { lunaOverview, platformOverview, listSubscriptionPayments, paymentDetail, latestPayment, listSubscriptions, listPlatformExpenses, createPlatformExpense, updatePlatformExpense, removePlatformExpense, copyRecurringExpenses, listCostRates, addCostRate, usageCost, economics } from "./_lib/platform.js";
 
 const STATUS = {
   "invalid-input": 400,
@@ -121,7 +121,7 @@ const ACTIONS = {
       const tenant = tenantDb(db, businessId);
       const raw = (await tenant.ref.get()).data();
       const invitation = raw?.workspaceTemplateId === "bridal-expense" ? await invitationSummary({ tenant, business: raw }) : null;
-      return { ...d, bills: await businessBills({ db, businessId }), invitation, support: await openSupportSession({ db, businessId, operator: { uid: op.uid } }) };
+      return { ...d, bills: await businessBills({ db, businessId }), latestPayment: await latestPayment({ db, businessId }), invitation, support: await openSupportSession({ db, businessId, operator: { uid: op.uid } }) };
     },
   },
   audit: { fields: ["after"], run: async ({ db }, b) => listAudit({ db, after: b.after ?? null }) },

@@ -29,6 +29,7 @@ export const WEDDING_STATUS = {
   "trial-preview": 409,
   "trial-rsvp-limit": 409,
   "slug-taken": 409,
+  "slug-paid": 403,
   "role-taken": 409,
   "member-linked": 409,
   "table-full": 409,

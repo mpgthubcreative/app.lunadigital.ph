@@ -838,25 +838,61 @@ describe("Bridal More: Wedding Setup and Download Excel", () => {
     expect(link.hasAttribute("data-link")).toBe(true);
   });
 
-  it("free trial: real links with \"RSVP trial: 12 / 20\"; a party that doesn't fit waits with Upgrade; at 20 the limit message and both plans", async () => {
-    const rows = [{ ...GUEST, category: "family", invitation: { status: "active" } }, { ...GUEST, id: "guestReyes0002", name: "Reyes Family", partySize: 9, category: "family" }];
-    const usage = { trialRsvp: { used: 12, limit: 20 } };
+  it("free trial: real links with \"RSVP trial: 12 / 50 guests\"; a party that doesn't fit waits with Upgrade; at 50 the limit message and both plans", async () => {
+    const rows = [{ ...GUEST, category: "family", invitation: { status: "active" } }, { ...GUEST, id: "guestReyes0002", name: "Reyes Family", partySize: 39, category: "family" }];
+    const usage = { trialRsvp: { used: 12, limit: 50 } };
     const data = fakeData({ listGuests: vi.fn(async () => ({ rows, hasMore: false })), getSeating: vi.fn(async () => null), getWeddingSetup: vi.fn(async () => ({ setup: FULL })), guestsApi: vi.fn(async () => usage) });
     mountGuests(container, { ...wedding(), subscription: { trial: { open: true } } }, { data, toast: () => {}, confirm: async () => true });
     await flush();
     expect(data.guestsApi).toHaveBeenCalledWith({ action: "trialRsvp" });
-    expect(container.querySelector('[data-role="trial-rsvp"]').textContent).toBe("RSVP trial: 12 / 20");
-    // The invited party keeps its link actions; the party of 9 doesn't fit (12 + 9 > 20).
+    expect(container.querySelector('[data-role="trial-rsvp"]').textContent).toBe("RSVP trial: 12 / 50 guests");
+    // The invited party keeps its link actions; the party of 39 doesn't fit (12 + 39 > 50).
     expect(container.querySelector('[data-guest="guestPrado001"] [data-act="invite-view"]')).not.toBeNull();
     expect(container.querySelector('[data-guest="guestReyes0002"] [data-act="invite-create"]')).toBeNull();
     expect(container.querySelector('[data-guest="guestReyes0002"] [data-role="trial-upgrade"]').getAttribute("href")).toBe("/subscription");
-    usage.trialRsvp = { used: 20, limit: 20 };
+    usage.trialRsvp = { used: 50, limit: 50 };
     container.innerHTML = "";
     mountGuests(container, { ...wedding(), subscription: { trial: { open: true } } }, { data, toast: () => {}, confirm: async () => true });
     await flush();
     const full = container.querySelector('[data-role="trial-rsvp-full"]').textContent;
-    expect(full).toContain("You've used the 20-guest RSVP limit included in your free trial. Upgrade to continue sending invitations.");
+    expect(full).toContain("You've used the 50-guest RSVP limit included in your free trial. Upgrade to continue sending invitations.");
     expect(full).toContain("₱499 — 3 Months · ₱799 — 6 Months");
+  });
+
+  it("RSVP open / closed is said plainly: open until the deadline; off → Turn on RSVP (one save); a passed deadline says closed", async () => {
+    const saved = [];
+    const data = fakeData({ listGuests: vi.fn(async () => ({ rows: [{ ...GUEST, category: "family" }], hasMore: false })), getSeating: vi.fn(async () => null), getWeddingSetup: vi.fn(async () => ({ setup: { ...FULL, closeAfterDeadline: true } })), saveWeddingSetup: vi.fn(async (x) => (saved.push(x), { setup: { ...FULL, ...x } })) });
+    let stop = mountGuests(container, wedding(), { data, toast: () => {}, confirm: async () => true });
+    await flush();
+    expect(container.querySelector('[data-role="rsvp-state"]').textContent).toBe("RSVP open until Nov 15, 2027");
+    // RSVP switched off (Shane's "RSVPs are closed"): said, with the fix.
+    stop();
+    container.innerHTML = "";
+    data.getWeddingSetup = vi.fn(async () => ({ setup: { ...FULL, rsvpEnabled: false } }));
+    stop = mountGuests(container, wedding(), { data, toast: () => {}, confirm: async () => true });
+    await flush();
+    const off = container.querySelector('[data-role="rsvp-state"]');
+    expect(off.dataset.state).toBe("off");
+    expect(off.textContent).toContain("RSVP is off: guests see \"RSVPs are closed\" and can't reply.");
+    off.querySelector('[data-act="rsvp-on"]').click();
+    await flush();
+    expect(saved).toEqual([{ rsvpEnabled: true }]);
+    expect(container.querySelector('[data-role="rsvp-state"]').dataset.state).toBe("open");
+    // A deadline in the past (and closing after it): closed.
+    stop();
+    container.innerHTML = "";
+    data.getWeddingSetup = vi.fn(async () => ({ setup: { ...FULL, rsvpDeadline: "2020-01-15", closeAfterDeadline: true } }));
+    mountGuests(container, wedding(), { data, toast: () => {}, confirm: async () => true });
+    await flush();
+    expect(container.querySelector('[data-role="rsvp-state"]').textContent).toContain("RSVP closed · the deadline was Jan 15, 2020");
+  });
+
+  it("a trial that ended: the Owner sees that guests' links are paused and that upgrading restores them", async () => {
+    const data = fakeData({ listGuests: vi.fn(async () => ({ rows: [{ ...GUEST, category: "family", invitation: { status: "active" } }], hasMore: false })), getSeating: vi.fn(async () => null), getWeddingSetup: vi.fn(async () => ({ setup: FULL })), guestsApi: vi.fn(async () => ({ trialRsvp: { used: 5, limit: 50 } })) });
+    mountGuests(container, { ...wedding(), subscription: { trial: { open: true, ended: true } } }, { data, toast: () => {}, confirm: async () => true });
+    await flush();
+    expect(container.querySelector('[data-role="trial-ended-links"]').textContent).toContain("guests' invitation links are paused. Upgrade to restore them. Links and answers are kept.");
+    expect(container.querySelector('[data-role="trial-rsvp"]')).toBeNull();
   });
 
   it("Guest ⋯ with Wedding Setup done and no link yet: Create invitation link creates, copies and refreshes", async () => {
@@ -1024,6 +1060,9 @@ describe("the guest's invitation page (/invite/{token}, no login)", () => {
     expect(root.textContent).toContain("RSVP before November 15, 2027");
     expect(root.querySelector('[data-role="guest-name"]').textContent).toBe("Maria Santos");
     expect(root.querySelector('[data-role="seats"]').textContent).toBe("2 seats reserved");
+    // 2026-10-28: the RSVP question and answers in the couple's words.
+    expect(root.querySelector('[data-role="rsvp"]').textContent).toMatch(/Will you be attending\?/);
+    expect([root.querySelector('[data-act="accept"]').textContent, root.querySelector('[data-act="decline"]').textContent]).toEqual(["Yes, I'll be there", "Sorry, I can't make it"]);
     root.querySelector('[data-act="accept"]').click();
     expect([...root.querySelectorAll("[data-seats]")].map((b) => b.textContent)).toEqual(["1", "2"]);
     // Reserved seats aren't assumed: nothing picked, Confirm RSVP waits.

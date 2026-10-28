@@ -319,3 +319,29 @@ describe("publishing, older designs, Custom, guests", () => {
     expect(container.querySelector('[data-section="story"], [data-section="dressCode"]')).toBeNull();
   });
 });
+
+describe("the wedding link during the free trial (2026-10-28)", () => {
+  it("a trial shows its Luna-made link (Copy) but no Change link: choosing one comes with Luna Bridal 3 / 6 months; paid can change it", async () => {
+    const setup = { templateId: "gold", published: true, coupleNames: "Carlo & Yanie", weddingDate: "2027-02-14", weddingSlug: "carlo-and-yanie-wedding-4f2a" };
+    let f = fakeApi(setup);
+    mount(container, { ...SESSION, subscription: { trial: { open: true } } }, { api: f.api, toast: () => {}, shrink: async () => "data:image/jpeg;base64,BBBB" });
+    await flush(16);
+    container.querySelector('[data-mode="guide"]').click();
+    await flush();
+    const link = container.querySelector('[data-role="wedding-link"]');
+    expect(link.querySelector('[data-role="wedding-url"]').textContent).toMatch(/\/w\/carlo-and-yanie-wedding-4f2a$/);
+    expect(link.querySelector('[data-act="copy-wedding-link"]')).not.toBeNull();
+    expect(link.querySelector('[data-ie-edit="link"]')).toBeNull();
+    expect(link.querySelector('[data-role="slug-paid"]').textContent).toMatch(/Choose your own .* with Luna Bridal: ₱499 — 3 Months · ₱799 — 6 Months/);
+    expect(link.querySelector('[data-role="slug-paid"] a').getAttribute("href")).toBe("/subscription");
+    // Paid: Change link is there.
+    container.innerHTML = "";
+    f = fakeApi(setup);
+    mount(container, SESSION, { api: f.api, toast: () => {}, shrink: async () => "data:image/jpeg;base64,BBBB" });
+    await flush(16);
+    container.querySelector('[data-mode="guide"]').click();
+    await flush();
+    expect(container.querySelector('[data-role="wedding-link"] [data-ie-edit="link"]')).not.toBeNull();
+    expect(container.querySelector('[data-role="slug-paid"]')).toBeNull();
+  });
+});

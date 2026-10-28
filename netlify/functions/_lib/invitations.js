@@ -30,7 +30,7 @@ import { roleLabel, rolesPlan, membersOf } from "../../../shared/wedding-roles.j
 import { accessPolicy } from "../../../shared/subscription.js";
 import { attendingMarksFor, nameCompanions } from "./wedding-roles.js";
 import { liveDesignFor, ownerInvitationStatus, previewDesign } from "./invitation-design.js";
-import { trialLocked } from "../../../shared/trial.js";
+import { trialLocked, trialOpen } from "../../../shared/trial.js";
 import { readTrialRsvp, claimTrialRsvp } from "./trial-rsvp.js";
 import { invitationData, PHOTO_SLOTS, isOfferedTemplate } from "../../../shared/invitation-design.js";
 import { reconcileSeats } from "../../../shared/wedding-seating.js";
@@ -70,9 +70,12 @@ const heroRef = (tenant) => tenant.doc("weddingSetup", "hero");
 const totalsRef = (tenant) => tenant.doc("guestTotals", TOTALS_DOC_ID);
 const BAD_LINK = () => new WeddingError("invalid-link", "This invitation link isn't valid. Please ask the couple for a new one.");
 // A free trial (2026-10-26): the couple publishes and sends real RSVP links
-// to up to 20 invited people (./trial-rsvp.js); the same links keep working
+// to up to 50 invited people (./trial-rsvp.js); the same links keep working
 // after Luna Bridal is paid. When a trial ENDS unpaid, links stop opening
-// until it's paid (the workspace is locked; nothing is deleted).
+// until it's paid (the workspace is locked; nothing is deleted): the guest
+// sees a neutral "unavailable" (never trial / billing words, 2026-10-28)
+// and the same link opens again once access is restored.
+const UNAVAILABLE = () => new WeddingError("unavailable", "This invitation is currently unavailable. Please contact the couple.");
 const NOT_PUBLISHED = () => new WeddingError("not-published", "This invitation isn't published yet. Please check back soon.");
 
 // ---- Wedding Setup (Owner side, guests.manage) ----
@@ -132,6 +135,16 @@ async function freeSlugFor(tx, db, businessId, base) {
   }
   return `${base.slice(0, WEDDING_SLUG_MAX - 7)}-${randomBytes(3).toString("hex")}`;
 }
+// Choosing the wedding link is part of paid Luna Bridal (2026-10-28): a
+// free trial gets a Luna-made link (its names + a short random ending,
+// e.g. carlo-and-yanie-wedding-4f2a) so a trial never holds a clean name;
+// after paying (3 or 6 months) the couple can choose any free name.
+export const SLUG_PAID_MESSAGE = "Choosing your own wedding link comes with Luna Bridal (₱499 — 3 Months or ₱799 — 6 Months). Your free trial uses a link Luna makes.";
+const trialSlug = (base) => `${base.slice(0, WEDDING_SLUG_MAX - 5).replace(/-+$/, "")}-${randomBytes(2).toString("hex")}`;
+async function onTrial(tx, tenant) {
+  const b = await tx.get(tenant.ref);
+  return trialOpen(b.exists ? b.data().subscription : null);
+}
 // Wedding Setup's "Check": is this wedding link name free for this wedding?
 export async function checkWeddingSlug({ db, tenant, slug }) {
   if (!isWeddingSlug(slug)) throw new WeddingError("invalid-input", "Use 3 to 60 lowercase letters, numbers or hyphens.");
@@ -139,10 +152,23 @@ export async function checkWeddingSlug({ db, tenant, slug }) {
   return { slug, available: !snap.exists || snap.data().businessId === tenant.businessId };
 }
 // In the caller's transaction (reads first): the slug to store, and the commit.
-async function prepareSlug(tx, { db, tenant, current, wanted, coupleNames, now }) {
+async function prepareSlug(tx, { db, tenant, current, wanted, coupleNames, now, trial = false }) {
   const businessId = tenant.businessId;
   let slug = wanted;
-  if (slug) {
+  if (trial) {
+    // A trial keeps the link it has; only Luna makes one (never a chosen name).
+    if (slug && slug !== current) throw new WeddingError("slug-paid", SLUG_PAID_MESSAGE);
+    if (!slug && isWeddingSlug(current)) slug = current;
+  }
+  if (trial && !slug) {
+    // No names yet: no link yet (as for a paid wedding).
+    const base = suggestWeddingSlug(coupleNames);
+    for (let i = 0; i < 5 && !slug && base.length >= WEDDING_SLUG_MIN; i++) {
+      const candidate = trialSlug(base);
+      if (!(await tx.get(slugRef(db, candidate))).exists) slug = candidate;
+    }
+    if (!slug && base.length >= WEDDING_SLUG_MIN) throw new WeddingError("slug-taken", "Couldn't make a wedding link. Please try again.");
+  } else if (slug) {
     const snap = await tx.get(slugRef(db, slug));
     if (snap.exists && snap.data().businessId !== businessId) throw new WeddingError("slug-taken", `The wedding link "${slug}" is already used by another wedding. Try another, e.g. ${slug}-${new Date(now).getFullYear()}.`);
   } else {
@@ -178,7 +204,8 @@ export async function saveSetup({ db, tenant, FieldValue, input, actor, now = ne
     const coupleNames = coupleDisplayName({ ...before, ...data });
     // Not sent = keep the current one (or make one); blank = make one from the names.
     const wanted = Object.hasOwn(data, "weddingSlug") ? data.weddingSlug : before.weddingSlug ?? null;
-    const plan = await prepareSlug(tx, { db, tenant, current: before.weddingSlug ?? null, wanted, coupleNames, now });
+    const trial = await onTrial(tx, tenant);
+    const plan = await prepareSlug(tx, { db, tenant, current: before.weddingSlug ?? null, wanted, coupleNames, now, trial });
     tx.set(setupRef(tenant), { schemaVersion: WEDDING_SCHEMA_VERSION, ...data, weddingSlug: plan.slug, updatedBy: who(actor), updatedAt: FieldValue.serverTimestamp() }, { merge: true });
     plan.commit();
   }, TX_OPTIONS);
@@ -195,7 +222,7 @@ async function ensureSlug({ db, tenant, now = new Date() }) {
       const own = await tx.get(slugRef(db, s.weddingSlug));
       if (own.exists && own.data().businessId === tenant.businessId) return s.weddingSlug;
     }
-    const plan = await prepareSlug(tx, { db, tenant, current: null, wanted: null, coupleNames: coupleDisplayName(s), now });
+    const plan = await prepareSlug(tx, { db, tenant, current: null, wanted: null, coupleNames: coupleDisplayName(s), now, trial: await onTrial(tx, tenant) });
     if (plan.slug) tx.set(setupRef(tenant), { weddingSlug: plan.slug }, { merge: true });
     plan.commit();
     return plan.slug;
@@ -289,7 +316,7 @@ async function resolve(db, token, host = null) {
   if (!b.exists || !g.exists || b.data().entitlements?.workspaceTemplateId !== "bridal-expense") throw BAD_LINK();
   // A deleted business (Super Admin, recoverable) or an unknown status: the link stops working at once.
   if (!accessPolicy(b.data().subscription?.status).canRead) throw BAD_LINK();
-  if (trialLocked(b.data().subscription, businessDate(b.data().timezone || "Asia/Manila", new Date()))) throw NOT_PUBLISHED();
+  if (trialLocked(b.data().subscription, businessDate(b.data().timezone || "Asia/Manila", new Date()))) throw UNAVAILABLE();
   return { businessId, guestId, biz, business: b.data(), guest: g.data(), linkRef: link.ref };
 }
 // What a guest sees of the Wedding Setup (shared/invitation-design.js).

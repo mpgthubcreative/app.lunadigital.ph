@@ -3,7 +3,7 @@
 // Every guest that got RSVP access during the trial, with the people it
 // counts for (its party size when the link was made, or later raised).
 // Read and written inside the caller's transaction, so two links made at
-// the same moment can't take the 21st place (the second one retries and
+// the same moment can't take the 51st place (the second one retries and
 // sees the first). Only grows during the trial: removing a guest or
 // shrinking a party frees nothing (those invitations were sent). Once the
 // trial converts it's never consulted again; the links stay as they are.
@@ -39,7 +39,7 @@ export function claimTrialRsvp(tx, tenant, state, guestId, seats) {
   return { used, limit: state.limit };
 }
 
-// The Guests page: "RSVP trial: 12 / 20" (null once paid).
+// The Guests page: "RSVP trial: 12 / 50" (null once paid).
 export async function readTrialRsvpUsage({ tenant }) {
   const b = await tenant.ref.get();
   if (!trialOpen(b.exists ? b.data().subscription : null)) return { trialRsvp: null };

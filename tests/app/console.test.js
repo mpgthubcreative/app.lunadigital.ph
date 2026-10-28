@@ -257,6 +257,62 @@ describe("console views", () => {
     expect(el.textContent).not.toMatch(/RSVP|guest list/i);
   });
 
+  it("Bridal ⋯ → Access: exactly Free Trial / 3 Months — ₱499 / 6 Months — ₱799 (no 12 months); saving sends setTermAccess", async () => {
+    const call = vi.fn(async () => ({ access: 3, amountDue: 49900 }));
+    const ctx = ctxWith(call);
+    const r = { id: "yanie", name: "Yanie Bridal", workspaceTemplateId: "bridal-expense", planId: "bridal-basic", status: "active", state: "trial", billingType: "term", trial: { open: true, endsAt: "2026-11-23" } };
+    const p = runSubscriptionAction(ctx, "s-access", r);
+    const f = lastForm();
+    expect([...f.elements.access.options].map((o) => o.textContent)).toEqual(["Free Trial", "3 Months — ₱499", "6 Months — ₱799"]);
+    expect(f.textContent).toMatch(/Access is not payment/);
+    f.elements.access.value = "3";
+    f.elements.reason.value = "Paid by GCash";
+    submit(f);
+    await p;
+    expect(call).toHaveBeenCalledWith("setTermAccess", { businessId: "yanie", access: 3, reason: "Paid by GCash" });
+  });
+
+  it("Overview → Payments to review: only payments waiting for verification, named by their bill; Review payment opens that payment", async () => {
+    const toReview = [{ id: "spY", businessId: "yanie", businessName: "Yanie Bridal", workspaceTemplateId: "bridal-expense", planName: "Luna Bridal", amountSubmitted: 49900, amountDue: 49900, method: "gcash", paymentDate: "2026-10-28", submittedAt: "2026-10-28T02:00:00.000Z", status: "for_verification", product: { kind: "access", label: "Luna Bridal — 3 Months", months: 3, does: "activate" } }];
+    const overview = { period: "2026-10", activeAccess: 1, trials: { active: 0, endingSoon: 0, ended: 0 }, collectedThisMonth: 29900, awaiting: { count: 1, amount: 49900 }, toReview, needsAttention: [], incomeByWorkspace: [] };
+    const call = vi.fn(async (action) => (action === "overview" ? { overview } : action === "payment" ? { payment: { ...toReview[0], hasProof: false, reference: "GC-77" }, product: toReview[0].product, access: null, invoice: null, history: [] } : { customLinks: { rows: [] } }));
+    overviewView(el, ctxWith(call));
+    await flush();
+    const row = el.querySelector('[data-role="to-review"] [data-payment="spY"]');
+    expect(row.textContent.replace(/\s+/g, " ").trim()).toMatch(/^Yanie Bridal ?Luna Bridal — 3 Months · GCash · Submitted Oct 28, 2026 ?₱499 ?Review payment$/);
+    // A paid payment isn't "to collect": the KPI stays on paid records only.
+    expect(el.querySelector('[data-role="kpis"]').textContent).toMatch(/Collected this month\s*₱299/);
+    row.querySelector('[data-act="review-payment"]').click();
+    await flush();
+    expect(call).toHaveBeenCalledWith("payment", { paymentId: "spY" });
+    expect(document.querySelector('[data-role="payment-review"]').dataset.payment).toBe("spY");
+    // Nothing waiting: no queue at all (no feed of finished items).
+    el.innerHTML = "";
+    overview.toReview = [];
+    overview.awaiting = { count: 0, amount: 0 };
+    overviewView(el, ctxWith(call));
+    await flush();
+    expect(el.querySelector('[data-role="to-review"]')).toBeNull();
+  });
+
+  it("Business detail shows the latest payment beside Subscription: received → Review; verified → whether the access is active", async () => {
+    const pending = { id: "spY", status: "for_verification", amountSubmitted: 49900, paymentDate: "2026-10-28", planName: "Luna Bridal", product: { kind: "access", label: "Luna Bridal — 3 Months", months: 3 } };
+    const wed = { ...DETAIL, business: { ...DETAIL.business, id: "yanie", name: "Yanie Bridal", workspaceTemplateId: "bridal-expense" }, billing: { id: "yanie", status: "active", state: "trial", billingType: "term", termMonths: 3, amount: 49900, trial: { open: true, endsAt: "2026-11-23" } }, latestPayment: pending, invitation: null, support: null };
+    const call = vi.fn(async (action) => (action === "business" ? wed : { payment: { ...pending, businessId: "yanie", businessName: "Yanie Bridal", hasProof: false }, product: pending.product, access: null, invoice: null, history: [] }));
+    businessDetailView(el, ctxWith(call), "yanie");
+    await flush();
+    const line = el.querySelector('[data-role="latest-payment"]');
+    expect(line.textContent.replace(/\s+/g, " ")).toMatch(/Payment received ?₱499 · Oct 28, 2026 · Luna Bridal — 3 Months · Pending verification ?Review/);
+    line.querySelector('[data-act="review-payment"]').click();
+    await flush();
+    expect(call).toHaveBeenCalledWith("payment", { paymentId: "spY" });
+    document.querySelectorAll(".modal-backdrop").forEach((b) => b.remove());
+    el.innerHTML = "";
+    businessDetailView(el, ctxWith(vi.fn(async () => ({ ...wed, billing: { ...wed.billing, state: "active", trial: null, paidThrough: "2027-01-27", accessUntil: "2027-01-27" }, latestPayment: { ...pending, status: "paid" } }))), "yanie");
+    await flush();
+    expect(el.querySelector('[data-role="latest-payment"]').textContent.replace(/\s+/g, " ")).toMatch(/Payment verified ✓ ?₱499 · Oct 28, 2026 · Luna Bridal — 3 Months ?Access active/);
+  });
+
   it("products: one per workspace (Custom is legacy), legacy hidden; what it's for, terms, included + add-ons, active count; Edit saves term and add-on prices", async () => {
     const call = vi.fn(async (action) => (action === "plans" ? { plans, subscribers: { "distributor-basic": 8, "baby-plus": 3 } } : { plan: {} }));
     plansView(el, ctxWith(call));

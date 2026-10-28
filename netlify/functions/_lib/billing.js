@@ -5,7 +5,7 @@
 // idempotent guard and an audit record; nothing is ever deleted.
 
 import { createHash, randomBytes } from "node:crypto";
-import { BillingError, BILLING_SCHEMA_VERSION, BILLING_TIMEZONE, BILLABLE_STATUSES, invoiceId, periodOfDay, periodEnd, dayAfter, dueDateOf, nextPeriod, validatePaymentSubmission, checkProof, validateRejectReason, validateBillingSettings, PAYMENT_STATUSES } from "../../../shared/billing.js";
+import { BillingError, BILLING_SCHEMA_VERSION, BILLING_TIMEZONE, BILLABLE_STATUSES, invoiceId, periodOfDay, periodEnd, dayAfter, dueDateOf, nextPeriod, validatePaymentSubmission, checkProof, validateRejectReason, validateBillingSettings, PAYMENT_STATUSES, billProduct } from "../../../shared/billing.js";
 import { businessDate } from "../../../shared/metrics.js";
 import { subscriptionTerms, coverEnd, billFigures, billLines, owesSetupFee, awaitingConversion, sumLines, amountAfter, isDayString, BILLING_TYPES, ADJUSTMENT_TYPES, ADJUSTMENT_TYPE_IDS } from "../../../shared/plan-billing.js";
 import { trialState, trialOpen } from "../../../shared/trial.js";
@@ -424,7 +424,11 @@ export async function confirmPayment({ db, FieldValue, paymentId, operator, now 
     tx.set(audit(db), { type: "subscription.payment-confirmed", businessId: pay.businessId, paymentId, period: pay.period, amount, actor: operator, before, after, at: stamp });
     tx.set(tenant.collection("auditLog").doc(), { type: "subscription.payment-confirmed", paymentId, period: pay.period, amount, actor: { name: "Luna", operator }, before, after, at: stamp });
     notify.commit({ FieldValue });
-    return { paymentId, status: "paid", invoiceStatus: fullyPaid ? "paid" : "due", paidThrough: after.paidThrough, nextRenewal: after.nextRenewal, verifiedMonth };
+    // What the confirmation changed, from the bill (never the amount): the
+    // access it covers, the add-on it unlocks, or nothing yet (part paid).
+    const product = billProduct(i);
+    const changed = !fullyPaid ? null : addOnBill ? { does: "unlock", label: product.label } : product.does === "activate" ? { does: "activate", label: product.label, until: after.paidThrough } : { does: product.does, label: product.label, until: after.paidThrough };
+    return { paymentId, status: "paid", invoiceStatus: fullyPaid ? "paid" : "due", paidThrough: after.paidThrough, nextRenewal: after.nextRenewal, verifiedMonth, changed, product };
   }, TX);
 }
 

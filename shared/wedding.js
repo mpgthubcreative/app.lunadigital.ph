@@ -61,8 +61,8 @@ export const MAX_PARTY_SIZE = 50;
 // once: copying, resending or replacing the same guest's link counts
 // nothing more. The guest list itself may be any size; the rest wait,
 // ready, until Luna Bridal is paid (then there's no limit; links stay).
-export const TRIAL_RSVP_GUESTS = 20;
-export const TRIAL_RSVP_LIMIT_MESSAGE = "You've used the 20-guest RSVP limit included in your free trial. Upgrade to continue sending invitations.";
+export const TRIAL_RSVP_GUESTS = 50;
+export const TRIAL_RSVP_LIMIT_MESSAGE = "You've used the 50-guest RSVP limit included in your free trial. Upgrade to continue sending invitations.";
 export const trialRsvpSeats = (guest) => (Number.isSafeInteger(guest?.partySize) && guest.partySize > 0 ? guest.partySize : 1);
 
 function text(value, { field, max, required = false }) {
@@ -633,10 +633,22 @@ export function coupleNameParts(setup) {
 export const isInvitationPublished = (setup) => setup?.published !== false;
 // Guests can answer while RSVP is on and (if set to close) the deadline
 // hasn't passed. The Owner can always change an RSVP in Luna.
+// today: the wedding's own date (businessDate(timezone)), so the deadline
+// day itself is still open until midnight in the couple's timezone.
 export function rsvpOpen(setup, today) {
-  if (!setup || setup.rsvpEnabled !== true) return false;
-  if (setup.closeAfterDeadline !== false && isDayId(setup.rsvpDeadline) && isDayId(today) && today > setup.rsvpDeadline) return false;
-  return true;
+  return rsvpState(setup, today).open;
+}
+// Why RSVP is open or closed, for the Owner (2026-10-28):
+//   { open, reason: null | "off" | "deadline", deadline }
+// "off" = Wedding Setup → RSVP "Guests can RSVP from their invitation" is
+// unticked; "deadline" = the deadline passed and RSVPs close after it. A
+// free trial or its 50-guest limit never closes RSVP for a guest who has a
+// link (the limit only stops NEW links).
+export function rsvpState(setup, today) {
+  const deadline = isDayId(setup?.rsvpDeadline) ? setup.rsvpDeadline : null;
+  if (!setup || setup.rsvpEnabled !== true) return { open: false, reason: "off", deadline };
+  if (setup.closeAfterDeadline !== false && deadline && isDayId(today) && today > deadline) return { open: false, reason: "deadline", deadline };
+  return { open: true, reason: null, deadline };
 }
 
 // ---------- Dashboard figures ----------

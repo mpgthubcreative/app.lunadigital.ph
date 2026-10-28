@@ -5,7 +5,7 @@
 // documents (platformMetrics) and aggregation queries, never a scan of every
 // record on a dashboard load.
 
-import { BillingError, BILLABLE_STATUSES, PLATFORM_EXPENSE_CATEGORIES, validatePlatformExpense, validateCostRate, estimateUsageCost, grossProfit, grossMarginPct, lastPeriods, previousPeriod, isPeriod, invoiceId, PAYMENT_STATUS_IDS } from "../../../shared/billing.js";
+import { BillingError, BILLABLE_STATUSES, PLATFORM_EXPENSE_CATEGORIES, validatePlatformExpense, validateCostRate, estimateUsageCost, grossProfit, grossMarginPct, lastPeriods, previousPeriod, isPeriod, invoiceId, PAYMENT_STATUS_IDS, billProduct } from "../../../shared/billing.js";
 import { WORKSPACE_TEMPLATE_IDS } from "../../../shared/workspaces.js";
 import { tenantDb } from "./tenant-db.js";
 import { readStorageCurrent } from "./metering.js";
@@ -356,7 +356,7 @@ export async function lunaOverview({ db, FieldValue, now = new Date() }) {
   const period = currentPeriod(now);
   const today = businessDate(BILLING_TIMEZONE, now);
   await billingRun({ db, FieldValue, period });
-  const [snap, money, plans] = await Promise.all([db.collection("businesses").limit(OVERVIEW_LIMIT).get(), moneyFromRecords({ db, months: [period] }), db.collection("plans").get()]);
+  const [snap, money, plans, toReview] = await Promise.all([db.collection("businesses").limit(OVERVIEW_LIMIT).get(), moneyFromRecords({ db, months: [period] }), db.collection("plans").get(), paymentsToReview({ db })]);
   const planNames = Object.fromEntries(plans.docs.map((d) => [d.id, d.data().name]));
   const rows = snap.docs.map((d) => billingRow(d.id, d.data(), planNames, today)).filter((r) => r.status !== "deleted");
   const m = money.byMonth[period];
@@ -378,6 +378,8 @@ export async function lunaOverview({ db, FieldValue, now = new Date() }) {
     // The Premium wedding link (+₱499 once) and other flat add-ons, when paid.
     addOnIncomeThisMonth: int(byType.addon),
     awaiting: money.awaiting,
+    // Payments waiting for Luna's check (newest first): only what needs action.
+    toReview,
     needsAttention: rows
       .filter((r) => r.attention && !r.attention.quiet && r.status !== "cancelled")
       .sort((a, b) => ATTENTION_ORDER[a.attention.kind] - ATTENTION_ORDER[b.attention.kind] || (a.attention.kind === "overdue" ? b.attention.days - a.attention.days : a.attention.date < b.attention.date ? -1 : 1))
@@ -427,12 +429,42 @@ export async function listSubscriptionPayments({ db, filters = {}, after = null 
   return { rows: page.map(paymentRow), next: !memo.length && docs.length > PAGE ? page.at(-1).id : null };
 }
 
-export async function paymentDetail({ db, paymentId }) {
+// Each payment with what its bill is for (billProduct: never the amount).
+async function withProducts(db, rows) {
+  const ids = [...new Set(rows.map((r) => r.invoiceId).filter((x) => typeof x === "string"))];
+  const bills = Object.fromEntries((await Promise.all(ids.map((id) => db.collection("subscriptionInvoices").doc(id).get()))).filter((b) => b.exists).map((b) => [b.id, b.data()]));
+  return rows.map(({ invoiceId: id, ...r }) => ({ ...r, product: bills[id] ? billProduct(bills[id]) : null }));
+}
+// Super Admin Overview → "Payments to review" (2026-10-28): payments sent
+// for verification only. Confirmed / rejected ones leave the queue (they
+// stay in Payments' history).
+const REVIEW_MAX = 20;
+export async function paymentsToReview({ db, max = REVIEW_MAX }) {
+  const snap = await db.collection("subscriptionPayments").where("status", "==", "for_verification").orderBy("submittedAt", "desc").limit(max).get();
+  return withProducts(db, snap.docs.map((d) => ({ ...paymentRow(d), method: d.data().method ?? null, invoiceId: d.data().invoiceId })));
+}
+// A business's latest payment (Business detail, beside Subscription).
+export async function latestPayment({ db, businessId }) {
+  const snap = await db.collection("subscriptionPayments").where("businessId", "==", businessId).orderBy("submittedAt", "desc").limit(1).get();
+  if (snap.empty) return null;
+  return (await withProducts(db, [{ ...paymentRow(snap.docs[0]), method: snap.docs[0].data().method ?? null, invoiceId: snap.docs[0].data().invoiceId }]))[0];
+}
+// The access a business has now, for the review screen.
+const accessNow = (b, today) => {
+  const sub = b?.subscription || {};
+  const trial = trialState(sub, today);
+  return { status: sub.status ?? null, billingType: sub.billingType ?? null, planName: b?.entitlements?.planName ?? sub.planId ?? null, trial: trial?.open ? { ended: trial.ended, endsAt: trial.endsAt } : null, termMonths: sub.termMonths ?? null, accessUntil: sub.accessUntil ?? null, paidThrough: sub.paidThrough ?? null, addOnsPaid: Array.isArray(sub.addOnsPaid) ? sub.addOnsPaid : [] };
+};
+
+export async function paymentDetail({ db, paymentId, now = new Date() }) {
   const p = await db.collection("subscriptionPayments").doc(String(paymentId || "-")).get();
   if (!p.exists) throw new BillingError("not-found", "Payment not found");
   const pay = p.data();
-  const [inv, history] = await Promise.all([db.collection("subscriptionInvoices").doc(pay.invoiceId).get(), db.collection("subscriptionPayments").where("businessId", "==", pay.businessId).orderBy("submittedAt", "desc").limit(11).get()]);
+  const [inv, history, biz] = await Promise.all([db.collection("subscriptionInvoices").doc(pay.invoiceId).get(), db.collection("subscriptionPayments").where("businessId", "==", pay.businessId).orderBy("submittedAt", "desc").limit(11).get(), db.collection("businesses").doc(pay.businessId).get()]);
   return {
+    // What it pays for (from the bill) and the access the business has now.
+    product: inv.exists ? { ...billProduct(inv.data()), coverFrom: inv.data().coverFrom ?? null, coverTo: inv.data().coverTo ?? null } : null,
+    access: biz.exists ? accessNow(biz.data(), businessDate(BILLING_TIMEZONE, now)) : null,
     payment: { ...paymentRow(p), method: pay.method, note: pay.note ?? null, hasProof: Boolean(pay.proof?.path), proofType: pay.proof?.contentType ?? null, verifiedBy: pay.verifiedBy ?? null, rejectedBy: pay.rejectedBy ?? null, submittedBy: pay.submittedBy?.email ?? pay.submittedBy?.name ?? null },
     // The bill's breakdown (frozen with the bill): charges, then what's taken off.
     invoice: inv.exists ? { period: inv.data().period, kind: inv.data().kind ?? "access", amountDue: inv.data().amountDue, amountPaid: inv.data().amountPaid, status: inv.data().status, dueDate: inv.data().dueDate, lines: inv.data().lines ?? null, adjustments: inv.data().adjustments ?? [] } : null,

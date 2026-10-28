@@ -137,7 +137,7 @@ async function termAccessDialog(ctx, r) {
     title: `Access · ${r.name}`,
     intro: "Access is not payment: a term's price becomes a bill to pay. Record the payment when you receive it.",
     fields: [
-      { name: "access", label: "Access", type: "select", options: [{ value: "trial", label: "Free Trial" }, ...b.terms.map((t) => ({ value: String(t.months), label: `${monthsText(t.months)} — ${peso(t.price)}` }))], value: current },
+      { name: "access", label: "Access", type: "select", options: [{ value: "trial", label: "Free Trial" }, ...b.terms.map((t) => ({ value: String(t.months), label: `${t.months} Months — ${peso(t.price)}` }))], value: current },
       { name: "reason", label: "Reason", required: true },
     ],
     submitLabel: "Save",

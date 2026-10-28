@@ -44,3 +44,5 @@ export const getWeddingSetup = () => post("wedding-setup", { action: "get" });
 // privately and served only through the API.
 export const attachExpenseProof = (expenseId, proof) => post("expenses", { action: "attachProof", expenseId, proof });
 export const expenseProof = (expenseId) => post("expenses", { action: "proof", expenseId });
+// 2026-10-28: Guests → "Turn on RSVP" (a Wedding Setup save of one setting).
+export const saveWeddingSetup = (setup) => post("wedding-setup", { action: "save", setup });

@@ -2,7 +2,7 @@
 // in src/modules/wedding/invitation/templates/{id}/ and customized/{id}/ (registry.js); a wedding
 // stores only its templateId. During the free trial the couple chooses a
 // Standard template, fills in the details, publishes and sends real RSVP
-// links to up to 20 guests (2026-10-26; tests/functions/trial-rsvp.test.js).
+// links to up to 50 guests (2026-10-28; tests/functions/trial-rsvp.test.js).
 // Switching template never changes a guest's link.
 
 import { describe, it, expect, beforeEach } from "vitest";
@@ -67,7 +67,7 @@ describe("Bridal free trial: choose, fill in, preview; publish once paid", () =>
   it("the Owner picks one of the three offered designs (stored as templateId only); older and Custom-only templates are refused as new choices", async () => {
     // 2026-10-25: only Gold Elegance, Black & White and Rustic Garden are offered.
     expect((await setup({ action: "save", setup: { coupleNames: "Carlo & Yanie", templateId: "romantic" } })).status).toBe(400);
-    ok(await setup({ action: "save", setup: { coupleNames: "Carlo & Yanie", weddingDate: "2027-02-14", rsvpEnabled: true, weddingSlug: "carloyanieforever", templateId: "rustic" } }));
+    ok(await setup({ action: "save", setup: { coupleNames: "Carlo & Yanie", weddingDate: "2027-02-14", rsvpEnabled: true, templateId: "rustic" } }));
     expect(world.db.docs.get(`businesses/${W}/weddingSetup/current`)).toMatchObject({ templateId: "rustic" });
     // The template source (and its sample content) is never copied into the wedding.
     expect(JSON.stringify(world.db.docs.get(`businesses/${W}/weddingSetup/current`))).not.toMatch(/#b4532a|Young Serif|Nicky|Magnolia/);
@@ -81,10 +81,10 @@ describe("Bridal free trial: choose, fill in, preview; publish once paid", () =>
   });
 
   it("during the trial a guest link works (RSVP trial); after paying, the same link stays and template changes keep it", async () => {
-    ok(await setup({ action: "save", setup: { coupleNames: "Carlo & Yanie", weddingDate: "2027-02-14", rsvpEnabled: true, weddingSlug: "carloyanieforever", templateId: "gold" } }));
+    ok(await setup({ action: "save", setup: { coupleNames: "Carlo & Yanie", weddingDate: "2027-02-14", rsvpEnabled: true, templateId: "gold" } }));
     const g = ok(await guests({ action: "create", guest: { name: "Santos Family", side: "bride", partySize: 4 } }), 201).guestId;
     const first = ok(await guests({ action: "inviteLink", guestId: g }));
-    expect(first.trialRsvp).toEqual({ used: 4, limit: 20 });
+    expect(first.trialRsvp).toEqual({ used: 4, limit: 50 });
     // Continue with Luna Bridal (₱499 for 3 months): choose, Luna records the payment.
     const chosen = ok(await sub({ action: "choose", termMonths: 3 }));
     expect(chosen.invoice.amountDue).toBe(49900);
@@ -93,7 +93,8 @@ describe("Bridal free trial: choose, fill in, preview; publish once paid", () =>
     const path = ok(await guests({ action: "inviteLink", guestId: g })).path;
     const token = path.split("/").pop();
     expect(path).toBe(first.path);
-    expect(path).toBe(`/w/carloyanieforever/rsvp/${token}`);
+    // A trial wedding link is Luna-made (choosing one is paid): it stays after paying.
+    expect(path).toBe(`/w/${world.db.docs.get(`businesses/${W}/weddingSetup/current`).weddingSlug}/rsvp/${token}`);
     const v1 = ok(await invite({ action: "view", token })).invitation;
     expect(v1.design).toMatchObject({ standard: true, config: { templateId: "gold", kind: "signature" } });
     expect(v1.guest.name).toBe("Santos Family");
@@ -109,7 +110,7 @@ describe("Bridal free trial: choose, fill in, preview; publish once paid", () =>
     ok(await invite({ action: "respond", token, rsvp: { status: "attending", confirmed: 3 } }));
   });
 
-  it("a link of a free trial that ENDED unpaid isn't opened (not published yet) until it's paid", async () => {
+  it("a link of a free trial that ENDED unpaid shows a neutral unavailable page until it is paid", async () => {
     ok(await setup({ action: "save", setup: { coupleNames: "Carlo & Yanie", weddingDate: "2027-02-14", rsvpEnabled: true, published: true } }));
     const g = ok(await guests({ action: "create", guest: { name: "Reyes Family", side: "groom", partySize: 2 } }), 201).guestId;
     const token = ok(await guests({ action: "inviteLink", guestId: g })).path.split("/").pop();
@@ -118,7 +119,7 @@ describe("Bridal free trial: choose, fill in, preview; publish once paid", () =>
     world.db.docs.set(`businesses/${W}`, { ...b, subscription: { ...b.subscription, trialStartedAt: "2020-01-01", trialEndsAt: "2020-01-30" } });
     const r = await invite({ action: "view", token });
     expect(r.status).toBe(404);
-    expect(r.body.message).toBe("This invitation isn't published yet. Please check back soon.");
+    expect(r.body.message).toBe("This invitation is currently unavailable. Please contact the couple.");
     expect((await invite({ action: "respond", token, rsvp: { status: "declined" } })).status).toBe(404);
   });
 });

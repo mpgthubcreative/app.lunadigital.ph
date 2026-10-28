@@ -1,5 +1,5 @@
-// Free trial RSVP on real Firestore transactions (2026-10-26): 30 guests'
-// links made at the same moment on a trial wedding → exactly 20 places
+// Free trial RSVP on real Firestore transactions (2026-10-28: 50 places): 60 guests'
+// links made at the same moment on a trial wedding → exactly 50 places
 // taken, one lookup per link made, and the counter equals its guests.
 import { beforeAll, describe, it, expect, vi } from "vitest";
 
@@ -35,23 +35,23 @@ async function trialWedding(guestSizes) {
 const actor = { uid: "owner", name: "Owner", email: "" };
 
 describe("trial RSVP places under contention", () => {
-  it("30 single guests at once: exactly 20 links; the rest are refused with the trial limit", async () => {
-    const w = await trialWedding(Array(30).fill(1));
+  it("60 single guests at once: exactly 50 links; the rest are refused with the trial limit", async () => {
+    const w = await trialWedding(Array(60).fill(1));
     const r = await Promise.allSettled(w.ids.map((guestId) => inv.inviteLink({ db, tenant: w.tenant, guestId, actor, now: new Date() })));
     const made = r.filter((x) => x.status === "fulfilled");
-    expect(made).toHaveLength(20);
+    expect(made).toHaveLength(50);
     for (const x of r.filter((y) => y.status === "rejected")) expect(["trial-rsvp-limit", 10]).toContain(x.reason.code);
     const counter = (await w.tenant.doc("weddingSetup", "trialRsvp").get()).data();
-    expect(counter.used).toBe(20);
-    expect(Object.keys(counter.guests)).toHaveLength(20);
+    expect(counter.used).toBe(50);
+    expect(Object.keys(counter.guests)).toHaveLength(50);
     const links = await db.collection("invitations").where("businessId", "==", w.id).get();
-    expect(links.size).toBe(20);
+    expect(links.size).toBe(50);
   });
 
-  it("parties of 3 at once: never more than 20 people (6 parties = 18)", async () => {
-    const w = await trialWedding(Array(10).fill(3));
+  it("parties of 3 at once: never more than 50 people (16 parties = 48)", async () => {
+    const w = await trialWedding(Array(20).fill(3));
     const r = await Promise.allSettled(w.ids.map((guestId) => inv.inviteLink({ db, tenant: w.tenant, guestId, actor, now: new Date() })));
-    expect(r.filter((x) => x.status === "fulfilled")).toHaveLength(6);
-    expect((await w.tenant.doc("weddingSetup", "trialRsvp").get()).data().used).toBe(18);
+    expect(r.filter((x) => x.status === "fulfilled")).toHaveLength(16);
+    expect((await w.tenant.doc("weddingSetup", "trialRsvp").get()).data().used).toBe(48);
   });
 });

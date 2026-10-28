@@ -1004,6 +1004,7 @@ a.item:hover {
 .banner-info { background: var(--info-bg); color: var(--info); border-color: #cddcf6; }
 .banner-warning { background: var(--warning-bg); color: var(--warning); border-color: #f4dfaa; }
 .banner-danger { background: var(--danger-bg); color: var(--danger); border-color: #f6c7c2; }
+.banner-success { background: var(--success-bg); color: var(--success); border-color: #bfe3cd; }
 
 /* ---------- Empty / loading / error states ---------- */
 
@@ -4799,3 +4800,14 @@ button.wl-person-name:hover .wl-edit, button.wl-person-name:focus-visible .wl-ed
     display: inline-flex;
   }
 }
+
+/* Super Admin Overview → Payments to review (2026-10-28): one compact row
+   per payment; the details wrap on a phone instead of being cut off. */
+.sa-review .item-sub { white-space: normal; }
+.sa-review .item-end { display: flex; flex-direction: column; align-items: flex-end; gap: var(--space-1); }
+[data-role="latest-payment"] .btn { margin-top: var(--space-1); }
+
+/* Guests (2026-10-28): the RSVP / trial notes wrap on a phone: the words take
+   the full width and the button goes under them (never a narrow column). */
+[data-role="trial-rsvp-full"], [data-role="rsvp-state"].banner, [data-role="trial-ended-links"] { flex-wrap: wrap; padding: var(--space-3) var(--space-4); border-radius: var(--radius); margin: var(--space-2) 0; }
+[data-role="trial-rsvp-full"] > span, [data-role="rsvp-state"].banner > span, [data-role="trial-ended-links"] > span { flex: 1 1 16rem; }

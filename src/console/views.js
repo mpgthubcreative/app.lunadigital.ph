@@ -13,8 +13,9 @@ import { pageHeader, card, emptyState, badge, kpiStrip, mobileCell, rowMenu } fr
 import { formDialog } from "../components/form-dialog.js";
 import { confirmDialog } from "../components/feedback.js";
 import { planWorkspace, isCatalogPlan, priceLabel, planBilling, termLabel, addOnLabel, monthsText, businessIdFromName, BILLING_TYPES, SUBSCRIPTION_LABELS, OVERRIDE_CHOICES, ROLE_TEMPLATES, METERS, MONTHLY_METER_IDS, overrideImpact, NO_LIMIT_FROM } from "@shared/index.js";
-import { formatBytes, formatNumber } from "../lib/format.js";
+import { formatBytes, formatNumber, formatDayId } from "../lib/format.js";
 import { invitationDesignView } from "./design.js";
+import { reviewPayment, methodText } from "./money.js";
 import { invitationCard, supportCard, supportView, startSupportDialog, previewInvitation, publishInvitation } from "./support.js";
 import { peso, dateText, whenText, stateChip, billingCell, subscriptionMenu, toggleMenus, runSubscriptionAction, termText, adjustmentDialog } from "./actions.js";
 
@@ -40,6 +41,7 @@ export async function overviewView(el, ctx) {
     return;
   }
   const rows = o.needsAttention;
+  const toReview = Array.isArray(o.toReview) ? o.toReview : [];
   const draw = () =>
     render(
       el,
@@ -54,8 +56,19 @@ export async function overviewView(el, ctx) {
             ],
             { role: "kpis" }
           )}
-          ${o.awaiting.count ? html`<p class="stat-note" data-role="awaiting"><a href="${ctx.base}/payments" data-link>${formatNumber(o.awaiting.count)} payment${o.awaiting.count === 1 ? "" : "s"} to verify · ${peso(o.awaiting.amount)}</a></p>` : ""}
         </section>
+        ${toReview.length
+          ? html`<section class="card section" data-role="to-review">
+              <div class="card-header"><h2 class="card-title">Payments to review</h2><span class="stat-hint">${formatNumber(o.awaiting.count)} · ${peso(o.awaiting.amount)}</span></div>
+              <ul class="items sa-review" data-role="review-rows">${toReview.map(
+                (p) => html`<li data-payment="${p.id}"><div class="item">
+                  <span class="item-main"><span class="item-title">${p.businessName}</span><span class="item-sub">${p.product?.label ?? p.planName} · ${methodText(p.method)} · Submitted ${p.submittedAt ? formatDayId(p.submittedAt.slice(0, 10)) : formatDayId(p.paymentDate)}</span></span>
+                  <span class="item-end"><b>${peso(p.amountSubmitted)}</b><button type="button" class="btn btn-compact btn-primary" data-act="review-payment" data-id="${p.id}">Review payment</button></span>
+                </div></li>`
+              )}</ul>
+              ${o.awaiting.count > toReview.length ? html`<p class="stat-note"><a href="${ctx.base}/payments" data-link>All ${formatNumber(o.awaiting.count)} payments to verify</a></p>` : ""}
+            </section>`
+          : ""}
         <section class="card section" data-role="attention">
           <div class="card-header"><h2 class="card-title">Needs attention</h2><span class="stat-hint">${rows.length ? `${rows.length}` : ""}</span></div>
           ${rows.length
@@ -103,6 +116,7 @@ export async function overviewView(el, ctx) {
   el.onclick = async (e) => {
     if (toggleMenus(e, el)) return;
     const t = e.target.closest("[data-act]");
+    if (t?.dataset.act === "review-payment") return reviewPayment(ctx, t.dataset.id, { onDone: () => overviewView(el, ctx) });
     if (!t || !t.dataset.act.startsWith("s-")) return;
     const r = rows.find((x) => x.id === t.dataset.id);
     if (r && (await runSubscriptionAction(ctx, t.dataset.act, r))) overviewView(el, ctx);
@@ -336,7 +350,7 @@ export async function businessDetailView(el, ctx, businessId) {
           <div class="card-body"><dl class="dl dl-compact">
             <dt>Product</dt><dd>${b.planName ?? b.planId}${plan ? html`<span class="cell-sub">${priceLabel(plan)}${plan.legacy ? " · older plan" : ""}</span>` : ""}</dd>
             ${r.billingType === "term"
-              ? html`<dt>Access</dt><dd data-role="term">${r.trial?.open ? "Free Trial" : `${monthsText(r.termMonths)} — ${peso(r.priceOverride ?? r.amount)}`}<span class="cell-sub" data-role="access-paid">${r.trial?.open ? `Trial ends ${dateText(r.trial.endsAt)}` : r.paidThrough ? "Paid" : `Not paid yet · nothing collected${r.accessGrant ? " · set by Luna" : ""}`}</span></dd>`
+              ? html`<dt>Access</dt><dd data-role="term">${r.trial?.open ? "Free Trial" : `${r.termMonths} Months — ${peso(r.priceOverride ?? r.amount)}`}<span class="cell-sub" data-role="access-paid">${r.trial?.open ? `Trial ends ${dateText(r.trial.endsAt)}` : r.paidThrough ? "Paid" : `Not paid yet · nothing collected${r.accessGrant ? " · set by Luna" : ""}`}</span></dd>`
               : html`<dt>Term</dt><dd data-role="term">${termText(r)}${r.amount ? html`<span class="cell-sub">${peso(r.amount)} per bill${r.priceOverride ? " · agreed price" : ""}</span>` : ""}</dd>`}
             ${r.addOns?.length ? html`<dt>Add-ons</dt><dd data-role="addons">${r.addOns.map((a) => html`<span class="cell-sub-line">${a.flat ? html`${a.label} · ${peso(a.price)} · <strong data-role="addon-paid">${a.paid ? "Paid" : "Not paid yet"}</strong>` : `${a.qty} × ${a.label}`}</span>`)}</dd>` : ""}
             ${r.linkAddOn ? html`<dt>${r.linkAddOn.label}</dt><dd data-role="link-addon">${r.linkAddOn.paid ? "Yes" : r.addOns?.some((a) => a.id === r.linkAddOn.id) ? "Billed, not paid" : "No"} <span class="cell-sub">${peso(r.linkAddOn.price)} once</span></dd>` : ""}
@@ -344,6 +358,7 @@ export async function businessDetailView(el, ctx, businessId) {
             <dt>${r.billingType === "term" ? "Ends" : "Next"}</dt><dd data-role="when">${whenText(r)}</dd>
             ${r.paidThrough ? html`<dt>Paid through</dt><dd>${dateText(r.paidThrough)}</dd>` : ""}
             <dt>Started</dt><dd>${dateText(r.startDate)}</dd>
+            ${paymentLine(d.latestPayment, r)}
           </dl></div>
         </section>
         <section class="card" data-role="usage">
@@ -438,6 +453,7 @@ export async function businessDetailView(el, ctx, businessId) {
       if (await runSubscriptionAction(ctx, act, r)) reload();
       return;
     }
+    if (act === "review-payment") return reviewPayment(ctx, t.dataset.id, { onDone: reload });
     if (act === "inv-preview") {
       try {
         await previewInvitation(businessId, t.dataset.which, b.name);
@@ -505,6 +521,20 @@ export async function businessDetailView(el, ctx, businessId) {
 // ---------- Bills (breakdown, discounts / credits) ----------
 // Open bills show their lines and what's taken off, with + Add discount /
 // deduction until a payment is recorded; a paid bill keeps its breakdown.
+// The latest payment (2026-10-28): received → pending verification with
+// Review; verified → whether what it paid for is active.
+function paymentLine(p, r) {
+  if (!p) return "";
+  const head = `${peso(p.amountSubmitted)} · ${formatDayId(p.paymentDate)}`;
+  const forWhat = p.product?.label ?? p.planName;
+  if (p.status === "for_verification") return html`<dt>Payment</dt><dd data-role="latest-payment" data-status="pending">Payment received<span class="cell-sub">${head} · ${forWhat} · Pending verification</span><button type="button" class="btn btn-compact btn-primary" data-act="review-payment" data-id="${p.id}">Review</button></dd>`;
+  if (p.status === "paid") {
+    const active = p.product?.kind === "addon" ? r.addOns?.some((a) => a.id === p.product.addOnId && a.paid) || r.linkAddOn?.paid : Boolean(r.paidThrough);
+    return html`<dt>Payment</dt><dd data-role="latest-payment" data-status="paid">Payment verified ✓<span class="cell-sub">${head} · ${forWhat}</span><span class="cell-sub ${active ? "" : "tone-warning"}" data-role="payment-access">${active ? (p.product?.kind === "addon" ? "Unlocked" : "Access active") : "Not active yet: part of the bill is still due"}</span></dd>`;
+  }
+  return html`<dt>Payment</dt><dd data-role="latest-payment" data-status="${p.status}">Payment ${p.status === "rejected" ? "rejected" : p.status}<span class="cell-sub">${head} · ${forWhat}${p.rejectionReason ? ` · ${p.rejectionReason}` : ""}</span><button type="button" class="btn btn-compact" data-act="review-payment" data-id="${p.id}">View</button></dd>`;
+}
+
 function billsCard(bills, b) {
   if (!bills.length) return "";
   const title = (i) => (i.kind === "upgrade" ? `Upgrade · ${dateText(i.dueDate)}` : i.kind === "addon" ? `Add-on: ${i.lines?.[0]?.label ?? "add-on"} · ${dateText(i.dueDate)}` : `${i.period} · due ${dateText(i.dueDate)}`);

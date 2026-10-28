@@ -145,8 +145,8 @@ export function renderInvitePage(root, { token = inviteTokenFrom(window.location
         ${note ? html`<label class="inv-note-label" for="inv-note">Dietary needs or allergies (optional)</label><textarea class="inv-note" id="inv-note" data-role="rsvp-note" rows="2" maxlength="300">${state.note}</textarea>` : ""}
         <div class="inv-actions"><button type="button" class="inv-btn" data-act="back">Back</button><button type="button" class="inv-btn inv-primary" data-act="send" ${ready ? "" : "disabled"}>Confirm RSVP</button></div>`;
     }
-    return html`${answered}<p>Will you be joining us?</p>
-      <div class="inv-actions"><button type="button" class="inv-btn inv-primary" data-act="accept" ${state.busy ? "disabled" : ""}>Accept</button><button type="button" class="inv-btn" data-act="decline" ${state.busy ? "disabled" : ""}>Decline</button></div>
+    return html`${answered}<p>Will you be attending?</p>
+      <div class="inv-actions"><button type="button" class="inv-btn inv-primary" data-act="accept" ${state.busy ? "disabled" : ""}>Yes, I'll be there</button><button type="button" class="inv-btn" data-act="decline" ${state.busy ? "disabled" : ""}>Sorry, I can't make it</button></div>
       ${wedding.rsvpDeadline ? html`<p class="inv-quiet">RSVP before ${longDate(wedding.rsvpDeadline)}</p>` : ""}`;
   }
 

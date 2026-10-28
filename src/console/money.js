@@ -140,89 +140,6 @@ export function paymentsView(el, ctx) {
     );
   }
 
-  async function review(id) {
-    let d;
-    try {
-      d = await ctx.call("payment", { paymentId: id });
-    } catch (err) {
-      ctx.toast(err.message, "danger");
-      return;
-    }
-    const p = d.payment;
-    const backdrop = document.createElement("div");
-    backdrop.className = "modal-backdrop";
-    document.body.appendChild(backdrop);
-    const close = () => backdrop.remove();
-    render(
-      backdrop,
-      html`<div class="modal modal-wide" role="dialog" aria-modal="true" aria-labelledby="pay-title" data-role="payment-review">
-        <div class="modal-header"><h2 class="card-title" id="pay-title">${p.businessName} · ${monthLong(p.period)}</h2>${payBadge(p.status)}</div>
-        <div class="modal-body">
-          <dl class="dl dl-compact">
-            <dt>Workspace</dt><dd>${ctx.workspaceName(p.workspaceTemplateId)}</dd>
-            <dt>Plan</dt><dd>${p.planName}</dd>
-            <dt>Billing month</dt><dd>${monthLong(p.period)}</dd>
-            <dt>Expected amount</dt><dd>${peso(p.amountDue)}${d.invoice && d.invoice.amountPaid ? ` (${peso(d.invoice.amountPaid)} already paid)` : ""}${d.invoice?.lines?.length ? html`<dl class="bill-lines" data-role="bill-lines">${d.invoice.lines.map((l) => html`<dt>${l.label}</dt><dd>${peso(l.amount)}</dd>`)}${d.invoice.adjustments.map((a) => html`<dt>${a.description}</dt><dd class="bill-minus">−${peso(a.amount)}</dd>`)}<dt class="bill-total">Amount due</dt><dd class="bill-total">${peso(d.invoice.amountDue)}</dd></dl>` : ""}</dd>
-            <dt>Submitted amount</dt><dd data-role="submitted"><b>${peso(p.amountSubmitted)}</b></dd>
-            <dt>Payment date</dt><dd>${formatDayId(p.paymentDate)}</dd>
-            <dt>Reference</dt><dd>${p.reference || "None (screenshot)"}</dd>
-            ${p.note ? html`<dt>Note</dt><dd>${p.note}</dd>` : ""}
-            <dt>Sent by</dt><dd>${p.submittedBy ?? "—"}</dd>
-            ${p.rejectionReason ? html`<dt>Rejected because</dt><dd>${p.rejectionReason}</dd>` : ""}
-            ${p.verifiedBy ? html`<dt>Confirmed by</dt><dd>${p.verifiedBy}</dd>` : ""}
-          </dl>
-          <div class="proof-box" data-role="proof">${p.hasProof ? html`<span class="stat-hint">Loading the screenshot…</span>` : html`<span class="stat-hint">No proof attached</span>`}</div>
-          ${d.history.length
-            ? html`<h3 class="section-title">Earlier payments from this business</h3><ul class="items" data-role="history">${d.history.map((h) => html`<li><div class="item"><span class="item-main"><span class="item-title">${monthLong(h.period)}</span><span class="item-sub">${formatDayId(h.paymentDate)}${h.reference ? ` · ref ${h.reference}` : " · screenshot"}${h.rejectionReason ? ` · ${h.rejectionReason}` : ""}</span></span><span class="item-end">${peso(h.amountSubmitted)}<small>${PAYMENT_STATUSES[h.status]?.label}</small></span></div></li>`)}</ul>`
-            : ""}
-        </div>
-        <div class="modal-footer">
-          <button type="button" class="btn" data-act="close">Close</button>
-          ${p.status === "for_verification" ? html`<button type="button" class="btn btn-danger" data-act="reject">Reject payment</button><button type="button" class="btn btn-primary" data-act="confirm">Confirm payment</button>` : ""}
-        </div>
-      </div>`
-    );
-    if (p.hasProof) {
-      ctx
-        .call("paymentProof", { paymentId: id })
-        .then(({ proof }) => {
-          const box = backdrop.querySelector('[data-role="proof"]');
-          if (!box) return;
-          const url = `data:${proof.contentType};base64,${proof.dataBase64}`;
-          render(box, proof.contentType === "application/pdf" ? html`<a class="btn" href="${url}" download="payment-${id}.pdf">Download the PDF receipt</a>` : html`<img class="proof-img" src="${url}" alt="Payment screenshot from ${p.businessName}" />`);
-        })
-        .catch(() => {
-          const box = backdrop.querySelector('[data-role="proof"]');
-          if (box) render(box, html`<span class="stat-hint">Couldn't load the proof.</span>`);
-        });
-    }
-    backdrop.onclick = async (e) => {
-      const act = e.target.closest("[data-act]")?.dataset.act;
-      if (!act) return;
-      if (act === "close") return close();
-      if (act === "confirm") {
-        const ok = await confirmDialog({ title: `Confirm ${peso(p.amountSubmitted)} from ${p.businessName}?`, body: `Only confirm if the money is in Luna's account. ${monthLong(p.period)} is credited, the renewal moves and the revenue is recorded.`, confirmLabel: "Confirm payment" });
-        if (!ok) return;
-        try {
-          const r = await ctx.call("confirmPayment", { paymentId: id });
-          ctx.toast(r.alreadyDecided ? "Already decided: nothing changed." : r.invoiceStatus === "paid" ? `Confirmed. Paid through ${formatDayId(r.paidThrough)}.` : "Confirmed. Part of the bill is still due.", "success");
-          close();
-          load();
-        } catch (err) {
-          ctx.toast(err.message, "danger");
-        }
-      }
-      if (act === "reject") {
-        const r = await formDialog({ title: "Reject this payment?", intro: "The business sees your reason and can send a corrected proof. The submission stays in the history.", fields: [{ name: "reason", label: "Reason", type: "textarea", required: true }], submitLabel: "Reject payment", onSubmit: (v) => ctx.call("rejectPayment", { paymentId: id, reason: v.reason }) });
-        if (r) {
-          ctx.toast(r.alreadyDecided ? "Already decided: nothing changed." : "Payment rejected. The business was told why.", "success");
-          close();
-          load();
-        }
-      }
-    };
-  }
-
   async function settings() {
     let s = null;
     try {
@@ -257,7 +174,7 @@ export function paymentsView(el, ctx) {
   el.onclick = (e) => {
     const t = e.target.closest("[data-act]");
     const act = t?.dataset.act;
-    if (act === "review") review(t.dataset.id);
+    if (act === "review") reviewPayment(ctx, t.dataset.id, { onDone: load });
     else if (act === "settings") settings();
     else if (act === "next") {
       state.cursors.push(state.page.next);
@@ -268,6 +185,145 @@ export function paymentsView(el, ctx) {
     }
   };
   load();
+  // Overview / Business detail → "Review payment" opens it here directly.
+  const open = new URLSearchParams(ctx.search || "").get("review");
+  if (open) reviewPayment(ctx, open, { onDone: load });
+}
+
+// ---------- Reviewing one payment (Payments, Overview, Business detail) ----------
+// 2026-10-28: what the payment is FOR comes from its bill (billProduct),
+// never from the amount. Confirming is one explicit action: it records the
+// money (collected) and, for a bill paid in full, applies what the bill
+// covers in the same transaction (the access's months, or the add-on).
+// Re-confirming changes nothing (alreadyDecided). A screenshot alone never
+// grants anything: only this confirmation does.
+const METHOD_LABELS = { bank_transfer: "Bank transfer", gcash: "GCash", maya: "Maya", cash: "Cash", recorded: "Recorded by Luna" };
+export const methodText = (m) => METHOD_LABELS[m] ?? (m ? String(m) : "—");
+export function accessText(a) {
+  if (!a) return "—";
+  if (a.trial) return a.trial.ended ? "Free trial · ended" : `Free trial · ends ${formatDayId(a.trial.endsAt)}`;
+  if (a.billingType === "term") return `${a.planName} — ${a.termMonths} Months · ${a.paidThrough ? `paid · until ${formatDayId(a.accessUntil || a.paidThrough)}` : "not paid yet"}`;
+  return `${a.planName}${a.paidThrough ? ` · paid through ${formatDayId(a.paidThrough)}` : ""}`;
+}
+const confirmLabel = (product, partial) => (partial || !product ? "Verify payment" : product.does === "activate" ? `Verify + activate ${product.months} Months` : product.does === "unlock" ? "Verify + unlock add-on" : "Verify payment");
+const changedText = (r) =>
+  !r.changed
+    ? "Part of the bill is still due: nothing is activated until it's paid in full."
+    : r.changed.does === "activate"
+      ? `Access active: ${r.changed.label}${r.changed.until ? ` · until ${formatDayId(r.changed.until)}` : ""}`
+      : r.changed.does === "unlock"
+        ? `${r.changed.label}: unlocked`
+        : `${r.changed.label}: paid${r.changed.until ? ` through ${formatDayId(r.changed.until)}` : ""}`;
+
+export async function reviewPayment(ctx, id, { onDone = () => {} } = {}) {
+  let d;
+  try {
+    d = await ctx.call("payment", { paymentId: id });
+  } catch (err) {
+    ctx.toast(err.message, "danger");
+    return;
+  }
+  const p = d.payment;
+  const product = d.product;
+  const inv = d.invoice;
+  const partial = Boolean(inv && p.amountSubmitted + (inv.amountPaid || 0) < inv.amountDue);
+  const backdrop = document.createElement("div");
+  backdrop.className = "modal-backdrop";
+  document.body.appendChild(backdrop);
+  let changed = false;
+  const close = () => {
+    backdrop.remove();
+    if (changed) onDone();
+  };
+  const detailUrl = `${ctx.base}/businesses?b=${encodeURIComponent(p.businessId)}`;
+  const footer = (done) =>
+    done
+      ? html`<a class="btn" href="${detailUrl}" data-act="open-business">Open business</a><button type="button" class="btn btn-primary" data-act="close">Done</button>`
+      : html`<button type="button" class="btn" data-act="close">Close</button>${p.status === "for_verification" ? html`<button type="button" class="btn btn-danger" data-act="reject">Reject</button><button type="button" class="btn btn-primary" data-act="confirm">${confirmLabel(product, partial)}</button>` : ""}`;
+  const draw = (result = null) =>
+    render(
+      backdrop,
+      html`<div class="modal modal-wide" role="dialog" aria-modal="true" aria-labelledby="pay-title" data-role="payment-review" data-payment="${p.id}">
+        <div class="modal-header"><h2 class="card-title" id="pay-title">${p.businessName}</h2>${result ? badge("Verified ✓", "success") : payBadge(p.status)}</div>
+        <div class="modal-body">
+          ${result ? html`<div class="banner banner-success" role="status" data-role="review-result"><strong>Payment verified ✓</strong> <span data-role="review-changed">${changedText(result)}</span></div>` : ""}
+          <dl class="dl dl-compact">
+            <dt>Business</dt><dd>${p.businessName}<span class="cell-sub">${ctx.workspaceName(p.workspaceTemplateId)}</span></dd>
+            <dt>For</dt><dd data-role="product"><b>${product?.label ?? p.planName}</b>${product?.kind === "access" && product.coverTo ? html`<span class="cell-sub">${product.coverFrom ? `${formatDayId(product.coverFrom)} – ` : "until "}${formatDayId(product.coverTo)}</span>` : product?.kind === "monthly" ? html`<span class="cell-sub">${monthLong(p.period)}</span>` : ""}</dd>
+            <dt>Expected amount</dt><dd>${peso(p.amountDue)}${inv && inv.amountPaid ? ` (${peso(inv.amountPaid)} already paid)` : ""}${inv?.lines?.length ? html`<dl class="bill-lines" data-role="bill-lines">${inv.lines.map((l) => html`<dt>${l.label}</dt><dd>${peso(l.amount)}</dd>`)}${inv.adjustments.map((a) => html`<dt>${a.description}</dt><dd class="bill-minus">−${peso(a.amount)}</dd>`)}<dt class="bill-total">Amount due</dt><dd class="bill-total">${peso(inv.amountDue)}</dd></dl>` : ""}</dd>
+            <dt>Submitted amount</dt><dd data-role="submitted"><b>${peso(p.amountSubmitted)}</b>${partial ? html`<span class="cell-sub tone-warning">Part of the bill</span>` : ""}</dd>
+            <dt>Method</dt><dd data-role="method">${methodText(p.method)}</dd>
+            <dt>Reference</dt><dd data-role="reference">${p.reference || "None (screenshot)"}</dd>
+            <dt>Payment date</dt><dd>${formatDayId(p.paymentDate)}</dd>
+            <dt>Submitted</dt><dd>${p.submittedAt ? new Date(p.submittedAt).toLocaleString("en-PH", { dateStyle: "medium", timeStyle: "short" }) : "—"}${p.submittedBy ? html`<span class="cell-sub">by ${p.submittedBy}</span>` : ""}</dd>
+            <dt>Current access</dt><dd data-role="access-now">${accessText(d.access)}</dd>
+            ${p.note ? html`<dt>Note</dt><dd>${p.note}</dd>` : ""}
+            ${p.rejectionReason ? html`<dt>Rejected because</dt><dd>${p.rejectionReason}</dd>` : ""}
+            ${p.verifiedBy ? html`<dt>Confirmed by</dt><dd>${p.verifiedBy}</dd>` : ""}
+          </dl>
+          <div class="proof-box" data-role="proof">${p.hasProof ? html`<span class="stat-hint">Loading the screenshot…</span>` : html`<span class="stat-hint">No proof attached</span>`}</div>
+          ${d.history.length
+            ? html`<h3 class="section-title">Earlier payments from this business</h3><ul class="items" data-role="history">${d.history.map((h) => html`<li><div class="item"><span class="item-main"><span class="item-title">${monthLong(h.period)}</span><span class="item-sub">${formatDayId(h.paymentDate)}${h.reference ? ` · ref ${h.reference}` : " · screenshot"}${h.rejectionReason ? ` · ${h.rejectionReason}` : ""}</span></span><span class="item-end">${peso(h.amountSubmitted)}<small>${PAYMENT_STATUSES[h.status]?.label}</small></span></div></li>`)}</ul>`
+            : ""}
+        </div>
+        <div class="modal-footer">${footer(Boolean(result))}</div>
+      </div>`
+    );
+  draw();
+  if (p.hasProof) {
+    ctx
+      .call("paymentProof", { paymentId: id })
+      .then(({ proof }) => {
+        const box = backdrop.querySelector('[data-role="proof"]');
+        if (!box) return;
+        const url = `data:${proof.contentType};base64,${proof.dataBase64}`;
+        render(box, proof.contentType === "application/pdf" ? html`<a class="btn" href="${url}" download="payment-${id}.pdf">Download the PDF receipt</a>` : html`<img class="proof-img" src="${url}" alt="Payment screenshot from ${p.businessName}" />`);
+      })
+      .catch(() => {
+        const box = backdrop.querySelector('[data-role="proof"]');
+        if (box) render(box, html`<span class="stat-hint">Couldn't load the proof.</span>`);
+      });
+  }
+  backdrop.onclick = async (e) => {
+    const act = e.target.closest("[data-act]")?.dataset.act;
+    if (!act) return;
+    if (act === "close") return close();
+    if (act === "open-business") {
+      e.preventDefault();
+      backdrop.remove();
+      if (ctx.navigate) ctx.navigate(`/businesses?b=${encodeURIComponent(p.businessId)}`);
+      else onDone();
+      return;
+    }
+    if (act === "confirm") {
+      const what = partial || !product ? "" : product.does === "activate" ? ` and activates ${product.label}` : product.does === "unlock" ? ` and unlocks the ${product.label}` : "";
+      const ok = await confirmDialog({ title: `Verify ${peso(p.amountSubmitted)} from ${p.businessName}?`, body: `Only confirm if the money is in Luna's account. This records ${peso(p.amountSubmitted)} as collected${what}.`, confirmLabel: confirmLabel(product, partial) });
+      if (!ok) return;
+      const btn = backdrop.querySelector('[data-act="confirm"]');
+      if (btn) btn.disabled = true;
+      try {
+        const r = await ctx.call("confirmPayment", { paymentId: id });
+        changed = true;
+        if (r.alreadyDecided) {
+          ctx.toast("Already decided: nothing changed.", "success");
+          close();
+          return;
+        }
+        draw(r);
+      } catch (err) {
+        if (btn) btn.disabled = false;
+        ctx.toast(err.message, "danger");
+      }
+    }
+    if (act === "reject") {
+      const r = await formDialog({ title: "Reject this payment?", intro: "The business sees your reason and can send a corrected proof. The submission stays in the history.", fields: [{ name: "reason", label: "Reason", type: "textarea", required: true }], submitLabel: "Reject payment", onSubmit: (v) => ctx.call("rejectPayment", { paymentId: id, reason: v.reason }) });
+      if (r) {
+        ctx.toast(r.alreadyDecided ? "Already decided: nothing changed." : "Payment rejected. The business was told why.", "success");
+        changed = true;
+        close();
+      }
+    }
+  };
 }
 
 // ---------- Usage: workspace usage, and provider bills apart ----------

@@ -12,7 +12,7 @@
 //   Invitations (Owner-pilot Bridal):
 //   { action: "inviteLink", guestId }       the guest's link (made on first use)
 //   { action: "regenerateInvite", guestId } a new link; the old one stops working
-//   { action: "trialRsvp" }                 free trial: RSVP places used of 20 (null once paid)
+//   { action: "trialRsvp" }                 free trial: RSVP places used of 50 (null once paid)
 //   Wedding roles (Owner-pilot Bridal; on the same guest record):
 //   A person = the guest (primary) or a named party member (memberId).
 //   { action: "assignRole", guestId, memberId?, role: { id, label? } }   many people per role
@@ -52,7 +52,7 @@ export const createGuestsHandler = (deps) =>
       updateTable: { permission: M, fields: ["action", "tableId", "changes"], run: (c, b) => updateTable({ ...c, tableId: b.tableId, changes: b.changes }) },
       deleteTable: { permission: M, fields: ["action", "tableId"], run: (c, b) => deleteTable({ ...c, tableId: b.tableId }) },
       inviteLink: { permission: M, fields: ["action", "guestId"], run: (c, b) => inviteLink({ ...c, guestId: guestIdOf(b) }) },
-      // Free trial: "RSVP trial: 12 / 20" (null once Luna Bridal is paid).
+      // Free trial: "RSVP trial: 12 / 50" (null once Luna Bridal is paid).
       trialRsvp: { permission: "guests.view", fields: ["action"], run: (c) => readTrialRsvpUsage(c) },
       regenerateInvite: { permission: M, fields: ["action", "guestId"], run: (c, b) => issueInvite({ ...c, guestId: guestIdOf(b) }) },
       assignRole: { permission: M, fields: ["action", "guestId", "memberId", "role"], run: (c, b) => assignRole({ ...c, guestId: guestIdOf(b), memberId: b.memberId ?? null, role: b.role }) },

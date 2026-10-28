@@ -34,7 +34,7 @@ import { formDialog } from "../../components/form-dialog.js";
 import { confirmDialog, toast as defaultToast } from "../../components/feedback.js";
 import { formatDayId } from "../../lib/format.js";
 import { RSVP_STATUSES, businessDate, GUEST_SIDES, GUEST_CATEGORIES, GUEST_CATEGORY_IDS, rsvpSummary, seatingPlan, seatablePeople, seatsOf, MAX_TABLE_CAPACITY, setupMissing } from "@shared/index.js";
-import { TRIAL_RSVP_LIMIT_MESSAGE } from "@shared/wedding.js";
+import { TRIAL_RSVP_LIMIT_MESSAGE, rsvpState } from "@shared/wedding.js";
 import { activityLines, detailsDialog } from "../baby/common.js";
 import * as defaultData from "./data.js";
 import { openInvitePreview, copyText, canShare } from "./invitation/preview.js";
@@ -98,10 +98,11 @@ export function mount(container, session, { data = defaultData, toast = defaultT
   const canManage = session.member.permissions["guests.manage"] === true;
   const businessId = session.business.id;
   const timezone = session.business.timezone;
-  const state = { view: "rsvp", filter: "all", search: "", rows: [], totals: null, seating: null, loading: true, error: null, setupMissing: null, trialRsvp: null };
+  const state = { view: "rsvp", filter: "all", search: "", rows: [], totals: null, seating: null, loading: true, error: null, setupMissing: null, setup: null, trialRsvp: null };
   let alive = true;
-  // Free trial RSVP: "RSVP trial: 12 / 20" (the server decides; this only explains).
+  // Free trial RSVP: "RSVP trial: 12 / 50" (the server decides; this only explains).
   const trial = session.subscription?.trial?.open === true;
+  const trialEnded = session.subscription?.trial?.ended === true;
   const overTrial = (g) => Boolean(trial && state.trialRsvp && g.invitation?.status !== "active" && state.trialRsvp.used + (g.partySize || 1) > state.trialRsvp.limit);
   const noteTrial = (r) => {
     if (r?.trialRsvp && trial) state.trialRsvp = r.trialRsvp;
@@ -122,6 +123,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
       // What Wedding Setup still needs before links can be made ([] = ready;
       // null = couldn't tell: the server decides and explains).
       state.setupMissing = setup?.setup ? setupMissing(setup.setup) : null;
+      state.setup = setup?.setup ?? null;
       state.totals = totals;
       state.rows = page.rows;
       state.seating = seating;
@@ -146,7 +148,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
   const seats = (g, text = seatsText(g)) => html`<span class="wl-seats" data-role="seats" aria-label="${text} seats">${text}</span>`;
   // Invitation link actions, always visible to the Owner: Create (no link
   // yet), View / Copy / Regenerate (a link exists), or why not yet. During
-  // the free trial up to 20 invited people get links (the server counts);
+  // the free trial up to 50 invited people get links (the server counts);
   // a party that doesn't fit any more waits, ready, for the upgrade.
   const inviteItems = (g) => {
     if (overTrial(g)) return [{ act: "invite-upgrade", id: g.id, href: "/subscription", label: "Upgrade to send this invitation →" }];
@@ -313,11 +315,25 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     });
   const roleFromKey = (key) => (key.startsWith("custom:") ? peopleOf(state.rows).flatMap((pp) => pp.roles).find((r) => roleKey(r) === key) : { id: key });
 
-  // "RSVP trial: 12 / 20"; at the limit, why and the two plans (no popup).
+  // RSVP open or closed, and why (2026-10-28): what guests' links do today,
+  // in the wedding's timezone. "Off" is said plainly with a one-tap fix
+  // (guests otherwise see "RSVPs are closed").
+  const rsvpLine = () => {
+    if (!canManage || !state.setup) return "";
+    const r = rsvpState(state.setup, businessDate(timezone || "Asia/Manila"));
+    if (r.reason === "off") return html`<div class="banner banner-warning" role="note" data-role="rsvp-state" data-state="off"><span>RSVP is off: guests see "RSVPs are closed" and can't reply.</span> <button type="button" class="btn btn-compact" data-act="rsvp-on">Turn on RSVP</button></div>`;
+    if (r.reason === "deadline") return html`<p class="wl-count is-warn" data-role="rsvp-state" data-state="closed">RSVP closed · the deadline was ${formatDayId(r.deadline)} · <a href="/wedding-setup" data-link>Change</a></p>`;
+    return html`<p class="wl-count" data-role="rsvp-state" data-state="open">${r.deadline ? `RSVP open until ${formatDayId(r.deadline)}` : "RSVP open"}</p>`;
+  };
+  // A trial that ended unpaid: guests' links show a neutral "unavailable"
+  // page (no billing words); here the Owner sees why and how to restore them.
+  const expiredLine = () =>
+    canManage && trialEnded ? html`<div class="banner banner-warning" role="note" data-role="trial-ended-links"><span>Your free trial has ended: guests' invitation links are paused. Upgrade to restore them. Links and answers are kept.</span> <a class="btn btn-compact" href="/subscription" data-link>Upgrade</a></div>` : "";
+  // "RSVP trial: 12 / 50 guests"; at the limit, why and the two plans (no popup).
   const trialLine = () => {
     const u = state.trialRsvp;
-    if (!trial || !u) return "";
-    if (u.used < u.limit) return html`<p class="wl-count wl-trial" data-role="trial-rsvp">RSVP trial: ${fmt(u.used)} / ${fmt(u.limit)}</p>`;
+    if (!trial || trialEnded || !u) return "";
+    if (u.used < u.limit) return html`<p class="wl-count wl-trial" data-role="trial-rsvp">RSVP trial: ${fmt(u.used)} / ${fmt(u.limit)} guests</p>`;
     return html`<div class="banner banner-info" role="note" data-role="trial-rsvp-full"><span>RSVP trial: ${fmt(u.used)} / ${fmt(u.limit)}. ${TRIAL_RSVP_LIMIT_MESSAGE}</span> <a class="btn btn-compact" href="/subscription" data-link>₱499 — 3 Months · ₱799 — 6 Months</a></div>`;
   };
 
@@ -338,7 +354,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
             ? html`<p class="wl-count" data-role="roles-summary">${fmt(new Set(roles.flatMap((r) => r.people.map((pp) => pp.key))).size)} people · ${fmt(roles.length)} roles</p>`
           : seatingOn
             ? html`<p class="wl-count" data-role="seating-summary">${fmt(plan.attendingSeats)} attending · ${fmt(plan.seatedSeats)} seated · <strong class="${plan.unassignedSeats ? "is-warn" : ""}">${fmt(plan.unassignedSeats)} unassigned</strong></p>`
-            : html`<p class="wl-count" data-role="rsvp-summary" title="People (seats), not invitations">${fmt(t.invitedSeats)} invited · ${fmt(t.attendingSeats)} attending · ${fmt(seatingPlan(state.rows, state.seating).seatedSeats)} seated</p>${trialLine()}`}
+            : html`<p class="wl-count" data-role="rsvp-summary" title="People (seats), not invitations">${fmt(t.invitedSeats)} invited · ${fmt(t.attendingSeats)} attending · ${fmt(seatingPlan(state.rows, state.seating).seatedSeats)} seated</p>${expiredLine()}${rsvpLine()}${trialLine()}`}
         <div class="wl-tools">${segmented("view", [["rsvp", "All Guests"], ["seating", "Seating"], ["roles", "Roles"]], state.view, { label: "Guests view" })}</div>
         ${seatingOn || rolesOn || !state.rows.length
           ? ""
@@ -677,6 +693,18 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     const el = event.target.closest("[data-act]");
     if (!el || !container.contains(el) || el.dataset.act === "export" || el.dataset.act === "invite-setup") return;
     const a = el.dataset.act;
+    if (a === "rsvp-on") {
+      el.disabled = true;
+      try {
+        const r = await data.saveWeddingSetup({ rsvpEnabled: true });
+        state.setup = r?.setup ?? { ...state.setup, rsvpEnabled: true };
+        toast("RSVP is on: guests can reply from their invitation.", "success");
+      } catch (err) {
+        toast(err.message || "Couldn't turn on RSVP", "danger");
+      }
+      draw();
+      return undefined;
+    }
     if (a.startsWith("role-")) {
       el.closest("details.line-menu")?.removeAttribute("open");
       try {

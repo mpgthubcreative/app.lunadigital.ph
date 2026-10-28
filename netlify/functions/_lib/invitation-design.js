@@ -168,7 +168,7 @@ export async function invitationSummary({ tenant, business }) {
     templateId: selectedTemplate({ custom, live: st.live, doc, setup: s }),
     templateLabel: TEMPLATES[selectedTemplate({ custom, live: st.live, doc, setup: s })]?.label ?? null,
     draftTemplateId: custom && doc?.draft?.config?.templateId ? doc.draft.config.templateId : null,
-    // A free trial: real RSVP for up to 20 invited people (./trial-rsvp.js).
+    // A free trial: real RSVP for up to 50 invited people (./trial-rsvp.js).
     trialPreviewOnly: trialOpen(business?.subscription),
     trialRsvp: trialRsvp ? { used: trialRsvp.used, limit: trialRsvp.limit } : null,
   };

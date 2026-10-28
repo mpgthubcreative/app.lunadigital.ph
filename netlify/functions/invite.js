@@ -15,7 +15,7 @@ import { getAdmin } from "./_lib/firebase-admin.js";
 import { viewInvite, respondInvite } from "./_lib/invitations.js";
 import { WeddingError } from "../../shared/wedding.js";
 
-const STATUS = { "invalid-link": 404, "not-published": 404, "rsvp-closed": 409, "history-full": 409 };
+const STATUS = { "invalid-link": 404, "not-published": 404, unavailable: 404, "rsvp-closed": 409, "history-full": 409 };
 
 export function createInviteHandler({ getAdmin: loadAdmin, now = () => new Date() }) {
   return withErrorHandling("invite", async (event) => {

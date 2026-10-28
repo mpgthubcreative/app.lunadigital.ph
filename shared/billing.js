@@ -277,3 +277,21 @@ export function estimateUsageCost({ storageBytes = 0, exportBytes = null } = {},
 export const grossProfit = (revenue, costs) => (revenue || 0) - (costs || 0);
 export const grossMarginPct = (gp, revenue) => (revenue > 0 ? Math.round((gp / revenue) * 1000) / 10 : null);
 export const PROFIT_HELP = "Estimated Platform Gross Profit = verified Luna subscription payments collected in the month − the platform expenses recorded for that month (Firebase / Google Cloud, Netlify, email, domains, other software). It is not net profit: owner pay, sales commissions, taxes, marketing, professional fees and other company overhead are not included.";
+
+// What a bill is FOR (2026-10-28), from the bill itself, never from the
+// amount (₱499 is both Luna Bridal — 3 Months and the Premium wedding link):
+//   { kind: "access" | "addon" | "upgrade" | "monthly", label, months, does }
+// does: what confirming its payment in full changes: "activate" (access for
+// its months), "unlock" (the add-on), "upgrade", or "credit" (the month).
+export function billProduct(inv) {
+  const i = inv && typeof inv === "object" ? inv : {};
+  const plan = i.planName || i.planId || "Luna";
+  if (i.kind === "addon") {
+    const line = (Array.isArray(i.lines) ? i.lines : []).find((l) => l.kind === "addon");
+    return { kind: "addon", label: `${line?.label || "Add-on"} add-on`, months: 0, addOnId: line?.addOnId ?? null, does: "unlock" };
+  }
+  if (i.kind === "upgrade") return { kind: "upgrade", label: `Upgrade to ${plan}`, months: 0, does: "upgrade" };
+  const months = Number.isSafeInteger(i.months) && i.months > 0 ? i.months : 1;
+  if (i.billingType === "term" || i.billingType === "annual") return { kind: "access", label: `${plan} — ${months} Month${months === 1 ? "" : "s"}`, months, does: "activate" };
+  return { kind: "monthly", label: `${plan} — monthly`, months, does: "credit" };
+}

@@ -37,7 +37,7 @@ import { mountCustomLink } from "../../components/custom-link.js";
 
 // The guest the Owner's previews show (never a real guest or link).
 const OWNER_SAMPLE_GUEST = Object.freeze({ name: "Your guest's name", seats: 2, rsvp: "awaiting", confirmed: 0, roles: [] });
-export const TRIAL_PREVIEW_MESSAGE = "Free trial: publish your invitation and send RSVP links to up to 20 guests. Upgrade for your whole guest list.";
+export const TRIAL_PREVIEW_MESSAGE = "Free trial: publish your invitation and send RSVP links to up to 50 guests. Upgrade for your whole guest list.";
 // The chosen Standard template as a design (Luna Standard: the original page).
 export const standardPreviewDesign = (templateId) => (STANDARD_TEMPLATE_IDS.includes(templateId) && templateId !== DEFAULT_TEMPLATE_ID ? { config: resolveDesign({ templateId }), assets: {}, standard: true } : null);
 
@@ -263,7 +263,8 @@ export function mount(container, session, { api = defaultApi, toast = defaultToa
       <ul class="ie-guide-list">${entry().editableSections.map((e) => html`<li data-guide="${e.id}"><div><strong>${e.label}</strong><p class="ie-guide-shows">${e.id === "entourage" && n ? `${n} ${n === 1 ? "person" : "people"} · ${e.shows}` : e.shows}</p><p class="stat-hint">${e.tap}</p></div>${e.link ? html`<a class="btn btn-compact" href="${e.link}" data-link>Open Guests</a>` : canEdit ? html`<button type="button" class="btn btn-compact" data-ie-edit="${e.id}">Edit</button>` : ""}</li>`)}</ul>
       <div class="ie-link" data-role="wedding-link"><strong>Your wedding link</strong>
         ${isWeddingSlug(slug) ? html`<p class="ws-link-url" data-role="wedding-url">${origin()}/w/${slug}</p>` : html`<p class="stat-hint" data-role="wedding-url-none">Your link is made from your names when you save them.</p>`}
-        <div class="ws-link-actions">${isWeddingSlug(slug) ? html`<button type="button" class="btn btn-compact" data-act="copy-wedding-link">Copy link</button>` : ""}${canEdit ? html`<button type="button" class="btn btn-compact btn-ghost" data-ie-edit="link">Change link</button>` : ""}<span class="ws-link-copied" data-role="copied" aria-live="polite"></span></div>
+        <div class="ws-link-actions">${isWeddingSlug(slug) ? html`<button type="button" class="btn btn-compact" data-act="copy-wedding-link">Copy link</button>` : ""}${canEdit && !trial ? html`<button type="button" class="btn btn-compact btn-ghost" data-ie-edit="link">Change link</button>` : ""}<span class="ws-link-copied" data-role="copied" aria-live="polite"></span></div>
+        ${trial ? html`<p class="stat-hint" data-role="slug-paid">Luna made this link for your free trial. Choose your own (e.g. /w/carlo-yanie) with Luna Bridal: <a href="/subscription" data-link>₱499 — 3 Months · ₱799 — 6 Months</a>.</p>` : ""}
         <p class="stat-hint">Each guest gets a personal link from Guests → ⋯; only that party can open it and RSVP.</p>
       </div>
     </div>`;
@@ -535,6 +536,7 @@ export function mount(container, session, { api = defaultApi, toast = defaultToa
   };
   function openSheet(id) {
     if (!canEdit) return;
+    if (id === "link" && trial) return;
     const ed = id === "link" ? { id: "link", label: "Wedding link", fields: ["weddingSlug"], photos: [], wording: [] } : editable(id);
     if (!ed) return;
     if (ed.link) return;
