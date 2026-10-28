@@ -175,7 +175,7 @@ describe("editing on the invitation", () => {
     expect(db.setup.templateOptions.gold.wording.storyTitle).toBe("How We Met");
     expect(JSON.stringify(db.setup)).not.toMatch(SAMPLE_WORDS);
   });
-  it("Replace photo straight from the invitation: the photo slot is saved and shown at once (cover photo too)", async () => {
+  it("Add / Change photo straight from the invitation: the photo slot is saved and shown at once (cover photo too)", async () => {
     const { db } = await start();
     container.querySelector('[data-ie-photo="story1"]').click();
     const pick = document.querySelector('[data-role="photo-pick"][data-slot="story1"]');
@@ -185,7 +185,7 @@ describe("editing on the invitation", () => {
     expect(calls).toContainEqual({ action: "photo", slot: "story1", dataUrl: "data:image/jpeg;base64,BBBB" });
     expect(db.photos.story1).toBe("data:image/jpeg;base64,BBBB");
     expect(container.querySelector('[data-slot="story1"]').getAttribute("src")).toBe("data:image/jpeg;base64,BBBB");
-    expect(container.querySelector('[data-ie-photo="story1"]').textContent).toBe("Replace photo");
+    expect(container.querySelector('[data-ie-photo="story1"]').textContent).toBe("Change photo");
     container.querySelector('[data-ie-photo="hero"]').click();
     const hero = document.querySelector('[data-role="photo-pick"][data-slot="hero"]');
     Object.defineProperty(hero, "files", { value: [new File(["x"], "b.jpg", { type: "image/jpeg" })] });

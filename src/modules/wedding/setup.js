@@ -368,17 +368,25 @@ export function mount(container, session, { api = defaultApi, toast = defaultToa
       wrap.className = "ie-photo";
       el.replaceWith(wrap);
       wrap.appendChild(el);
-      // "Replace" only the couple's own photo (an example or no photo: "Add").
+      // Three states (2026-10-28): the couple's saved photo → Change photo /
+      // Remove photo; the design's example photo → labelled, Add your photo
+      // (nothing to remove); no photo at all → Add photo.
       const own = slot === "hero" ? state.hero : state.photos[slot];
-      const b = document.createElement("button");
-      b.type = "button";
-      b.className = "ie-replace";
-      b.dataset.iePhoto = slot;
-      b.textContent = own ? "Replace photo" : "Add your photo";
-      wrap.appendChild(b);
-      // 2026-10-28: an example photo says so on the photo itself (the
-      // couple once took the design's cover photo for their own).
-      if (!own && el.tagName === "IMG") {
+      const example = !own && el.tagName === "IMG";
+      const actions = document.createElement("span");
+      actions.className = "ie-photo-actions";
+      const button = (label, data) => {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = "ie-replace";
+        Object.assign(b.dataset, data);
+        b.textContent = label;
+        actions.appendChild(b);
+      };
+      button(own ? "Change photo" : example ? "Add your photo" : "Add photo", { iePhoto: slot });
+      if (own) button("Remove photo", { act: "photo-remove", photoSlot: slot });
+      wrap.appendChild(actions);
+      if (example) {
         const tag = document.createElement("span");
         tag.className = "ie-example";
         tag.dataset.role = "example-photo";
@@ -541,7 +549,8 @@ export function mount(container, session, { api = defaultApi, toast = defaultToa
     return html`<div class="ie-sheet-photos" data-role="sheet-photos">${slots.map((slot) => {
       const realSrc = slot === "hero" ? state.hero : state.photos[slot];
       const src = slot === "hero" ? m.hero : m.photos[slot];
-      return html`<figure class="ws-slot" data-slot-row="${slot}">${src ? html`<img src="${src}" alt="">` : html`<span class="ws-slot-empty" aria-hidden="true"></span>`}<figcaption>${slot === "hero" ? "Cover photo" : PHOTO_SLOTS[slot]}${realSrc ? "" : html` <span class="ws-unused">example</span>`}</figcaption><span class="ws-hero-actions"><button type="button" class="btn btn-compact" data-ie-photo="${slot}">${realSrc ? "Replace" : "Add photo"}</button>${realSrc ? html`<button type="button" class="btn btn-compact btn-ghost" data-act="photo-remove" data-slot="${slot}">Remove</button>` : ""}</span></figure>`;
+      const example = !realSrc && Boolean(src);
+      return html`<figure class="ws-slot" data-slot-row="${slot}" data-state="${realSrc ? "saved" : example ? "example" : "none"}">${src ? html`<img src="${src}" alt="">` : html`<span class="ws-slot-empty" aria-hidden="true"></span>`}<figcaption>${slot === "hero" ? "Cover photo" : PHOTO_SLOTS[slot]}${example ? html` <span class="ws-unused" data-role="example-photo">Example photo · guests won't see it</span>` : ""}</figcaption><span class="ws-hero-actions"><button type="button" class="btn btn-compact" data-ie-photo="${slot}">${realSrc ? "Change photo" : example ? "Add your photo" : "Add photo"}</button>${realSrc ? html`<button type="button" class="btn btn-compact btn-ghost" data-act="photo-remove" data-slot="${slot}">Remove photo</button>` : ""}</span></figure>`;
     })}</div>`;
   };
   function openSheet(id) {
@@ -735,14 +744,19 @@ export function mount(container, session, { api = defaultApi, toast = defaultToa
       toast("Photo saved ✓", "success");
       afterPhoto(slot);
     } catch (err) {
-      toast(err.message || "Couldn't save the photo.", "danger");
+      // Nothing changed on screen: the saved photo (if any) stays as it was.
+      toast(`Couldn't save the photo${err.message ? `: ${err.message}` : ""}. Please try again.`, "danger");
     }
   }
   async function removePhoto(slot) {
+    if (!photoOf(slot)) return;
+    const ok = await confirm({ title: "Remove this wedding photo?", body: "Your guests' invitation shows the design's fallback instead. You can add a photo again any time.", confirmLabel: "Remove", danger: true });
+    if (!ok) return;
     try {
       const before = photoOf(slot);
       await putPhoto(slot, null);
       remember(`${photoLabel(slot)} removed`, [{ kind: "photo", slot, dataUrl: before }]);
+      toast("Photo removed ✓", "success");
       afterPhoto(slot);
     } catch (err) {
       toast(err.message || "Couldn't remove the photo.", "danger");
@@ -870,6 +884,7 @@ export function mount(container, session, { api = defaultApi, toast = defaultToa
     if (el.dataset.choose) return choose(el.dataset.choose);
     if (el.dataset.ieEdit) return openSheet(el.dataset.ieEdit);
     if (el.dataset.iePhoto) return pickPhoto(el.dataset.iePhoto);
+    if (el.dataset.act === "photo-remove") return removePhoto(el.dataset.photoSlot);
     const act = el.dataset.act;
     el.closest("details.ie-more")?.removeAttribute("open");
     if (act === "undo") return undo();

@@ -23,14 +23,48 @@ beforeEach(() => {
 const text = (sel) => root.querySelector(sel)?.textContent.replace(/\s+/g, " ").trim();
 
 describe("/bridal (no login)", () => {
-  it("in order: what it is + View demo wedding, designs, RSVP, guest list, setup, prices, Request free trial", () => {
+  it("in order: what it is + View demo wedding + Request free trial, designs, RSVP, guest list, setup, prices, the form", async () => {
     renderBridalPage(root, { fetchImpl: vi.fn() });
-    expect([...root.querySelectorAll("[data-section]")].map((s) => s.dataset.section)).toEqual(["hero", "designs", "rsvp", "guests", "setup", "pricing", "trial"]);
+    await flush();
+    expect([...root.querySelectorAll("main.bp > [data-section]")].map((s) => s.dataset.section)).toEqual(["hero", "designs", "rsvp", "guests", "setup", "pricing", "trial"]);
     expect(text("h1")).toBe("Your wedding invitation, RSVP and guest list in one place");
     expect(root.querySelector('[data-role="view-demo"]').getAttribute("href")).toBe("/bridal/demo?design=gold");
-    expect([...root.querySelectorAll("[data-design]")].map((a) => [a.dataset.design, a.getAttribute("href")])).toEqual([["gold", "/bridal/demo?design=gold"], ["monochrome", "/bridal/demo?design=monochrome"], ["rustic", "/bridal/demo?design=rustic"]]);
-    expect(text('[data-section="rsvp"]')).toMatch(/2 seats reserved.*Will you be attending\?.*Yes, I'll be there.*Sorry, I can't make it/);
+    expect(root.querySelector('[data-section="hero"] a[href="#trial"]').textContent).toBe("Request free trial");
     expect(text('[data-section="guests"]')).toMatch(/Attending.*Waiting.*Not attending/);
+    // No lookalike invitation mock-ups.
+    expect(root.querySelector(".bp-phone, .bp-mock-rsvp")).toBeNull();
+  });
+
+  it("the designs are the REAL guest invitation (renderer, layout, sample photos), switchable Gold / Black & White / Rustic", async () => {
+    renderBridalPage(root, { fetchImpl: vi.fn() });
+    await flush();
+    const viewer = () => root.querySelector('[data-role="design-viewer"]');
+    expect([...root.querySelectorAll(".bp-tabs [data-design]")].map((b) => b.dataset.design)).toEqual(["gold", "monochrome", "rustic"]);
+    for (const id of ["gold", "monochrome", "rustic"]) {
+      root.querySelector(`.bp-tabs [data-design="${id}"]`).click();
+      await flush();
+      const page = viewer().querySelector('[data-role="invite-page"]');
+      expect(page.classList.contains("inv-signature")).toBe(true);
+      expect(page.dataset.template).toBe(id);
+      expect(page.querySelector(".sg-hero-photo").getAttribute("src")).toBe(getTemplateEntry(id).sampleAssets.hero);
+      expect([...page.querySelectorAll("[data-section]")].map((x) => x.dataset.section)).toEqual(expect.arrayContaining(["hero", "welcome", "story", "entourage", "rsvp"]));
+      expect(root.querySelector(`.bp-tabs [data-design="${id}"]`).getAttribute("aria-selected")).toBe("true");
+      expect(root.querySelector('[data-role="open-demo"]').getAttribute("href")).toBe(`/bridal/demo?design=${id}`);
+    }
+  });
+
+  it("the RSVP example is the real invitation's RSVP (try it: nothing is sent)", async () => {
+    const fetchImpl = vi.fn();
+    renderBridalPage(root, { fetchImpl });
+    await flush();
+    const box = root.querySelector('[data-role="rsvp-live"]');
+    expect(box.querySelector(".inv-signature .sg-rsvp")).not.toBeNull();
+    expect(box.querySelector('[data-role="guest-name"]').textContent).toBe("Maria & Jose Santos");
+    expect(box.querySelector('[data-role="seats"]').textContent).toBe("2 seats reserved");
+    box.querySelector('[data-act="decline"]').click();
+    await flush();
+    expect(box.querySelector('[data-role="rsvp"]').textContent).toMatch(/This is a demo/);
+    expect(fetchImpl).not.toHaveBeenCalled();
   });
 
   it("today's prices only: Free Trial (50 invited guests), ₱499 — 3 Months, ₱799 — 6 Months, Premium wedding link +₱499 once; no 12 months", () => {
@@ -147,5 +181,93 @@ describe("Wedding Setup marks example photos", () => {
     const hero = root.querySelector('.ie-photo [data-slot="hero"]').closest(".ie-photo");
     expect(hero.querySelector('[data-role="example-photo"]')).toBeNull();
     expect(root.querySelector('[data-role="hero-sample-note"]')).toBeNull();
+  });
+});
+
+describe("Wedding Setup photo states (2026-10-28)", () => {
+  // An in-memory /api/wedding-setup that stores the cover photo like the server.
+  const store = (setup, hero = null) => {
+    const db = { hero, calls: [] };
+    const api = async (_p, { body }) => {
+      db.calls.push(body);
+      if (body.action === "get") return { setup, hero: db.hero, hasHero: Boolean(db.hero), photos: {}, gallery: [], entourage: [], invitation: null };
+      if (body.action === "preview") return { design: { config: resolveDesign({ templateId: setup.templateId }), assets: {}, standard: true }, gallery: [], entourage: [], photos: {} };
+      if (body.action === "hero") {
+        if (body.dataUrl === "data:image/jpeg;base64,FAIL") throw new Error("The photo couldn't be uploaded");
+        db.hero = body.dataUrl;
+        return { hero: Boolean(body.dataUrl) };
+      }
+      return {};
+    };
+    return { db, api };
+  };
+  const SESSION = { member: { permissions: { "guests.manage": true } }, business: { timezone: "Asia/Manila" }, subscription: {} };
+  const SETUP = { templateId: "monochrome", coupleNames: "Carlo & Yanie", weddingDate: "2026-12-15", published: true };
+  const heroBox = () => root.querySelector('.ie-photo [data-slot="hero"]').closest(".ie-photo");
+  const buttons = () => [...heroBox().querySelectorAll(".ie-photo-actions button")].map((b) => b.textContent);
+  const pickHero = async (dataUrl) => {
+    heroBox().querySelector("[data-ie-photo]").click();
+    const pick = document.querySelector('[data-role="photo-pick"][data-slot="hero"]');
+    Object.defineProperty(pick, "files", { value: [new File(["x"], "c.jpg", { type: "image/jpeg" })] });
+    pick.dispatchEvent(new Event("change"));
+    await flush(20);
+    return dataUrl;
+  };
+
+  it("A. the design's example photo: labelled, Add your photo, no Remove", async () => {
+    const { api } = store(SETUP);
+    mount(root, SESSION, { api, toast: () => {} });
+    await flush(20);
+    expect(heroBox().querySelector('[data-role="example-photo"]').textContent).toBe("Example photo · guests won't see it");
+    expect(buttons()).toEqual(["Add your photo"]);
+  });
+
+  it("C. a saved photo: shown, Change photo + Remove photo, no Example label; Change replaces it", async () => {
+    const { api, db } = store(SETUP, "data:image/jpeg;base64,OLD");
+    let next = "data:image/jpeg;base64,NEW";
+    mount(root, SESSION, { api, toast: () => {}, shrink: async () => next });
+    await flush(20);
+    expect(root.querySelector(".sg-hero-photo").getAttribute("src")).toBe("data:image/jpeg;base64,OLD");
+    expect(heroBox().querySelector('[data-role="example-photo"]')).toBeNull();
+    expect(buttons()).toEqual(["Change photo", "Remove photo"]);
+    await pickHero();
+    expect(db.hero).toBe("data:image/jpeg;base64,NEW");
+    expect(root.querySelector(".sg-hero-photo").getAttribute("src")).toBe("data:image/jpeg;base64,NEW");
+    // A failed upload changes nothing on screen and says so.
+    const toast = vi.fn();
+    document.body.innerHTML = '<main id="app"></main>';
+    root = document.getElementById("app");
+    mount(root, SESSION, { api, toast, shrink: async () => next });
+    await flush(20);
+    next = "data:image/jpeg;base64,FAIL";
+    await pickHero();
+    expect(toast).toHaveBeenCalledWith(expect.stringMatching(/^Couldn't save the photo: The photo couldn't be uploaded\. Please try again\.$/), "danger");
+    expect(root.querySelector(".sg-hero-photo").getAttribute("src")).toBe("data:image/jpeg;base64,NEW");
+    expect(db.hero).toBe("data:image/jpeg;base64,NEW");
+  });
+
+  it("Remove photo asks first; Cancel keeps it; Remove stores the removal and the example state returns", async () => {
+    const { api, db } = store(SETUP, "data:image/jpeg;base64,SAVED");
+    const answers = [false, true];
+    const confirm = vi.fn(async () => answers.shift());
+    mount(root, SESSION, { api, toast: () => {}, confirm });
+    await flush(20);
+    heroBox().querySelector('[data-act="photo-remove"]').click();
+    await flush(20);
+    expect(confirm).toHaveBeenCalledWith(expect.objectContaining({ title: "Remove this wedding photo?", confirmLabel: "Remove" }));
+    expect(db.hero).toBe("data:image/jpeg;base64,SAVED");
+    expect(db.calls.filter((c) => c.action === "hero")).toEqual([]);
+    heroBox().querySelector('[data-act="photo-remove"]').click();
+    await flush(20);
+    expect(db.calls.filter((c) => c.action === "hero")).toEqual([{ action: "hero", dataUrl: null }]);
+    expect(db.hero).toBeNull();
+    expect(buttons()).toEqual(["Add your photo"]);
+    expect(heroBox().querySelector('[data-role="example-photo"]')).not.toBeNull();
+    // Refresh: still removed.
+    document.body.innerHTML = '<main id="app"></main>';
+    root = document.getElementById("app");
+    mount(root, SESSION, { api, toast: () => {} });
+    await flush(20);
+    expect(buttons()).toEqual(["Add your photo"]);
   });
 });
