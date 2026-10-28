@@ -36,6 +36,7 @@ import { invitationData, PHOTO_SLOTS, isOfferedTemplate } from "../../../shared/
 import { reconcileSeats } from "../../../shared/wedding-seating.js";
 import { dataUrlImageType } from "../../../shared/image-type.js";
 import { linkBusinessId } from "./custom-links.js";
+import { retainPhoto, pruneRetained } from "./photo-retention.js";
 
 const TX_OPTIONS = { maxAttempts: 10 };
 const MAX_HISTORY = 200;
@@ -92,15 +93,20 @@ export async function readSetup({ tenant, business }) {
 }
 // A design's photo slot (shrunk in the browser), or null to remove it.
 const photoRef = (tenant, slot) => tenant.doc("weddingPhotos", slot);
-export async function savePhoto({ tenant, FieldValue, slot, dataUrl, actor }) {
+// A replaced or removed photo is kept 30 days (./photo-retention.js).
+export async function savePhoto({ db, tenant, FieldValue, slot, dataUrl, actor, now = new Date() }) {
   if (typeof slot !== "string" || !Object.hasOwn(PHOTO_SLOTS, slot)) throw new WeddingError("invalid-input", "Invalid photo");
-  if (dataUrl === null) {
-    await photoRef(tenant, slot).delete();
-    return { slot, photo: false };
-  }
-  if (typeof dataUrl !== "string" || dataUrl.length > 400_000 || !dataUrlImageType(dataUrl)) throw new WeddingError("invalid-input", "Choose a JPEG, PNG or WebP photo (it's shrunk before upload)");
-  await photoRef(tenant, slot).set({ dataUrl, updatedBy: who(actor), updatedAt: FieldValue.serverTimestamp() });
-  return { slot, photo: true };
+  if (dataUrl !== null && (typeof dataUrl !== "string" || dataUrl.length > 400_000 || !dataUrlImageType(dataUrl))) throw new WeddingError("invalid-input", "Choose a JPEG, PNG or WebP photo (it's shrunk before upload)");
+  const ref = photoRef(tenant, slot);
+  await db.runTransaction(async (tx) => {
+    const cur = await tx.get(ref);
+    const before = cur.exists ? cur.data().dataUrl : null;
+    if (before !== dataUrl) retainPhoto(tx, tenant, { kind: "slot", slot, dataUrl: before, reason: dataUrl === null ? "removed" : "replaced", actor, now });
+    if (dataUrl === null) tx.delete(ref);
+    else tx.set(ref, { dataUrl, updatedBy: who(actor), updatedAt: FieldValue.serverTimestamp() });
+  }, TX_OPTIONS);
+  await pruneRetained({ tenant, now });
+  return { slot, photo: dataUrl !== null };
 }
 // Gallery photos for a customized invitation (shrunk in the browser).
 const galleryCol = (tenant) => tenant.collection("weddingGallery");
@@ -114,9 +120,16 @@ export async function addGalleryPhoto({ tenant, FieldValue, dataUrl, actor }) {
   await ref.set({ dataUrl, order: (last ? last.data().order : 0) + 10, addedBy: who(actor), addedAt: FieldValue.serverTimestamp() });
   return { photoId: ref.id };
 }
-export async function removeGalleryPhoto({ tenant, photoId }) {
+export async function removeGalleryPhoto({ db, tenant, photoId, actor, now = new Date() }) {
   if (typeof photoId !== "string" || !/^[A-Za-z0-9]{1,40}$/.test(photoId)) throw new WeddingError("invalid-input", "Invalid photo");
-  await galleryCol(tenant).doc(photoId).delete();
+  const ref = galleryCol(tenant).doc(photoId);
+  await db.runTransaction(async (tx) => {
+    const cur = await tx.get(ref);
+    if (!cur.exists) return;
+    retainPhoto(tx, tenant, { kind: "gallery", photoId, dataUrl: cur.data().dataUrl, reason: "removed", actor, now });
+    tx.delete(ref);
+  }, TX_OPTIONS);
+  await pruneRetained({ tenant, now });
   return { removed: true };
 }
 export const previewInvitation = ({ tenant, business, which, templateId }) => previewDesign({ tenant, business, which: which === "draft" ? "draft" : "live", templateId: typeof templateId === "string" ? templateId : undefined });
@@ -228,14 +241,19 @@ async function ensureSlug({ db, tenant, now = new Date() }) {
     return plan.slug;
   }, TX_OPTIONS);
 }
-export async function saveHero({ tenant, FieldValue, dataUrl, actor }) {
-  if (dataUrl === null) {
-    await heroRef(tenant).delete();
-    return { hero: false };
-  }
-  if (typeof dataUrl !== "string" || dataUrl.length > HERO_MAX || !dataUrlImageType(dataUrl)) throw new WeddingError("invalid-input", "Choose a JPEG, PNG or WebP photo (it's shrunk before upload)");
-  await heroRef(tenant).set({ dataUrl, updatedBy: who(actor), updatedAt: FieldValue.serverTimestamp() });
-  return { hero: true };
+// The cover photo, or null to remove it. The previous one is kept 30 days
+// (./photo-retention.js), in the same transaction.
+export async function saveHero({ db, tenant, FieldValue, dataUrl, actor, now = new Date() }) {
+  if (dataUrl !== null && (typeof dataUrl !== "string" || dataUrl.length > HERO_MAX || !dataUrlImageType(dataUrl))) throw new WeddingError("invalid-input", "Choose a JPEG, PNG or WebP photo (it's shrunk before upload)");
+  await db.runTransaction(async (tx) => {
+    const cur = await tx.get(heroRef(tenant));
+    const before = cur.exists ? cur.data().dataUrl : null;
+    if (before !== dataUrl) retainPhoto(tx, tenant, { kind: "hero", dataUrl: before, reason: dataUrl === null ? "removed" : "replaced", actor, now });
+    if (dataUrl === null) tx.delete(heroRef(tenant));
+    else tx.set(heroRef(tenant), { dataUrl, updatedBy: who(actor), updatedAt: FieldValue.serverTimestamp() });
+  }, TX_OPTIONS);
+  await pruneRetained({ tenant, now });
+  return { hero: dataUrl !== null };
 }
 
 // Reset invitation (Wedding Setup → ⋯, 2026-10-25): the design returns to
@@ -247,11 +265,20 @@ export async function saveHero({ tenant, FieldValue, dataUrl, actor }) {
 // seating and the rest of the wedding are never touched (that is Reset
 // Data, Settings).
 export const INVITATION_RESET_FIELDS = Object.freeze(["welcomeMessage", "partner1Family", "partner2Family", "partner1Parents", "partner2Parents", "story", "schedule", "gettingThere", "dressCode", "dressCodeDetails", "palette", "attireNotes", "reminders", "giftNote", "faq", "footerNote", "templateOptions"]);
-export async function resetInvitation({ db, tenant, FieldValue, actor }) {
+export async function resetInvitation({ db, tenant, FieldValue, actor, now = new Date() }) {
   const slots = Object.keys(PHOTO_SLOTS);
   const gallery = await galleryCol(tenant).limit(MAX_GALLERY + 10).get();
   await db.runTransaction(async (tx) => {
     const cur = await tx.get(setupRef(tenant));
+    // Every photo the reset removes is kept 30 days (./photo-retention.js).
+    const hero = await tx.get(heroRef(tenant));
+    const slotSnaps = [];
+    for (const slot of slots) slotSnaps.push([slot, await tx.get(photoRef(tenant, slot))]);
+    const gallerySnaps = [];
+    for (const d of gallery.docs) gallerySnaps.push(await tx.get(d.ref));
+    if (hero.exists) retainPhoto(tx, tenant, { kind: "hero", dataUrl: hero.data().dataUrl, reason: "reset", actor, now });
+    for (const [slot, snap] of slotSnaps) if (snap.exists) retainPhoto(tx, tenant, { kind: "slot", slot, dataUrl: snap.data().dataUrl, reason: "reset", actor, now });
+    for (const snap of gallerySnaps) if (snap.exists) retainPhoto(tx, tenant, { kind: "gallery", photoId: snap.id, dataUrl: snap.data().dataUrl, reason: "reset", actor, now });
     if (cur.exists) {
       const next = Object.fromEntries(Object.entries(cur.data()).filter(([k]) => !INVITATION_RESET_FIELDS.includes(k)));
       tx.set(setupRef(tenant), { ...next, updatedBy: who(actor), updatedAt: FieldValue.serverTimestamp() });

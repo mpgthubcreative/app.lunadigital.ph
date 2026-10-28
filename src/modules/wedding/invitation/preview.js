@@ -6,7 +6,8 @@
 
 import { html, render } from "../../../lib/html.js";
 
-// actions: [{ id, label, href? }]; onAction(id) for the buttons.
+// actions: [{ id, label, href?, primary? }]; onAction(id) for the buttons.
+// A primary action makes Close a plain "Cancel".
 export async function openInvitePreview({ token = "", fetchImpl, note = "Preview: what your guest sees", actions = [], onAction = () => {} }) {
   const backdrop = document.createElement("div");
   backdrop.className = "modal-backdrop inv-preview-backdrop";
@@ -15,7 +16,7 @@ export async function openInvitePreview({ token = "", fetchImpl, note = "Preview
   render(
     backdrop,
     html`<div class="inv-preview" role="dialog" aria-modal="true" aria-label="Invitation preview" data-role="invite-preview">
-      <div class="inv-preview-bar" data-role="owner-bar"><span class="inv-preview-note">${note}</span><span class="inv-preview-actions">${actions.map((a) => (a.href ? html`<a class="btn btn-compact" href="${a.href}" target="_blank" rel="noopener" data-pv="${a.id}">${a.label}</a>` : html`<button type="button" class="btn btn-compact" data-pv="${a.id}">${a.label}</button>`))}<button type="button" class="btn btn-compact btn-primary" data-pv="close">Close</button></span></div>
+      <div class="inv-preview-bar" data-role="owner-bar"><span class="inv-preview-note">${note}</span><span class="inv-preview-actions">${actions.map((a) => (a.href ? html`<a class="btn btn-compact" href="${a.href}" target="_blank" rel="noopener" data-pv="${a.id}">${a.label}</a>` : html`<button type="button" class="btn btn-compact${a.primary ? " btn-primary" : ""}" data-pv="${a.id}">${a.label}</button>`))}<button type="button" class="btn btn-compact${actions.some((a) => a.primary) ? "" : " btn-primary"}" data-pv="close">${actions.some((a) => a.primary) ? "Cancel" : "Close"}</button></span></div>
       <div class="inv-preview-body" data-role="invite-preview-body"></div>
     </div>`
   );

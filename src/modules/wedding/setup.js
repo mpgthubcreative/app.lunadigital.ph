@@ -54,6 +54,23 @@ export const cleanSlugInput = (v) =>
 // A photo shrunk in the browser to a small JPEG data URL (≤ 1200 px, under
 // the 400,000-character limit): iPhone HEIC photos too (../../lib/image.js).
 export const shrinkPhoto = (file) => photoDataUrl(file, { maxSide: 1200, quality: 0.8, maxChars: 400_000 });
+// The cover photo (2026-10-28): kept sharper, up to 2000 px on its longest
+// side, within the server's cover-photo limit (HERO_MAX, 700,000 characters).
+export const shrinkCoverPhoto = (file) => photoDataUrl(file, { maxSide: 2000, quality: 0.85, maxChars: 690_000 });
+export const COVER_PHOTO_GUIDE = "Recommended: portrait photo, 1600 × 2000 px or larger (JPG or PNG, under 5 MB). Keep faces near the center for the best crop.";
+export const COVER_LOW_RES = "This photo may look blurry on larger screens. For best results, use at least 1200 × 1500 px. You can still save it.";
+// Is a (shrunk) photo at least 1200 × 1500 px (either way round)? null = couldn't tell.
+export const coverIsLowRes = (size) => (size ? Math.min(size.w, size.h) < 1200 || Math.max(size.w, size.h) < 1500 : false);
+const measurePhoto = (dataUrl) =>
+  new Promise((resolve) => {
+    if (typeof Image === "undefined") return resolve(null);
+    const img = new Image();
+    const done = (v) => resolve(v);
+    img.onload = () => done(img.naturalWidth ? { w: img.naturalWidth, h: img.naturalHeight } : null);
+    img.onerror = () => done(null);
+    setTimeout(() => done(null), 4000);
+    img.src = dataUrl;
+  });
 
 // ---- Fields (one definition; each section's sheet shows only its own) ----
 // type: text | textarea | date | time | url | check | list | schedule | palette | faq
@@ -196,7 +213,8 @@ export function readSetupForm(form, saved = {}) {
   return setup;
 }
 
-export function mount(container, session, { api = defaultApi, toast = defaultToast, shrink = shrinkPhoto, preview = openInvitePreview, confirm = confirmDialog } = {}) {
+export function mount(container, session, { api = defaultApi, toast = defaultToast, shrink = shrinkPhoto, shrinkCover = null, measure = measurePhoto, preview = openInvitePreview, confirm = confirmDialog } = {}) {
+  const coverShrink = shrinkCover ?? (shrink === shrinkPhoto ? shrinkCoverPhoto : shrink);
   const canEdit = session.member.permissions["guests.manage"] === true;
   const tz = session.business?.timezone || "Asia/Manila";
   const trial = session.subscription?.trial?.open === true;
@@ -551,7 +569,7 @@ export function mount(container, session, { api = defaultApi, toast = defaultToa
       const src = slot === "hero" ? m.hero : m.photos[slot];
       const example = !realSrc && Boolean(src);
       return html`<figure class="ws-slot" data-slot-row="${slot}" data-state="${realSrc ? "saved" : example ? "example" : "none"}">${src ? html`<img src="${src}" alt="">` : html`<span class="ws-slot-empty" aria-hidden="true"></span>`}<figcaption>${slot === "hero" ? "Cover photo" : PHOTO_SLOTS[slot]}${example ? html` <span class="ws-unused" data-role="example-photo">Example photo · guests won't see it</span>` : ""}</figcaption><span class="ws-hero-actions"><button type="button" class="btn btn-compact" data-ie-photo="${slot}">${realSrc ? "Change photo" : example ? "Add your photo" : "Add photo"}</button>${realSrc ? html`<button type="button" class="btn btn-compact btn-ghost" data-act="photo-remove" data-slot="${slot}">Remove photo</button>` : ""}</span></figure>`;
-    })}</div>`;
+    })}${slots.includes("hero") ? html`<p class="stat-hint ws-photo-guide" data-role="photo-guide">${COVER_PHOTO_GUIDE}</p>` : ""}</div>`;
   };
   function openSheet(id) {
     if (!canEdit) return;
@@ -735,7 +753,51 @@ export function mount(container, session, { api = defaultApi, toast = defaultToa
       state.photos = rest;
     }
   }
+  // The cover photo is shown first in the real invitation (the same crop a
+  // guest gets on this screen), with a warning when it's small; only Save
+  // photo uploads it. Nothing is stored before that.
+  async function previewCover(file) {
+    let dataUrl;
+    try {
+      dataUrl = await coverShrink(file);
+    } catch (err) {
+      toast(`Couldn't use that photo${err.message ? `: ${err.message}` : ""}. Please try another.`, "danger");
+      return;
+    }
+    const low = coverIsLowRes(await measure(dataUrl));
+    const m = merged();
+    const invitation = invitationData({ setup: m.setup, hero: dataUrl, guest: OWNER_SAMPLE_GUEST, rsvpOpen: rsvpOpen(m.setup, businessDate(tz)), look: { ...(state.look || {}), photos: m.photos }, sample: true, timezone: tz });
+    const holder = {};
+    holder.pv = await preview({
+      token: "C".repeat(32),
+      fetchImpl: async () => ({ ok: true, status: 200, json: async () => ({ success: true, invitation }) }),
+      note: low ? COVER_LOW_RES : "Your new cover photo, as your guests will see it.",
+      actions: [{ id: "cover-other", label: "Choose another" }, { id: "cover-save", label: "Save photo", primary: true }],
+      onAction: async (id, btn) => {
+        if (id === "cover-other") {
+          holder.pv?.close();
+          pickPhoto("hero");
+          return;
+        }
+        if (id !== "cover-save") return;
+        if (btn) btn.disabled = true;
+        try {
+          const before = photoOf("hero");
+          await putPhoto("hero", dataUrl);
+          remember(`${photoLabel("hero")} replaced`, [{ kind: "photo", slot: "hero", dataUrl: before }]);
+          holder.pv?.close();
+          toast("Photo saved ✓", "success");
+          afterPhoto("hero");
+        } catch (err) {
+          if (btn) btn.disabled = false;
+          toast(`Couldn't save the photo${err.message ? `: ${err.message}` : ""}. Please try again.`, "danger");
+        }
+      },
+    });
+    holder.pv?.backdrop?.querySelector('[data-role="owner-bar"]')?.setAttribute("data-low-res", low ? "1" : "0");
+  }
   async function savePhoto(slot, file) {
+    if (slot === "hero") return previewCover(file);
     try {
       const dataUrl = await shrink(file);
       const before = photoOf(slot);

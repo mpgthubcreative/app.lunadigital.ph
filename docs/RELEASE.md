@@ -29,6 +29,11 @@ node scripts/release.js publish --sha <commit> --confirm luna-business-os
 
 Firestore rules and indexes are not part of the Netlify deploy. When `firestore.rules` changes, deploy the rules after the emulator gate and before publishing the code that needs them: `npx firebase deploy --only firestore:rules --project staging`. The `.firebaserc` alias is still named `staging`, which is the same project.
 
+## After publishing: smoke checks
+
+- Read-only: `node --env-file=.env.local scripts/prod-smoke-bridal.js`.
+- Checks that change data only in the test workspace: add `--destructive test-workspace-only --confirm luna-business-os` (see [BACKUP.md](BACKUP.md), "Production checks that change data"). Never change a real customer's data to test.
+
 ## Rollback (code)
 
 Netlify keeps every earlier deploy. Pick a deploy from `status`, or from Netlify → Deploys, and run:

@@ -358,7 +358,8 @@ export async function lunaOverview({ db, FieldValue, now = new Date() }) {
   await billingRun({ db, FieldValue, period });
   const [snap, money, plans, toReview] = await Promise.all([db.collection("businesses").limit(OVERVIEW_LIMIT).get(), moneyFromRecords({ db, months: [period] }), db.collection("plans").get(), paymentsToReview({ db })]);
   const planNames = Object.fromEntries(plans.docs.map((d) => [d.id, d.data().name]));
-  const rows = snap.docs.map((d) => billingRow(d.id, d.data(), planNames, today)).filter((r) => r.status !== "deleted");
+  // Luna's own test workspace (scripts/create-test-workspace.js) is never counted.
+  const rows = snap.docs.filter((d) => d.data().testWorkspace !== true).map((d) => billingRow(d.id, d.data(), planNames, today)).filter((r) => r.status !== "deleted");
   const m = money.byMonth[period];
   // Paying access; free trials are counted on their own (never income).
   const live = rows.filter((r) => BILLABLE_STATUSES.includes(r.status) && !["expired", "trial", "trial_ended"].includes(r.state));

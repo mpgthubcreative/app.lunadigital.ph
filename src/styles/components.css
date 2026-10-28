@@ -4825,3 +4825,10 @@ button.wl-person-name:hover .wl-edit, button.wl-person-name:focus-visible .wl-ed
 .sg-hero .ie-photo-actions, .inv-hero-wrap .ie-photo-actions { top: 12px; bottom: auto; }
 .ws-slot .ws-unused::before { content: none; }
 .ws-slot .ws-unused { display: block; }
+
+/* Cover photo guide (2026-10-28): one compact line under the cover photo;
+   the preview bar turns into a warning for a small photo. */
+.ws-photo-guide { margin: 4px 0 0; font-size: 0.78rem; line-height: 1.4; }
+.inv-preview-bar[data-low-res="1"] { background: var(--warning-bg); }
+.inv-preview-bar[data-low-res="1"] .inv-preview-note { color: var(--warning); font-weight: 600; }
+.ie-sheet-photos .ws-photo-guide { grid-column: 1 / -1; }

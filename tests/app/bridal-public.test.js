@@ -211,6 +211,8 @@ describe("Wedding Setup photo states (2026-10-28)", () => {
     Object.defineProperty(pick, "files", { value: [new File(["x"], "c.jpg", { type: "image/jpeg" })] });
     pick.dispatchEvent(new Event("change"));
     await flush(20);
+    document.querySelector('[data-pv="cover-save"]')?.click();
+    await flush(20);
     return dataUrl;
   };
 
@@ -225,7 +227,7 @@ describe("Wedding Setup photo states (2026-10-28)", () => {
   it("C. a saved photo: shown, Change photo + Remove photo, no Example label; Change replaces it", async () => {
     const { api, db } = store(SETUP, "data:image/jpeg;base64,OLD");
     let next = "data:image/jpeg;base64,NEW";
-    mount(root, SESSION, { api, toast: () => {}, shrink: async () => next });
+    mount(root, SESSION, { api, toast: () => {}, shrink: async () => next, measure: async () => ({ w: 1600, h: 2000 }) });
     await flush(20);
     expect(root.querySelector(".sg-hero-photo").getAttribute("src")).toBe("data:image/jpeg;base64,OLD");
     expect(heroBox().querySelector('[data-role="example-photo"]')).toBeNull();
@@ -237,7 +239,7 @@ describe("Wedding Setup photo states (2026-10-28)", () => {
     const toast = vi.fn();
     document.body.innerHTML = '<main id="app"></main>';
     root = document.getElementById("app");
-    mount(root, SESSION, { api, toast, shrink: async () => next });
+    mount(root, SESSION, { api, toast, shrink: async () => next, measure: async () => ({ w: 1600, h: 2000 }) });
     await flush(20);
     next = "data:image/jpeg;base64,FAIL";
     await pickHero();
@@ -269,5 +271,82 @@ describe("Wedding Setup photo states (2026-10-28)", () => {
     mount(root, SESSION, { api, toast: () => {} });
     await flush(20);
     expect(buttons()).toEqual(["Add your photo"]);
+  });
+});
+
+describe("cover photo guide and preview-before-save (2026-10-28)", () => {
+  const SESSION = { member: { permissions: { "guests.manage": true } }, business: { timezone: "Asia/Manila" }, subscription: {} };
+  const SETUP = { templateId: "gold", coupleNames: "Carlo & Yanie", weddingDate: "2026-12-15", published: true };
+  const store = () => {
+    const db = { hero: null, calls: [] };
+    const api = async (_p, { body }) => {
+      db.calls.push(body);
+      if (body.action === "get") return { setup: SETUP, hero: db.hero, hasHero: Boolean(db.hero), photos: {}, gallery: [], entourage: [], invitation: null };
+      if (body.action === "preview") return { design: { config: resolveDesign({ templateId: "gold" }), assets: {}, standard: true }, gallery: [], entourage: [], photos: {} };
+      if (body.action === "hero") {
+        db.hero = body.dataUrl;
+        return { hero: Boolean(body.dataUrl) };
+      }
+      return { saved: true, setup: SETUP };
+    };
+    return { db, api };
+  };
+  const choose = async (type) => {
+    root.querySelector('.ie-photo [data-slot="hero"]').closest(".ie-photo").querySelector("[data-ie-photo]").click();
+    const pick = [...document.querySelectorAll('[data-role="photo-pick"][data-slot="hero"]')].at(-1);
+    expect(pick.accept).toMatch(/image\/jpeg/);
+    expect(pick.accept).toMatch(/image\/png/);
+    Object.defineProperty(pick, "files", { value: [new File(["x"], type === "image/png" ? "c.png" : "c.jpg", { type })] });
+    pick.dispatchEvent(new Event("change"));
+    await flush(20);
+  };
+
+  it("the cover photo's sheet shows the size guide", async () => {
+    const { api } = store();
+    mount(root, SESSION, { api, toast: () => {} });
+    await flush(20);
+    root.querySelector('[data-ie-edit="hero"]').click();
+    await flush(5);
+    expect(document.querySelector('[data-role="photo-guide"]').textContent).toBe("Recommended: portrait photo, 1600 × 2000 px or larger (JPG or PNG, under 5 MB). Keep faces near the center for the best crop.");
+  });
+
+  it("JPG and PNG: previewed in the real invitation (same hero) before anything is saved; Save photo stores it", async () => {
+    for (const type of ["image/jpeg", "image/png"]) {
+      document.body.innerHTML = '<main id="app"></main>';
+      root = document.getElementById("app");
+      const { api, db } = store();
+      const url = `data:image/jpeg;base64,${type === "image/png" ? "PNG0" : "JPG0"}`;
+      mount(root, SESSION, { api, toast: () => {}, shrink: async () => url, measure: async () => ({ w: 1600, h: 2000 }) });
+      await flush(20);
+      await choose(type);
+      const pv = document.querySelector('[data-role="invite-preview"]');
+      expect(pv.querySelector(".inv-signature .sg-hero-photo").getAttribute("src")).toBe(url);
+      expect(pv.querySelector('[data-role="owner-bar"]').textContent).toMatch(/Your new cover photo, as your guests will see it\./);
+      expect(db.calls.some((c) => c.action === "hero")).toBe(false);
+      pv.querySelector('[data-pv="cover-save"]').click();
+      await flush(20);
+      expect(db.hero).toBe(url);
+      expect(document.querySelector('[data-role="invite-preview"]')).toBeNull();
+      expect(root.querySelector(".sg-hero-photo").getAttribute("src")).toBe(url);
+    }
+  });
+
+  it("a small photo warns (and can still be saved); Choose another / Close save nothing", async () => {
+    const { api, db } = store();
+    mount(root, SESSION, { api, toast: () => {}, shrink: async () => "data:image/jpeg;base64,SMALL", measure: async () => ({ w: 800, h: 1000 }) });
+    await flush(20);
+    await choose("image/jpeg");
+    const bar = document.querySelector('[data-role="owner-bar"]');
+    expect(bar.dataset.lowRes).toBe("1");
+    expect(bar.textContent).toMatch(/This photo may look blurry on larger screens\. For best results, use at least 1200 × 1500 px\. You can still save it\./);
+    bar.querySelector('[data-pv="close"]').click();
+    await flush(5);
+    expect(db.calls.some((c) => c.action === "hero")).toBe(false);
+    await choose("image/jpeg");
+    document.querySelector('[data-pv="cover-other"]').click();
+    await flush(5);
+    expect(document.querySelector('[data-role="invite-preview"]')).toBeNull();
+    expect(document.querySelector('[data-role="photo-pick"][data-slot="hero"]')).not.toBeNull();
+    expect(db.calls.some((c) => c.action === "hero")).toBe(false);
   });
 });

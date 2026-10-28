@@ -84,7 +84,7 @@ describe("a brand-new invitation", () => {
 describe("editing on the invitation", () => {
   const start = async (setup = { templateId: "gold", published: false }) => {
     const f = fakeApi(setup);
-    mount(container, SESSION, { api: f.api, toast: () => {}, shrink: async () => "data:image/jpeg;base64,BBBB" });
+    mount(container, SESSION, { api: f.api, toast: () => {}, shrink: async () => "data:image/jpeg;base64,BBBB", measure: async () => ({ w: 1600, h: 2000 }) });
     await flush(16);
     return f;
   };
@@ -190,6 +190,10 @@ describe("editing on the invitation", () => {
     const hero = document.querySelector('[data-role="photo-pick"][data-slot="hero"]');
     Object.defineProperty(hero, "files", { value: [new File(["x"], "b.jpg", { type: "image/jpeg" })] });
     hero.dispatchEvent(new Event("change"));
+    await flush(16);
+    // The cover photo is previewed in the invitation first; Save photo stores it.
+    expect(calls.some((c) => c.action === "hero")).toBe(false);
+    document.querySelector('[data-pv="cover-save"]').click();
     await flush(16);
     expect(calls).toContainEqual({ action: "hero", dataUrl: "data:image/jpeg;base64,BBBB" });
     expect(container.querySelector(".sg-hero-photo").getAttribute("src")).toBe("data:image/jpeg;base64,BBBB");
