@@ -4,14 +4,17 @@
 //   (the trial request uses the bot field, so nothing is stored), and the
 //   test workspace's guest link.
 //     node --env-file=.env.local scripts/prod-smoke-bridal.js
-//   Photo add / change / remove: ONLY in the test workspace, ONLY with the
-//   flag; the cover photo document is put back exactly afterwards, and the
-//   retained copies the check made (test workspace only) are removed.
+//   Photo add / change / remove, retention (30 days, server-only), the
+//   restore script and Reset invitation: ONLY in the test workspace, ONLY
+//   with the flag. Any other starting state STOPS before a write. The sample
+//   wedding, cover and design photo are put back exactly afterwards (and
+//   verified); the run's own retained copies and gallery photo are removed.
 //     node --env-file=.env.local scripts/prod-smoke-bridal.js --destructive test-workspace-only --confirm <project>
 // Real customer workspaces are never changed: there is no option for it.
+import { execFile } from "node:child_process";
 import { parseArgs, connect, connectReadOnly } from "./_cli.js";
 import { tenantDb } from "../netlify/functions/_lib/tenant-db.js";
-import { saveHero } from "../netlify/functions/_lib/invitations.js";
+import { saveHero, savePhoto, addGalleryPhoto, resetInvitation } from "../netlify/functions/_lib/invitations.js";
 import { photoHistory } from "../netlify/functions/_lib/photo-retention.js";
 import { TEST_BRIDAL_ID, requireDestructiveFlag, assertTestWorkspace, withRestore, ProdGuardError } from "./_prod-guard.js";
 
@@ -49,42 +52,109 @@ if (!token) {
   check("the test workspace's guest link opens", v.status === 200 && v.body?.invitation?.guest?.name === "Smoke Test Guest");
 }
 
-// ---- Photo add / change / remove: the test workspace only ----
+// ---- Photo add / change / remove / restore / reset: the test workspace only ----
+if (destructive && !token) {
+  fail += 1;
+  console.log(`STOP: no test workspace guest link (${TEST_BRIDAL_ID}); nothing was changed.`);
+}
 if (destructive && token) {
   try {
+    // The guard refuses every real business (read-only).
+    const real = (await db.collection("businesses").get()).docs.filter((d) => d.data().testWorkspace !== true).map((d) => d.id);
+    const refusedAll = (await Promise.all(real.map((id) => assertTestWorkspace(db, id).then(() => false, (e) => e instanceof ProdGuardError && e.code === "refused")))).every(Boolean);
+    check(`the guard refuses every real workspace (${real.length})`, real.length > 0 && refusedAll);
+    let flagRefused = false;
+    try {
+      requireDestructiveFlag({ destructive: "yes" });
+    } catch (e) {
+      flagRefused = e instanceof ProdGuardError;
+    }
+    check("the guard refuses a run without --destructive test-workspace-only", flagRefused);
+
     await assertTestWorkspace(db, TEST_BRIDAL_ID);
-    const heroRef = tenant.doc("weddingSetup", "hero");
-    const historyBefore = new Set((await photoHistory(tenant).get()).docs.map((d) => d.id));
     const FieldValue = admin.firestore.FieldValue;
     const actor = { uid: "luna-smoke", name: "Luna smoke test" };
+    const setupRef = tenant.doc("weddingSetup", "current");
+    const heroRef = tenant.doc("weddingSetup", "hero");
+    const slotRef = tenant.doc("weddingPhotos", "story1");
+    const gallery = tenant.collection("weddingGallery");
+    const history = photoHistory(tenant);
+    const [historyStart, galleryStart] = await Promise.all([history.get(), gallery.get()]);
+    if (!historyStart.empty || !galleryStart.empty) throw new ProdGuardError("blocked", `photo checks: blocked, nothing was changed (expected no retained and no gallery photos; found ${historyStart.size} and ${galleryStart.size}).`);
     // Tiny valid JPEGs (a JPEG header is all the server checks for type).
     const jpeg = (n) => `data:image/jpeg;base64,${Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(200 + n, n)]).toString("base64")}`;
-    await withRestore({
-      label: "cover photo add / change / remove",
-      refs: [heroRef],
-      expect: ([hero]) => (hero === null ? true : "the test workspace already has a cover photo"),
-      run: async () => {
-        await saveHero({ db, tenant, FieldValue, dataUrl: jpeg(1), actor });
-        check("add: the guest link shows the saved photo", (await post("/api/invite", { action: "view", token })).body?.invitation?.hero === jpeg(1));
-        await saveHero({ db, tenant, FieldValue, dataUrl: jpeg(2), actor });
-        check("change: the guest link shows the new photo", (await post("/api/invite", { action: "view", token })).body?.invitation?.hero === jpeg(2));
-        await saveHero({ db, tenant, FieldValue, dataUrl: null, actor });
-        check("remove: the guest link has no photo (monogram)", (await post("/api/invite", { action: "view", token })).body?.invitation?.hero === null);
-        const kept = (await photoHistory(tenant).get()).docs.filter((d) => !historyBefore.has(d.id));
-        check("the replaced and removed photos were retained", kept.length === 2 && kept.every((d) => d.data().kind === "hero"));
-        // This check's own retained copies (test workspace only).
-        for (const d of kept) await d.ref.delete();
-      },
-    });
-    check("cover photo restored exactly as before", true);
-  } catch (err) {
-    if (err instanceof ProdGuardError && err.code === "blocked") {
-      skipped += 1;
-      console.log(`SKIP ${err.message}`);
-    } else {
-      fail += 1;
-      console.log(`FAIL ${err.message}`);
+    const guest = async () => (await post("/api/invite", { action: "view", token })).body?.invitation ?? null;
+    const kept = async () => (await history.get()).docs.map((d) => ({ id: d.id, ...d.data() }));
+    const ms = (v) => (v?.toMillis ? v.toMillis() : NaN);
+    const restoreScript = (id) =>
+      new Promise((resolve) => {
+        execFile(process.execPath, ["--env-file=.env.local", "scripts/restore-wedding-photo.js", "--business", TEST_BRIDAL_ID, "--id", id, "--confirm", process.env.FIREBASE_PROJECT_ID], (err, out) => resolve(!err && /Restored hero/.test(out)));
+      });
+    // A Firestore read with no sign-in (what anyone on the internet could try).
+    const anonRead = (path) => fetch(`https://firestore.googleapis.com/v1/projects/${process.env.FIREBASE_PROJECT_ID}/databases/(default)/documents/${path}?key=${process.env.VITE_FIREBASE_API_KEY}`).then((r) => r.status);
+    try {
+      await withRestore({
+        label: "photo checks",
+        refs: [setupRef, heroRef, slotRef],
+        expect: ([setup, hero, slot]) => (setup?.coupleNames !== "Smoke & Test" ? "the test wedding isn't the sample one" : hero !== null ? "the test workspace already has a cover photo" : slot !== null ? "the test workspace already has a design photo" : true),
+        run: async () => {
+          // An expired copy is pruned on the next photo change; a fresh one stays.
+          const old = history.doc();
+          await old.set({ kind: "hero", slot: null, photoId: null, dataUrl: jpeg(9), reason: "replaced", retainedAt: new Date(Date.now() - 31 * 86_400_000), expiresAt: new Date(Date.now() - 86_400_000), by: actor });
+
+          await saveHero({ db, tenant, FieldValue, dataUrl: jpeg(1), actor });
+          check("add: the guest link shows the saved photo", (await guest())?.hero === jpeg(1));
+          check("add: nothing to retain (there was no photo)", (await kept()).length === 0);
+          check("30 days: an expired retained copy is pruned on the next change", !(await old.get()).exists);
+
+          await saveHero({ db, tenant, FieldValue, dataUrl: jpeg(2), actor });
+          const v2 = await guest();
+          check("change: the guest link shows the new photo", v2?.hero === jpeg(2));
+          check("change: the guest sees only the active photo", !JSON.stringify(v2).includes(jpeg(1)));
+          const replaced = (await kept()).find((h) => h.dataUrl === jpeg(1));
+          check("change: the previous photo is retained (hero, replaced)", replaced?.kind === "hero" && replaced?.reason === "replaced");
+          check("30 days: expiresAt = retainedAt + 30 days", ms(replaced?.expiresAt) - ms(replaced?.retainedAt) === 30 * 86_400_000);
+          check("server-only: a retained photo can't be read without sign-in", (await anonRead(`businesses/${TEST_BRIDAL_ID}/weddingPhotoHistory/${replaced?.id}`)) === 403);
+          check("server-only: retained photos can't be listed without sign-in", (await anonRead(`businesses/${TEST_BRIDAL_ID}/weddingPhotoHistory`)) === 403);
+
+          await saveHero({ db, tenant, FieldValue, dataUrl: null, actor });
+          check("remove: the guest link has no photo (monogram)", (await guest())?.hero === null);
+          const removed = (await kept()).find((h) => h.dataUrl === jpeg(2));
+          check("remove: the removed photo is retained (hero, removed)", removed?.reason === "removed");
+
+          // Restore with the ops script: back to the removed photo (nothing to keep: no photo now) ...
+          check("restore script: puts the removed photo back", await restoreScript(removed.id));
+          check("restore: the guest link shows it again", (await guest())?.hero === jpeg(2));
+          check("restore: marked restored, nothing extra kept", (await history.doc(removed.id).get()).data().restoredAt != null && (await kept()).length === 2);
+          // ... then to the first photo: the photo it replaces is kept in turn.
+          check("restore script: puts the replaced photo back", await restoreScript(replaced.id));
+          check("restore: the guest link shows it", (await guest())?.hero === jpeg(1));
+          const byRestore = (await kept()).filter((h) => h.dataUrl === jpeg(2) && h.id !== removed.id);
+          check("restore: the photo it replaced is retained", byRestore.length === 1 && byRestore[0].reason === "replaced");
+
+          // Reset invitation keeps every photo it removes.
+          await savePhoto({ db, tenant, FieldValue, slot: "story1", dataUrl: jpeg(3), actor });
+          const { photoId: galleryId } = await addGalleryPhoto({ tenant, FieldValue, dataUrl: jpeg(4), actor });
+          const before = (await kept()).length;
+          await resetInvitation({ db, tenant, FieldValue, actor });
+          const reset = (await kept()).filter((h) => h.reason === "reset");
+          check("reset: the cover, design and gallery photos are retained", (await kept()).length === before + 3 && reset.some((h) => h.kind === "hero" && h.dataUrl === jpeg(1)) && reset.some((h) => h.kind === "slot" && h.slot === "story1" && h.dataUrl === jpeg(3)) && reset.some((h) => h.kind === "gallery" && h.dataUrl === jpeg(4) && (!galleryId || h.photoId === galleryId)));
+          const v3 = await guest();
+          check("reset: the guest link has no photos (monogram)", v3?.hero === null && ![1, 2, 3, 4].some((n) => JSON.stringify(v3).includes(jpeg(n))));
+        },
+      });
+      check("restore: the sample wedding, cover and design photo are exactly as before (verified)", true);
+    } finally {
+      // This run's own data, test workspace only: its retained copies and gallery photo.
+      for (const d of (await history.get()).docs) await d.ref.delete();
+      for (const d of (await gallery.get()).docs) await d.ref.delete();
     }
+    const [historyEnd, galleryEnd] = await Promise.all([history.get(), gallery.get()]);
+    check("cleanup: no retained or gallery photos left (as before)", historyEnd.empty && galleryEnd.empty);
+  } catch (err) {
+    fail += 1;
+    // A starting state that isn't the expected one stops the run: never "warn and continue".
+    console.log(`${err instanceof ProdGuardError && err.code === "blocked" ? "STOP" : "FAIL"} ${err.message}`);
   }
 }
 console.log(`\n${pass} passed, ${fail} failed, ${skipped} skipped`);

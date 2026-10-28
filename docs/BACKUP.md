@@ -20,7 +20,7 @@ Updated 2026-10-28 (status, wedding photo retention, the 2026-10-28 incident). F
 | Scheduled Firestore backups | **OFF** (paid; not enabled) |
 | Wedding photo retention | **ON** (2026-10-28): a replaced or removed cover / design / gallery photo is kept 30 days, server-only (below) |
 | Storage soft delete | 7 days (Google default). It does **not** cover wedding photos: they are stored in Firestore, not Storage |
-| Latest manual logical backup | 2026-10-25 (staging rehearsal, before the in-place cutover). None of production since |
+| Latest manual logical backup | 2026-10-28, production, before publishing f208929: 793 documents + 5 files, SHA-256 verified (kept off the repo, on Luna's operator machine) |
 
 Customers never see these settings.
 
@@ -42,7 +42,7 @@ Customers never see these settings.
 
 - They run **only** in the dedicated test workspace `luna-smoke-bridal` ("Luna Smoke Test (internal)", `testWorkspace: true`, no members, a free trial, sample content, left out of Super Admin's Overview counts). Create or refresh it with `scripts/create-test-workspace.js --confirm luna-business-os`.
 - `scripts/_prod-guard.js` enforces it: the id must start with `luna-smoke-` **and** the business must be marked `testWorkspace: true` (a real customer fails both); the `--destructive test-workspace-only` flag is required; `withRestore()` reads the current state, **stops before any write** if it isn't the expected starting state (reported as skipped/blocked), keeps the full original, runs, restores it exactly and verifies the restore.
-- `scripts/prod-smoke-bridal.js` is read-only by default; with the flag it checks photo add / change / remove in the test workspace only.
+- `scripts/prod-smoke-bridal.js` is read-only by default; with the flag, in the test workspace only, it checks: the guard refuses every real workspace; photo add / change / remove; the previous photo retained (30-day expiry, expired copies pruned); retained photos unreadable without sign-in; the guest sees only the active photo (monogram when none); `scripts/restore-wedding-photo.js` (the photo it replaces is kept); Reset invitation keeps cover, design and gallery photos; then everything is put back exactly. Created and first run 2026-10-28: 28/28.
 - Never use a real customer's workspace (Carlo & Yanie, Veah Bridal, Distributor or Household customers) for a check that changes data.
 
 ## Paid PITR / scheduled backups: recommendation
