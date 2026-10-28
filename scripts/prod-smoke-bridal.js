@@ -15,8 +15,9 @@ import { saveHero } from "../netlify/functions/_lib/invitations.js";
 import { photoHistory } from "../netlify/functions/_lib/photo-retention.js";
 import { TEST_BRIDAL_ID, requireDestructiveFlag, assertTestWorkspace, withRestore, ProdGuardError } from "./_prod-guard.js";
 
-const SITE = (process.env.SITE_URL || "https://app.lunadigitalsystem.com").replace(/\/$/, "");
 const args = parseArgs();
+// The live address itself (an older address redirects, and a redirect turns a POST into a GET).
+const SITE = String(args.site || "https://app.lunadigitalsystem.com").replace(/\/$/, "");
 const destructive = args.destructive !== undefined;
 let pass = 0;
 let fail = 0;
