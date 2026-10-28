@@ -92,7 +92,8 @@ export const isWeddingHomePath = (path) => /^\/w\/[a-z0-9-]{1,60}\/?$/.test(path
 
 // preview (Owner, inside Luna): the same page, but answers aren't sent and
 // the tab title / address bar are left alone.
-export function renderInvitePage(root, { token = inviteTokenFrom(window.location.pathname), fetchImpl = (...a) => window.fetch(...a), preview = false } = {}) {
+// previewMessage: what answering says in preview (the public demo has its own words).
+export function renderInvitePage(root, { token = inviteTokenFrom(window.location.pathname), fetchImpl = (...a) => window.fetch(...a), preview = false, previewMessage = "Preview only: your guest answers from their own link." } = {}) {
   // companions: names typed for the party's unnamed seats (optional).
   const state = { status: "loading", inv: null, message: "", choosing: null, seats: null, meal: null, note: "", companions: [], done: null, busy: false, timer: null };
   // The party's known names and how many seats still have none (older links: none).
@@ -282,7 +283,7 @@ export function renderInvitePage(root, { token = inviteTokenFrom(window.location
 
   async function send(status, confirmed) {
     if (preview) {
-      state.message = "Preview only: your guest answers from their own link.";
+      state.message = previewMessage;
       draw();
       return;
     }

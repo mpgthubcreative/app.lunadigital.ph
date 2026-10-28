@@ -42,6 +42,7 @@ import { invitationSummary } from "./_lib/invitation-design.js";
 import { listFeedback, setFeedbackStatus } from "./_lib/feedback.js";
 import { FeedbackError } from "../../shared/feedback.js";
 import { listCustomLinks, customLinkDomain } from "./_lib/custom-links.js";
+import { listTrialRequests, closeTrialRequest, TrialRequestError } from "./_lib/trial-requests.js";
 import { lunaOverview, platformOverview, listSubscriptionPayments, paymentDetail, latestPayment, listSubscriptions, listPlatformExpenses, createPlatformExpense, updatePlatformExpense, removePlatformExpense, copyRecurringExpenses, listCostRates, addCostRate, usageCost, economics } from "./_lib/platform.js";
 
 const STATUS = {
@@ -99,6 +100,9 @@ const ACTIONS = {
   session: { fields: [], run: async ({ op }) => ({ operator: { email: op.email, name: op.name, role: op.role }, workspaces: creatableWorkspaces() }) },
   // The short Overview: active access, recurring and annual income, Needs Attention, Income by Workspace.
   overview: { fields: [], run: async ({ db, admin }) => ({ overview: await lunaOverview({ db, FieldValue: admin.firestore.FieldValue }) }) },
+  // Bridal free-trial requests from the public /bridal page (2026-10-28).
+  trialRequests: { fields: [], run: async ({ db }) => ({ requests: await listTrialRequests({ db }) }) },
+  closeTrialRequest: { fields: ["requestId"], run: async ({ db, admin, op }, b) => closeTrialRequest({ db, FieldValue: admin.firestore.FieldValue, requestId: b.requestId, operator: actorOf(op) }) },
   // Custom workspace links (2026-10-26): every name, its workspace, setup and the site address count.
   customLinks: { fields: [], run: async ({ db }) => ({ customLinks: await listCustomLinks({ db, domain: customLinkDomain() }) }) },
   counts: { fields: [], run: async ({ db }) => ({ overview: await overview({ db, planIds: (await listPlans({ db })).map((p) => p.id) }) }) },
@@ -359,7 +363,7 @@ export function createOperatorHandler({ getAdmin: loadAdmin }) {
     try {
       return respond(200, { success: true, ...(await action.run({ db, auth, admin, bucket, op }, body)) });
     } catch (err) {
-      if (err instanceof ProvisioningError || err instanceof OperatorError || err instanceof BillingError || err instanceof SupportError || err instanceof FeedbackError) throw new RequestError(err.code, err.message, STATUS[err.code] || 400);
+      if (err instanceof ProvisioningError || err instanceof OperatorError || err instanceof BillingError || err instanceof SupportError || err instanceof FeedbackError || err instanceof TrialRequestError) throw new RequestError(err.code, err.message, STATUS[err.code] || 400);
       throw err;
     }
   });

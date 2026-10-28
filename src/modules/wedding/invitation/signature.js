@@ -88,7 +88,7 @@ export function signaturePage({ inv, names, wording: W, time12, rsvpBlock, messa
 
   const heroPart = on("hero")
     ? html`<section class="sg-hero" data-section="hero" data-has-photo="${hero ? "1" : "0"}">
-        ${hero ? html`<img class="sg-hero-photo" src="${hero}" alt="" data-slot="hero">` : html`<div class="sg-hero-photo sg-hero-plain" aria-hidden="true" data-slot="hero"></div>`}
+        ${hero ? html`<img class="sg-hero-photo" src="${hero}" alt="" data-slot="hero">` : html`<div class="sg-hero-photo sg-hero-plain" aria-hidden="true" data-slot="hero" data-role="hero-fallback">${mono}</div>`}
         <div class="sg-hero-card" data-edit="hero">
           ${W.intro ? html`<p class="sg-intro">${W.intro}</p>` : ""}
           <h1 class="sg-names">${n2 ? html`<span>${n1}</span><span class="sg-amp">&amp;</span><span>${n2}</span>` : html`<span>${n1 || ""}</span>`}</h1>

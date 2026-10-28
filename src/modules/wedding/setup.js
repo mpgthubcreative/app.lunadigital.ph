@@ -253,7 +253,8 @@ export function mount(container, session, { api = defaultApi, toast = defaultToa
   const sampleNotice = (m) => {
     const items = [...m.sampled, ...m.sampledPhotos];
     if (!items.length) return "";
-    return html`<div class="banner banner-info ie-notice" role="note" data-role="sample-notice"><strong>${items.length} ${items.length === 1 ? "item is" : "items are"} still using template examples.</strong> Replace them before publishing: ${items.map((x) => x.label).join(", ")}. Until then, your guests' invitation leaves them out.</div>`;
+    const heroSample = m.sampledPhotos.some((x) => x.id === "hero");
+    return html`<div class="banner banner-info ie-notice" role="note" data-role="sample-notice"><strong>${items.length} ${items.length === 1 ? "item is" : "items are"} still using template examples.</strong> Replace them before publishing: ${items.map((x) => x.label).join(", ")}. Until then, your guests' invitation leaves them out.${heroSample ? html` <span data-role="hero-sample-note">The cover photo is the design's example: guests see your monogram instead until you add your own.</span> <button type="button" class="btn btn-compact" data-ie-photo="hero">Add your cover photo</button>` : ""}</div>`;
   };
   const guide = () => {
     const slug = real().weddingSlug;
@@ -375,6 +376,15 @@ export function mount(container, session, { api = defaultApi, toast = defaultToa
       b.dataset.iePhoto = slot;
       b.textContent = own ? "Replace photo" : "Add your photo";
       wrap.appendChild(b);
+      // 2026-10-28: an example photo says so on the photo itself (the
+      // couple once took the design's cover photo for their own).
+      if (!own && el.tagName === "IMG") {
+        const tag = document.createElement("span");
+        tag.className = "ie-example";
+        tag.dataset.role = "example-photo";
+        tag.textContent = "Example photo · guests won't see it";
+        wrap.appendChild(tag);
+      }
     }
   }
 

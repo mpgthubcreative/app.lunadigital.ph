@@ -294,6 +294,16 @@ function boot() {
   }
   // Owner pilot: a business's public menu / order link needs no login
   // (/api/store resolves the slug to one business and shows only the menu).
+  // Luna Bridal before signup (2026-10-28): /bridal (the product, prices,
+  // Request free trial) and /bridal/demo (a sample invitation). No login.
+  if (window.location.pathname === "/bridal" || window.location.pathname === "/bridal/") {
+    import("./bridal.js").then((m) => m.renderBridalPage(root));
+    return;
+  }
+  if (window.location.pathname === "/bridal/demo") {
+    import("./bridal.js").then((m) => m.renderBridalDemo(root));
+    return;
+  }
   if (window.location.pathname.startsWith("/store/")) {
     import("./store.js").then((m) => m.renderStorePage(root));
     return;

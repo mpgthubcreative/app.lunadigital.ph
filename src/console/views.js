@@ -94,9 +94,42 @@ export async function overviewView(el, ctx) {
             </li>`
           )}</ul></div>
         </section>
+        <section class="card section" data-role="trial-requests" hidden></section>
         <section class="card section" data-role="custom-links"></section>`
     );
   draw();
+  // Bridal free-trial requests from the public /bridal page (2026-10-28):
+  // create the workspace (trial), then mark the request done.
+  let requests = [];
+  const drawRequests = () => {
+    const box = el.querySelector('[data-role="trial-requests"]');
+    if (!box) return;
+    box.hidden = !requests.length;
+    render(
+      box,
+      requests.length
+        ? html`<div class="card-header"><h2 class="card-title">Trial requests</h2><span class="stat-hint">${formatNumber(requests.length)}</span></div>
+            <ul class="items sa-review" data-role="request-rows">${requests.map(
+              (q) => html`<li data-request="${q.id}"><div class="item">
+                <span class="item-main"><span class="item-title">${q.name}${q.coupleNames ? ` · ${q.coupleNames}` : ""}</span><span class="item-sub">${q.contact}${q.weddingDate ? ` · wedding ${formatDayId(q.weddingDate)}` : ""}${q.createdAt ? ` · ${formatDayId(q.createdAt.slice(0, 10))}` : ""}</span>${q.note ? html`<span class="item-sub">${q.note}</span>` : ""}</span>
+                <span class="item-end"><button type="button" class="btn btn-compact btn-primary" data-act="tr-create" data-id="${q.id}">Create workspace</button><button type="button" class="btn btn-compact" data-act="tr-done" data-id="${q.id}">Done</button></span>
+              </div></li>`
+            )}</ul>`
+        : ""
+    );
+  };
+  ctx
+    .call("trialRequests")
+    .then((r) => {
+      requests = Array.isArray(r?.requests) ? r.requests : [];
+      drawRequests();
+    })
+    .catch(() => {});
+  const closeRequest = async (id) => {
+    await ctx.call("closeTrialRequest", { requestId: id });
+    requests = requests.filter((x) => x.id !== id);
+    drawRequests();
+  };
   // Custom workspace links: names, setup and how many site addresses are used.
   ctx
     .call("customLinks")
@@ -117,6 +150,24 @@ export async function overviewView(el, ctx) {
     if (toggleMenus(e, el)) return;
     const t = e.target.closest("[data-act]");
     if (t?.dataset.act === "review-payment") return reviewPayment(ctx, t.dataset.id, { onDone: () => overviewView(el, ctx) });
+    if (t?.dataset.act === "tr-create" || t?.dataset.act === "tr-done") {
+      const q = requests.find((x) => x.id === t.dataset.id);
+      if (!q) return undefined;
+      try {
+        if (t.dataset.act === "tr-create") {
+          const made = await createBusinessDialog(ctx, { planId: "bridal-basic", name: q.coupleNames ? `${q.coupleNames} Wedding` : `${q.name} Wedding`, ownerName: q.name });
+          if (!made) return undefined;
+          ctx.toast("Workspace created with the free trial. Send the owner their setup link.", "success");
+          await closeRequest(q.id);
+          ctx.navigate(`/businesses?b=${made.businessId}#members`);
+          return undefined;
+        }
+        await closeRequest(q.id);
+      } catch (err) {
+        ctx.toast(err.message || "Something went wrong", "danger");
+      }
+      return undefined;
+    }
     if (!t || !t.dataset.act.startsWith("s-")) return;
     const r = rows.find((x) => x.id === t.dataset.id);
     if (r && (await runSubscriptionAction(ctx, t.dataset.act, r))) overviewView(el, ctx);
@@ -229,9 +280,10 @@ export function businessesView(el, ctx) {
 
 const limitsText = (p) => `${formatNumber(p.limits.users)} user${p.limits.users === 1 ? "" : "s"} · ${formatBytes(p.limits.storageBytes)}`;
 const termOptions = (p) => planBilling(p).terms.map((t) => ({ value: String(t.months), label: termLabel(p, t.months) }));
-export function createBusinessDialog(ctx) {
+// prefill (2026-10-28, a Bridal trial request): { planId, name, ownerName }.
+export function createBusinessDialog(ctx, prefill = {}) {
   const products = ctx.workspaces.flatMap((w) => plansFor(ctx, w.id));
-  const first = products[0];
+  const first = products.find((p) => p.id === prefill.planId) ?? products[0];
   let idTouched = false;
   return formDialog({
     title: "Create business",
@@ -241,8 +293,8 @@ export function createBusinessDialog(ctx) {
       // Products with a free trial start with it (nothing billed until the
       // customer chooses a plan on "Continue with Luna").
       { name: "start", label: "Start", type: "select", options: [{ value: "trial", label: "30-day free trial" }, { value: "paid", label: "Paid from today" }], value: "trial" },
-      { name: "name", label: "Business / workspace name", required: true },
-      { name: "ownerName", label: "Owner name", required: true },
+      { name: "name", label: "Business / workspace name", required: true, value: prefill.name ?? "" },
+      { name: "ownerName", label: "Owner name", required: true, value: prefill.ownerName ?? "" },
       { name: "ownerEmail", label: "Owner email", required: true, inputmode: "email" },
       { name: "price", label: "Agreed price (₱, optional)", inputmode: "decimal", hint: "Only when it differs from the product's price (e.g. a Custom wedding's quote).", more: true },
       { name: "addonUsers", label: "Extra users (add-on packs)", value: "0", inputmode: "numeric", more: true, default: true },
