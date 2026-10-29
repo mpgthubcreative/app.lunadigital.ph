@@ -503,7 +503,7 @@ export async function checkAdvanceLimit(tx, tenant, staff, staffId, amount, { st
 // pay period (each advance stays traceable; several can share a payroll).
 const advanceLine = (a, amount) => {
   const partial = amount < advanceRemaining(a) || advanceRemaining(a) < a.amount;
-  return { id: `adv-${a.id}`, type: "advance", advanceId: a.id, description: `Advance ${a.paidDate || a.date}${a.description ? ` (${a.description})` : ""}${partial ? ` · ${peso(amount)} of ${peso(advanceRemaining(a))} owed` : ""}`, amount };
+  return { id: `adv-${a.id}`, type: "advance", advanceId: a.id, date: a.paidDate || a.date, description: `Advance ${a.paidDate || a.date}${a.description ? ` (${a.description})` : ""}${partial ? ` · ${peso(amount)} of ${peso(advanceRemaining(a))} owed` : ""}`, amount };
 };
 // The advance lines of one pay period, from the plans of the person's
 // released advances.
@@ -840,7 +840,7 @@ function withDeductions(tx, { ref, p }, deductions, actor, label, FieldValue) {
   tx.update(ref, { deductions, deductionsTotal: total, ...payTotals(p, { deductionsTotal: total }), history: append(p.history, entry(actor, label)), revision: (p.revision || 1) + 1, updatedBy: actor, updatedAt: FieldValue.serverTimestamp() });
 }
 
-export async function addDeduction({ db, tenant, FieldValue, payrollId, deduction, actor, idempotencyKey = null }) {
+export async function addDeduction({ db, tenant, FieldValue, business = null, payrollId, deduction, actor, idempotencyKey = null, now = new Date() }) {
   const d = validateManualDeduction(deduction);
   return keyed({ tenant, key: idempotencyKey, kind: "payroll.deduction", request: { payrollId, d }, actor, FieldValue }, (guard) => db.runTransaction(async (tx) => {
     const prior = await guard?.check(tx);
@@ -849,7 +849,7 @@ export async function addDeduction({ db, tenant, FieldValue, payrollId, deductio
     const list = draft.p.deductions || [];
     if (list.length >= MAX_DEDUCTIONS_PER_PAYROLL) throw new PayrollError("too-many-deductions", "Too many deductions on this payroll");
     const id = `man-${randomBytes(6).toString("hex")}`;
-    withDeductions(tx, draft, [...list, { id, type: "manual", ...d }], actor, `Deduction added ${peso(d.amount)} (${d.description})`, FieldValue);
+    withDeductions(tx, draft, [...list, { id, type: "manual", ...d, date: businessDate(business?.timezone || "Asia/Manila", now) }], actor, `Deduction added ${peso(d.amount)} (${d.description})`, FieldValue);
     guard?.remember(tx, { payrollId, deductionId: id });
     return { payrollId, deductionId: id };
   }, TX_OPTIONS));
@@ -1089,26 +1089,33 @@ export async function findReceiptLink({ db, token, now = new Date() }) {
 }
 
 // The lines as they were when the salary was paid (release saves them).
-const snapshotLines = (lines) => (Array.isArray(lines) ? lines : []).map((l) => ({ type: l.type ?? null, description: l.description ?? null, amount: l.amount, ...(l.year ? { year: l.year } : {}) }));
+const snapshotLines = (lines) => (Array.isArray(lines) ? lines : []).map((l) => ({ type: l.type ?? null, description: l.description ?? null, amount: l.amount, ...(l.year ? { year: l.year } : {}), ...(l.date ? { date: l.date } : {}), ...(l.advanceId ? { advanceId: l.advanceId } : {}) }));
 
 // The salary receipt breakdown from what was SAVED at payment, never a
-// recalculation: Basic pay, bonuses / additions, advance deduction, other
-// deductions, prepaid salary, net pay. No zero rows. (A payroll paid before
-// the lines were saved at payment falls back to its stored lines.)
+// recalculation (2026-10-29: every line on its own, nothing folded away):
+// Basic pay (earned through the payment day when paid early), each bonus /
+// 13th month pay (date, what for), each advance deduction (the advance's
+// date), each other deduction (date, reason), prepaid salary, additional
+// payments; total paid. No zero rows. Each row: { key, label, amount, date?,
+// detail?, earnedThrough? } (dates as YYYY-MM-DD; the page words them). A
+// payroll paid before the lines were saved at payment falls back to its
+// stored lines; a line from before dates were kept has no date.
+const ADVANCE_TEXT = /^Advance (\d{4}-\d{2}-\d{2})(?: \(([^)]*)\))?/;
 export function receiptBreakdown(p) {
   const at = p.salary?.atPayment || {};
   const additions = Array.isArray(at.additions) ? at.additions : snapshotLines(p.additions);
   const deductions = Array.isArray(at.deductions) ? at.deductions : snapshotLines(p.deductions);
-  const sum = (list) => list.reduce((t, l) => t + (Number.isSafeInteger(l.amount) ? l.amount : 0), 0);
-  const advance = sum(deductions.filter((d) => d.type === "advance"));
-  const other = deductions.filter((d) => d.type !== "advance" && d.amount);
+  const early = p.paymentTiming === "early" && p.salary?.paidDate;
   const rows = [
-    { key: "basic", label: "Basic pay", amount: Number.isSafeInteger(at.basePay) ? at.basePay : p.basePay ?? 0 },
-    ...additions.filter((a) => a.amount).map((a) => ({ key: "addition", label: a.type === "thirteenth" ? `13th month pay${a.year ? ` ${a.year}` : ""}` : a.description || "Bonus", amount: a.amount })),
-    ...(advance ? [{ key: "advance", label: "Advance deduction", amount: -advance }] : []),
-    ...(other.length ? [{ key: "other", label: "Other deductions", note: other.map((d) => (d.type === "overpayment" ? "Previous salary overpayment" : d.description)).filter(Boolean).join(", "), amount: -sum(other) }] : []),
-    ...(p.salary?.prepaid?.amount ? [{ key: "prepaid", label: "Prepaid salary", note: `${p.salary.prepaid.days} upcoming day${p.salary.prepaid.days === 1 ? "" : "s"}`, amount: p.salary.prepaid.amount }] : []),
-    ...(p.salary?.additional || []).filter((x) => x.amount).map((x) => ({ key: "additional", label: "Additional payment", note: x.paidDate, amount: x.amount })),
+    { key: "basic", label: "Basic pay", amount: Number.isSafeInteger(at.basePay) ? at.basePay : p.basePay ?? 0, ...(early ? { earnedThrough: p.salary.paidDate } : Number.isSafeInteger(at.payableDays ?? p.payableDays) ? { detail: `${at.payableDays ?? p.payableDays} paid day${(at.payableDays ?? p.payableDays) === 1 ? "" : "s"}` } : {}) },
+    ...additions.filter((a) => a.amount).map((a) => (a.type === "thirteenth" ? { key: "addition", label: `13th month pay${a.year ? ` ${a.year}` : ""}`, amount: a.amount, ...(a.date ? { date: a.date } : {}) } : { key: "addition", label: "Bonus", amount: a.amount, ...(a.date ? { date: a.date } : {}), ...(a.description && a.description !== "Bonus" ? { detail: a.description } : {}) })),
+    ...deductions.filter((d) => d.type === "advance" && d.amount).map((d) => {
+      const m = ADVANCE_TEXT.exec(d.description || "");
+      return { key: "advance", label: "Advance deduction", amount: -d.amount, ...(d.date || m ? { date: d.date || m[1] } : {}), ...(m?.[2] ? { detail: m[2] } : {}) };
+    }),
+    ...deductions.filter((d) => d.type !== "advance" && d.amount).map((d) => (d.type === "overpayment" ? { key: "other", label: "Previous salary overpayment", amount: -d.amount, ...(d.date ? { date: d.date } : {}) } : { key: "other", label: "Other deduction", amount: -d.amount, ...(d.date ? { date: d.date } : {}), ...(d.description ? { detail: d.description } : {}) })),
+    ...(p.salary?.prepaid?.amount ? [{ key: "prepaid", label: "Prepaid salary", detail: `${p.salary.prepaid.days} upcoming day${p.salary.prepaid.days === 1 ? "" : "s"}`, amount: p.salary.prepaid.amount }] : []),
+    ...(p.salary?.additional || []).filter((x) => x.amount).map((x) => ({ key: "additional", label: "Additional payment", date: x.paidDate, amount: x.amount })),
   ].filter((r) => r.amount);
   return { rows, netPay: paidTotal(p) };
 }
@@ -1453,7 +1460,7 @@ async function staffPayrolls(tx, tenant, staffId) {
 const ADDITION_TYPES = { bonus: "Bonus", thirteenth: "13th Month Pay" };
 const MAX_ADDITIONS = 20;
 
-export async function addAddition({ db, tenant, FieldValue, payrollId, addition, actor, idempotencyKey = null }) {
+export async function addAddition({ db, tenant, FieldValue, business = null, payrollId, addition, actor, idempotencyKey = null, now = new Date() }) {
   if (!addition || typeof addition !== "object" || Array.isArray(addition)) throw new PayrollError("invalid-input", "Invalid addition");
   for (const k of Object.keys(addition)) if (!["type", "description", "amount", "year"].includes(k)) throw new PayrollError("invalid-input", `Unknown field ${k}`);
   if (!ADDITION_TYPES[addition.type]) throw new PayrollError("invalid-input", "Choose Bonus or 13th Month Pay");
@@ -1476,9 +1483,9 @@ export async function addAddition({ db, tenant, FieldValue, payrollId, addition,
       if (t.remaining <= 0) throw new PayrollError("thirteenth-over", `No 13th month pay is left for ${year} (${peso(t.entitlement)} earned so far, ${peso(t.onPayrolls)} already given)`);
       const amount = addition.amount ?? t.remaining;
       if (amount > t.remaining) throw new PayrollError("thirteenth-over", `Only ${peso(t.remaining)} of ${year}'s 13th month pay is left (1/12 of ${peso(t.basicPay)} basic pay, minus ${peso(t.onPayrolls)} already given)`);
-      line = { id: `thm-${randomBytes(6).toString("hex")}`, type: "thirteenth", year, description: description || `13th Month Pay ${year}`, amount, basis: { basicPay: t.basicPay, entitlement: t.entitlement } };
+      line = { id: `thm-${randomBytes(6).toString("hex")}`, type: "thirteenth", year, description: description || `13th Month Pay ${year}`, amount, basis: { basicPay: t.basicPay, entitlement: t.entitlement }, date: businessDate(business?.timezone || "Asia/Manila", now) };
     } else {
-      line = { id: `bon-${randomBytes(6).toString("hex")}`, type: "bonus", description: description || "Bonus", amount: addition.amount };
+      line = { id: `bon-${randomBytes(6).toString("hex")}`, type: "bonus", description: description || "Bonus", amount: addition.amount, date: businessDate(business?.timezone || "Asia/Manila", now) };
     }
     const additions = [...list, line];
     const total = additions.reduce((t, a) => t + a.amount, 0);

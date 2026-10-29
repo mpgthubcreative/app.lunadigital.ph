@@ -221,20 +221,21 @@ describe("Dashboard: an ended period nobody paid (never saved) is flagged", () =
 });
 
 describe("Bell: what needs attention, one sentence per item, by helper, with deep links", () => {
-  it("unrecorded prepaid days, salary / advance not confirmed, an ended period nobody paid; gone once handled", async () => {
+  it("unrecorded prepaid days, salary not confirmed (advances aren't confirmed since 2026-10-29), an ended period nobody paid; gone once handled", async () => {
     const lor = await staff("Loriza Ibanez");
     const ana = await staff("Ana");
     at(OCT(13));
     await mark(lor, range(1, 13).map(OCT));
     await mark(ana, range(1, 13).map(OCT));
-    const adv = (await api("advances", u.carlo, { action: "give", advance: { staffId: lor, amount: 50000, date: OCT(13), method: "cash" } })).body.advanceId;
+    await api("advances", u.carlo, { action: "give", advance: { staffId: lor, amount: 50000, date: OCT(13), method: "cash" } });
     await api("payroll", u.carlo, { action: "release", staffId: lor, periodStart: OCT(1), payment: { method: "cash", prepaidDays: 2 } });
     at(OCT(16));
     const todos = (await summary()).todos;
     const of = (kind) => todos.filter((x) => x.kind === kind).map((x) => [x.name, x.text, x.href]);
     expect(of("unrecordedDays")).toEqual([["Loriza Ibanez", "2 attendance days of Loriza's Oct 1–15 still need to be recorded (salary paid early).", `/attendance?staff=${lor}&period=${OCT(1)}`]]);
     expect(of("salaryConfirmation")).toEqual([["Loriza Ibanez", "Loriza hasn't confirmed the Oct 1–15 salary yet.", `/payroll?staff=${lor}&period=${OCT(1)}_${OCT(15)}`]]);
-    expect(of("advanceConfirmation")).toEqual([["Loriza Ibanez", "Loriza hasn't confirmed receiving the ₱500.00 advance (Oct 13).", `/advances?advance=${adv}`]]);
+    // One confirmation only (the salary's Confirm received): no advance item.
+    expect(of("advanceConfirmation")).toEqual([]);
     expect(of("unpaid")).toEqual([["Ana", "Ana's Oct 1–15 salary (₱5,343.00) hasn't been paid yet.", `/payroll?staff=${ana}&period=${OCT(1)}_${OCT(15)}`]]);
     expect(todos.map((x) => x.name)).toEqual([...todos.map((x) => x.name)].sort((a, b) => a.localeCompare(b)));
     // Handled -> gone.
@@ -255,28 +256,28 @@ describe("Bell read state: read is not resolved", () => {
   it("an attention item marked read stays listed (read: true) until the helper really confirms; Mark all as read covers the items shown", async () => {
     const lor = await staff("Loriza Ibanez");
     const uid = await withLogin(lor);
-    at(OCT(12));
-    const adv = (await api("advances", u.carlo, { action: "give", advance: { staffId: lor, amount: 50000, date: OCT(12), method: "cash" } })).body.advanceId;
-    let item = (await summary()).todos.find((x) => x.kind === "advanceConfirmation");
-    expect(item).toMatchObject({ id: `advanceConfirmation:${adv}`, read: false });
+    at(OCT(15));
+    await mark(lor, range(1, 15).map(OCT));
+    const pid = (await api("payroll", u.carlo, { action: "release", staffId: lor, periodStart: OCT(1), payment: { method: "cash" } })).body.payrollId;
+    let item = (await summary()).todos.find((x) => x.kind === "salaryConfirmation");
+    expect(item).toMatchObject({ id: `salaryConfirmation:${pid}`, read: false });
     expect((await api("notifications", u.carlo, { action: "attention", ids: [item.id], read: true })).status).toBe(200);
-    item = (await summary()).todos.find((x) => x.kind === "advanceConfirmation");
+    item = (await summary()).todos.find((x) => x.kind === "salaryConfirmation");
     expect(item.read).toBe(true); // read, still needs attention
     // Each person has their own read marks.
-    expect((await summary(u.dad)).todos.find((x) => x.kind === "advanceConfirmation").read).toBe(false);
+    expect((await summary(u.dad)).todos.find((x) => x.kind === "salaryConfirmation").read).toBe(false);
     expect((await api("notifications", u.carlo, { action: "attention", ids: [item.id], read: false })).status).toBe(200);
-    expect((await summary()).todos.find((x) => x.kind === "advanceConfirmation").read).toBe(false);
+    expect((await summary()).todos.find((x) => x.kind === "salaryConfirmation").read).toBe(false);
     expect((await api("notifications", u.carlo, { action: "attention", ids: ["bad id!"], read: true })).status).toBe(400);
     // Mark all as read: the notifications and the items shown.
     expect((await api("notifications", u.carlo, { action: "readAll", attentionIds: [item.id] })).status).toBe(200);
-    expect((await summary()).todos.find((x) => x.kind === "advanceConfirmation").read).toBe(true);
+    expect((await summary()).todos.find((x) => x.kind === "salaryConfirmation").read).toBe(true);
     expect(unreadCount(u.carlo)).toBe(0);
-    // Only the real confirmation makes it go away.
+    // Only the real confirmation (Confirm received) makes it go away.
     const me = await import("../../netlify/functions/me.js");
-    await me.createMeHandler(deps())({ ...request({ uid, businessId: H, method: "POST" }), body: JSON.stringify({ action: "advanceReceived", advanceId: adv }) });
-    const left = (await summary()).todos.filter((x) => x.kind === "advanceConfirmation");
-    expect(docAt(`advances/${adv}`).receipt?.state).toBe("confirmed");
-    expect(left).toEqual([]);
+    await me.createMeHandler(deps())({ ...request({ uid, businessId: H, method: "POST" }), body: JSON.stringify({ action: "received", payrollId: pid }) });
+    expect(docAt(`payrolls/${pid}`).receiptStatus).toBe("confirmed");
+    expect((await summary()).todos.filter((x) => x.kind === "salaryConfirmation")).toEqual([]);
   });
 
   it("a notification: read -> unread -> read moves the bell counter by one each time", async () => {

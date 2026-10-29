@@ -28,6 +28,8 @@
 //   moreModules    (2026-10-22) navigation modules shown under More /
 //                  Manage instead of with the daily pages (Distributor:
 //                  Payments, Costs)
+//   moreLabel      (2026-10-29) the desktop sidebar's name for that group
+//                  (default "Manage"; Household: "More", as on the phone)
 //   menuHidden     (Owner-pilot Bridal UX) navigation modules that keep
 //                  their route but get no menu entry: reached from another
 //                  page (Bridal: Wedding Expenses and Supplier Payments open
@@ -147,17 +149,22 @@ const TEMPLATES = [
     description: "Your household, organized: household staff, payroll, bills and household spending in one place.",
     status: "live",
     modules: [...CORE, "household", "attendance", "payroll", "advances", "expenses", "budget", "schedule", "grocery"],
-    // Owner-pilot UX: no Dashboard in Household. Payroll is the home page;
-    // what needs attention lives in the bell. Phone: Payroll, Attendance,
-    // Expenses + More (Advances, Household Staff, Bills, Grocery List, Export
-    // & Backup, Users, Subscription, Settings). No budget in Household (expense
-    // monitoring, not budgeting): the "budget" module is just Categories,
-    // opened from Expenses → ⋯ → Manage categories.
-    navigation: ["payroll", "attendance", "expenses", "advances", "household", "schedule", "grocery", "budget", "users", "settings"],
-    mobileTabs: ["payroll", "attendance", "expenses"],
+    // Owner-pilot UX: no Dashboard in Household; what needs attention lives
+    // in the bell. 2026-10-29: Attendance & Pay (Attendance) is the home page
+    // and the employee workspace (attendance, that cutoff's pay, Pay /
+    // Payment link / More actions). Main nav: Attendance, Expenses, Grocery
+    // List + More; Payroll and Advances are the Everyone overviews, first in
+    // More (with Household Staff, Bills, Download Excel, Users, Subscription,
+    // Settings). No budget in Household (expense monitoring, not budgeting):
+    // the "budget" module is just Categories, opened from Expenses → ⋯ →
+    // Manage categories.
+    navigation: ["attendance", "expenses", "grocery", "payroll", "advances", "household", "schedule", "budget", "users", "settings"],
+    mobileTabs: ["attendance", "expenses", "grocery"],
+    moreModules: ["payroll", "advances", "household", "schedule"],
+    moreLabel: "More",
     navHidden: ["dashboard"],
     menuHidden: ["budget"],
-    home: "payroll",
+    home: "attendance",
     dashboard: {
       widgets: ["activeStaff", "attendanceToday", "payrollsToRelease", "awaitingReceipt", "advancesNotPaid", "advancesToDeduct"],
       empty: { title: "Your payroll workspace is ready", body: "Add your household staff to start marking attendance." },
@@ -296,7 +303,7 @@ export function validateWorkspaceTemplate(t, { moduleIds, coreModuleIds, availab
   const problems = [];
   const isObj = (v) => Boolean(v) && typeof v === "object" && !Array.isArray(v);
   if (!isObj(t)) return ["template must be an object"];
-  const allowedKeys = ["id", "version", "upgradingFrom", "name", "description", "status", "modules", "navigation", "mobileTabs", "navHidden", "moreModules", "menuHidden", "redirects", "home", "dashboard", "labels", "settings", "plannedModules"];
+  const allowedKeys = ["id", "version", "upgradingFrom", "name", "description", "status", "modules", "navigation", "mobileTabs", "navHidden", "moreModules", "moreLabel", "menuHidden", "redirects", "home", "dashboard", "labels", "settings", "plannedModules"];
   for (const k of Object.keys(t)) if (!allowedKeys.includes(k)) problems.push(`unknown key ${k}`);
   if (typeof t.id !== "string" || !WORKSPACE_TEMPLATE_ID_PATTERN.test(t.id)) problems.push("invalid id");
   if (!Number.isSafeInteger(t.version) || t.version < 1) problems.push("version must be a positive integer");
@@ -326,6 +333,7 @@ export function validateWorkspaceTemplate(t, { moduleIds, coreModuleIds, availab
   const more = t.moreModules === undefined ? [] : Array.isArray(t.moreModules) ? t.moreModules : null;
   if (!more || new Set(more).size !== more.length) problems.push("moreModules must be a list without duplicates");
   for (const m of more || []) if (!nav.includes(m) || m === t.home || (t.mobileTabs || []).includes(m)) problems.push(`moreModules ${m} must be a navigation module that isn't home or a phone tab`);
+  if (t.moreLabel !== undefined && (typeof t.moreLabel !== "string" || !t.moreLabel.trim() || t.moreLabel.length > 20)) problems.push("moreLabel must be a short name");
   const redirects = t.redirects === undefined ? {} : t.redirects && typeof t.redirects === "object" && !Array.isArray(t.redirects) ? t.redirects : null;
   if (!redirects) problems.push("redirects must be an object");
   for (const [from, to] of Object.entries(redirects || {})) if (!(menuHidden || []).includes(from) || !nav.includes(to) || (menuHidden || []).includes(to)) problems.push(`redirects ${from} must be a menuHidden module sent to a visible navigation module`);

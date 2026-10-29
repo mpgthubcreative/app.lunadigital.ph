@@ -175,8 +175,10 @@ export function renderShell(root, session, handlers = {}) {
   const workspace = snapshotWorkspaceTemplateId(session.entitlements) || "";
   const tabs = mobileTabs(nav, workspace, session.member.navigationPreference);
   const rest = nav.filter((m) => !tabs.includes(m));
+  // Household (2026-10-29): the Manage group reads "More", as on the phone.
+  const groupLabels = { ...GROUP_LABELS, ...(getWorkspaceTemplate(workspace)?.moreLabel ? { manage: getWorkspaceTemplate(workspace).moreLabel } : {}) };
   const groups = Object.keys(GROUP_LABELS)
-    .map((g) => ({ id: g, label: GROUP_LABELS[g], items: nav.filter((m) => groupOf(m) === g) }))
+    .map((g) => ({ id: g, label: groupLabels[g], items: nav.filter((m) => groupOf(m) === g) }))
     .filter((g) => g.items.length);
   const who = session.user.name || session.user.email;
 

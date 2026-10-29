@@ -449,14 +449,23 @@ describe("navigation", () => {
     // Owner-pilot Bridal UX: Money first (home), no Dashboard; Expenses / Payments keep a route.
     expect(nav("bridal-expense", "owner")).toEqual(["/wedding-suppliers Expenses", "/wedding-tasks Tasks", "/guests Guests", "/budget Budget", "/expenses Wedding Expenses", "/supplier-payments Supplier Payments", "/users Users", "/settings Settings"]);
     expect(nav("baby-expense", "owner")).toEqual(["/ Baby Dashboard", "/budget Budget & Categories", "/expenses Baby Expenses", "/payment-schedule Payment Schedule", "/providers Providers / Vendors", "/users Users", "/settings Settings"]);
-    // Owner-pilot UX (2026-10-17): no Dashboard in Household; Payroll first (home).
-    expect(nav("household-payroll", "owner")).toEqual(["/payroll Payroll", "/attendance Attendance", "/expenses Expenses", "/advances Advances", "/household-staff Household Staff", "/payment-schedule Bills", "/budget Categories", "/users Users", "/settings Settings"]);
+    // Owner-pilot UX (2026-10-17): no Dashboard in Household. 2026-10-29:
+    // Attendance first (home), then Expenses (Grocery List when entitled);
+    // Payroll and Advances lead the More group.
+    expect(nav("household-payroll", "owner")).toEqual(["/attendance Attendance", "/expenses Expenses", "/payroll Payroll", "/advances Advances", "/household-staff Household Staff", "/payment-schedule Bills", "/budget Categories", "/users Users", "/settings Settings"]);
   });
 
-  it("Household hides the Dashboard (still an allowed, entitled module) and names Payroll its home; the validator holds the rules", () => {
+  it("Household hides the Dashboard (still an allowed, entitled module) and names Attendance (& Pay) its home; the validator holds the rules", () => {
     const t = WORKSPACE_TEMPLATES["household-payroll"];
     expect(t.navHidden).toEqual(["dashboard"]);
-    expect(t.home).toBe("payroll");
+    expect(t.home).toBe("attendance");
+    // 2026-10-29: Attendance · Expenses · Grocery List + More (Payroll, Advances first).
+    expect(t.mobileTabs).toEqual(["attendance", "expenses", "grocery"]);
+    expect(t.moreModules.slice(0, 2)).toEqual(["payroll", "advances"]);
+    expect(t.moreLabel).toBe("More");
+    expect(validateWorkspaceTemplate(t, CTX)).toEqual([]);
+    expect(validateWorkspaceTemplate({ ...t, moreLabel: "" }, CTX)).toContain("moreLabel must be a short name");
+    expect(validateWorkspaceTemplate({ ...t, moreModules: ["attendance"] }, CTX)).toContain("moreModules attendance must be a navigation module that isn't home or a phone tab");
     expect(t.modules).toContain("dashboard");
     expect(validateWorkspaceTemplate({ ...t, home: undefined }, CTX)).toContain("a template without the Dashboard in its navigation needs a home module");
     expect(validateWorkspaceTemplate({ ...t, home: "dashboard" }, CTX)).toContain("home must be a navigation module");

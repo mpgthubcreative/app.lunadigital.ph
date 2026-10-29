@@ -46,10 +46,10 @@ describe("switching business lands on a valid page at once", () => {
     r.router.stop();
   });
 
-  it("Bridal Guests -> Household: Payroll opens", () => {
+  it("Bridal Guests -> Household: Attendance & Pay opens (its home since 2026-10-29)", () => {
     const r = open(S.household(), "/guests", { justSwitched: true });
-    expect(r.url()).toBe("/payroll");
-    expect(r.pages).toEqual(["/payroll"]);
+    expect(r.url()).toBe("/attendance");
+    expect(r.pages).toEqual(["/attendance"]);
     expect(r.notAvailable).toBe(0);
     r.router.stop();
   });
@@ -87,7 +87,7 @@ describe("switching business lands on a valid page at once", () => {
     const before = window.history.length;
     const r = open(S.household(), "/wedding-tasks", { justSwitched: true });
     expect(window.history.length).toBe(before);
-    expect(r.url()).toBe("/payroll");
+    expect(r.url()).toBe("/attendance");
     r.router.stop();
   });
 });
@@ -103,7 +103,7 @@ describe("refresh, back / forward, typed URLs", () => {
     const r = open(S.household(), "/payroll");
     window.history.pushState({}, "", "/wedding-suppliers");
     window.dispatchEvent(new PopStateEvent("popstate"));
-    expect(r.url()).toBe("/payroll");
+    expect(r.url()).toBe("/attendance");
     expect(r.notAvailable).toBe(0);
     r.router.stop();
   });
@@ -147,10 +147,10 @@ describe("helpers", () => {
 describe("switchLandingPath: always a valid, authorized page of the destination", () => {
   const PLANS = { distributor: "growth", "household-payroll": "household-plus", "bridal-expense": "bridal-plus", "baby-expense": "baby-plus" };
   const as = (template, roleTemplate) => sessionFixture({ roleTemplate, planId: PLANS[template], workspaceTemplateId: template });
-  const DEFAULTS = { distributor: "/orders", "household-payroll": "/payroll", "bridal-expense": "/wedding-suppliers", "baby-expense": "/" };
+  const DEFAULTS = { distributor: "/orders", "household-payroll": "/attendance", "bridal-expense": "/wedding-suppliers", "baby-expense": "/" };
   const SHARED = new Set(["/users", "/settings", "/notifications", "/subscription", "/export"]);
 
-  it("default page per template: Business Orders, Household Payroll, Bridal Money, Baby Dashboard", () => {
+  it("default page per template: Business Orders, Household Attendance & Pay, Bridal Money, Baby Dashboard", () => {
     for (const [t, path] of Object.entries(DEFAULTS)) expect(defaultPath(buildRoutes(as(t, "owner"))), t).toBe(path);
   });
 

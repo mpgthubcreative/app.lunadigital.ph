@@ -44,12 +44,12 @@ function fakeData(extra = {}) {
 }
 
 describe("navigation", () => {
-  it("Grocery List sits under More; phone tabs stay Payroll · Attendance · Expenses + More", async () => {
+  it("2026-10-29: Grocery List is a main tab (Attendance · Expenses · Grocery + More); Payroll and Advances lead More", async () => {
     const s = home();
     expect(buildRoutes(s).map((r) => r.path)).toContain("/grocery-list");
     renderShell(document.getElementById("app"), s);
-    expect($$(".tabbar .tab-link", document).map((a) => a.textContent.trim())).toEqual(["Payroll", "Attendance", "Expenses", "More"]);
-    expect($$(".nav-link", document).map((a) => a.textContent.trim())).toEqual(["Payroll", "Attendance", "Expenses", "Advances", "Household Staff", "Bills", "Grocery List", "Download Excel", "Users", "Subscription", "Settings"]);
+    expect($$(".tabbar .tab-link", document).map((a) => a.textContent.trim())).toEqual(["Attendance", "Expenses", "Grocery", "More"]);
+    expect($$(".nav-link", document).map((a) => a.textContent.trim())).toEqual(["Attendance", "Expenses", "Grocery List", "Payroll", "Advances", "Household Staff", "Bills", "Download Excel", "Users", "Subscription", "Settings"]);
     expect((await MODULE_LOADERS.grocery(s)).mount).toBe(mountGrocery);
   });
   it("the kasambahay's account: Grocery List only through their portal; no money routes", () => {

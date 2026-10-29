@@ -75,7 +75,7 @@ describe("THE scenario: Maria, ₱600/day, Oct 1-15", () => {
     expect(prep.status).toBe(201);
     const p = payroll(prep.body.payrollId);
     expect(p).toMatchObject({ staffName: "Maria", periodStart: "2026-10-01", periodEnd: "2026-10-15", days: 15, dailyWage: 60000, present: 10, officialLeave: 2, absent: 3, notMarked: 0, payableDays: 12, basePay: 720000, deductionsTotal: 50000, netPay: 670000, status: "draft", receiptStatus: "none" });
-    expect(p.deductions).toEqual([{ id: `adv-${adv.body.advanceId}`, type: "advance", advanceId: adv.body.advanceId, description: "Advance 2026-10-05 (Fare home)", amount: 50000 }]);
+    expect(p.deductions).toEqual([{ id: `adv-${adv.body.advanceId}`, type: "advance", advanceId: adv.body.advanceId, date: "2026-10-05", description: "Advance 2026-10-05 (Fare home)", amount: 50000 }]);
   });
 
   it("inline change Absent -> Present recalculates payable days, base and net, and logs previous -> new", async () => {
@@ -263,7 +263,7 @@ describe("salary release and the one-time receipt link", () => {
     expect(owner.body.view.rows[0].receiptView.openedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
   });
 
-  it("full breakdown: bonus, advance deduction, other deduction, prepaid salary, net pay; no zero rows; a later edit doesn't rewrite it", async () => {
+  it("full breakdown (2026-10-29: every line on its own, with its date): bonus, each advance deduction, each other deduction, prepaid salary; no zero rows; a later edit doesn't rewrite it", async () => {
     clock = new Date("2026-10-10T04:00:00Z"); // paid early, on Oct 10
     const id = await maria();
     await markPeriod(id, "2026-10-01", OCT_1_15.slice(0, 10));
@@ -281,11 +281,11 @@ describe("salary release and the one-time receipt link", () => {
     const view = (await receipt({ action: "view", token: r.body.receiptToken }, helper)).body.receipt;
     const net = before.basePay + 100000 - 50000 - 20000 + 2 * 60000;
     expect(view.rows).toEqual([
-      { key: "basic", label: "Basic pay", amount: before.basePay },
-      { key: "addition", label: "Fiesta bonus", amount: 100000 },
-      { key: "advance", label: "Advance deduction", amount: -50000 },
-      { key: "other", label: "Other deductions", note: "Broken glass", amount: -20000 },
-      { key: "prepaid", label: "Prepaid salary", note: "2 upcoming days", amount: 120000 },
+      { key: "basic", label: "Basic pay", amount: before.basePay, earnedThrough: "2026-10-10" },
+      { key: "addition", label: "Bonus", amount: 100000, date: "2026-10-10", detail: "Fiesta bonus" },
+      { key: "advance", label: "Advance deduction", amount: -50000, date: "2026-10-05", detail: "Fare home" },
+      { key: "other", label: "Other deduction", amount: -20000, date: "2026-10-10", detail: "Broken glass" },
+      { key: "prepaid", label: "Prepaid salary", detail: "2 upcoming days", amount: 120000 },
     ]);
     expect(view.netPay).toBe(net);
     expect(view.rows.reduce((t, x) => t + x.amount, 0)).toBe(net);

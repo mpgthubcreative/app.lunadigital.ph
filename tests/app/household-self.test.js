@@ -42,7 +42,16 @@ const ME = {
   period: { start: "2026-10-16", end: "2026-10-31", days: [], counts: { present: 0, officialLeave: 0 }, estimate: { basicPay: 0, additions: 0, deductions: 50000, netPay: -50000, prepared: false } },
   corrections: [],
   requests: [],
-  salaries: [{ id: "staffMaria0001_2026-10-01", period: { start: "2026-10-01", end: "2026-10-15" }, state: "paid", basicPay: 720000, additions: [], deductions: [{ description: "Advance", amount: 50000 }], netPay: 670000, payment: { method: "GCash", paidDate: "2026-10-12", hasProof: true, early: true }, receipt: "not_confirmed", received: { earned: 493200, prepaid: { days: 3, from: "2026-10-13", to: "2026-10-15", amount: 123300 }, additional: [], total: 616500 } }],
+  salaries: [{ id: "staffMaria0001_2026-10-01", period: { start: "2026-10-01", end: "2026-10-15" }, state: "paid", basicPay: 720000, additions: [], deductions: [{ description: "Advance", amount: 50000 }], netPay: 670000, payment: { method: "GCash", paidDate: "2026-10-12", hasProof: true, early: true }, receipt: "not_confirmed", received: { earned: 493200, prepaid: { days: 3, from: "2026-10-13", to: "2026-10-15", amount: 123300 }, additional: [], total: 616500 },
+    // The saved breakdown (server: receiptBreakdown), every line on its own.
+    breakdown: [
+      { key: "basic", label: "Basic pay", amount: 575400, earnedThrough: "2026-10-12" },
+      { key: "advance", label: "Advance deduction", amount: -50000, date: "2026-10-05" },
+      { key: "advance", label: "Advance deduction", amount: -50000, date: "2026-10-09", detail: "Fare" },
+      { key: "addition", label: "Bonus", amount: 30000, date: "2026-10-10", detail: "Performance bonus" },
+      { key: "other", label: "Other deduction", amount: -15000, date: "2026-10-11", detail: "Uniform" },
+      { key: "prepaid", label: "Prepaid salary", amount: 123300, detail: "3 upcoming days" },
+    ] }],
   adjustments: [{ amount: 41100, from: { start: "2026-10-01", end: "2026-10-15" }, plannedFor: { start: "2026-10-16", end: "2026-10-31" } }],
   advances: [{ id: "advA00000001", date: "2026-10-12", releasedOn: "2026-10-12", amount: 200000, status: "paid", remaining: 200000, planned: [{ periodStart: "2026-10-16", periodEnd: "2026-10-31", amount: 200000 }], hasProof: true, received: "awaiting" }],
 };
@@ -56,28 +65,26 @@ describe("household staff screen", () => {
     expect(isStaffPortalSession(owner)).toBe(false);
   });
 
-  it("four tabs; Home lists what to confirm (attendance, salary, advance); no Owner tools", async () => {
+  it("four tabs; Home lists only the salary to confirm (2026-10-29: one confirmation); no Owner tools", async () => {
     const api = vi.fn(async () => ({ me: ME }));
     await mountStaffPortal(container, staffSession(), { api });
     expect(container.querySelector(".staff-hello").textContent).toBe("Hi, Maria!");
     expect([...container.querySelectorAll(".staff-tab")].map((t) => t.textContent)).toEqual(["Home", "Attendance", "Salary", "Advances"]);
-    expect([...container.querySelectorAll('[data-role="to-confirm"] li')].map((li) => li.textContent.replace(/\s+/g, " ").trim())).toEqual(["Attendance Oct 1–15Review", "Salary ₱6,700.00 · Oct 1–15Confirm", "Advance ₱2,000.00 · Oct 12Confirm"]);
+    expect([...container.querySelectorAll('[data-role="to-confirm"] li')].map((li) => li.textContent.replace(/\s+/g, " ").trim())).toEqual(["Salary ₱6,165.00 · Oct 1–15Review"]);
     // Nothing to operate: no attendance editing, no requests, no advance form.
     expect(container.querySelector('select, [data-act="present"], [data-panel], [data-role="advance-form"]')).toBeNull();
   });
 
-  it("My Attendance: totals for the period, View details, Confirm attendance, Report a correction", async () => {
-    const api = vi.fn(async (path, opts) => (opts?.method === "POST" ? { confirmed: true } : { me: ME }));
+  it("My Attendance: totals for the period, View details, Report a correction; no separate confirmation", async () => {
+    const api = vi.fn(async (path, opts) => (opts?.method === "POST" ? {} : { me: ME }));
     await mountStaffPortal(container, staffSession(), { api });
     container.querySelector('[data-act="tab"][data-tab="attendance"]').click();
     const totals = [...container.querySelectorAll('[data-role="totals"] dt')].map((dt) => `${dt.textContent} ${dt.nextElementSibling.textContent}`);
     expect(totals).toEqual(["Present 11 days", "Rest Day 2 days", "Absent 1 day", "Paid Leave 1 day"]);
     container.querySelector('[data-act="details"]').click();
     expect([...container.querySelectorAll('[data-role="days"] li')].map((li) => li.textContent.replace(/\s+/g, " ").trim())).toEqual(["Oct 1Present", "Oct 2Rest Day"]);
-    container.querySelector('[data-act="confirm-attendance"]').click();
-    await flush();
-    expect(api).toHaveBeenCalledWith("me", { method: "POST", body: { action: "confirmAttendance", periodStart: "2026-10-01" } });
-    container.querySelector('[data-act="tab"][data-tab="attendance"]').click();
+    expect(container.querySelector('[data-act="confirm-attendance"]')).toBeNull();
+    expect(container.textContent).not.toMatch(/Confirm attendance/);
     container.querySelector('[data-act="report"]').click();
     const f = container.querySelector('[data-role="correction-form"]');
     f.elements.date.value = "2026-10-02";
@@ -87,21 +94,26 @@ describe("household staff screen", () => {
     expect(api).toHaveBeenCalledWith("me", { method: "POST", body: { action: "reportCorrection", message: "I was present on Oct 2", date: "2026-10-02" } });
   });
 
-  it("a confirmed period says so; changed since asks to confirm again", async () => {
-    const api = vi.fn(async () => ({ me: { ...ME, sheet: { ...SHEET, confirmation: { at: "2026-10-16T02:00:00.000Z", current: true } } } }));
-    await mountStaffPortal(container, staffSession(), { api });
-    container.querySelector('[data-act="tab"][data-tab="attendance"]').click();
-    expect(container.querySelector('[data-role="confirmed"]').textContent).toMatch(/You confirmed this attendance on Oct 16/);
-    expect(container.querySelector('[data-act="confirm-attendance"]')).toBeNull();
-  });
-
-  it("My Salary: proof of their own salary, I received my salary", async () => {
+  it("My Salary: the full breakdown (never folded), proof, ONE Confirm received", async () => {
     const api = vi.fn(async (path, opts) => (opts?.body?.action === "proof" ? { proof: { contentType: "image/png", dataBase64: "iVBORw0KGgo=" } } : opts?.method === "POST" ? {} : { me: ME }));
     await mountStaffPortal(container, staffSession(), { api });
     container.querySelector('[data-act="tab"][data-tab="salary"]').click();
-    expect(container.querySelector('[data-salary]').textContent).toMatch(/₱6,700\.00[\s\S]*paid Oct 12 by GCash \(early\)[\s\S]*Please confirm/);
-    // Owner-pilot refinement: what was received, in plain parts.
-    expect([...container.querySelectorAll('[data-role="received"] dt')].map((dt) => `${dt.textContent.replace(/\s+/g, " ").trim()}: ${dt.nextElementSibling.textContent}`)).toEqual(["Earned through Oct 12: ₱4,932.00", "Prepaid for Oct 13–15: ₱1,233.00", "Total received: ₱6,165.00"]);
+    const card = container.querySelector("[data-salary]");
+    expect(card.textContent).toMatch(/Oct 1–15[\s\S]*Paid Oct 12 by GCash \(early\)[\s\S]*Please confirm/);
+    // Every line on its own, with its date and what it was for.
+    expect([...card.querySelectorAll('[data-role="breakdown"] li')].map((li) => li.textContent.replace(/\s+/g, " ").trim())).toEqual([
+      "Basic payEarned through Oct 12₱5,754.00",
+      "Advance deductionOct 5− ₱500.00",
+      "Advance deductionOct 9 · Fare− ₱500.00",
+      "BonusOct 10 · Performance bonus+ ₱300.00",
+      "Other deductionOct 11 · Uniform− ₱150.00",
+      "Prepaid salary3 upcoming days₱1,233.00",
+    ]);
+    expect(card.querySelector('[data-role="net"]').textContent).toBe("₱6,165.00");
+    expect(card.textContent).toMatch(/Total paid/);
+    expect(card.querySelector("details")).toBeNull();
+    expect(card.querySelectorAll('[data-act="received"]')).toHaveLength(1);
+    expect(card.querySelector('[data-act="received"]').textContent.trim()).toBe("Confirm received");
     expect(container.querySelector('[data-role="adjustment"]').textContent.replace(/\s+/g, " ")).toMatch(/Previous salary adjustment\s*₱411\.00 Your Oct 1–15 salary was paid early, before all the days were done, and this part wasn't earned\. Planned to come off your Oct 16–31 salary\./);
     container.querySelector('[data-act="proof"][data-kind="salary"]').click();
     await flush();
@@ -113,16 +125,24 @@ describe("household staff screen", () => {
     expect(api).toHaveBeenCalledWith("me", { method: "POST", body: { action: "received", payrollId: "staffMaria0001_2026-10-01" } });
   });
 
-  it("My Advances: amount, date, remaining, planned deduction (read-only), proof, I received this advance", async () => {
+  it("a confirmed salary: ✓ Received and confirmed, with the day; no button", async () => {
+    const confirmed = { ...ME, salaries: [{ ...ME.salaries[0], receipt: "received", confirmedAt: "2026-10-31T10:42:00.000Z" }] };
+    await mountStaffPortal(container, staffSession(), { api: vi.fn(async () => ({ me: confirmed })) });
+    container.querySelector('[data-act="tab"][data-tab="salary"]').click();
+    expect(container.querySelector('[data-role="received-note"]').textContent.replace(/\s+/g, " ")).toMatch(/✓ Received and confirmeds*Oct 31/);
+    expect(container.querySelector('[data-act="received"]')).toBeNull();
+    expect(container.querySelectorAll('[data-role="to-confirm"] li')).toHaveLength(0);
+  });
+
+  it("My Advances: amount, date, remaining, planned deduction (read-only), proof; nothing to confirm", async () => {
     const api = vi.fn(async (path, opts) => (opts?.method === "POST" ? {} : { me: ME }));
     await mountStaffPortal(container, staffSession(), { api });
     container.querySelector('[data-act="tab"][data-tab="advances"]').click();
     const card = container.querySelector('[data-advance="advA00000001"]');
     expect([...card.querySelectorAll("dt")].map((dt) => `${dt.textContent}: ${dt.nextElementSibling.textContent}`)).toEqual(["Amount received: ₱2,000.00", "Date: Oct 12", "Remaining balance: ₱2,000.00", "Planned deduction: ₱2,000.00 Oct 16–31"]);
     expect(card.querySelector("input, select")).toBeNull();
-    card.querySelector('[data-act="advance-received"]').click();
-    await flush();
-    expect(api).toHaveBeenCalledWith("me", { method: "POST", body: { action: "advanceReceived", advanceId: "advA00000001" } });
+    expect(card.querySelector('[data-act="advance-received"]')).toBeNull();
+    expect(card.querySelector('[data-act="proof"]')).not.toBeNull();
   });
 });
 

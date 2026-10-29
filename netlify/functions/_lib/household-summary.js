@@ -19,8 +19,9 @@
 // Reads: a household has a handful of people, so per-person equality
 // queries (no composite index) are fine.
 // Owner-pilot simplification batch: "needs attention" per helper (only
-// helpers with something): attendance corrections they reported, salary or
-// advance not confirmed by them yet, a salary reported not received,
+// helpers with something): attendance corrections they reported, salary
+// not confirmed by them yet (2026-10-29: advances aren't confirmed any
+// more, only the salary), a salary reported not received,
 // deductions not taken, and any staff request still waiting.
 
 // Owner-pilot polish (2026-10-16): each row also carries this cutoff's money
@@ -99,7 +100,6 @@ export async function householdSummary({ db, tenant, business, uid = null, now =
       const advance = current?.status === "draft" ? (current.deductions || []).filter((x) => x.type === "advance").reduce((t, x) => t + x.amount, 0) : current ? 0 : released.reduce((t, a) => t + plannedFor(a, period.start), 0);
       if (lastPaid && lastPaid.receiptStatus !== "confirmed" && lastPaid.dispute?.state !== "open" && recent(lastPaid.salary?.paidDate)) bump(d.id, s.name, "salaryConfirmation");
       bump(d.id, s.name, "salaryIssue", payrolls.filter((p) => p.dispute?.state === "open").length);
-      bump(d.id, s.name, "advanceConfirmation", advances.filter((a) => a.status === "paid" && a.receipt?.state === "awaiting" && recent(a.paidDate)).length);
       bump(d.id, s.name, "notTaken", released.filter((a) => scheduleOf(a).some((e) => e.state === "not_taken")).length);
       bump(d.id, s.name, "additionalDue", payrolls.filter((p) => reconcileOf(p, today)?.additionalDue > 0).length);
       bump(d.id, s.name, "unrecordedDays", payrolls.filter((p) => reconcileOf(p, today)?.waiting).length);
@@ -113,7 +113,6 @@ export async function householdSummary({ db, tenant, business, uid = null, now =
         if (p.dispute?.state === "open") todo(d.id, s.name, "salaryIssue", `${first} reported the ${periodText(p.periodStart, p.periodEnd)} salary as not received.`, payHref(p), p.id);
       }
       if (lastPaid && lastPaid.receiptStatus !== "confirmed" && lastPaid.dispute?.state !== "open" && recent(lastPaid.salary?.paidDate)) todo(d.id, s.name, "salaryConfirmation", `${first} hasn't confirmed the ${periodText(lastPaid.periodStart, lastPaid.periodEnd)} salary yet.`, payHref(lastPaid), lastPaid.id);
-      for (const a of advances.filter((x) => x.status === "paid" && x.receipt?.state === "awaiting" && recent(x.paidDate))) todo(d.id, s.name, "advanceConfirmation", `${first} hasn't confirmed receiving the ${peso(a.amount)} advance (${dayText(a.paidDate)}).`, `/advances?advance=${enc(a.id)}`, a.id);
       for (const a of released) for (const e of scheduleOf(a).filter((x) => x.state === "not_taken")) todo(d.id, s.name, "notTaken", `A planned ${peso(e.amount)} advance deduction wasn't taken from ${first}'s ${periodText(e.periodStart, e.periodEnd)} salary. It's still owed.`, `/advances?advance=${enc(a.id)}`, `${a.id}_${e.periodStart}`);
       const sum = summarizeAttendance(lineSnaps.filter((x) => x.exists).map((x) => x.data()), { start: period.start, end: days.at(-1) ?? period.start });
       const carried = current ? 0 : overpaymentLinesFor(period.start, s, payrolls, today).reduce((t, l) => t + l.amount, 0);

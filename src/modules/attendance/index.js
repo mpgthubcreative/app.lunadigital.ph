@@ -15,6 +15,22 @@
 // Day and unmarked days aren't. Correcting a day the helper sent asks for a
 // reason (kept in its history). Paid days are locked by the server.
 // ?staff=<id>&period=<start> opens on that helper / period.
+//
+// Attendance & Pay (2026-10-29): the Household home and the employee
+// workspace. Employee ▾ + Period ▾ are ONE choice for everything on the
+// screen (shared with Payroll and Advances: ../household/scope.js):
+//   Everyone        each helper's days and pay for the cutoff; tap one to
+//                   open them on the SAME cutoff
+//   one helper      that cutoff's pay above the calendar: paid days, basic
+//                   pay, advances to deduct, bonuses, other deductions,
+//                   prepaid salary, estimated / final net, payment and the
+//                   helper's confirmation; then
+//                     [ Pay ]                         (the payroll's own Pay flow)
+//                     [ Payment link ] [ More actions ▾ ]
+//                   and the attendance calendar (the base of payroll).
+// Pay, Payment link and More actions are the payslip's (../payroll/payslip.js):
+// nothing here calculates or pays. The helper confirms only their salary
+// (Confirm received); attendance has no separate confirmation any more.
 
 import { html, render } from "../../lib/html.js";
 import { pageHeader, emptyState, skeleton, badge } from "../../components/ui.js";
@@ -25,6 +41,8 @@ import { exportButton, bindExport, mayExport, exportHint } from "../../lib/expor
 import { ATTENDANCE_STATUSES, businessDate, staffPeriod, staffPeriods, daysIn, weekdayLabel, weekdayOf, summarizeAttendance, addDays, expectedStatus } from "@shared/index.js";
 import * as defaultData from "../household/data.js";
 import { formDialog } from "../../components/form-dialog.js";
+import { getScope, setScope } from "../household/scope.js";
+import { createPayslips, moreActionsMenu, paymentState, receivedState, payParts, daysText, rowPeriod, periodName } from "../payroll/payslip.js";
 
 const ORDER = ["present", "absent", "rest_day", "official_leave", "unpaid_leave"];
 const short = (d) => formatDayId(d).replace(/, \d{4}$/, "");
@@ -48,29 +66,63 @@ export const ATTENDANCE_EXAMPLES = Object.freeze([
   { name: "Maria Santos", sub: "Tue, Oct 21", end: "Paid Leave" },
 ]);
 
-export function mount(container, session, { data = defaultData, toast = defaultToast, now = () => new Date(), exportDeps = {}, confirm = confirmDialog } = {}) {
+export function mount(container, session, { data = defaultData, toast = defaultToast, now = () => new Date(), exportDeps = {}, confirm = confirmDialog, copy } = {}) {
   const businessId = session.business.id;
   const canEdit = session.member.permissions["attendance.edit"] === true;
+  // The cutoff's pay (and Everyone) for people who can see payroll.
+  const canPay = session.member.permissions["payroll.view"] === true;
   const today = businessDate(session.business.timezone, now());
   const params = new URLSearchParams(typeof location === "undefined" ? "" : location.search);
-  const state = { staffId: ID.test(params.get("staff") || "") ? params.get("staff") : "", periodStart: /^\d{4}-\d{2}-\d{2}$/.test(params.get("period") || "") ? params.get("period") : "", staff: [], lines: [], review: { corrections: [], requests: [], confirmation: null }, selected: new Set(), pending: new Map(), expected: false, loading: true, error: null, saving: false };
+  // A link's helper / period wins; else the choice made on any Household page.
+  const scope = getScope(businessId);
+  const urlStaff = ID.test(params.get("staff") || "") ? params.get("staff") : "";
+  const urlPeriod = /^\d{4}-\d{2}-\d{2}$/.test(params.get("period") || "") ? params.get("period") : "";
+  const canEveryone = canPay && Boolean(data.payrollApi);
+  const everyone = canEveryone && !urlStaff && scope.staffId === "";
+  const state = { staffId: urlStaff || (everyone ? "" : scope.staffId || ""), everyone, evPeriod: !urlStaff && scope.period ? scope.period : null, ev: null, pay: null, periodStart: urlPeriod || (!urlStaff && scope.period ? scope.period.start : ""), staff: [], lines: [], review: { corrections: [], requests: [], confirmation: null }, selected: new Set(), pending: new Map(), expected: false, loading: true, error: null, saving: false };
   let alive = true;
+  const payslips = createPayslips({ session, data, toast, now, ...(copy ? { copy } : {}), staff: () => state.staff, rows: () => (state.pay ? [state.pay] : state.ev?.rows || []), onClose: () => load() });
 
   const person = () => state.staff.find((s) => s.id === state.staffId) || null;
   const periods = () => (person() ? periodsOf(person(), today) : []);
   const period = () => periods().find((p) => p.start === state.periodStart) || null;
+
+  // Everyone: the server's period view (the same rows as Payroll).
+  async function loadEveryone() {
+    const q = state.evPeriod && !state.evPeriod.mixed ? { period: { start: state.evPeriod.start, end: state.evPeriod.end } } : state.evPeriod ? { period: { current: true } } : {};
+    const [{ view }, review] = await Promise.all([data.payrollApi({ action: "period", ...q }), data.attendanceReview ? data.attendanceReview(null, null).catch(() => null) : null]);
+    state.ev = view;
+    state.evPeriod = view.period;
+    state.review = review || { corrections: [], requests: [], confirmation: null };
+    setScope(businessId, { staffId: "", ...(view.period && !view.period.mixed ? { period: view.period } : {}) });
+  }
 
   async function load() {
     state.loading = true;
     draw();
     try {
       if (!state.staff.length) state.staff = await data.activeStaff(businessId);
+      if (state.everyone) {
+        await loadEveryone();
+        state.error = null;
+        state.loading = false;
+        state.saving = false;
+        return draw();
+      }
       if (!person()) state.staffId = state.staff[0]?.id || "";
+      // The chosen cutoff, as this helper's own pay period (their cycle).
+      if (person() && !period()) state.periodStart = staffPeriod(person(), state.periodStart && state.periodStart <= today ? state.periodStart : today).start;
       if (person() && !period()) state.periodStart = staffPeriod(person(), today).start;
       const p = period();
-      const [lines, review] = await Promise.all([p ? data.listAttendance(businessId, { staffId: state.staffId, from: p.start, to: p.end }, { pageSize: 100 }).then((r) => r.rows) : [], data.attendanceReview ? data.attendanceReview(state.staffId || null, p?.start || null).catch(() => null) : null]);
+      const [lines, review, pay] = await Promise.all([
+        p ? data.listAttendance(businessId, { staffId: state.staffId, from: p.start, to: p.end }, { pageSize: 100 }).then((r) => r.rows) : [],
+        data.attendanceReview ? data.attendanceReview(state.staffId || null, p?.start || null).catch(() => null) : null,
+        canPay && p && data.payrollApi ? data.payrollApi({ action: "period", period: { start: p.start, end: p.end }, staffId: state.staffId }).then((r) => r.view.rows.find((x) => x.staffId === state.staffId && x.periodStart === p.start) || null).catch(() => null) : null,
+      ]);
       state.lines = lines;
       state.review = review || { corrections: [], requests: [], confirmation: null };
+      state.pay = pay;
+      if (p) setScope(businessId, { staffId: state.staffId, period: { start: p.start, end: p.end } });
       state.error = null;
     } catch (err) {
       console.error("attendance: load failed:", err && (err.code || err.message));
@@ -103,25 +155,6 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     </section>`;
   }
 
-  function confirmationLine(sum) {
-    const c = state.review.confirmation;
-    const s = person();
-    if (!s || !s.memberUid) return "";
-    if (!c) return html`<p class="stat-hint" data-role="confirmation">${badge("Not confirmed", "neutral")} ${s.name} hasn't confirmed this period yet.</p>`;
-    const same = ["present", "absent", "officialLeave", "unpaidLeave", "restDay", "notMarked"].every((k) => (c.counts?.[k] ?? 0) === sum[k]);
-    return html`<p class="stat-hint" data-role="confirmation">${same ? badge("Confirmed", "success") : badge("Changed since", "warning")} ${s.name} confirmed this attendance${c.confirmedAt ? ` on ${short(c.confirmedAt.slice(0, 10))}` : ""}${same ? "." : "; days changed after that."}</p>`;
-  }
-
-  // The helper's confirmation of this period, as one chip.
-  function confirmationChip(sum) {
-    const c = state.review.confirmation;
-    const s = person();
-    if (!s || !s.memberUid) return "";
-    if (!c) return html`<span data-role="confirmation-chip">${badge("Not confirmed", "warning")}</span>`;
-    const same = ["present", "absent", "officialLeave", "unpaidLeave", "restDay", "notMarked"].every((k) => (c.counts?.[k] ?? 0) === sum[k]);
-    return html`<span data-role="confirmation-chip">${same ? badge(`Confirmed${c.confirmedAt ? ` ${short(c.confirmedAt.slice(0, 10))}` : ""}`, "success") : badge("Changed since confirmed", "warning")}</span>`;
-  }
-
   // Owner-pilot cleanup: Paid Leave this calendar year.
   function leaveLine() {
     const l = state.review.leave;
@@ -142,22 +175,19 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     const p = period();
     if (!p) return emptyState({ iconName: "calendar", title: "No pay period", body: `${s.name}'s start date is after today.` });
     const days = visibleDays(s, p);
-    const saved = summarizeAttendance(state.lines, { start: p.start, end: p.end > today ? today : p.end });
     const preview = summarizeAttendance(days.filter((d) => d <= today && valueOf(d) && valueOf(d) !== "clear").map((d) => ({ date: d, status: valueOf(d), dailyWage: savedOf(d)?.dailyWage ?? s.dailyWage })), { start: p.start, end: p.end > today ? today : p.end });
     const n = state.selected.size;
     const changes = state.pending.size;
-    // Owner-pilot UX (2026-10-17): one quiet summary line (paid days, the
-    // helper's confirmation as a chip); the breakdown, the confirmation
-    // sentence and Paid Leave fold under Details.
+    // Owner-pilot UX (2026-10-17): one quiet line (paid days; with the pay
+    // summary above it only while days are unsaved); the breakdown and Paid
+    // Leave fold under Details.
     const open = days.some((d) => d <= today && !valueOf(d));
     return html`
-      <div class="att-head" data-role="att-head">
+      ${!state.pay || changes ? html`<div class="att-head" data-role="att-head">
         <span class="att-paid" data-role="att-paid"><strong>${preview.payableDays} paid day${preview.payableDays === 1 ? "" : "s"} · ${formatCentavos(preview.basePay)}</strong>${changes ? html` <span class="stat-hint">unsaved</span>` : ""}</span>
-        ${confirmationChip(saved)}
-      </div>
-      <details class="att-more" data-role="att-details"><summary>Details</summary>
+      </div>` : ""}
+      <details class="att-more" data-role="att-details"><summary>Attendance details</summary>
         <p class="stat-hint" data-role="totals">Present ${preview.present} · Absent ${preview.absent} · Rest Day ${preview.restDay} · Paid Leave ${preview.officialLeave} · Unpaid Leave ${preview.unpaidLeave}${preview.notMarked ? ` · Not marked ${preview.notMarked}` : ""} → ${preview.payableDays} paid days · ${formatCentavos(preview.basePay)}${changes ? " (with unsaved changes)" : ""}</p>
-        ${confirmationLine(saved)}
         ${leaveLine()}
       </details>
       ${canEdit
@@ -184,6 +214,51 @@ export function mount(container, session, { data = defaultData, toast = defaultT
       ${changes
         ? html`<div class="att-save" data-role="save-bar"><span><strong>${changes}</strong> change${changes === 1 ? "" : "s"} not saved</span><span><button type="button" class="btn btn-compact btn-ghost" data-act="discard" ${state.saving ? "disabled" : ""}>Discard</button> <button type="button" class="btn btn-primary" data-act="save" ${state.saving ? "disabled" : ""}>${state.saving ? "Saving…" : "Save attendance"}</button></span></div>`
         : ""}`;
+  }
+
+  // The cutoff's pay for this helper, above the calendar: what Payroll
+  // works out (nothing is calculated here), then Pay · Payment link · More actions.
+  function paySummary() {
+    const p = state.pay;
+    const s = person();
+    if (!canPay || !p || !s) return "";
+    const x = payParts(p);
+    const paid = p.status === "released";
+    const ongoing = today <= p.periodEnd;
+    const money = (n, sign = "") => (n ? `${sign}${formatCentavos(n)}` : "—");
+    return html`<div class="att-pay" data-role="pay-summary">
+      <div class="att-pay-head"><strong data-role="pay-who">${s.name}</strong><span class="stat-hint" data-role="pay-period">${rowPeriod(p)} · ${ongoing ? "In progress" : "Ended"}</span></div>
+      <dl class="att-pay-figures" data-role="pay-figures">
+        <div><dt>Paid days</dt><dd data-k="days">${x.paidDays}</dd></div>
+        <div><dt>Basic pay</dt><dd data-k="basic">${formatCentavos(x.basic)}</dd></div>
+        <div><dt>Advances to deduct</dt><dd data-k="advances">${money(x.advances, "− ")}</dd></div>
+        <div><dt>Bonuses</dt><dd data-k="bonuses">${money(x.bonuses, "+ ")}</dd></div>
+        <div><dt>Other deductions</dt><dd data-k="other">${money(x.other, "− ")}</dd></div>
+        ${x.prepaid ? html`<div><dt>Prepaid salary</dt><dd data-k="prepaid">${formatCentavos(x.prepaid)}</dd></div>` : ""}
+        <div class="att-pay-net"><dt>${paid ? "Total paid" : ongoing ? "Estimated net pay" : "Net pay"}</dt><dd data-k="net">${formatCentavos(paid ? x.paid : x.net)}</dd></div>
+      </dl>
+      <dl class="att-pay-status" data-role="pay-status">
+        <div><dt>Payment</dt><dd data-k="payment">${badge(...paymentState(p))}${paid && p.salary?.paidDate ? html` <small>${formatDayId(p.salary.paidDate).replace(/, \d{4}$/, "")}</small>` : ""}</dd></div>
+        <div><dt>Staff confirmation</dt><dd data-k="confirmation">${paid ? badge(...receivedState(p)) : html`<span class="stat-hint">After payment</span>`}</dd></div>
+      </dl>
+      <div class="att-pay-actions" data-role="pay-actions">
+        ${payslips.flags.canRelease && p.status === "draft" && p.netPay > 0 ? html`<button type="button" class="btn btn-primary btn-block att-pay-main" data-act="pay">Pay ${formatCentavos(p.netPay)}</button>` : ""}
+        <div class="att-pay-row"><button type="button" class="btn" data-act="paylink">Payment link</button>${moreActionsMenu(p, payslips.flags, { attr: "pay-act", details: true })}</div>
+      </div>
+    </div>`;
+  }
+
+  // Everyone: each helper's days and pay for the cutoff (tap one to open them).
+  function everyoneList() {
+    const v = state.ev;
+    if (!v) return skeleton(4);
+    if (!v.rows.length) return emptyState({ iconName: "staff", title: "Nobody on payroll for this period", body: "Attendance and pay follow each helper's start date, end date and pay cycle on Household Staff." });
+    return html`<ul class="att-everyone" data-role="everyone">${v.rows.map(
+      (r) => html`<li><button type="button" class="att-person" data-act="open-staff" data-staff="${r.staffId}" data-period="${r.periodStart}" aria-label="Open ${r.staffName}, ${rowPeriod(r)}">
+        <span class="att-person-main"><strong>${r.staffName}</strong><small>${v.period?.mixed ? `${rowPeriod(r)} · ` : ""}${daysText(r)}${r.notMarked ? ` · ${r.notMarked} not marked` : ""}</small></span>
+        <span class="att-person-end"><strong>${formatCentavos(r.status === "released" ? payParts(r).paid : r.netPay)}</strong><small>${badge(...paymentState(r))}${r.status === "released" ? html` ${badge(...receivedState(r))}` : ""}</small></span>
+      </button></li>`
+    )}</ul>`;
   }
 
   // Stage a status for days up to today; "clear" takes a recorded day back
@@ -225,17 +300,22 @@ export function mount(container, session, { data = defaultData, toast = defaultT
   function draw() {
     if (!alive) return;
     const s = person();
+    const v = state.ev;
+    const evMixed = v?.period?.mixed === true;
+    const evNow = state.everyone && v && v.periods.filter((x) => x.current).length > 1;
     render(
       container,
       html`
-        ${pageHeader({ title: "Attendance" })}
+        ${pageHeader({ title: canPay ? "Attendance & Pay" : "Attendance" })}
         ${needsReview()}
         <section class="card section">
           <div class="pick-row" data-role="pickers">
-            <label class="pick">Employee <select class="select" data-role="pick-staff" aria-label="Employee">${state.staff.map((x) => html`<option value="${x.id}" ${x.id === state.staffId ? "selected" : ""}>${x.name}</option>`)}</select></label>
-            <label class="pick">Period <select class="select" data-role="pick-period" aria-label="Pay period" ${s ? "" : "disabled"}>${periods().map((p) => html`<option value="${p.start}" ${p.start === state.periodStart ? "selected" : ""}>${range(p)}${p.start <= today && today <= p.end ? " (now)" : ""}</option>`)}</select></label>
+            <label class="pick">Employee <select class="select" data-role="pick-staff" aria-label="Employee">${canEveryone ? html`<option value="" ${state.everyone ? "selected" : ""}>Everyone</option>` : ""}${state.staff.map((x) => html`<option value="${x.id}" ${!state.everyone && x.id === state.staffId ? "selected" : ""}>${x.name}</option>`)}</select></label>
+            ${state.everyone
+              ? html`<label class="pick">Period <select class="select" data-role="pick-ev-period" aria-label="Pay period">${evNow ? html`<option value="current" ${evMixed ? "selected" : ""}>Now (everyone)</option>` : ""}${(v?.periods || []).map((x) => html`<option value="${x.start}_${x.end}" ${!evMixed && v.period && x.start === v.period.start && x.end === v.period.end ? "selected" : ""}>${periodName(x)}${x.current ? " (now)" : ""}</option>`)}</select></label>`
+              : html`<label class="pick">Period <select class="select" data-role="pick-period" aria-label="Pay period" ${s ? "" : "disabled"}>${periods().map((p) => html`<option value="${p.start}" ${p.start === state.periodStart ? "selected" : ""}>${range(p)}${p.start <= today && today <= p.end ? " (now)" : ""}</option>`)}</select></label>`}
           </div>
-          ${state.error ? emptyState({ title: "Couldn't load", body: state.error }) : state.loading && !state.lines.length ? skeleton(6) : sheet()}
+          ${state.error ? emptyState({ title: "Couldn't load", body: state.error }) : state.everyone ? everyoneList() : state.loading && !state.lines.length ? skeleton(6) : html`${paySummary()}${sheet()}`}
         </section>`
     );
     for (const btn of container.querySelectorAll('[data-act="export"]')) btn.classList.add("btn-ghost");
@@ -299,14 +379,21 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     load();
   }
 
+  // staffId "" = Everyone. The cutoff carries over (a helper gets their own
+  // pay period around it).
   const choose = async (staffId, periodStart) => {
     if (state.pending.size && !(await confirm({ title: "Discard unsaved changes?", body: `${state.pending.size} day${state.pending.size === 1 ? "" : "s"} you changed aren't saved yet.`, confirmLabel: "Discard", danger: true }))) return draw();
     state.pending.clear();
     state.expected = false;
+    const cut = period() || (state.evPeriod && !state.evPeriod.mixed ? state.evPeriod : null);
+    state.everyone = canEveryone && staffId === "";
     state.staffId = staffId;
-    state.periodStart = periodStart || "";
+    state.periodStart = periodStart || cut?.start || "";
+    if (state.everyone && cut) state.evPeriod = { start: cut.start, end: cut.end };
     state.selected.clear();
     state.lines = [];
+    state.pay = null;
+    if (!state.everyone) state.ev = null;
     load();
   };
 
@@ -314,13 +401,36 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     const el = event.target;
     if (el.dataset.role === "pick-staff") return choose(el.value, "");
     if (el.dataset.role === "pick-period") return choose(state.staffId, el.value);
+    if (el.dataset.role === "pick-ev-period") {
+      const [start, end] = el.value.split("_");
+      state.evPeriod = el.value === "current" ? { current: true } : { start, end };
+      return load();
+    }
     return undefined;
   };
   const onClick = async (event) => {
+    const more = event.target.closest("[data-pay-act]");
+    if (more && container.contains(more) && state.pay) {
+      more.closest("details")?.removeAttribute("open");
+      const x = more.dataset.payAct;
+      const p = state.pay;
+      if (x === "details-open") return payslips.openView(p);
+      if (x === "give-advance") return payslips.giveFor(p.staffId).then((r) => r && load());
+      if (x === "view-advances") {
+        window.history.pushState({}, "", `/advances?staff=${encodeURIComponent(p.staffId)}`);
+        return window.dispatchEvent(new PopStateEvent("popstate"));
+      }
+      if (x === "delete") return payslips.deletePayroll(p).then((ok) => ok && load());
+      if (x === "void") return payslips.voidPaid(p).then((ok) => ok && load());
+      return payslips.openView(p, x);
+    }
     const el = event.target.closest("[data-act]");
     if (!el || !container.contains(el)) return;
     const a = el.dataset.act;
-    if (a === "cell") {
+    if (a === "pay" && state.pay) payslips.openView(state.pay, "release");
+    else if (a === "paylink" && state.pay) payslips.paymentLink(state.pay);
+    else if (a === "open-staff") choose(el.dataset.staff, el.dataset.period);
+    else if (a === "cell") {
       const d = el.dataset.day;
       if (d > today) return;
       if (state.selected.has(d)) state.selected.delete(d);

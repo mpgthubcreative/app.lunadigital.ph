@@ -2,7 +2,8 @@
 //   Owner pays → Luna makes this link → the Owner sends it to the helper →
 //   the helper opens it → signs in if needed (and comes straight back here)
 //   → the server checks the account is the Staff member this payroll
-//   belongs to → the saved salary breakdown → "Confirm received".
+//   belongs to → the saved salary breakdown (every line, nothing folded
+//   away) → one "Confirm received" for all of it.
 // Opening the link never confirms. The token comes from the URL fragment
 // (never sent as part of a page URL), is kept for this tab only
 // (sessionStorage) so sign-in and refresh return to the same receipt, and is
@@ -10,9 +11,10 @@
 
 import { html, render } from "../lib/html.js";
 import { lunaMark } from "../components/icons.js";
-import { formatCentavos, formatDayId } from "../lib/format.js";
+import { formatDayId } from "../lib/format.js";
 import { watchUser, signIn, signOutUser, currentIdToken, friendlyAuthError } from "./auth.js";
 import { renderLogin } from "./screens.js";
+import { salaryBreakdown } from "../components/salary-breakdown.js";
 
 const KEY = "luna.receiptToken";
 const remember = (token) => {
@@ -53,8 +55,6 @@ export function renderReceiptPage(root, { token: given = window.location.hash.sl
     return body.receipt;
   }
 
-  const row = (r) => html`<li data-line="${r.key}"><span class="slip-what">${r.label}${r.note ? html`<small>${r.note}</small>` : ""}</span><span class="slip-amt">${r.amount < 0 ? `− ${formatCentavos(-r.amount)}` : formatCentavos(r.amount)}</span></li>`;
-
   function draw() {
     const r = state.receipt;
     const confirmed = r?.receiptStatus === "confirmed";
@@ -71,14 +71,13 @@ export function renderReceiptPage(root, { token: given = window.location.hash.sl
                   ${state.code === "receipt-not-yours" ? html`<button type="button" class="btn" data-act="switch">Sign in with another account</button>` : ""}`
               : html`<h1 class="card-title">${confirmed ? "Salary received" : "Your salary"}</h1>
                   <p class="stat-hint" data-role="who">${r.businessName} · ${r.employeeName} · ${formatDayId(r.period.start)} – ${formatDayId(r.period.end)}</p>
-                  <ul class="slip" data-role="breakdown">${r.rows.map(row)}</ul>
-                  <ul class="slip slip-total slip-total-paid"><li><span class="slip-what"><strong>Net pay</strong></span><span class="slip-amt"><strong class="receipt-net" data-role="net">${formatCentavos(r.netPay)}</strong></span></li></ul>
+                  ${salaryBreakdown(r.rows, r.netPay)}
                   ${r.paidDate ? html`<p class="stat-hint" data-role="paid">Paid ${formatDayId(r.paidDate)}${r.method ? ` · ${r.method}` : ""}</p>` : ""}
                   ${confirmed
-                    ? html`<p data-role="message">${r.alreadyConfirmed || !r.confirmed ? "You already confirmed this salary" : "Thank you. Your confirmation was recorded"}${r.confirmedAt ? ` · ${confirmedText(r.confirmedAt, r.timezone || undefined)}` : ""}.</p>`
+                    ? html`<p class="receipt-confirmed" data-role="message"><strong>✓ Received and confirmed</strong><br /><small>${r.employeeName ? `Confirmed by ${r.employeeName}` : "Confirmed"}${r.confirmedAt ? ` · ${confirmedText(r.confirmedAt, r.timezone || undefined)}` : ""}</small></p>`
                     : r.expired
                       ? html`<p data-role="message">This link has expired. Open Luna and confirm it under My salary.</p>`
-                      : html`<p class="stat-hint">Only confirm if you received the full amount.</p><button type="button" class="btn btn-primary btn-block" data-act="confirm" ${state.busy ? "disabled" : ""}>Confirm received</button>`}
+                      : html`<p class="stat-hint">Confirm received means you received the payment shown above, with this breakdown. Only confirm if you received the full amount.</p><button type="button" class="btn btn-primary btn-block" data-act="confirm" ${state.busy ? "disabled" : ""}>Confirm received</button>`}
                   <p><a href="/" data-role="home">Open Luna</a></p>`}
         </div>
       </main>`

@@ -1,12 +1,16 @@
 // Household staff screen (Owner-pilot simplification batch): the helper
-// reviews and confirms; the Owner records and manages. Four tabs:
-//   Home           what needs their confirmation now, at a glance
+// reviews and confirms; the Owner records and manages. 2026-10-29: ONE
+// confirmation, Confirm received on a paid salary (its full breakdown shown
+// above it); attendance and advances are to see and, for attendance, to
+// report a correction. Tabs:
+//   Home           a salary to confirm, at a glance
 //   My Attendance  a pay period's totals (Present 11 days…), View details,
-//                  Confirm attendance, Report a correction
-//   My Salary      what they were paid (with proof), I received it /
-//                  I didn't receive it, and this period so far
+//                  Report a correction
+//   My Salary      each paid salary with every line (basic pay, each
+//                  advance, bonus and deduction with its date, prepaid,
+//                  total paid), proof, Confirm received; this period so far
 //   My Advances    amount received, date, what's left, the planned
-//                  deduction (set by the employer), proof, I received it
+//                  deduction (set by the employer), proof
 //   Grocery        the household's Grocery List (grocery.view): tick items
 //                  as bought; add items only when the Owner allows it.
 //                  Never any expense, budget or bill.
@@ -20,6 +24,7 @@ import { formatCentavos, formatDayId } from "../lib/format.js";
 import { lunaMark } from "../components/icons.js";
 import { ATTENDANCE_STATUSES } from "@shared/index.js";
 import { viewProof } from "../components/proof-viewer.js";
+import { salaryBreakdown } from "../components/salary-breakdown.js";
 
 const label = (s) => ATTENDANCE_STATUSES[s]?.label ?? s;
 const shortDay = (d) => formatDayId(d).replace(/, \d{4}$/, "");
@@ -46,20 +51,12 @@ export function mountStaffPortal(root, session, { api = defaultApi, onSignOut = 
   }
 
   const pill = (text, tone) => html`<span class="badge badge-${tone}">${text}</span>`;
-  const toConfirm = (m) => ({
-    salaries: (m.salaries || []).filter((s) => s.receipt === "not_confirmed"),
-    advances: (m.advances || []).filter((a) => a.status === "paid" && a.received === "awaiting"),
-    attendance: m.sheet && m.sheet.canConfirm && (!m.sheet.confirmation || !m.sheet.confirmation.current) && m.sheet.current,
-  });
+  const toConfirm = (m) => ({ salaries: (m.salaries || []).filter((s) => s.receipt === "not_confirmed") });
   const owed = (m) => (m.advances || []).filter((a) => a.status === "paid").reduce((t, a) => t + (a.remaining || 0), 0);
 
   function home(m) {
     const c = toConfirm(m);
-    const items = [
-      ...(can.attendance && c.attendance ? [html`<li><span>Attendance ${span(m.sheet.start, m.sheet.end)}</span><button type="button" class="btn btn-compact btn-primary" data-act="tab" data-tab="attendance">Review</button></li>`] : []),
-      ...(can.salary ? c.salaries.map((s) => html`<li><span>Salary ${money(s.netPay)} · ${span(s.period.start, s.period.end)}</span><button type="button" class="btn btn-compact btn-primary" data-act="tab" data-tab="salary">Confirm</button></li>`) : []),
-      ...(can.advance ? c.advances.map((a) => html`<li><span>Advance ${money(a.amount)} · ${shortDay(a.releasedOn || a.date)}</span><button type="button" class="btn btn-compact btn-primary" data-act="tab" data-tab="advances">Confirm</button></li>`) : []),
-    ];
+    const items = can.salary ? c.salaries.map((s) => html`<li><span>Salary ${money(s.received?.total ?? s.netPay)} · ${span(s.period.start, s.period.end)}</span><button type="button" class="btn btn-compact btn-primary" data-act="tab" data-tab="salary">Review</button></li>`) : [];
     const s = m.sheet;
     return html`
       <section class="card staff-card" data-section="to-confirm">
@@ -77,7 +74,6 @@ export function mountStaffPortal(root, session, { api = defaultApi, onSignOut = 
     const s = m.sheet;
     const c = s.counts;
     const rows = [["Present", c.present], ["Rest Day", c.restDay], ["Absent", c.absent], ["Paid Leave", c.officialLeave], ["Unpaid Leave", c.unpaidLeave], ...(c.notMarked && s.end <= m.today ? [["Not marked", c.notMarked]] : [])].filter(([l, n]) => n || l === "Present");
-    const conf = s.confirmation;
     return html`<section class="card staff-card" data-section="attendance">
       <h2 class="staff-h">My attendance</h2>
       <div class="sheet-nav">
@@ -89,11 +85,7 @@ export function mountStaffPortal(root, session, { api = defaultApi, onSignOut = 
       ${m.leave ? html`<p class="stat-hint" data-role="leave">Paid Leave ${m.leave.year}: used ${m.leave.used} of ${days(m.leave.entitled)} · ${days(m.leave.remaining)} remaining</p>` : ""}
       <button type="button" class="btn btn-block" data-act="details">${state.details ? "Hide details" : "View details"}</button>
       ${state.details ? html`<ul class="staff-days-list" data-role="days">${s.days.filter((d) => d.lock !== "Before your start date" && d.lock !== "After your last day").map((d) => html`<li><span>${shortDay(d.date)}</span><span>${d.status ? label(d.status) : d.pending ? `${label(d.pending)} (sent)` : html`<small>Not recorded</small>`}</span></li>`)}</ul>` : ""}
-      ${s.canConfirm
-        ? conf && conf.current
-          ? html`<p class="staff-note" data-role="confirmed">${pill("Confirmed", "success")} You confirmed this attendance${conf.at ? ` on ${shortDay(conf.at.slice(0, 10))}` : ""}.</p>`
-          : html`${conf ? html`<p class="staff-note">${pill("Changed", "warning")} Your employer changed some days after you confirmed. Please check again.</p>` : ""}<button type="button" class="btn btn-primary btn-block btn-big" data-act="confirm-attendance" ${state.busy ? "disabled" : ""}>Confirm attendance</button><p class="staff-note">Confirm means: I reviewed the attendance recorded for me.</p>`
-        : html`<p class="staff-note">This pay period hasn't started yet.</p>`}
+      ${s.canConfirm ? "" : html`<p class="staff-note">This pay period hasn't started yet.</p>`}
       ${state.reporting
         ? html`<form class="form" data-role="correction-form" novalidate>
             <div class="field"><label for="cDate">Which day? (optional)</label><select class="input input-big" id="cDate" name="date"><option value="">Not one day / several days</option>${s.days.filter((d) => d.date <= m.today && d.lock !== "Before your start date" && d.lock !== "After your last day").map((d) => html`<option value="${d.date}">${shortDay(d.date)}${d.status ? ` · ${label(d.status)}` : ""}</option>`)}</select></div>
@@ -118,21 +110,15 @@ export function mountStaffPortal(root, session, { api = defaultApi, onSignOut = 
       ${paid.length
         ? html`<ul class="staff-list" data-role="salaries">${paid.map(
             (s) => html`<li data-salary="${s.id}">
-              <div class="staff-row"><span><strong>${money(s.netPay)}</strong><br /><small>${span(s.period.start, s.period.end)} · paid ${s.payment?.paidDate ? shortDay(s.payment.paidDate) : ""}${s.payment?.method ? ` by ${s.payment.method}` : ""}${s.payment?.early ? " (early)" : ""}</small></span>
+              <div class="staff-row"><span><strong>${span(s.period.start, s.period.end)}</strong><br /><small>Paid ${s.payment?.paidDate ? shortDay(s.payment.paidDate) : ""}${s.payment?.method ? ` by ${s.payment.method}` : ""}${s.payment?.early ? " (early)" : ""}</small></span>
               ${s.receipt === "received" ? pill("Received", "success") : s.receipt === "not_received" ? pill("Reported not received", "danger") : pill("Please confirm", "warning")}</div>
-              ${s.received ? html`<dl class="staff-totals" data-role="received">
-                <dt>Earned through ${shortDay(s.payment?.paidDate || s.period.end)}</dt><dd>${money(s.received.earned)}</dd>
-                ${s.received.prepaid ? html`<dt>Prepaid for ${span(s.received.prepaid.from, s.received.prepaid.to)}</dt><dd>${money(s.received.prepaid.amount)}</dd>` : ""}
-                ${s.received.additional.map((a) => html`<dt>Additional payment ${shortDay(a.paidDate)}</dt><dd>${money(a.amount)}</dd>`)}
-                <dt><strong>Total received</strong></dt><dd><strong>${money(s.received.total)}</strong></dd>
-              </dl>` : ""}
-              <div class="staff-actions">${s.payment?.hasProof ? html`<button type="button" class="btn" data-act="proof" data-kind="salary" data-id="${s.id}">View proof</button>` : ""}${s.receipt === "not_confirmed" || s.receipt === "not_received" ? html`<button type="button" class="btn btn-primary" data-act="received" data-id="${s.id}">I received my salary</button>${s.receipt === "not_confirmed" ? html`<button type="button" class="btn" data-act="notReceived" data-id="${s.id}">I didn't receive it</button>` : ""}` : ""}</div>
-              <details class="staff-details"><summary>See the breakdown</summary><dl class="dl dl-compact">
-                <dt>Basic pay</dt><dd>${money(s.basicPay)}</dd>
-                ${s.additions.map((a) => html`<dt>${a.description || a.type}</dt><dd>+ ${money(a.amount)}</dd>`)}
-                ${s.deductions.map((d) => html`<dt>${d.description}</dt><dd>− ${money(d.amount)}</dd>`)}
-                <dt><strong>Take-home</strong></dt><dd><strong>${money(s.netPay)}</strong></dd>
-              </dl></details>
+              ${s.breakdown ? salaryBreakdown(s.breakdown, s.received?.total ?? s.netPay, { money }) : ""}
+              ${s.payment?.hasProof ? html`<div class="staff-actions"><button type="button" class="btn" data-act="proof" data-kind="salary" data-id="${s.id}">View proof</button></div>` : ""}
+              ${s.receipt === "received"
+                ? html`<p class="staff-note receipt-confirmed" data-role="received-note"><strong>✓ Received and confirmed</strong>${s.confirmedAt ? html`<br /><small>${shortDay(s.confirmedAt.slice(0, 10))}</small>` : ""}</p>`
+                : html`<button type="button" class="btn btn-primary btn-block btn-big" data-act="received" data-id="${s.id}" ${state.busy ? "disabled" : ""}>Confirm received</button>
+                    <p class="staff-note">Confirm received means you received this payment, with the breakdown above.</p>
+                    ${s.receipt === "not_confirmed" ? html`<p class="staff-note"><button type="button" class="btn-linklike" data-act="notReceived" data-id="${s.id}">Didn't receive it? Tell your employer</button></p>` : ""}`}
             </li>`
           )}</ul>`
         : html`<p class="staff-note">Paid salaries will show here.</p>`}
@@ -161,7 +147,7 @@ export function mountStaffPortal(root, session, { api = defaultApi, onSignOut = 
             <dt>Remaining balance</dt><dd>${a.remaining ? money(a.remaining) : "Fully repaid"}</dd>
             ${a.remaining ? html`<dt>Planned deduction</dt><dd>${a.planned.length ? a.planned.map((p) => `${money(p.amount)} ${span(p.periodStart, p.periodEnd)}`).join(", ") : "Not planned yet"}</dd>` : ""}
           </dl>
-          <div class="staff-actions">${a.hasProof ? html`<button type="button" class="btn" data-act="proof" data-kind="advance" data-id="${a.id}">View proof</button>` : ""}${a.received === "awaiting" ? html`<button type="button" class="btn btn-primary" data-act="advance-received" data-id="${a.id}">I received this advance</button>` : pill("Received", "success")}</div>
+          ${a.hasProof ? html`<div class="staff-actions"><button type="button" class="btn" data-act="proof" data-kind="advance" data-id="${a.id}">View proof</button></div>` : ""}
         </li>`
       )}</ul>
     </section>`;
@@ -248,10 +234,8 @@ export function mountStaffPortal(root, session, { api = defaultApi, onSignOut = 
       state.reporting = false;
       return draw();
     }
-    if (act === "confirm-attendance") return send({ action: "confirmAttendance", periodStart: state.me.sheet.start }, "Thank you! Your employer can see you confirmed it.");
     if (act === "received") return send({ action: "received", payrollId: el.dataset.id }, "Thank you! Your employer can see you received it.");
     if (act === "notReceived") return send({ action: "notReceived", payrollId: el.dataset.id }, "We told your employer. They'll check the payment.");
-    if (act === "advance-received") return send({ action: "advanceReceived", advanceId: el.dataset.id }, "Thank you! Your employer can see you received it.");
     if (act === "proof") return viewProof({ title: el.dataset.kind === "advance" ? "Advance proof" : "Salary proof", load: async () => (await api("me", { method: "POST", body: { action: "proof", kind: el.dataset.kind, recordId: el.dataset.id } })).proof });
     return undefined;
   });

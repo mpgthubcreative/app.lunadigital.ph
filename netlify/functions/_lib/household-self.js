@@ -48,6 +48,9 @@ const salaryView = (p) => ({
   // prepaid upcoming days), and any later additional payment.
   received: p.status === "released" && p.salary ? { earned: int(p.salary.earned ?? p.salary.amount), prepaid: p.salary.prepaid ? { days: p.salary.prepaid.days, from: p.salary.prepaid.from, to: p.salary.prepaid.to, amount: p.salary.prepaid.amount } : null, additional: (p.salary.additional || []).map((a) => ({ amount: a.amount, paidDate: a.paidDate })), total: paidTotal(p) } : null,
   receipt: p.receiptStatus === "confirmed" ? "received" : p.dispute?.state === "open" ? "not_received" : p.status === "released" ? "not_confirmed" : null,
+  // 2026-10-29: the full breakdown, as on the receipt link (saved at payment).
+  breakdown: p.status === "released" ? receiptBreakdown(p).rows : null,
+  confirmedAt: p.receiptStatus === "confirmed" ? iso(p.receiptConfirmation?.confirmedAt ?? p.receiptConfirmedAt) ?? null : null,
 });
 
 const advanceView = (a) => ({

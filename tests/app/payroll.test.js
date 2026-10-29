@@ -12,6 +12,8 @@ import { renderReceiptPage } from "../../src/app/receipt.js";
 import { buildRoutes } from "../../src/app/routes.js";
 import { resolvePermissions } from "../../shared/permissions.js";
 import { sessionFixture } from "../helpers/session-fixture.js";
+import { clearScope } from "../../src/modules/household/scope.js";
+import { forgetLinks } from "../../src/modules/payroll/payslip.js";
 // One request key per dialog (duplicate-request protection, 2026-10-25).
 const KEY = /^[A-Za-z0-9_-]{16,64}$/;
 
@@ -29,6 +31,9 @@ let container;
 beforeEach(() => {
   document.body.innerHTML = '<main id="content"></main>';
   container = document.getElementById("content");
+  // The shared employee + cutoff and remembered links never leak between cases.
+  clearScope();
+  forgetLinks();
 });
 const lastForm = () => [...document.querySelectorAll(".modal-backdrop form")].at(-1);
 const submit = (form) => form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
@@ -200,12 +205,17 @@ describe("Attendance (Owner-pilot simplification): one helper, one pay period", 
 });
 
 describe("Payroll", () => {
-  it("compact row with counts, base, deductions, net, salary and receipt state", async () => {
+  it("Everyone row (2026-10-29): paid days, basic pay, advances, bonuses, other deductions, net, payment and staff confirmation", async () => {
     mountPayroll(container, home(), { data: fakeData(), now: NOW, toast: () => {} });
     await flush();
+    expect(container.querySelector('[data-role="pick-staff"]').value).toBe(""); // Everyone by default
+    expect([...container.querySelectorAll('[data-role="period-payrolls"] thead th')].map((th) => th.textContent.trim()).filter(Boolean)).toEqual(["Employee", "Paid days", "Basic pay", "Advances", "Bonuses", "Other deductions", "Net pay", "Payment", "Staff confirmation", "Details"]);
     const row = container.querySelector("tr[data-payroll]");
     expect(row.textContent).toMatch(/Maria/);
-    expect(row.textContent).toMatch(/10 P · 2 PL · 3 A/);
+    expect(row.querySelector('[data-col="days"]').textContent.trim()).toBe("12");
+    expect(row.querySelector('[data-col="advances"]').textContent).toBe("− ₱500.00");
+    expect(row.querySelector('[data-col="bonuses"]').textContent).toBe("—");
+    expect(row.querySelector('[data-col="other"]').textContent).toBe("—");
     expect(row.textContent).toMatch(/₱6,700\.00/);
     // Phase 18.6: the Owner's payment and the employee's confirmation are separate columns.
     expect(row.querySelector('[data-col="payment"]').textContent).toBe("Not paid");
@@ -391,7 +401,15 @@ describe("Payroll", () => {
     container.querySelector('[data-act="view"]').click();
     await flush();
     expect(document.querySelector('[data-x="delete"]')).toBeNull();
-    document.querySelector('[data-x="correct"]').click();
+    // 2026-10-29: one entry, More actions → Correct payroll / payment → what.
+    const actions = [...document.querySelectorAll('[data-role="payslip-actions"] > .btn, [data-role="payslip-actions"] > details > summary')].map((b) => b.textContent.trim());
+    expect(actions).toEqual(["Payment link", "More actions ▾", "Close"]);
+    document.querySelector('[data-role="payroll-view"] [data-x="correct-any"]').click();
+    const choose = lastForm();
+    expect([...choose.elements.what.options].map((o) => o.value)).toEqual(["lines", "payment", "attendance", "proof"]);
+    choose.elements.what.value = "payment";
+    submit(choose);
+    await until(() => lastForm()?.elements.reason);
     const f = lastForm();
     f.elements.method.value = "gcash";
     f.elements.reason.value = "It was GCash";
@@ -410,7 +428,8 @@ describe("Payroll", () => {
     who.value = maria.id;
     who.dispatchEvent(new Event("change", { bubbles: true }));
     await flush();
-    expect(data.payrollApi).toHaveBeenLastCalledWith({ action: "period", staffId: maria.id });
+    // The same cutoff for the helper (2026-10-29: never back to a default period).
+    expect(data.payrollApi).toHaveBeenLastCalledWith({ action: "period", period: { start: "2026-10-01", end: "2026-10-15" }, staffId: maria.id });
   });
 
   it("recent periods follow the cycle", () => {
@@ -420,20 +439,20 @@ describe("Payroll", () => {
 });
 
 describe("Advances", () => {
-  it("Give an advance: one step (released now) with the method; the summary shows what's owed and planned", async () => {
+  it("Everyone overview (2026-10-29): compact rows with date, amount, deducted, outstanding, when deducted and status; Give advance (one step, released now)", async () => {
     const owed = { id: "adv0000000009", staffId: maria.id, staffName: "Maria", date: "2026-10-02", paidDate: "2026-10-02", amount: 110000, deductedAmount: 0, status: "paid", receipt: { state: "awaiting" }, schedule: [{ id: "a", periodStart: "2026-10-16", periodEnd: "2026-10-31", amount: 60000, state: "planned" }, { id: "b", periodStart: "2026-11-01", periodEnd: "2026-11-15", amount: 50000, state: "planned" }] };
     const data = fakeData({ listAdvances: vi.fn(async () => ({ rows: [owed], hasMore: false })), advancesApi: vi.fn(async () => ({ advanceId: "x", schedule: [{ periodStart: "2026-10-16", periodEnd: "2026-10-31", amount: 200000, state: "planned" }], outstanding: 310000, available: null })) });
     mountAdvances(container, home(), { data, now: NOW, toast: () => {} });
     await flush();
-    const card = container.querySelector(`[data-owe="${maria.id}"]`).textContent.replace(/\s+/g, " ");
-    expect(card).toMatch(/Outstanding\s*₱1,100\.00\s*Next deduction\s*₱600\.00\s*· Oct 16–31/);
-    expect(container.querySelector('[data-advance="adv0000000009"]').textContent.replace(/\s+/g, " ")).toMatch(/₱1,100\.00 · Oct 2[\s\S]*₱1,100\.00 owed · Deduct ₱600\.00 Oct 16–31 · ₱500\.00 Nov 1–15[\s\S]*Not confirmed/);
-    // Owner-pilot UX: the helper card is the working area (advances inside it), no "Open advances"; Voided records outside.
-    const owe = container.querySelector(`[data-owe="${maria.id}"]`);
-    expect(owe.querySelector('[data-advance="adv0000000009"]')).not.toBeNull();
-    expect(container.textContent).not.toMatch(/Open advances/);
-    expect([...owe.querySelectorAll(".adv-card-actions > .btn, .adv-card-actions > details > summary")].map((b) => b.textContent.trim())).toEqual(["Give advance", "⋯ More"]);
-    expect(container.querySelector('[data-act="voided"]').closest("[data-owe]")).toBeNull();
+    expect([...container.querySelectorAll('[data-role="pickers"] select')].map((x) => x.getAttribute("aria-label"))).toEqual(["Employee", "Pay period"]);
+    expect(container.querySelector('[data-role="outstanding"]').textContent).toBe("₱1,100.00");
+    expect(container.querySelector('[data-role="cutoff"]').closest("dl").textContent).toMatch(/To deduct Oct 1–15\s*₱0\.00/);
+    expect([...container.querySelectorAll('[data-role="advances"] thead th')].map((th) => th.textContent.trim()).filter(Boolean)).toEqual(["Employee", "Date", "Amount", "Deducted", "Outstanding", "Deduct on", "Status", "Actions"]);
+    const row = container.querySelector('tr[data-advance="adv0000000009"]');
+    expect(row.querySelector('[data-col="outstanding"]').textContent).toBe("₱1,100.00");
+    expect(row.querySelector('[data-col="deduct-on"]').textContent).toBe("₱600.00 Oct 16–31 · ₱500.00 Nov 1–15");
+    // Helpers no longer confirm advances: the status is about the money.
+    expect(row.querySelector('[data-col="status"]').textContent).toBe("Given");
     expect(container.querySelector('[data-act="voided"]').closest(".card")).toBeNull();
     // Owner-pilot polish: Helper, Amount, Deduct on; the rest under More options.
     container.querySelector('[data-act="give"]').click();
@@ -446,9 +465,28 @@ describe("Advances", () => {
     submit(f);
     await flush();
     expect(data.advancesApi).toHaveBeenCalledWith({ action: "give", advance: { staffId: maria.id, date: "2026-10-16", amount: 200000, method: "gcash", plan: "next" }, idempotencyKey: expect.stringMatching(KEY) });
-    // The quick result.
+    // The quick result (no "waiting for confirmation": only salaries are confirmed).
     const res = document.querySelector('[data-role="advance-result"]');
-    expect(res.textContent.replace(/\s+/g, " ")).toMatch(/Advance given\s*₱2,000\.00[\s\S]*Next deduction\s*₱2,000\.00\s*Oct 16–31[\s\S]*Waiting for confirmation/);
+    expect(res.textContent.replace(/\s+/g, " ")).toMatch(/Advance given\s*₱2,000\.00[\s\S]*Next deduction\s*₱2,000\.00\s*Oct 16–31/);
+    expect(res.textContent).not.toMatch(/confirmation/i);
+  });
+
+  it("the cutoff carries over: Advances opens on the cutoff chosen on Payroll, and marks this cutoff's deduction", async () => {
+    const owed = { id: "adv0000000009", staffId: maria.id, staffName: "Maria", date: "2026-10-02", paidDate: "2026-10-02", amount: 110000, deductedAmount: 0, status: "paid", schedule: [{ id: "a", periodStart: "2026-10-16", periodEnd: "2026-10-31", amount: 60000, state: "planned" }] };
+    const data = fakeData({ listAdvances: vi.fn(async () => ({ rows: [owed], hasMore: false })), payrollApi: vi.fn(async (b) => (b.action === "period" ? periodView([payroll()], b.period?.start ? { ...b.period, state: "in_progress" } : undefined) : {})) });
+    mountPayroll(container, home(), { data, now: NOW, toast: () => {} });
+    await flush();
+    const sel = container.querySelector('[data-role="period-select"]');
+    sel.value = "2026-10-16_2026-10-31";
+    sel.dispatchEvent(new Event("change", { bubbles: true }));
+    await flush();
+    document.body.innerHTML = '<main id="content"></main>';
+    container = document.getElementById("content");
+    mountAdvances(container, home(), { data, now: NOW, toast: () => {} });
+    await flush();
+    expect(container.querySelector('[data-role="pick-period"]').value).toBe("2026-10-16_2026-10-31");
+    expect(container.querySelector('[data-role="cutoff"]').textContent).toBe("₱600.00");
+    expect(container.querySelector('tr[data-advance="adv0000000009"] [data-col="deduct-on"]').textContent).toBe("₱600.00 Oct 16–31 (this cutoff)");
   });
 
   it("duplicate-request protection: a retry from the same dialog sends the same request key; a new dialog a new one", async () => {
@@ -612,11 +650,12 @@ describe("salary receipt page (sign-in required)", () => {
     method: "GCash",
     paidDate: "2026-10-16",
     rows: [
-      { key: "basic", label: "Basic pay", amount: 720000 },
-      { key: "addition", label: "Fiesta bonus", amount: 100000 },
-      { key: "advance", label: "Advance deduction", amount: -50000 },
-      { key: "other", label: "Other deductions", note: "Broken glass", amount: -20000 },
-      { key: "prepaid", label: "Prepaid salary", note: "2 upcoming days", amount: 120000 },
+      { key: "basic", label: "Basic pay", amount: 720000, earnedThrough: "2026-10-15" },
+      { key: "addition", label: "Bonus", amount: 100000, date: "2026-10-10", detail: "Fiesta bonus" },
+      { key: "advance", label: "Advance deduction", amount: -30000, date: "2026-10-03" },
+      { key: "advance", label: "Advance deduction", amount: -20000, date: "2026-10-08", detail: "Fare" },
+      { key: "other", label: "Other deduction", amount: -20000, date: "2026-10-12", detail: "Broken glass" },
+      { key: "prepaid", label: "Prepaid salary", detail: "2 upcoming days", amount: 120000 },
     ],
     netPay: 870000,
     receiptStatus: "awaiting",
@@ -673,17 +712,21 @@ describe("salary receipt page (sign-in required)", () => {
     expect(calls.map((c) => c.token)).toEqual([TOKEN, TOKEN]);
   });
 
-  it("the saved breakdown: each line, Net pay strongest; Confirm received records once", async () => {
+  it("the saved breakdown: every line on its own with its date (nothing folded), Total paid strongest; ONE Confirm received, recorded once", async () => {
     const calls = [];
     await renderReceiptPage(container, { token: TOKEN, fetchImpl: okFetch(calls), auth: fakeAuth(true) });
-    const lines = [...container.querySelectorAll('[data-role="breakdown"] li')].map((li) => [li.dataset.line, li.querySelector(".slip-what").childNodes[0].textContent.trim(), li.querySelector(".slip-amt").textContent]);
+    const lines = [...container.querySelectorAll('[data-role="breakdown"] li')].map((li) => [li.dataset.line, li.querySelector(".slip-what").childNodes[0].textContent.trim(), li.querySelector(".slip-what small")?.textContent ?? "", li.querySelector(".slip-amt").textContent]);
     expect(lines).toEqual([
-      ["basic", "Basic pay", "₱7,200.00"],
-      ["addition", "Fiesta bonus", "₱1,000.00"],
-      ["advance", "Advance deduction", "− ₱500.00"],
-      ["other", "Other deductions", "− ₱200.00"],
-      ["prepaid", "Prepaid salary", "₱1,200.00"],
+      ["basic", "Basic pay", "Earned through Oct 15", "₱7,200.00"],
+      ["addition", "Bonus", "Oct 10 · Fiesta bonus", "+ ₱1,000.00"],
+      ["advance", "Advance deduction", "Oct 3", "− ₱300.00"],
+      ["advance", "Advance deduction", "Oct 8 · Fare", "− ₱200.00"],
+      ["other", "Other deduction", "Oct 12 · Broken glass", "− ₱200.00"],
+      ["prepaid", "Prepaid salary", "2 upcoming days", "₱1,200.00"],
     ]);
+    expect(container.querySelector("details")).toBeNull();
+    expect(container.textContent).toMatch(/Total paid/);
+    expect(container.querySelectorAll('[data-act="confirm"]')).toHaveLength(1);
     expect(container.querySelector('[data-role="net"]').textContent).toBe("₱8,700.00");
     expect(container.querySelector('[data-role="net"]').closest("strong")).not.toBeNull();
     expect(calls.map((c) => c.action)).toEqual(["view"]);
@@ -691,14 +734,14 @@ describe("salary receipt page (sign-in required)", () => {
     await flush();
     expect(calls.map((c) => c.action)).toEqual(["view", "confirm"]);
     expect(container.querySelector('[data-act="confirm"]')).toBeNull();
-    expect(container.querySelector('[data-role="message"]').textContent).toBe("Thank you. Your confirmation was recorded · Oct 19, 2026 · 6:45 PM.");
+    expect(container.querySelector('[data-role="message"]').textContent.replace(/\s+/g, " ").trim()).toBe("✓ Received and confirmedConfirmed by Maria · Oct 19, 2026 · 6:45 PM");
   });
 
   it("an already-confirmed receipt shows no button", async () => {
     const done = { ...receipt, receiptStatus: "confirmed", confirmedAt: "2026-10-19T10:45:00.000Z" };
     await renderReceiptPage(container, { token: TOKEN, fetchImpl: vi.fn(async () => ({ ok: true, json: async () => ({ receipt: done }) })), auth: fakeAuth(true) });
     expect(container.querySelector('[data-act="confirm"]')).toBeNull();
-    expect(container.querySelector('[data-role="message"]').textContent).toMatch(/You already confirmed this salary/);
+    expect(container.querySelector('[data-role="message"]').textContent).toMatch(/✓ Received and confirmed[\s\S]*Oct 19, 2026 · 6:45 PM/);
   });
 
   it("the wrong account: 'not assigned to your account', no figures, and a way to switch accounts", async () => {
@@ -731,7 +774,7 @@ describe("Owner view of the helper's receipt", () => {
     container.querySelector('[data-act="view"]').click();
     await flush();
     const facts = [...document.querySelectorAll('[data-role="receipt"] dt')].map((dt) => `${dt.textContent}: ${dt.nextElementSibling.textContent.trim()}`);
-    expect(facts).toEqual(["Receipt: Confirmed", "Opened: Oct 19, 2026 · 6:30 PM", "Confirmed by: Loriza Ibanez", "Verified via: Kasambahay account", "Confirmed: Oct 19, 2026 · 6:45 PM"]);
+    expect(facts).toEqual(["Staff confirmation: Confirmed received", "Opened: Oct 19, 2026 · 6:30 PM", "Confirmed by: Loriza Ibanez", "Verified via: Kasambahay account", "Confirmed: Oct 19, 2026 · 6:45 PM"]);
     expect(document.querySelector('[data-role="pay-status"]').textContent).toMatch(/Confirmed by Loriza on Oct 19/);
   });
   it("opened but not confirmed: the two stay separate", async () => {
@@ -742,7 +785,7 @@ describe("Owner view of the helper's receipt", () => {
     container.querySelector('[data-act="view"]').click();
     await flush();
     const facts = [...document.querySelectorAll('[data-role="receipt"] dt')].map((dt) => `${dt.textContent}: ${dt.nextElementSibling.textContent.trim()}`);
-    expect(facts).toEqual(["Receipt: Not confirmed yet", "Opened: Oct 19, 2026 · 6:30 PM"]);
+    expect(facts).toEqual(["Staff confirmation: Awaiting staff confirmation", "Opened: Oct 19, 2026 · 6:30 PM"]);
   });
 });
 
@@ -848,7 +891,7 @@ describe("Payroll: automatic pay periods (Owner-pilot batch)", () => {
     const slip = [...document.querySelectorAll('[data-role="summary"] > li')].map((li) => [...li.querySelectorAll(".slip-what, .slip-amt")].map((x) => x.childNodes[0].textContent.trim()).join(" "));
     expect(slip).toEqual(["Basic pay ₱6,600.00", "Advance deduction − ₱500.00", "Prepaid salary Oct 12 ₱600.00"]);
     expect(document.querySelector('[data-role="net"]').textContent).toBe("₱6,700.00");
-    expect(document.querySelector('[data-role="pay-status"]').textContent).toMatch(/Not yet confirmed/);
+    expect(document.querySelector('[data-role="pay-status"]').textContent).toMatch(/Awaiting staff confirmation/);
     expect(fig).toEqual(["Actually paid: ₱6,700.00", "Final salary: ₱7,300.00"]);
     expect(document.querySelector('[data-role="reconcile"]').textContent).toMatch(/Additional salary due\s*₱600\.00 more was earned than paid/);
     document.querySelector('[data-x="pay-additional"]').click();
@@ -857,7 +900,7 @@ describe("Payroll: automatic pay periods (Owner-pilot batch)", () => {
     await until(() => data.payrollApi.mock.calls.some((c) => c[0].action === "payAdditional"));
     expect(data.payrollApi).toHaveBeenCalledWith({ action: "payAdditional", payrollId: paid.id, payment: { amount: 60000, method: "cash", paidDate: "2026-10-16" } });
     // The employee's receipt is still their own step.
-    expect(document.querySelector('[data-role="receipt"]').textContent).toMatch(/Not confirmed/);
+    expect(document.querySelector('[data-role="receipt"]').textContent).toMatch(/Awaiting staff confirmation/);
   });
 });
 
@@ -892,10 +935,10 @@ describe("Owner-pilot change: ⋯ Delete payroll / Void payroll / Delete or Void
     mountPayroll(container, home(), { data, now: NOW, toast: () => {} });
     await flush();
     const items = (id) => [...container.querySelectorAll(`tr[data-payroll="${id}"] .line-menu-list > *`)].map((x) => (x.classList.contains("menu-sep") ? "—" : x.textContent));
-    expect(items(draft.id)).toEqual(["View details", "—", "Delete payroll"]);
-    expect(items(paid.id)).toEqual(["View details", "Correct payroll", "Correct payment", "—", "Void payroll"]);
+    expect(items(draft.id)).toEqual(["View details", "Payment link", "—", "Delete payroll"]);
+    expect(items(paid.id)).toEqual(["View details", "Payment link", "Correct payroll / payment", "—", "Void payroll"]);
     // Owner-pilot cleanup: always visible; nothing saved = it explains.
-    expect(items(auto.id)).toEqual(["View details", "—", "Delete payroll"]);
+    expect(items(auto.id)).toEqual(["View details", "Payment link", "—", "Delete payroll"]);
     // Delete: a plain confirmation, then deleteDraft.
     container.querySelector(`tr[data-payroll="${draft.id}"] [data-act="delete-payroll"]`).click();
     await flush();
@@ -989,12 +1032,16 @@ describe("Owner-pilot cleanup: payroll eligibility, Delete / Correct from ⋯, P
     expect(data.payrollApi.mock.calls.some((c) => c[0].action === "deleteDraft")).toBe(false);
   });
 
-  it("a paid payroll: ⋯ Correct payment opens the correction form directly", async () => {
+  it("a paid payroll: ⋯ Correct payroll / payment asks what, then opens that correction", async () => {
     const paid = payroll({ status: "released", ownerPayment: "paid", receiptStatus: "awaiting", salary: { amount: 670000, paidDate: "2026-10-12", method: "cash" } });
     const data = fakeData({ payrollApi: vi.fn(async (b) => (b.action === "period" ? periodView([paid]) : {})) });
     mountPayroll(container, home(), { data, now: NOW, toast: () => {} });
     await flush();
-    container.querySelector('[data-act="correct-payment"]').click();
+    container.querySelector('[data-act="correct-any"]').click();
+    await until(() => lastForm()?.elements.what);
+    const what = lastForm();
+    what.elements.what.value = "payment";
+    submit(what);
     await until(() => lastForm()?.elements.reason);
     expect(lastForm().closest(".modal-backdrop").textContent).toMatch(/Correct this payment/);
   });

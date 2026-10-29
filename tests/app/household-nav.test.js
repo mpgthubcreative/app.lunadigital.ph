@@ -42,11 +42,11 @@ function visit(session, path) {
 }
 
 describe("Household navigation without a Dashboard", () => {
-  it("the Owner lands on Payroll: / (sign-in, old links) redirects there, keeping the query", () => {
+  it("the Owner lands on Attendance & Pay: / (sign-in, old links) redirects there, keeping the query", () => {
     const r = visit(home(), "/");
-    expect(r.route.moduleId).toBe("payroll");
-    expect(r.url).toBe("/payroll");
-    expect(visit(home(), "/?staff=abc12345").url).toBe("/payroll?staff=abc12345");
+    expect(r.route.moduleId).toBe("attendance");
+    expect(r.url).toBe("/attendance");
+    expect(visit(home(), "/?staff=abc12345").url).toBe("/attendance?staff=abc12345");
     expect(buildRoutes(home()).filter((x) => !x.redirect).map((x) => x.path)).not.toContain("/");
   });
 
@@ -54,10 +54,12 @@ describe("Household navigation without a Dashboard", () => {
     for (const p of ["/payroll", "/attendance", "/advances", "/household-staff", "/users", "/notifications"]) expect(visit(home(), p).route?.path, p).toBe(p);
   });
 
-  it("Luna Household: Payroll first, no Dashboard; phone tabs Payroll · Attendance · Expenses + More (Advances, Household Staff, Bills, Download Excel, Users, Subscription, Settings)", () => {
+  it("Luna Household (2026-10-29): Attendance first, no Dashboard; Payroll and Advances lead More (with Household Staff, Bills, Download Excel, Users, Subscription, Settings)", () => {
     renderShell(document.getElementById("app"), home());
-    expect([...document.querySelectorAll(".nav-link")].map((a) => a.textContent.trim())).toEqual(["Payroll", "Attendance", "Expenses", "Advances", "Household Staff", "Bills", "Download Excel", "Users", "Subscription", "Settings"]);
-    expect([...document.querySelectorAll(".tabbar .tab-link")].map((a) => a.textContent.trim())).toEqual(["Payroll", "Attendance", "Expenses", "More"]);
+    expect([...document.querySelectorAll(".nav-link")].map((a) => a.textContent.trim())).toEqual(["Attendance", "Expenses", "Payroll", "Advances", "Household Staff", "Bills", "Download Excel", "Users", "Subscription", "Settings"]);
+    // This plan has no Grocery List: Attendance · Expenses + More (never Payroll as a tab).
+    expect([...document.querySelectorAll(".tabbar .tab-link")].map((a) => a.textContent.trim())).toEqual(["Attendance", "Expenses", "More"]);
+    expect([...document.querySelectorAll("#moreSheet .sheet-link[data-sheet]")].map((a) => a.textContent.trim()).slice(0, 2)).toEqual(["Payroll", "Advances"]);
     expect(document.querySelector('.nav-link[href="/"]')).toBeNull();
     expect(document.querySelector('.tab-link[href="/"]')).toBeNull();
   });

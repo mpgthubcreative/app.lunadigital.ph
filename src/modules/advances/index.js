@@ -18,28 +18,33 @@
 // available shown and checked before sending; date (today), method (last
 // used, else Cash), reference, proof and note under More options. The
 // result shows what's owed now and the next deduction.
+// 2026-10-29: the Everyone overview, under More. Employee ▾ + Period ▾ (the
+// cutoff shared with Attendance & Pay and Payroll: ../household/scope.js).
+// One compact row per advance: employee, date, amount, deducted so far,
+// outstanding, when it's deducted (this cutoff marked), status, ⋯. Open
+// advances plus those deducted in the chosen cutoff; repaid ones stay
+// under Repaid advances (history is never removed). Give advance is the
+// shared flow (./give.js), also in an employee's More actions. Helpers no
+// longer confirm advances (only their salary: Confirm received).
 
 import { html, render } from "../../lib/html.js";
-import { pageHeader, emptyState, badge, skeleton } from "../../components/ui.js";
+import { pageHeader, emptyState, badge, skeleton, mobileCell } from "../../components/ui.js";
 import { examplesState } from "../../components/examples.js";
 import { formDialog } from "../../components/form-dialog.js";
 import { confirmDialog, toast as defaultToast } from "../../components/feedback.js";
 import { formatCentavos, formatDayId } from "../../lib/format.js";
 import { exportButton, bindExport, mayExport, exportHint } from "../../lib/export.js";
-import { ADVANCE_STATUSES, SALARY_METHODS, SCHEDULE_STATES, businessDate, parseCentavos, advanceRemaining, advanceCapacity, advanceSummary } from "@shared/index.js";
+import { ADVANCE_STATUSES, SALARY_METHODS, SCHEDULE_STATES, businessDate, parseCentavos, advanceRemaining, advanceCapacity, advanceSummary, scheduleOf } from "@shared/index.js";
 import * as defaultData from "../household/data.js";
 import { prepareProof, PHOTO_OR_PDF_ACCEPT } from "../../lib/image.js";
 import { viewProof } from "../../components/proof-viewer.js";
 import { editPlan, repay, periodText, methodOptions } from "./plan.js";
+import { giveAdvance } from "./give.js";
+import { getScope, setScope } from "../household/scope.js";
 
-// One request key per dialog: a double tap or retry records once.
-const newKey = () => (globalThis.crypto && crypto.randomUUID ? crypto.randomUUID() : `k${Date.now()}${Math.random().toString(36).slice(2)}${Math.random().toString(36).slice(2)}`).replace(/[^A-Za-z0-9_-]/g, "");
 const ID = /^[A-Za-z0-9]{8,40}$/;
 const short = (d) => formatDayId(d).replace(/, \d{4}$/, "");
-const planText = (a) => {
-  const open = (a.schedule || []).filter((e) => e.state === "planned");
-  return open.length ? open.map((e) => `${formatCentavos(e.amount)} ${periodText(e)}`).join(" · ") : "No deduction planned";
-};
+const pname = (x) => periodText({ periodStart: x.start, periodEnd: x.end });
 
 // What an empty Advances page shows (examples only: nothing is ever deducted).
 export const ADVANCE_EXAMPLES = Object.freeze([
@@ -54,15 +59,30 @@ export function mount(container, session, { data = defaultData, toast = defaultT
   const params = new URLSearchParams(typeof location === "undefined" ? "" : location.search);
   let fromAdvance = ID.test(params.get("advance") || "") ? params.get("advance") : null;
   let openGive = params.get("give") === "1" && canManage;
-  const state = { staffId: ID.test(params.get("staff") || "") ? params.get("staff") : "", staff: [], rows: [], loading: true, error: null };
+  // The Everyone overview (a link's helper wins), on the cutoff chosen on
+  // Attendance & Pay / Payroll.
+  const scope = getScope(businessId);
+  const urlStaff = ID.test(params.get("staff") || "") ? params.get("staff") : "";
+  const state = { staffId: urlStaff, period: scope.period, periods: [], staff: [], rows: [], loading: true, error: null };
   let alive = true;
   const api = (body) => data.advancesApi(body);
+  const canPayView = session.member.permissions["payroll.view"] === true;
 
   async function load() {
     state.loading = true;
     draw();
     try {
       if (!state.staff.length) state.staff = await data.activeStaff(businessId);
+      // The cutoffs (the same list as Payroll); the chosen one, else now.
+      if (canPayView && data.payrollApi && !state.periods.length) {
+        const v = await data.payrollApi({ action: "period", ...(state.period ? { period: { start: state.period.start, end: state.period.end } } : {}) }).then((r) => r.view).catch(() => null);
+        if (v) {
+          state.periods = v.periods || [];
+          if (!state.period && v.period && !v.period.mixed) state.period = { start: v.period.start, end: v.period.end };
+          if (!state.period) state.period = state.periods.find((x) => x.current) || state.periods[0] || null;
+        }
+      }
+      if (state.period) setScope(businessId, { period: state.period });
       const all = (await data.listAdvances(businessId, state.staffId ? { staffId: state.staffId } : {}, { pageSize: 200 })).rows;
       if (fromAdvance) {
         const hit = all.find((r) => r.id === fromAdvance);
@@ -92,36 +112,57 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     return ids.map((id) => ({ id, staff: state.staff.find((s) => s.id === id), name: state.staff.find((s) => s.id === id)?.name ?? state.rows.find((a) => a.staffId === id)?.staffName ?? "Staff", advances: state.rows.filter((a) => a.staffId === id) }));
   };
 
-  // Owner-pilot UX (2026-10-17): one card per helper is the whole working
-  // area: name, Outstanding / Available / Next deduction, [Give advance]
-  // [⋯ More], then that helper's current advances right under it (no
-  // separate "Open advances" section). Repaid ones are behind ⋯ More;
-  // Voided records sit at the very bottom of the page.
-  function helperCard(p) {
-    const sum = advanceSummary(p.advances);
-    const cap = p.staff && Number.isSafeInteger(p.staff.advanceLimit) ? advanceCapacity(p.staff, p.advances) : null;
-    const open = p.advances.filter((a) => a.status === "not_yet_paid" || (a.status === "paid" && advanceRemaining(a) > 0));
-    const done = p.advances.filter((a) => a.status === "paid" && advanceRemaining(a) === 0);
-    const more = [{ x: "repaid", label: `Repaid advances (${done.length})` }];
-    return html`<section class="card section adv-card" data-owe="${p.id}">
-      <div class="adv-card-head"><h2 class="card-title">${p.name}</h2>${sum.notTaken ? badge(`${formatCentavos(sum.notTaken)} not taken`, "warning") : ""}</div>
-      <dl class="adv-summary">
-        <dt>Outstanding</dt><dd data-role="outstanding">${formatCentavos(sum.outstanding)}</dd>
-        ${cap ? html`<dt>Available</dt><dd data-role="available">${formatCentavos(cap.available)}</dd>` : ""}
-        <dt>Next deduction</dt><dd data-role="next">${sum.next ? html`${formatCentavos(sum.next.amount)} <small>· ${periodText(sum.next)}</small>` : "—"}</dd>
-      </dl>
-      <div class="adv-card-actions">
-        ${canManage && p.staff ? html`<button type="button" class="btn btn-primary" data-act="give" data-staff="${p.id}">Give advance</button>` : ""}
-        <details class="line-menu"><summary class="btn" aria-label="More for ${p.name}">⋯ More</summary><div class="line-menu-list" role="menu">${more.map((i) => html`<button type="button" class="menu-item" role="menuitem" data-act="${i.x}" data-staff="${p.id}">${i.label}</button>`)}</div></details>
-      </div>
-      ${open.length ? html`<ul class="adv-list" data-role="advances">${open.map(advanceRow)}</ul>` : html`<p class="stat-hint" data-role="none-owed">Nothing owed.</p>`}
-    </section>`;
+  // This cutoff's deduction from an advance (planned or taken), if any.
+  const inPeriod = (a) => (state.period ? scheduleOf(a).find((e) => e.periodStart === state.period.start && e.amount > 0 && e.state !== "cancelled") || null : null);
+  // Open advances, plus any deducted in the chosen cutoff.
+  const shown = (list) => list.filter((a) => a.status === "not_yet_paid" || (a.status === "paid" && (advanceRemaining(a) > 0 || inPeriod(a))));
+  const statusOf = (a) => (a.status === "paid" ? (advanceRemaining(a) === 0 ? badge("Repaid", "success") : badge("Given", "info")) : badge(a.status === "not_yet_paid" ? "Approved, not given" : ADVANCE_STATUSES[a.status]?.label ?? a.status, a.status === "requested" ? "warning" : "neutral"));
+  const deductOn = (a) => {
+    const plan = (a.schedule || []).filter((e) => e.state === "planned" || e.state === "not_taken");
+    if (a.status !== "paid") return "—";
+    if (advanceRemaining(a) === 0) return "Repaid";
+    return plan.length ? plan.map((e) => `${formatCentavos(e.amount)} ${periodText(e)}${state.period && e.periodStart === state.period.start ? " (this cutoff)" : ""}${e.state === "not_taken" ? " · not taken" : ""}`).join(" · ") : "No deduction planned";
+  };
+
+  // Outstanding, what this cutoff deducts, and (one helper with a limit) what's available.
+  function summary(list) {
+    const sum = advanceSummary(list);
+    const cutoff = list.filter((a) => a.status === "paid").reduce((t, a) => t + (inPeriod(a)?.amount || 0), 0);
+    const one = state.staffId ? state.staff.find((s) => s.id === state.staffId) : null;
+    const cap = one && Number.isSafeInteger(one.advanceLimit) ? advanceCapacity(one, list) : null;
+    return html`<dl class="adv-summary" data-role="adv-summary">
+      <dt>Outstanding</dt><dd data-role="outstanding">${formatCentavos(sum.outstanding)}</dd>
+      ${state.period ? html`<dt>To deduct ${pname(state.period)}</dt><dd data-role="cutoff">${formatCentavos(cutoff)}</dd>` : ""}
+      ${cap ? html`<dt>Available</dt><dd data-role="available">${formatCentavos(cap.available)}</dd>` : ""}
+      ${sum.notTaken ? html`<dt>Not taken</dt><dd>${badge(formatCentavos(sum.notTaken), "warning")}</dd>` : ""}
+    </dl>`;
   }
 
-  function advanceRow(a) {
+  function table(list) {
+    const rows = shown(list).sort((x, y) => (x.staffName || "").localeCompare(y.staffName || "") || ((y.paidDate || y.date) > (x.paidDate || x.date) ? 1 : -1));
+    if (!rows.length) return html`<p class="stat-hint" data-role="none-owed">Nothing owed${state.staffId ? "" : " by anyone"}.</p>`;
+    const everyone = !state.staffId;
+    return html`<div class="table-wrap"><table class="table table-compact rows" data-role="advances">
+      <thead><tr><th class="m-only"></th>${everyone ? html`<th>Employee</th>` : ""}<th>Date</th><th class="num">Amount</th><th class="num col-secondary">Deducted</th><th class="num">Outstanding</th><th class="col-secondary">Deduct on</th><th>Status</th><th><span class="visually-hidden">Actions</span></th></tr></thead>
+      <tbody>${rows.map((a) => {
+        const owed = a.status === "paid" ? advanceRemaining(a) : 0;
+        return html`<tr data-advance="${a.id}"${inPeriod(a) ? html` data-this-cutoff="1"` : ""}>
+          ${mobileCell({ title: everyone ? a.staffName : `${formatCentavos(a.amount)} · ${short(a.paidDate || a.date)}`, sub: `${everyone ? `${formatCentavos(a.amount)} · ${short(a.paidDate || a.date)} · ` : ""}${deductOn(a)}${a.description ? ` · ${a.description}` : ""}`, end: formatCentavos(owed), endSub: a.status === "paid" ? "owed" : "" })}
+          ${everyone ? html`<td class="cell-strong">${a.staffName}</td>` : ""}
+          <td>${short(a.paidDate || a.date)}${a.description ? html`<span class="cell-sub">${a.description}</span>` : ""}</td>
+          <td class="num">${formatCentavos(a.amount)}</td>
+          <td class="num col-secondary" data-col="deducted">${a.deductedAmount ? formatCentavos(a.deductedAmount) : "—"}</td>
+          <td class="num" data-col="outstanding"><strong>${formatCentavos(owed)}</strong></td>
+          <td class="col-secondary" data-col="deduct-on">${deductOn(a)}</td>
+          <td data-col="status">${statusOf(a)}</td>
+          <td class="row-actions" data-m="more">${rowMenu(a)}</td>
+        </tr>`;
+      })}</tbody></table></div>`;
+  }
+
+  // ⋯ per advance: Details, plan, repayment, proof; destructive last.
+  function rowMenu(a) {
     const owed = advanceRemaining(a);
-    const repaid = a.status === "paid" && owed === 0;
-    const state_ = a.status === "paid" ? (repaid ? badge("Repaid", "success") : a.receipt?.state === "confirmed" ? badge("Confirmed", "success") : badge("Not confirmed", "warning")) : badge(ADVANCE_STATUSES[a.status]?.label ?? a.status, a.status === "requested" ? "warning" : "neutral");
     const items = [{ x: "details", label: "Details" }];
     if (canManage && a.status === "paid" && owed > 0) items.push({ x: "plan", label: "Edit repayment plan" }, { x: "repay", label: "Record a repayment" });
     if (a.status === "paid" && a.proof) items.push({ x: "proof", label: "View proof" });
@@ -130,22 +171,18 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     // Destructive last: delete (money never given) or void (given).
     if (canManage && a.status === "paid") items.push({ x: "void", label: "Delete / Void advance", danger: true, sep: true });
     if (canManage && a.status !== "paid") items.push({ x: "delete", label: "Delete advance", danger: true, sep: true });
-    const plan = (a.schedule || []).filter((e) => e.state === "planned");
-    return html`<li class="adv-row" data-advance="${a.id}">
-      <div class="adv-main"><strong>${formatCentavos(a.amount)} · ${short(a.paidDate || a.date)}</strong>
-        <small>${a.status === "paid" ? (repaid ? "Fully repaid" : html`${formatCentavos(owed)} owed · ${plan.length ? `Deduct ${plan.map((e) => `${formatCentavos(e.amount)} ${periodText(e)}`).join(" · ")}` : "No deduction planned"}`) : a.status === "not_yet_paid" ? "Approved, not given yet" : a.status === "requested" ? "Asked by the helper" : "Not approved"}${a.description ? ` · ${a.description}` : ""}</small></div>
-      <div class="adv-end">${state_}<details class="line-menu"><summary class="btn btn-compact btn-ghost" aria-label="Actions for the ${formatCentavos(a.amount)} advance">⋯</summary><div class="line-menu-list" role="menu">${items.map((i) => html`${i.sep ? html`<div class="menu-sep" role="separator"></div>` : ""}<button type="button" class="menu-item${i.danger ? " is-danger" : ""}" role="menuitem" data-x="${i.x}" data-id="${a.id}">${i.label}</button>`)}</div></details></div>
-    </li>`;
+    return html`<details class="line-menu"><summary class="btn btn-compact btn-ghost" aria-label="Actions for the ${formatCentavos(a.amount)} advance">⋯</summary><div class="line-menu-list" role="menu">${items.map((i) => html`${i.sep ? html`<div class="menu-sep" role="separator"></div>` : ""}<button type="button" class="menu-item${i.danger ? " is-danger" : ""}" role="menuitem" data-x="${i.x}" data-id="${a.id}">${i.label}</button>`)}</div></details>`;
   }
+  const advanceRow = (a) => html`<li class="adv-row" data-advance="${a.id}"><div class="adv-main"><strong>${a.staffName} · ${formatCentavos(a.amount)} · ${short(a.paidDate || a.date)}</strong><small>Fully repaid${a.description ? ` · ${a.description}` : ""}</small></div><div class="adv-end">${statusOf(a)}${rowMenu(a)}</div></li>`;
 
   // ⋯ More -> Repaid advances (history, read-only list with each row's ⋯).
-  function showRepaid(staffId) {
-    const p = people().find((x) => x.id === staffId);
-    const done = (p?.advances || []).filter((a) => a.status === "paid" && advanceRemaining(a) === 0);
+  function showRepaid() {
+    const done = state.rows.filter((a) => a.status === "paid" && advanceRemaining(a) === 0);
+    const who = state.staffId ? state.staff.find((s) => s.id === state.staffId)?.name ?? "" : "Everyone";
     const backdrop = document.createElement("div");
     backdrop.className = "modal-backdrop is-panel";
     document.body.appendChild(backdrop);
-    render(backdrop, html`<div class="modal" role="dialog" aria-modal="true" aria-label="Repaid advances" data-role="repaid"><div class="modal-header"><h2 class="card-title">${p?.name ?? ""} · Repaid advances</h2></div><div class="modal-body">${done.length ? html`<ul class="adv-list" data-role="advances-repaid">${done.map(advanceRow)}</ul>` : html`<p class="stat-hint">None yet.</p>`}</div><div class="modal-footer"><button type="button" class="btn" data-x="close">Close</button></div></div>`);
+    render(backdrop, html`<div class="modal" role="dialog" aria-modal="true" aria-label="Repaid advances" data-role="repaid"><div class="modal-header"><h2 class="card-title">${who} · Repaid advances</h2></div><div class="modal-body">${done.length ? html`<ul class="adv-list" data-role="advances-repaid">${done.map(advanceRow)}</ul>` : html`<p class="stat-hint">None yet.</p>`}</div><div class="modal-footer"><button type="button" class="btn" data-x="close">Close</button></div></div>`);
     backdrop.addEventListener("click", (e) => {
       if (e.target === backdrop || e.target.closest('[data-x="close"]')) return backdrop.remove();
       const el = e.target.closest("[data-x]");
@@ -161,7 +198,6 @@ export function mount(container, session, { data = defaultData, toast = defaultT
   function draw() {
     if (!alive) return;
     const requests = state.rows.filter((a) => a.status === "requested");
-    const list = people();
     render(
       container,
       html`
@@ -173,108 +209,26 @@ export function mount(container, session, { data = defaultData, toast = defaultT
                   <div class="request-actions"><button type="button" class="btn btn-compact" data-act="reject" data-id="${a.id}">Reject</button><button type="button" class="btn btn-compact btn-primary" data-act="approve" data-id="${a.id}">Approve</button></div></li>`
               )}</ul></section>`
           : ""}
-        <div class="pick-row page-pickers" data-role="pickers">
-          <label class="pick">Employee <select class="select" data-role="pick-staff" aria-label="Employee"><option value="">Everyone</option>${state.staff.map((x) => html`<option value="${x.id}" ${x.id === state.staffId ? "selected" : ""}>${x.name}</option>`)}</select></label>
-        </div>
-        ${state.error
-          ? html`<section class="card section">${emptyState({ title: "Couldn't load", body: state.error })}</section>`
-          : state.loading && !state.rows.length
-            ? html`<section class="card section">${skeleton(4)}</section>`
-            : list.length
-              ? html`<div data-role="summaries">${list.map(helperCard)}</div>`
-              : html`<section class="card section">${examplesState({ title: "No advances yet", body: "An advance you give is taken from the next payroll:", items: ADVANCE_EXAMPLES, helper: "Add the people you pay on the Household Staff page first.", role: "advance-examples", wrap: true })}<p class="ex-add"><a class="btn btn-primary" href="/household-staff" data-link>+ Add staff</a></p></section>`}
-        <p class="voided-link page-foot"><button type="button" class="btn-linklike" data-act="voided">Voided records ›</button></p>`
+        <section class="card section" data-section="advances">
+          <div class="pick-row" data-role="pickers">
+            <label class="pick">Employee <select class="select" data-role="pick-staff" aria-label="Employee"><option value="">Everyone</option>${state.staff.map((x) => html`<option value="${x.id}" ${x.id === state.staffId ? "selected" : ""}>${x.name}</option>`)}</select></label>
+            ${state.periods.length ? html`<label class="pick">Period <select class="select" data-role="pick-period" aria-label="Pay period">${state.periods.map((x) => html`<option value="${x.start}_${x.end}" ${state.period && x.start === state.period.start && x.end === state.period.end ? "selected" : ""}>${pname(x)}${x.current ? " (now)" : ""}</option>`)}</select></label>` : ""}
+          </div>
+          ${state.error
+            ? emptyState({ title: "Couldn't load", body: state.error })
+            : state.loading && !state.rows.length
+              ? skeleton(4)
+              : !state.rows.length && !state.staff.length
+                ? html`${examplesState({ title: "No advances yet", body: "An advance you give is taken from the next payroll:", items: ADVANCE_EXAMPLES, helper: "Add the people you pay on the Household Staff page first.", role: "advance-examples", wrap: true })}<p class="ex-add"><a class="btn btn-primary" href="/household-staff" data-link>+ Add staff</a></p>`
+                : html`<div class="adv-head">${summary(state.rows)}${canManage && state.staff.length ? html`<button type="button" class="btn btn-primary" data-act="give" data-staff="${state.staffId}">Give advance</button>` : ""}</div>${table(state.rows)}`}
+        </section>
+        <p class="voided-link page-foot"><button type="button" class="btn-linklike" data-act="repaid">Repaid advances ›</button> <button type="button" class="btn-linklike" data-act="voided">Voided records ›</button></p>`
     );
     for (const btn of container.querySelectorAll('[data-act="export"]')) btn.classList.add("btn-ghost");
   }
 
-  const METHOD_KEY = "luna.advance.method";
-  const lastMethod = () => {
-    try {
-      const m = localStorage.getItem(METHOD_KEY);
-      return SALARY_METHODS[m] ? m : "cash";
-    } catch {
-      return "cash";
-    }
-  };
-  const availableFor = (s) => (s && Number.isSafeInteger(s.advanceLimit) ? advanceCapacity(s, state.rows.filter((a) => a.staffId === s.id)).available : null);
-
   async function give(preset = "") {
-    if (!state.staff.length) return toast("Add household staff first.", "danger");
-    const chosen = preset || state.staffId || state.staff[0].id;
-    const first = state.staff.find((s) => s.id === chosen) || state.staff[0];
-    const idempotencyKey = newKey();
-    const r = await formDialog({
-      title: "Give an advance",
-      intro: state.staff.length === 1 || preset || state.staffId ? (availableFor(first) !== null ? `Available to advance: ${formatCentavos(availableFor(first))}.` : "") : "",
-      fields: [
-        { name: "staffId", label: "Helper", type: "select", value: first.id, options: state.staff.map((s) => ({ value: s.id, label: availableFor(s) !== null ? `${s.name} · ${formatCentavos(availableFor(s))} available` : s.name })) },
-        { name: "amount", label: "Amount (₱)", required: true, inputmode: "decimal" },
-        { name: "plan", label: "Deduct on", type: "select", value: "next", options: [{ value: "next", label: "Next unpaid payroll" }, { value: "split", label: "Split repayment" }, { value: "none", label: "No payroll deduction" }] },
-        { name: "date", label: "Date given", type: "date", value: today, max: today, more: true, default: true },
-        { name: "method", label: "How", type: "select", value: lastMethod(), options: methodOptions(), more: true },
-        { name: "reference", label: "Reference (optional)", more: true },
-        { name: "proof", label: "Proof (screenshot or PDF, optional)", type: "file", accept: PHOTO_OR_PDF_ACCEPT, more: true },
-        { name: "description", label: "Note (optional)", more: true, placeholder: "e.g. Fare home" },
-      ],
-      submitLabel: "Give advance",
-      moreLabel: "More options",
-      onSubmit: async (v) => {
-        const s = state.staff.find((x) => x.id === v.staffId);
-        const amount = parseCentavos(v.amount);
-        const avail = availableFor(s);
-        if (avail !== null && amount > avail) throw new Error(`Maximum available is ${formatCentavos(avail)}.`);
-        const proof = v.proof ? await prepareProof(v.proof, { pdf: true }) : null;
-        const res = await api({ action: "give", advance: { staffId: v.staffId, date: v.date || today, amount, method: v.method, plan: v.plan === "none" || v.plan === "split" ? "none" : "next", ...(v.description?.trim() ? { description: v.description.trim() } : {}), ...(v.reference?.trim() ? { reference: v.reference.trim() } : {}) }, ...(proof ? { proof } : {}), idempotencyKey });
-        try {
-          localStorage.setItem(METHOD_KEY, v.method);
-        } catch {
-          /* per-device convenience only */
-        }
-        return { ...res, amount, plan: v.plan, staff: s };
-      },
-    });
-    if (!r) return undefined;
-    // Split: the plan editor for this new advance (the money is already recorded).
-    let schedule = r.schedule;
-    if (r.plan === "split") {
-      const planned = await editPlan({ advance: { id: r.advanceId, amount: r.amount, deductedAmount: 0, repaidAmount: 0, status: "paid", schedule: [] }, staff: r.staff, today, api });
-      if (planned?.schedule) schedule = planned.schedule;
-    }
-    await quickResult({ name: r.staffName || r.staff?.name, amount: r.amount, outstanding: r.outstanding, next: (schedule || []).find((e) => e.state === "planned") || null, available: r.available });
-    load();
-    return undefined;
-  }
-
-  // The result at a glance (one tap to close).
-  function quickResult({ name, amount, outstanding, next, available }) {
-    return new Promise((resolve) => {
-      const backdrop = document.createElement("div");
-      backdrop.className = "modal-backdrop";
-      document.body.appendChild(backdrop);
-      render(
-        backdrop,
-        html`<div class="modal" role="dialog" aria-modal="true" aria-label="Advance given" data-role="advance-result">
-          <div class="modal-header"><h2 class="card-title">${name}</h2></div>
-          <div class="modal-body">
-            <dl class="adv-result">
-              <dt>Advance given</dt><dd>${formatCentavos(amount)}</dd>
-              <dt>Outstanding</dt><dd data-role="result-outstanding">${formatCentavos(outstanding ?? amount)}</dd>
-              <dt>Next deduction</dt><dd>${next ? html`${formatCentavos(next.amount)} <small>${periodText(next)}</small>` : "None planned"}</dd>
-              ${available !== null && available !== undefined ? html`<dt>Still available</dt><dd>${formatCentavos(available)}</dd>` : ""}
-            </dl>
-            <p class="pay-status">${badge("Waiting for confirmation", "warning")}</p>
-          </div>
-          <div class="modal-footer"><button type="button" class="btn btn-primary" data-x="close">OK</button></div>
-        </div>`
-      );
-      backdrop.addEventListener("click", (event) => {
-        if (event.target === backdrop || event.target.closest('[data-x="close"]')) {
-          backdrop.remove();
-          resolve();
-        }
-      });
-    });
+    if (await giveAdvance({ staff: state.staff, advances: state.rows, preset: preset || state.staffId, today, api, toast })) load();
   }
 
   async function details(a) {
@@ -290,7 +244,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
             <dt>Given</dt><dd>${a.paidDate ? `${formatDayId(a.paidDate)} by ${SALARY_METHODS[a.method]?.label ?? a.method}${a.reference ? ` · Ref ${a.reference}` : ""}` : "Not yet"}</dd>
             ${a.description ? html`<dt>What for</dt><dd>${a.description}</dd>` : ""}
             <dt>Still owed</dt><dd><strong>${formatCentavos(a.status === "paid" ? advanceRemaining(a) : 0)}</strong></dd>
-            <dt>Helper confirmed</dt><dd>${a.receipt?.state === "confirmed" ? "Yes, received" : a.status === "paid" ? "Not yet" : "—"}</dd>
+            ${a.receipt?.state === "confirmed" ? html`<dt>Helper confirmed</dt><dd>Yes, received</dd>` : ""}
           </dl>
           ${(a.schedule || []).length ? html`<h3 class="slip-head">Repayment plan</h3><ul class="slip">${a.schedule.map((e) => html`<li><span class="slip-what">${periodText(e)}<small>${SCHEDULE_STATES[e.state]?.label ?? e.state}</small></span><span class="slip-amt">${formatCentavos(e.amount)}</span><span class="slip-act"></span></li>`)}</ul>` : ""}
           ${(a.repayments || []).length ? html`<h3 class="slip-head">Repaid separately</h3><ul class="slip">${a.repayments.map((r) => html`<li><span class="slip-what">${short(r.date)} · ${SALARY_METHODS[r.method]?.label ?? r.method}${r.note ? html`<small>${r.note}</small>` : ""}</span><span class="slip-amt">${formatCentavos(r.amount)}</span><span class="slip-act"></span></li>`)}</ul>` : ""}
@@ -331,7 +285,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     try {
       if (act === "give") return give(el.dataset.staff || "");
       if (act === "voided") return showVoided();
-      if (act === "repaid") return showRepaid(el.dataset.staff);
+      if (act === "repaid") return showRepaid();
       if (!a) return undefined;
       if (act === "details") return details(a);
       if (act === "plan") {
@@ -423,9 +377,15 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     return undefined;
   };
   const onChange = (event) => {
-    if (event.target.dataset.role !== "pick-staff") return;
+    if (event.target.dataset.role === "pick-period") {
+      const [start, end] = event.target.value.split("_");
+      state.period = { start, end };
+      return load();
+    }
+    if (event.target.dataset.role !== "pick-staff") return undefined;
     state.staffId = event.target.value;
-    load();
+    setScope(businessId, { staffId: state.staffId });
+    return load();
   };
   container.addEventListener("click", onClick);
   container.addEventListener("change", onChange);

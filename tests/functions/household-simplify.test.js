@@ -312,7 +312,7 @@ describe("the helper reviews and confirms: own records and proofs only", () => {
 });
 
 describe("dashboard: what needs the Owner's attention, per helper", () => {
-  it("corrections, salary / advance not confirmed yet, deductions not taken; helpers with nothing aren't listed", async () => {
+  it("corrections, salary not confirmed yet, deductions not taken (an advance isn't confirmed since 2026-10-29); helpers with nothing aren't listed", async () => {
     const y = await staff("Yanie");
     const r = await staff("Riza");
     await staff("Lito");
@@ -324,8 +324,8 @@ describe("dashboard: what needs the Owner's attention, per helper", () => {
     await plan(a, [{ periodStart: OCT(1), amount: 50000, state: "not_taken" }]);
     const s = await householdSummary({ db: world.db, tenant: tenantDb(world.db, H), business: { timezone: "Asia/Manila" }, now: clock });
     expect(s.pending.byStaff).toEqual([
-      { staffId: r, name: "Riza", items: { advanceConfirmation: 1, notTaken: 1 }, total: 2 },
       { staffId: y, name: "Yanie", items: { correction: 1, salaryConfirmation: 1 }, total: 2 },
+      { staffId: r, name: "Riza", items: { notTaken: 1 }, total: 1 },
     ]);
   });
 });

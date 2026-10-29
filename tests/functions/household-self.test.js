@@ -226,6 +226,26 @@ describe("salary received: the employee's confirmation is separate from the Owne
     expect((await me(uid, { action: "received", payrollId: p })).body.alreadyConfirmed).toBe(true);
   });
 
+  it("2026-10-29: My Salary carries the full saved breakdown (each bonus / deduction with its date) and when it was confirmed", async () => {
+    const id = await staff();
+    const uid = await withLogin(id);
+    const p = await paidSalary(id);
+    await api("payroll", u.mom, { action: "addAddition", payrollId: p, addition: { type: "bonus", amount: 30000, description: "Performance bonus" } });
+    await api("payroll", u.mom, { action: "addDeduction", payrollId: p, deduction: { description: "Uniform", amount: 15000 } });
+    await api("payroll", u.mom, { action: "release", payrollId: p, payment: { method: "cash" } });
+    const today = docAt(`payrolls/${p}`).additions[0].date;
+    expect(today).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    const s0 = (await me(uid)).body.me.salaries[0];
+    expect(s0.breakdown).toEqual([
+      { key: "basic", label: "Basic pay", amount: 60000, detail: "1 paid day" },
+      { key: "addition", label: "Bonus", amount: 30000, date: today, detail: "Performance bonus" },
+      { key: "other", label: "Other deduction", amount: -15000, date: today, detail: "Uniform" },
+    ]);
+    expect(s0.confirmedAt).toBeNull();
+    await me(uid, { action: "received", payrollId: p });
+    expect((await me(uid)).body.me.salaries[0].confirmedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+  });
+
   it("Not received flags Payment disputed and tells the Owner; a later confirmation resolves it", async () => {
     const id = await staff();
     const uid = await withLogin(id);
