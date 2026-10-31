@@ -377,7 +377,11 @@ describe("Luna Business workbook", () => {
     const x = await ensureAuthUser({ auth: world.auth, email: "nocost@t.test", name: "No Cost" });
     await addMember({ ...world, businessId: "biz-a", uid: x.uid, email: x.email, name: "No Cost", roleTemplate: "manager", permissionOverrides: { revoke: ["inventory.costs"] } });
     expect((await api("products", x.uid, "biz-a", { action: "setUnitCost", productId: ids.kopi, unitCost: 100 })).status).toBe(403);
-    for (const bad of [0, -5, 12.5, "43"]) expect((await api("products", world.uids.ownera, "biz-a", { action: "setUnitCost", productId: ids.kopi, unitCost: bad })).status).toBe(400);
+    for (const bad of [-5, 12.5, "43", null, "0"]) expect((await api("products", world.uids.ownera, "biz-a", { action: "setUnitCost", productId: ids.kopi, unitCost: bad })).status).toBe(400);
+    // ₱0 is a valid cost (2026-10-31), then back to ₱43 for the fulfilment below.
+    ok(await api("products", world.uids.ownera, "biz-a", { action: "setUnitCost", productId: ids.kopi, unitCost: 0 }));
+    expect(world.db.docs.get(`businesses/biz-a/productCosts/${ids.kopi}`)).toMatchObject({ avgCostUnits: 0, inventoryValue: 0 });
+    ok(await api("products", world.uids.ownera, "biz-a", { action: "setUnitCost", productId: ids.kopi, unitCost: 4300 }));
     expect((await api("products", world.uids.ownerb, "biz-b", { action: "setUnitCost", productId: ids.kopi, unitCost: 100 })).status).toBe(404);
     // Fulfil the order: Kopi × 2 at ₱43 + Choco × 1 at ₱50 = ₱136 COGS.
     await fulfillOrder({ ...ids.common, business: ids.business, orderId: ids.orderId, now: clock });

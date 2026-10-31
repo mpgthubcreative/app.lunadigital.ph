@@ -131,6 +131,34 @@ const TEMPLATES = [
     ],
   },
   {
+    id: "reseller",
+    // Reseller Package (2026-10-31): the Distributor workspace (Orders,
+    // Inventory, Payments, Customers, Reports, Costs, Share menu, Excel) plus
+    // Resellers. The Owner adds a reseller by name; each reseller gets a
+    // private menu link (no Luna account) where they set their selling price
+    // over the owner/base price; Luna tags the order to them, snapshots both
+    // prices and works out the commission; the Owner may adjust the final
+    // commission and records payouts (Unpaid / Partially Paid / Paid). One
+    // business inventory; customer payments are the Distributor's own flow.
+    version: 1,
+    name: "Reseller Package",
+    description: "Orders, inventory and payments, plus resellers who sell from a private menu link and earn a commission.",
+    status: "live",
+    modules: [...CORE, "orders", "payments", "inventory", "customers", "expenses", "reports", "imports", "resellers"],
+    navigation: ["orders", "inventory", "resellers", "customers", "reports", "payments", "expenses", "imports", "users", "settings"],
+    mobileTabs: ["orders", "inventory", "resellers", "reports"],
+    navHidden: ["dashboard"],
+    moreModules: ["payments", "expenses"],
+    home: "orders",
+    dashboard: {
+      widgets: ["netSales", "ordersToday", "grossProfit", "fulfilledOrders", "receivablesOutstanding", "unpaidOrders", "pendingFulfillment", "lowStock", "paymentsToVerify", "ordersPending", "ordersPreparing", "ordersReady", "inventorySummary", "recentOrders", "lowStockItems"],
+      empty: { title: "Nothing to show yet", body: "Your dashboard fills in as your business uses Luna." },
+    },
+    labels: { modules: { expenses: "Costs" } },
+    settings: { orderPrefix: "ORD" },
+    plannedModules: [],
+  },
+  {
     id: "household-payroll",
     // v2 (Phase 14): Household Staff, Attendance, Payroll (deductions,
     // salary release, receipt confirmation, history) and Advances.

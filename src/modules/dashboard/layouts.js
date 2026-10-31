@@ -424,5 +424,5 @@ export function bridalDashboard(ctx) {
   `;
 }
 
-export const LAYOUTS = { distributor: distributorDashboard, "household-payroll": householdDashboard, "baby-expense": babyDashboard, "bridal-expense": bridalDashboard };
+export const LAYOUTS = { distributor: distributorDashboard, reseller: distributorDashboard, "household-payroll": householdDashboard, "baby-expense": babyDashboard, "bridal-expense": bridalDashboard };
 export { NO_DATA };

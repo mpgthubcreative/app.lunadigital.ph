@@ -98,7 +98,7 @@ export const EXPORT_DATASETS = Object.freeze({
     module: "expenses",
     // The Distributor (operating-expense) columns and fixed categories; Baby
     // Expenses have their own dataset below.
-    workspaces: ["distributor"],
+    workspaces: ["distributor", "reseller"],
     view: ["expenses.view"],
     exportPermission: EXPORT_PERMISSION,
     // Active expenses only: removed ones are an audit view, not an export.

@@ -42,3 +42,4 @@ export * from "./plan-billing.js";
 export * from "./trial.js";
 export * from "./feedback.js";
 export * from "./navigation-prefs.js";
+export * from "./resellers.js";

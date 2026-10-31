@@ -80,20 +80,20 @@ function personalPlan({ id, name, workspace, monthly = 0, sortOrder, users, stor
 
 // Distributor: monthly + ₱999 setup; users and storage only, no order limit.
 const DISTRIBUTOR_MODULES = ["orders", "payments", "inventory", "customers", "reports", "imports", "expenses"];
-function distributorPlan({ id, name, sortOrder, price, users, storage, plus = false, legacy = false, terms = null, addOns = [], tagline = null, billing = null }) {
+function distributorPlan({ id, name, sortOrder, price, users, storage, plus = false, legacy = false, terms = null, addOns = [], tagline = null, billing = null, workspace = "distributor", modules = DISTRIBUTOR_MODULES }) {
   return {
     id,
     name,
     ...(legacy ? { legacy: true } : {}),
     ...(tagline ? { tagline } : {}),
-    workspaceTemplateId: "distributor",
+    workspaceTemplateId: workspace,
     recommended: !legacy,
     sortOrder,
     pricing: billing
       ? { currency: CURRENCY, setupFeeIsMinimum: false, monthly: 0, monthlyIsMinimum: false, addOns, ...billing }
       : { currency: CURRENCY, setupFee: 99900, setupFeeIsMinimum: false, monthly: price, monthlyIsMinimum: false, billingType: "monthly", price, termMonths: 1, autoRenew: true, terms: terms ?? [{ months: 1, price, kind: "main" }], addOns },
     limits: { users, ordersPerMonth: NO_LIMIT, storageBytes: storage, importsPerMonth: 0 },
-    modules: { ...ALL_SELLABLE_OFF, ...Object.fromEntries(DISTRIBUTOR_MODULES.map((m) => [m, true])) },
+    modules: { ...ALL_SELLABLE_OFF, ...Object.fromEntries(modules.map((m) => [m, true])) },
     features: { reportsLevel: plus ? "advanced" : "basic", inAppNotifications: true, pushNotifications: plus, googleSheets: false, advancedPermissions: false, workflowCustomization: false, support: plus ? "priority" : "standard" },
   };
 }
@@ -109,6 +109,28 @@ export const PLAN_SEED = Object.freeze({
     users: 2,
     storage: 500 * MB,
     // Prepaid access (6 or 12 months), renewing; ₱250 setup on the first paid bill.
+    billing: {
+      billingType: "annual",
+      price: 239000,
+      termMonths: 12,
+      autoRenew: true,
+      setupFee: 25000,
+      trialDays: 30,
+      terms: [{ months: 6, price: 129900, kind: "main" }, { months: 12, price: 239000, kind: "main", label: "Best Value" }],
+    },
+    addOns: [{ id: "users", label: "+2 users", users: 2, price: 14900, perMonths: 1 }, { id: "storage", label: "+1 GB storage", storageMb: 1024, price: 9900, perMonths: 1 }],
+  }),
+  // ---- Reseller Package (2026-10-31): the Distributor plan + Resellers. ----
+  "reseller-basic": distributorPlan({
+    id: "reseller-basic",
+    name: "Luna Reseller",
+    tagline: "Your resellers sell from their own private menu link; Luna tracks their orders and commission.",
+    workspace: "reseller",
+    modules: [...DISTRIBUTOR_MODULES, "resellers"],
+    sortOrder: 2,
+    price: 239000,
+    users: 2,
+    storage: 500 * MB,
     billing: {
       billingType: "annual",
       price: 239000,

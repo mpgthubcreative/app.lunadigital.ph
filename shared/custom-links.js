@@ -44,7 +44,7 @@ export const RESERVED_LINK_NAMES = Object.freeze(
       "mail", "email", "smtp", "imap", "pop", "mx", "send", "resend", "ns", "ns1", "ns2", "dns", "ftp", "vpn",
       "support", "help", "status", "static", "assets", "cdn", "img", "images", "media", "files", "docs", "blog", "news",
       "dev", "test", "testing", "demo", "preview", "staging", "stage", "production", "prod", "beta", "sandbox",
-      "firebase", "netlify", "google", "luna", "lunadigital", "lunadigitalsystem", "luna-business-os", "store", "shop", "rsvp", "invite", "wedding", "household", "distributor",
+      "firebase", "netlify", "google", "luna", "lunadigital", "lunadigitalsystem", "luna-business-os", "store", "shop", "rsvp", "invite", "wedding", "household", "distributor", "reseller",
       "security", "abuse", "postmaster", "hostmaster", "webmaster", "root", "superadmin", "operator", "system", "official",
     ]
   )

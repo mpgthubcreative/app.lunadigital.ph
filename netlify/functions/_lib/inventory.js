@@ -163,7 +163,8 @@ export async function updateProduct({ db, tenant, FieldValue, productId, changes
 // in the audit log with before / after (the costing history stays there).
 // inventoryValue (the sum() the inventory value reads) follows.
 export async function setProductUnitCost({ db, tenant, FieldValue, productId, unitCost, actor }) {
-  if (!isCentavos(unitCost) || unitCost === 0 || unitCost > MAX_CENTAVOS) throw new InventoryError("invalid-cost", "Enter a unit cost more than ₱0");
+  // ₱0 is a valid cost (2026-10-31); only a non-amount or a negative is refused.
+  if (!isCentavos(unitCost) || unitCost > MAX_CENTAVOS) throw new InventoryError("invalid-cost", "Enter a unit cost of ₱0 or more");
   const { product: productRef, costs: costRef } = refs(tenant, productId);
   return db.runTransaction(async (tx) => {
     const [snap, costSnap] = await Promise.all([tx.get(productRef), tx.get(costRef)]);

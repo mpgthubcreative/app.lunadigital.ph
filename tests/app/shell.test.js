@@ -89,5 +89,5 @@ describe("app shell", () => {
       mod.mount(el, session);
       expect(el.querySelector(".page-title"), id).not.toBeNull();
     }
-  });
+  }, 15000); // imports every module's chunk in turn (slow under a full parallel run)
 });

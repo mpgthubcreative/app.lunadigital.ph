@@ -41,7 +41,7 @@ export const canSeeCrewMeals = (session) => snapshotWorkspaceTemplateId(session?
 // Distributor (2026-10-22): Share menu (the store link + Store settings) as
 // a page under More (also a button on Orders).
 export const SHARE_ROUTE = Object.freeze({ path: "/share-menu", label: "Share menu", moduleId: "sharemenu" });
-export const canSeeShareMenu = (session) => snapshotWorkspaceTemplateId(session?.entitlements) === "distributor" && session?.member?.permissions?.["orders.view"] === true && canUseModule(accessOf(session), "orders");
+export const canSeeShareMenu = (session) => ["distributor", "reseller"].includes(snapshotWorkspaceTemplateId(session?.entitlements)) && session?.member?.permissions?.["orders.view"] === true && canUseModule(accessOf(session), "orders");
 export const canSeeWeddingSetup = (session) => snapshotWorkspaceTemplateId(session?.entitlements) === "bridal-expense" && session?.member?.permissions?.["guests.view"] === true && canUseModule(accessOf(session), "guests");
 
 export function buildRoutes(session) {
@@ -111,7 +111,7 @@ export function workspacePaths(session) {
     if (m?.available) paths.add(m.path);
   }
   if (template?.id === "bridal-expense") for (const r of [SETUP_ROUTE, PROGRAM_ROUTE, CREW_ROUTE]) paths.add(r.path);
-  if (template?.id === "distributor") paths.add(SHARE_ROUTE.path);
+  if (template?.id === "distributor" || template?.id === "reseller") paths.add(SHARE_ROUTE.path);
   return paths;
 }
 

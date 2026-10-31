@@ -21,6 +21,13 @@ export const RESET_PLAN = Object.freeze({
     removes: ["orders", "orderPayLinks", "payments", "paymentRefs", "products", "productCosts", "skuIndex", "inventoryTransactions", "inventoryTransactionCosts", "customers", "customerPrices", "openingBalances", "setupImports", "expenses", "imports", "reports", ...DERIVED],
     summary: ["Orders and their payments", "Products, stock and stock movements (and costs)", "Customers, their special prices and opening balances", "Expenses", "Dashboard and report totals", "Uploaded files (product photos, payment and expense proofs)"],
   },
+  // Reseller Package (2026-10-31): the Distributor's records + resellers,
+  // their links and prices, and commission payouts.
+  reseller: {
+    label: "Luna Reseller",
+    removes: ["orders", "orderPayLinks", "payments", "paymentRefs", "products", "productCosts", "skuIndex", "inventoryTransactions", "inventoryTransactionCosts", "customers", "customerPrices", "openingBalances", "setupImports", "expenses", "imports", "reports", "resellers", "resellerLinks", "resellerPrices", "commissionPayouts", ...DERIVED],
+    summary: ["Orders and their payments", "Products, stock and stock movements (and costs)", "Customers, their special prices and opening balances", "Resellers, their menu links, prices and commission payouts", "Expenses", "Dashboard and report totals", "Uploaded files (product photos, payment and expense proofs)"],
+  },
   "household-payroll": {
     label: "Luna Household",
     removes: ["householdStaff", "attendance", "attendanceRequests", "attendanceCorrections", "attendanceConfirmations", "payrolls", "voidedPayrolls", "advances", "voidedAdvances", "expenses", "expenseCategories", "budgets", "scheduledPayments", "groceryItems", "groceryLists", "providers", ...DERIVED],

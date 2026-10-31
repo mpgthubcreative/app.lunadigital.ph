@@ -18,7 +18,7 @@ import { formDialog } from "../../components/form-dialog.js";
 import { toast as defaultToast } from "../../components/feedback.js";
 import { api as defaultApi } from "../../lib/api.js";
 import { formatCentavos, formatDayId } from "../../lib/format.js";
-import { DEFAULT_EXPENSE_CATEGORIES, EXPENSE_METHODS, EXPENSE_METHOD_IDS, expenseCategoryLabel, parseCentavos, businessDate, canUseModule, costUnitsToCentavos } from "@shared/index.js";
+import { DEFAULT_EXPENSE_CATEGORIES, EXPENSE_METHODS, EXPENSE_METHOD_IDS, expenseCategoryLabel, parseCentavos, parseCost, businessDate, canUseModule, costUnitsToCentavos } from "@shared/index.js";
 import * as defaultData from "./data.js";
 import * as defaultInventoryData from "../inventory/data.js";
 
@@ -248,8 +248,7 @@ export function mount(container, session, { data = defaultData, inventoryData = 
       ],
       submitLabel: "Save",
       onSubmit: (v) => {
-        const unitCost = parseCentavos(v.unitCost);
-        if (!(unitCost > 0)) throw new Error("Enter a cost per unit more than ₱0");
+        const unitCost = parseCost(v.unitCost);
         return api("products", { method: "POST", body: { action: "setUnitCost", productId: product ? product.id : v.productId, unitCost } });
       },
     });

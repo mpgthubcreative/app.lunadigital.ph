@@ -36,7 +36,8 @@ export function orderRow(o, { currency = "PHP", timezone } = {}) {
     when: when(o.createdAt, timezone) || o.orderDate,
     customer: o.customer?.name ?? "",
     source: sourceLabel(o.source),
-    items: o.items?.length === 1 ? `${o.items[0].name} × ${qtyText(o.items[0].quantity, o.items[0].unit)}` : `${o.itemCount} items`,
+    items: `${o.items?.length === 1 ? `${o.items[0].name} × ${qtyText(o.items[0].quantity, o.items[0].unit)}` : `${o.itemCount} items`}${o.reseller?.name ? ` · Reseller: ${o.reseller.name}` : ""}`,
+    reseller: o.reseller?.name ?? null,
     total: formatCentavos(o.total, currency),
     paymentStatus: o.paymentStatus,
     fulfillmentStatus: o.fulfillmentStatus,
@@ -44,7 +45,7 @@ export function orderRow(o, { currency = "PHP", timezone } = {}) {
   };
 }
 
-const HISTORY_LABEL = { created: "Order created", edited: "Order edited", corrected: "Order corrected", fulfilled: "Fulfilled", cancelled: "Cancelled" };
+const HISTORY_LABEL = { created: "Order created", edited: "Order edited", corrected: "Order corrected", fulfilled: "Fulfilled", cancelled: "Cancelled", commission: "Reseller / commission changed" };
 const signedQty = (n) => `${n > 0 ? "+" : n < 0 ? "−" : ""}${formatQuantity(Math.abs(n))}`;
 
 // "Oct 8, 2026, 10:42 AM • Carlo • Qty changed 10 → 8" plus the automatic
@@ -65,10 +66,19 @@ export function historyRows(order, { currency = "PHP", timezone } = {}) {
     if (h.changes?.customer) lines.push("Customer details changed");
     if (h.changes?.deliveryAddress) lines.push("Delivery address changed");
     if (h.changes?.source) lines.push(`Source ${sourceLabel(h.changes.source.from)} → ${sourceLabel(h.changes.source.to)}`);
+    // Reseller Package: who sold it, selling prices, and the commission.
+    if (h.changes?.reseller) lines.push(`Reseller ${h.changes.reseller.from ?? "Direct sale"} → ${h.changes.reseller.to ?? "Direct sale"}`);
+    for (const p of h.changes?.prices || []) lines.push(`${p.name}: selling price ${formatCentavos(p.from, currency)} → ${formatCentavos(p.to, currency)}`);
+    if (h.changes?.commission) {
+      const c = h.changes.commission;
+      const m = (v) => (v === null || v === undefined ? "none" : formatCentavos(v, currency));
+      if (c.final.from !== c.final.to) lines.push(`Final commission ${m(c.final.from)} → ${m(c.final.to)}`);
+      if (c.calculated.from !== c.calculated.to) effects.push(`Calculated commission ${m(c.calculated.from)} → ${m(c.calculated.to)}`);
+    }
     if (h.reason) lines.push(`Reason: ${h.reason}`);
     const actor = h.actor?.name ?? "";
     const stamp = when(h.at, timezone);
-    const summary = lines.length && (h.type === "edited" || h.type === "corrected") ? lines.join(" · ") : HISTORY_LABEL[h.type] || h.type;
+    const summary = lines.length && (h.type === "edited" || h.type === "corrected" || h.type === "commission") ? lines.join(" · ") : HISTORY_LABEL[h.type] || h.type;
     return { type: h.type, label: HISTORY_LABEL[h.type] || h.type, actor, when: stamp, headline: [stamp, actor, summary].filter(Boolean).join(" • "), effects, details: lines.join(" · ") };
   });
 }

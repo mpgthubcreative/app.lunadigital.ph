@@ -51,7 +51,7 @@ describe("authorization: operators only (never a business role)", () => {
     }
     const s = ok(await op({ action: "session" }));
     expect(s.operator).toMatchObject({ email: "ops@luna.test", role: "superadmin" });
-    expect(s.workspaces.map((w) => w.id).sort()).toEqual(["baby-expense", "bridal-expense", "distributor", "household-payroll"]);
+    expect(s.workspaces.map((w) => w.id).sort()).toEqual(["baby-expense", "bridal-expense", "distributor", "household-payroll", "reseller"]);
   });
 
   it("validation happens only after the operator check (a non-operator learns nothing); unknown actions / fields refused", async () => {
@@ -257,7 +257,7 @@ describe("read models", () => {
     expect(d.business).toMatchObject({ id: "biz-a", workspaceTemplateId: "distributor", entitlementsValid: true });
     expect(d.members.map((m) => m.email).sort()).toEqual(["disableda@t.test", "managera@t.test", "multi@t.test", "ownera@t.test", "staffa@t.test"]);
     expect((await op({ action: "business", businessId: "nope-nope" })).status).toBe(404);
-    expect(ok(await op({ action: "plans" })).plans.map((p) => p.id)).toEqual(["distributor-basic", "household-basic", "baby-basic", "baby-plus", "bridal-basic", "bridal-plus", "starter", "growth", "pro", "distributor-plus", "household-plus"]);
+    expect(ok(await op({ action: "plans" })).plans.map((p) => p.id)).toEqual(["distributor-basic", "reseller-basic", "household-basic", "baby-basic", "baby-plus", "bridal-basic", "bridal-plus", "starter", "growth", "pro", "distributor-plus", "household-plus"]);
     expect(ok(await op({ action: "audit" })).rows.length).toBeGreaterThan(0);
   });
 });

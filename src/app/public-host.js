@@ -69,8 +69,8 @@ export async function mountPublicHost(root, { label, location = window.location,
     if (token && TOKEN_PATH.exec(path) === null) window.history.replaceState(null, "", `/rsvp/${token}`);
     return (await load("invite")).renderInvitePage(root, { token: token || "", fetchImpl: fetchHere });
   }
-  if (r.workspace === "distributor" && path.startsWith("/pay/")) return (await load("pay")).renderPayPage(root, { fetchImpl: fetchHere });
-  if (r.workspace === "distributor" && (path === "/" || path === "")) {
+  if ((r.workspace === "distributor" || r.workspace === "reseller") && path.startsWith("/pay/")) return (await load("pay")).renderPayPage(root, { fetchImpl: fetchHere });
+  if ((r.workspace === "distributor" || r.workspace === "reseller") && (path === "/" || path === "")) {
     if (!r.storeSlug) return page(root, r.name, "This store isn't taking orders online yet.");
     return (await load("store")).renderStorePage(root, { slug: r.storeSlug, fetchImpl: fetchHere });
   }

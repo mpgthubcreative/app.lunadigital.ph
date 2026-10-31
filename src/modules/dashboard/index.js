@@ -34,7 +34,7 @@ const rangeText = ({ from, to }) => (from === to ? formatDayId(from) : `${format
 const DEFAULT_PRESET = { "baby-expense": "thisMonth", "bridal-expense": "thisMonth" };
 // Owner pilot: the Business Dashboard screen is the checkout; it reads only
 // the three figures it shows (the workbook still lists every widget).
-const SCREEN_WIDGETS = { distributor: ["netSales", "ordersToday", "grossProfit", "fulfilledOrders"] };
+const SCREEN_WIDGETS = { distributor: ["netSales", "ordersToday", "grossProfit", "fulfilledOrders"], reseller: ["netSales", "ordersToday", "grossProfit", "fulfilledOrders"] };
 
 // options.fetchDocuments / fetchLists / now / exportDeps / api are injectable for tests.
 export function mount(container, session, { fetchDocuments = fetchMetricDocuments, fetchLists = fetchDashboardLists, now = new Date(), toast = defaultToast, exportDeps = {}, api = defaultApi, listOrderPayments = defaultListOrderPayments, listActiveProducts } = {}) {

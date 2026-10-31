@@ -4969,3 +4969,28 @@ button.wl-person-name:hover .wl-edit, button.wl-person-name:focus-visible .wl-ed
 .inv-preview-bar[data-low-res="1"] { background: var(--warning-bg); }
 .inv-preview-bar[data-low-res="1"] .inv-preview-note { color: var(--warning); font-weight: 600; }
 .ie-sheet-photos .ws-photo-guide { grid-column: 1 / -1; }
+
+/* Reseller Package (2026-10-31): the reseller's private menu, the Owner's
+   Resellers page, the reseller block on an order, the commission report. */
+.rs-card { margin: 0 0 var(--space-3); padding: var(--space-3); }
+.rs-h { font-size: var(--text-base, 1rem); font-weight: 700; margin: 0 0 var(--space-2); }
+.rs-figs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-2); margin: 0; }
+.rs-figs dt { font-size: 12px; color: var(--text-muted); }
+.rs-figs dd { margin: 0; font-weight: 700; font-variant-numeric: tabular-nums; }
+.rs-row { align-items: flex-start; }
+.rs-prices { display: grid; gap: 4px; margin-top: 2px; font-size: var(--text-sm); }
+.rs-owner { color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.rs-sell { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+.rs-price { width: 7.5rem; max-width: 100%; min-height: 40px; font-variant-numeric: tabular-nums; }
+.rs-price.is-invalid { border-color: var(--danger); }
+.rs-commission { color: var(--success); font-weight: 600; font-variant-numeric: tabular-nums; }
+.rs-warn { margin: 0; }
+.rs-customer { white-space: pre-wrap; word-break: break-word; font: inherit; font-size: var(--text-sm); background: var(--surface-muted); border: 1px solid var(--border); border-radius: var(--radius); padding: var(--space-2) var(--space-3); margin: 0 0 var(--space-2); }
+.rs-figures { margin: 0 0 var(--space-3); }
+.rs-link .input { width: 100%; margin-bottom: var(--space-2); }
+tr.is-muted td, li.is-muted { opacity: 0.6; }
+.od-reseller { margin-top: var(--space-2); }
+.rp-commission { list-style: none; margin: var(--space-2) 0 0; padding: 0; }
+.rp-commission li { display: grid; grid-template-columns: 1fr auto; gap: 2px var(--space-3); padding: var(--space-2) 0; border-top: 1px solid var(--border); }
+.rp-c-amt { text-align: right; font-variant-numeric: tabular-nums; }
+.rp-c-state { grid-column: 1 / -1; }

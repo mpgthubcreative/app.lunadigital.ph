@@ -92,7 +92,7 @@ const distributorSink = {
   },
 };
 
-const SINKS = { distributor: distributorSink, "baby-expense": babySpendingSink, "bridal-expense": weddingSpendingSink, "household-payroll": householdSpendingSink };
+const SINKS = { distributor: distributorSink, reseller: distributorSink, "baby-expense": babySpendingSink, "bridal-expense": weddingSpendingSink, "household-payroll": householdSpendingSink };
 
 // The workspace's profile + sink, or a refusal (no workspace default).
 function profileOf(workspace) {

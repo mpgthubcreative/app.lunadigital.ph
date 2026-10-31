@@ -98,6 +98,21 @@ export function parseCentavos(input) {
   return centavos;
 }
 
+// A cost per unit (COGS) typed by a person (2026-10-31): ₱0 is a valid cost
+// (a free item, a sample, a reseller's own stock). Blank, negative, NaN or
+// malformed input gets a plain message, never "Invalid number" for 0.
+export function parseCost(input) {
+  const text = typeof input === "number" ? (Number.isFinite(input) ? String(input) : "") : typeof input === "string" ? input.trim() : "";
+  if (text === "") throw new QuantityError("Enter the cost per unit (₱0 is fine)");
+  if (/^-/.test(text)) throw new QuantityError("The cost per unit can't be negative");
+  try {
+    return parseCentavos(text);
+  } catch (err) {
+    if (/too large/.test(err.message)) throw err;
+    throw new QuantityError("Enter a cost like 0, 250 or 250.50");
+  }
+}
+
 export function isCentavos(value) {
   return Number.isSafeInteger(value) && value >= 0 && value <= MAX_CENTAVOS;
 }

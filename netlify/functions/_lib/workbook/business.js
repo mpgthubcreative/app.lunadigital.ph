@@ -10,6 +10,11 @@
 //              and Luna's own order count (back 2026-10-20; no ids)
 // Each sheet only with its module and view permission (COGS also needs
 // inventory.costs). No averages, stock value or profit: unit costs only.
+// Reseller Package (2026-10-31; Resellers module + resellers.view): Orders
+// gain Reseller, the prices (selling / owner), Owner Amount, Calculated and
+// Final Commission, Commission Paid / Remaining / Status (payouts settle the
+// oldest commission first); plus Resellers and Commission Payouts sheets.
+// A Distributor workbook is unchanged.
 
 import { ordersQuery, paymentsQuery, productsQuery, expensesQuery, customersQuery } from "../../../../shared/list-queries.js";
 import { expenseCategoryLabel } from "../../../../shared/expenses.js";
@@ -20,6 +25,7 @@ import { UNITS, formatQuantity } from "../../../../shared/quantity.js";
 import { ROLE_TEMPLATES } from "../../../../shared/permissions.js";
 import { loginName } from "../activation.js";
 import { byText } from "./common.js";
+import { allocatePayouts, earnedOf, ownerAmountOf, commissionSummary, COMMISSION_STATUSES, PAYOUT_METHODS } from "../../../../shared/resellers.js";
 
 const label = (map, key) => map[key]?.label ?? key ?? "";
 const unitText = (u) => (u && u !== "pcs" ? ` ${UNITS[u]?.label ?? u}` : "");
@@ -79,14 +85,61 @@ const COGS_COLUMNS = [
   { header: "Unit Cost", format: "money", width: 14, value: (p) => p.unitCost },
 ];
 
+// Reseller Package columns on Orders. Per-order payout state needs every
+// reseller order (oldest first), not only the range.
+const peso = (c) => `₱${(c / 100).toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const priceText = (items) => (Array.isArray(items) ? items.map((l) => `${l.name} @ ${peso(l.unitPrice)}${Number.isSafeInteger(l.basePrice) ? ` (owner ${peso(l.basePrice)})` : ""}`).join("; ") : "");
+async function resellerOrderColumns(x, resellers) {
+  const lists = await Promise.all(resellers.map((r) => x.tenant.collection("orders").where("resellerId", "==", r.id).limit(5000).get()));
+  const all = lists.flatMap((snap) => snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+  const paidOf = new Map(resellers.map((r) => [r.id, r.paid || 0]));
+  const alloc = new Map();
+  for (const id of new Set(all.map((o) => o.resellerId))) {
+    for (const [orderId, v] of allocatePayouts(all.filter((o) => o.resellerId === id).map((o) => ({ id: o.id, date: o.orderDate, final: earnedOf(o) })), paidOf.get(id) || 0)) alloc.set(orderId, v);
+  }
+  const of = (o) => (o.resellerId ? alloc.get(o.id) ?? null : null);
+  return [
+    { header: "Reseller", format: "text", width: 18, value: (o) => o.reseller?.name ?? "Direct sale" },
+    { header: "Selling / Owner Price", format: "text", width: 40, value: (o) => (o.resellerId ? priceText(o.items) : "") },
+    { header: "Owner Amount", format: "money", width: 14, total: true, value: (o) => (o.resellerId ? ownerAmountOf(o.items) : o.total) },
+    { header: "Calculated Commission", format: "money", width: 14, total: true, value: (o) => (o.resellerId ? o.commission?.calculated ?? 0 : 0) },
+    { header: "Final Commission", format: "money", width: 14, total: true, value: (o) => earnedOf(o) },
+    { header: "Commission Paid", format: "money", width: 14, total: true, value: (o) => of(o)?.paid ?? 0 },
+    { header: "Commission Remaining", format: "money", width: 14, total: true, value: (o) => of(o)?.remaining ?? 0 },
+    { header: "Commission Status", format: "text", width: 16, value: (o) => (o.resellerId ? COMMISSION_STATUSES[of(o)?.status ?? "none"]?.label ?? "" : "") },
+  ];
+}
+const RESELLER_COLUMNS = [
+  { header: "Reseller", format: "text", width: 22, value: (r) => r.name },
+  { header: "Status", format: "text", width: 10, value: (r) => (r.status === "active" ? "Active" : "Inactive") },
+  { header: "Commission Earned", format: "money", width: 16, total: true, value: (r) => r.earned || 0 },
+  { header: "Commission Paid", format: "money", width: 16, total: true, value: (r) => r.paid || 0 },
+  { header: "Commission Remaining", format: "money", width: 16, total: true, value: (r) => commissionSummary(r.earned, r.paid).remaining },
+  { header: "Commission Status", format: "text", width: 16, value: (r) => COMMISSION_STATUSES[commissionSummary(r.earned, r.paid).status]?.label ?? "" },
+];
+const PAYOUT_COLUMNS = [
+  { header: "Date", format: "date", width: 14, value: (p) => p.date },
+  { header: "Reseller", format: "text", width: 22, value: (p) => p.resellerName },
+  { header: "Amount", format: "money", width: 14, total: true, value: (p) => (p.state === "reversed" ? 0 : p.amount) },
+  { header: "Method", format: "text", width: 14, value: (p) => (p.method ? PAYOUT_METHODS[p.method]?.label ?? p.method : "") },
+  { header: "Reference", format: "text", width: 18, value: (p) => p.reference || "" },
+  { header: "Notes", format: "text", width: 28, value: (p) => [p.notes, p.state === "reversed" ? `Reversed: ${p.reversal?.reason ?? ""}` : ""].filter(Boolean).join(" · ") },
+];
+
 export async function businessSheets(x) {
   const { from, to } = x.range;
   const dated = { ...(from ? { from } : {}), ...(to ? { to } : {}) };
   const sheets = [];
+  const resellers = x.can("resellers", "resellers.view") ? await x.readAll("resellers") : null;
   if (x.can("orders", "orders.view")) {
     const rows = await x.readRows("orders", ordersQuery(dated));
     rows.sort((a, b) => (a.orderDate < b.orderDate ? -1 : a.orderDate > b.orderDate ? 1 : byText(a.orderNumber, b.orderNumber)));
-    sheets.push({ name: "Orders", columns: ORDER_COLUMNS, rows });
+    sheets.push({ name: "Orders", columns: resellers ? [...ORDER_COLUMNS, ...(await resellerOrderColumns(x, resellers))] : ORDER_COLUMNS, rows });
+  }
+  if (resellers) {
+    sheets.push({ name: "Resellers", columns: RESELLER_COLUMNS, rows: [...resellers].sort((a, b) => byText(a.name, b.name)) });
+    const payouts = (await x.readAll("commissionPayouts")).filter((p) => (!from || p.date >= from) && (!to || p.date <= to)).sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : byText(a.resellerName, b.resellerName)));
+    sheets.push({ name: "Commission Payouts", columns: PAYOUT_COLUMNS, rows: payouts });
   }
   if (x.can("payments", "payments.view")) {
     const rows = (await x.readRows("payments", paymentsQuery(dated))).filter((p) => p.state !== "voided");

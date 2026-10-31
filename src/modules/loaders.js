@@ -20,6 +20,8 @@ export const MODULE_LOADERS = {
   payments: () => import("./payments/index.js"),
   inventory: () => import("./inventory/index.js"),
   customers: () => import("./customers/index.js"),
+  // Reseller Package (2026-10-31).
+  resellers: () => import("./resellers/index.js"),
   expenses: (session) => (isHome(session) ? import("./household/expenses.js") : isBaby(session) ? import("./baby/expenses.js") : isBridal(session) ? import("./wedding/expenses.js") : import("./expenses/index.js")),
   reports: () => import("./reports/index.js"),
   imports: () => import("./imports/index.js"),

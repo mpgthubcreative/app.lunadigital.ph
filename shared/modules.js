@@ -38,6 +38,10 @@ export const MODULES = Object.freeze([
   { id: "expenses", label: "Expenses", path: "/expenses", icon: "expenses", permission: "expenses.view", available: true, collections: { expenses: "expenses.view" }, storage: {} },
   // Built in Phase 12 (Distributor Products + Customers imports).
   { id: "imports", label: "Imports", path: "/imports", icon: "imports", permission: "imports.run", available: true, collections: { imports: "imports.run" }, storage: { imports: "imports.run" } },
+  // Reseller Package (2026-10-31): resellers, their private menu links,
+  // commission and payouts. Server-only data (every read and write goes
+  // through /api/resellers; the public menu through /api/reseller-menu).
+  { id: "resellers", label: "Resellers", path: "/resellers", icon: "customers", permission: "resellers.view", available: true, collections: {}, storage: {} },
   // Built in Phase 14 (Household / Kasambahay Payroll). Operational only in
   // the household-payroll template.
   { id: "household", label: "Household Staff", path: "/household-staff", icon: "staff", permission: "household.view", available: true, collections: { householdStaff: "household.view" }, storage: {} },
@@ -78,7 +82,9 @@ export const MODULE_IDS = Object.freeze(MODULES.map((m) => m.id));
 // Emptied once recompute-entitlements has run everywhere.
 // grocery (Luna Household v4, 2026-10-17): snapshots computed before it
 // read it as off; only Household businesses are recomputed to switch it on.
-export const ROLLING_OUT_MODULE_IDS = Object.freeze(["grocery"]);
+// resellers (Reseller Package, 2026-10-31): the same; only Reseller
+// businesses (their own plan) have it on.
+export const ROLLING_OUT_MODULE_IDS = Object.freeze(["grocery", "resellers"]);
 export const CORE_MODULE_IDS = Object.freeze(MODULES.filter((m) => m.core).map((m) => m.id));
 // Modules a plan or override can switch on or off.
 export const SELLABLE_MODULE_IDS = Object.freeze(MODULES.filter((m) => !m.core).map((m) => m.id));

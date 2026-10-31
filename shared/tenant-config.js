@@ -22,7 +22,7 @@ export const TENANT_CONFIG_DOC_ID = "tenantConfig";
 export const TERMINOLOGY = Object.freeze({
   customer: {
     label: "What do you call your customers?",
-    workspaces: ["distributor"],
+    workspaces: ["distributor", "reseller"],
     module: "customers",
     default: "customer",
     options: Object.freeze({

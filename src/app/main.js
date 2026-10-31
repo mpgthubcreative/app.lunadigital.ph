@@ -304,6 +304,13 @@ function boot() {
     import("./bridal.js").then((m) => m.renderBridalDemo(root));
     return;
   }
+  // Reseller Package (2026-10-31): a reseller's private menu link needs no
+  // login (/reseller#{token}; /api/reseller-menu checks the token and shows
+  // only that reseller's menu, orders and commission).
+  if (window.location.pathname === "/reseller") {
+    import("./reseller.js").then((m) => m.renderResellerPage(root));
+    return;
+  }
   if (window.location.pathname.startsWith("/store/")) {
     import("./store.js").then((m) => m.renderStorePage(root));
     return;

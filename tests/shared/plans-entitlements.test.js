@@ -7,8 +7,8 @@ describe("plan seed", () => {
   const plans = Object.values(PLAN_SEED);
 
   it("one product per workspace; the main product recommended; the + plans, Starter / Growth / Pro and Luna Bridal Custom (2026-10-25) are legacy", () => {
-    expect(Object.keys(PLAN_SEED)).toEqual(["distributor-basic", "distributor-plus", "starter", "growth", "pro", "household-basic", "household-plus", "baby-basic", "baby-plus", "bridal-basic", "bridal-plus"]);
-    expect(plans.filter((p) => p.recommended).map((p) => p.id)).toEqual(["distributor-basic", "growth", "household-basic", "baby-plus", "bridal-basic"]);
+    expect(Object.keys(PLAN_SEED)).toEqual(["distributor-basic", "reseller-basic", "distributor-plus", "starter", "growth", "pro", "household-basic", "household-plus", "baby-basic", "baby-plus", "bridal-basic", "bridal-plus"]);
+    expect(plans.filter((p) => p.recommended).map((p) => p.id)).toEqual(["distributor-basic", "reseller-basic", "growth", "household-basic", "baby-plus", "bridal-basic"]);
     expect(plans.filter((p) => p.legacy).map((p) => p.id)).toEqual(["distributor-plus", "starter", "growth", "pro", "household-plus", "bridal-plus"]);
     // A stored copy without the flag is still legacy: the seed retires it.
     expect(isLegacyPlan({ ...PLAN_SEED["bridal-plus"], legacy: undefined })).toBe(true);

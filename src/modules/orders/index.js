@@ -36,6 +36,8 @@ import { STATE_TONE } from "../payments/index.js";
 import { searchCustomers as defaultSearchCustomers } from "../customers/data.js";
 import { exportButton, bindExport, mayExport, exportHint } from "../../lib/export.js";
 import { publicUrl } from "@shared/custom-links.js";
+import { snapshotWorkspaceTemplateId } from "@shared/workspaces.js";
+import { editResellerSaleDialog, resellerBlock } from "../resellers/sale.js";
 
 const defaultDeps = {
   data: ordersData,
@@ -171,9 +173,13 @@ export function mount(container, session, { data = defaultDeps.data, payments = 
     const canEdit = can.update && (open || (fulfilled && can.correct));
     const canDelete = can.cancel && open && !(order.amountPaid > 0);
     const canRecord = can.recordPayment && order.fulfillmentStatus !== "cancelled" && (order.balance ?? 0) > 0;
+    // Reseller Package: who sold it and the commission (Owner / Admin decide).
+    const resellerWs = snapshotWorkspaceTemplateId(session.entitlements) === "reseller";
+    const canCommission = resellerWs && perms["resellers.pay"] === true && order.fulfillmentStatus !== "cancelled";
     // Owner pilot: Edit and Close are the two buttons; everything else an
     // order can do (payment, fulfil, cancel, delete) sits under ⋯ More.
     const more = [
+      ...(canCommission ? [html`<button type="button" class="menu-item" data-act="commission">Reseller & commission</button>`] : []),
       ...(canRecord ? [html`<button type="button" class="menu-item" data-act="pay-link">Payment link</button>`] : []),
       ...(canRecord ? [html`<button type="button" class="menu-item" data-act="record">Record payment</button>`] : []),
       ...(open && can.fulfill ? [html`<button type="button" class="menu-item" data-act="fulfill">Mark fulfilled</button>`] : []),
@@ -209,7 +215,7 @@ export function mount(container, session, { data = defaultDeps.data, payments = 
           ${order.notes ? html`<p class="od-note" data-role="notes"><span class="od-k">Note</span> ${order.notes}</p>` : ""}
           ${order.cancellationReason ? html`<p class="od-note"><span class="od-k">Cancelled because</span> ${order.cancellationReason}</p>` : ""}
           <ul class="od-items" data-role="items">${order.items.map(
-            (l) => html`<li class="od-item"><span class="od-item-main"><span class="od-name">${l.name}</span><span class="od-sub">${qtyText(l.quantity, l.unit)} × ${money(l.unitPrice)}${costs ? html` · cost ${money(costByLine.get(l.lineId) ?? 0)}` : ""}</span></span><b class="od-amt">${money(l.lineSubtotal)}</b></li>`
+            (l) => html`<li class="od-item"><span class="od-item-main"><span class="od-name">${l.name}</span><span class="od-sub">${qtyText(l.quantity, l.unit)} × ${money(l.unitPrice)}${resellerWs && Number.isSafeInteger(l.basePrice) ? html` <span data-role="owner-price">(owner ${money(l.basePrice)})</span>` : ""}${costs ? html` · cost ${money(costByLine.get(l.lineId) ?? 0)}` : ""}</span></span><b class="od-amt">${money(l.lineSubtotal)}</b></li>`
           )}</ul>
           <dl class="od-totals" data-role="totals">
             ${order.discount ? html`<div><dt>Subtotal</dt><dd>${money(order.subtotal)}</dd></div><div><dt>Discount</dt><dd>−${money(order.discount)}</dd></div>` : ""}
@@ -218,6 +224,7 @@ export function mount(container, session, { data = defaultDeps.data, payments = 
             ${(order.balance ?? 0) > 0 ? html`<div class="od-due"><dt>Balance</dt><dd>${money(order.balance)}</dd></div>` : ""}
             ${costs ? html`<div class="od-quiet"><dt>COGS</dt><dd data-role="cogs">${money(costs.cogs)}</dd></div><div class="od-quiet"><dt>Gross profit</dt><dd data-role="profit">${money(costs.grossProfit)}</dd></div>` : ""}
           </dl>
+          ${resellerWs && perms["resellers.view"] === true ? resellerBlock(order, money) : ""}
           ${paymentRows.length
             ? html`<h3 class="section-title od-section">Payments</h3>
               <ul class="od-pays" data-role="payments">${paymentRows.map((p) => {
@@ -270,6 +277,7 @@ export function mount(container, session, { data = defaultDeps.data, payments = 
       if (act === "p-reject") return after(rejectPaymentDialog({ payment, api, currency }), "Marked not accepted. The customer sees why on their link.");
       if (act === "p-receipt") return showReceipt({ payment, businessName: session.business.name, currency });
       if (act === "pay-link") return openPayLinkSheet({ order, api, toast, session });
+      if (act === "commission") return after(editResellerSaleDialog({ order, api, currency }), "Reseller & commission saved");
       if (act === "p-verify") {
         try {
           return await after(api("payments", { method: "POST", body: { action: "verify", paymentId: payment.id } }), "Payment verified");

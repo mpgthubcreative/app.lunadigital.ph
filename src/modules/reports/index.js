@@ -21,13 +21,19 @@
 //                       Unit ÷ price)
 // Business has no payroll module: operating expenses are the Costs page's
 // expenses only, so nothing is counted twice. null = no data, never 0.
+//
+// Reseller Package (2026-10-31): one more simple question, "How much
+// commission did each reseller earn?" for the same period: Total Commission
+// and one line per reseller (final commission, by the order's date) with its
+// payout state (Paid ₱100 · Remaining ₱200 / Paid / Unpaid). From
+// /api/resellers report; no sales, owner amount or COGS here.
 
 import { html, render } from "../../lib/html.js";
 import { pageHeader, emptyState, card, skeleton } from "../../components/ui.js";
 import { profitColumns, compactMoney } from "../../components/charts.js";
 import { api as defaultApi } from "../../lib/api.js";
 import { formatCentavos, formatDayId } from "../../lib/format.js";
-import { reportPresets, validateRange, businessDate } from "@shared/index.js";
+import { reportPresets, validateRange, businessDate, snapshotWorkspaceTemplateId, COMMISSION_STATUSES } from "@shared/index.js";
 
 export const NO_DATA = "No data yet";
 
@@ -55,7 +61,8 @@ export function mount(container, session, { api = defaultApi, now = () => new Da
   const money = (v) => (v === null || v === undefined ? NO_DATA : formatCentavos(v, currency));
   const today = businessDate(session.business.timezone, now());
   const presets = presetsFor(today);
-  const state = { preset: "thisMonth", from: presets.thisMonth.from, to: presets.thisMonth.to, report: null, loading: true, error: null };
+  const state = { preset: "thisMonth", from: presets.thisMonth.from, to: presets.thisMonth.to, report: null, commission: null, loading: true, error: null };
+  const commissions = snapshotWorkspaceTemplateId(session.entitlements) === "reseller" && session.member.permissions["resellers.view"] === true;
   let alive = true;
 
   async function load() {
@@ -63,7 +70,9 @@ export function mount(container, session, { api = defaultApi, now = () => new Da
     draw();
     try {
       validateRange({ from: state.from, to: state.to }, today);
-      state.report = await api(`reports?from=${encodeURIComponent(state.from)}&to=${encodeURIComponent(state.to)}`);
+      const [report, commission] = await Promise.all([api(`reports?from=${encodeURIComponent(state.from)}&to=${encodeURIComponent(state.to)}`), commissions ? api("resellers", { method: "POST", body: { action: "report", from: state.from, to: state.to } }).then((r) => r.report).catch(() => null) : null]);
+      state.report = report;
+      state.commission = commission;
       state.error = null;
     } catch (err) {
       state.error = err.message || "Couldn't load the report.";
@@ -118,6 +127,18 @@ export function mount(container, session, { api = defaultApi, now = () => new Da
         : ""}`;
   }
 
+  // Reseller commissions for the period (Reseller Package).
+  function commissionSection(c) {
+    const state_ = (row) => (row.status === "paid" ? "Paid" : row.status === "partial" ? `Paid ${money(row.paid)} · Remaining ${money(row.remaining)}` : COMMISSION_STATUSES[row.status]?.label ?? "");
+    return html`<section class="card rp-section" data-section="commissions">
+      <h2 class="rp-title">Reseller commissions</h2>
+      <div class="rp-totals">${total("commission", "Total Commission", money(c.total), { main: true })}</div>
+      ${c.rows.length
+        ? html`<ul class="rp-commission" data-role="commission-rows">${c.rows.map((row) => html`<li data-reseller="${row.resellerId}"><span class="rp-c-name">${row.name}</span><b class="rp-c-amt">${money(row.earned)}</b><span class="rp-c-state stat-hint">${state_(row)}</span></li>`)}</ul>`
+        : html`<p class="stat-hint">No reseller commission in this period.</p>`}
+    </section>`;
+  }
+
   function draw() {
     if (!alive) return;
     const r = state.report;
@@ -143,7 +164,7 @@ export function mount(container, session, { api = defaultApi, now = () => new Da
           : state.error
             ? card({ body: emptyState({ title: "Couldn't load", body: state.error }) })
             : r.access?.financials
-              ? html`<div class="rp" data-role="report">${summary(r)}</div>`
+              ? html`<div class="rp" data-role="report">${state.commission ? commissionSection(state.commission) : ""}${summary(r)}</div>`
               : card({ body: emptyState({ iconName: "reports", title: "Sales figures are for the Owner", body: "Ask the Owner if you need the sales summary." }) })}`
     );
   }

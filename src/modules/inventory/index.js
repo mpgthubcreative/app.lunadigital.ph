@@ -28,7 +28,7 @@ import { formDialog } from "../../components/form-dialog.js";
 import { confirmDialog, toast as defaultToast } from "../../components/feedback.js";
 import { api as defaultApi } from "../../lib/api.js";
 import { formatCentavos } from "../../lib/format.js";
-import { UNITS, ADJUSTMENT_REASONS, parseQuantity, parseCentavos, formatQuantity, isModuleEnabled } from "@shared/index.js";
+import { UNITS, ADJUSTMENT_REASONS, parseQuantity, parseCentavos, parseCost, formatQuantity, isModuleEnabled, snapshotWorkspaceTemplateId } from "@shared/index.js";
 import * as defaultData from "./data.js";
 import { productRow, historyRow, unitLabel, qty } from "./view.js";
 
@@ -80,6 +80,9 @@ export function mount(container, session, { data = defaultData, api = defaultApi
     costs: perms["inventory.costs"] === true,
   };
   const businessId = session.business.id;
+  // Reseller Package (2026-10-31): the product's price is the Owner/Base
+  // Price (what the business expects for one unit; resellers sell above it).
+  const priceName = snapshotWorkspaceTemplateId(session.entitlements) === "reseller" ? "Owner/Base Price" : "Selling price";
   const currency = session.business.currency || "PHP";
   // The Dashboard links here as ?low=1 (low stock only).
   const lowFromUrl = new URLSearchParams(typeof location === "undefined" ? "" : location.search).get("low") === "1";
@@ -212,7 +215,7 @@ export function mount(container, session, { data = defaultData, api = defaultApi
   // ---- inline edits ----
   async function editPrice(p) {
     const ok = await formDialog({
-      title: `Selling price: ${p.name}`,
+      title: `${priceName}: ${p.name}`,
       fields: [{ name: "price", label: `Price (${currency})`, value: pesos(p.sellingPrice), inputmode: "decimal", required: true }],
       submitLabel: "Save",
       onSubmit: (v) => updateProduct(p, { sellingPrice: parseCentavos(v.price) }),
@@ -317,7 +320,7 @@ export function mount(container, session, { data = defaultData, api = defaultApi
       moreLabel: "More details",
       submitLabel: kind === "receipt" ? "Receive" : "Record",
       onSubmit: (v) => {
-        const body = { action: kind, idempotencyKey, productId: p.id, quantity: parseQuantity(v.quantity, p.unit), unitCost: parseCentavos(v.unitCost) };
+        const body = { action: kind, idempotencyKey, productId: p.id, quantity: parseQuantity(v.quantity, p.unit), unitCost: parseCost(v.unitCost) };
         if (v.reference) body.reference = v.reference;
         if (v.note) body.note = v.note;
         return send("inventory", body);
@@ -333,7 +336,7 @@ export function mount(container, session, { data = defaultData, api = defaultApi
       { name: "name", label: "Product name", value: p ? p.name : "", required: true },
       { name: "category", label: "Category", value: p ? p.category : "" },
       { name: "unit", label: "Unit", type: "select", options: UNIT_OPTIONS, value: p ? p.unit : "pcs", disabled: Boolean(p && p.movementCount > 0), hint: p && p.movementCount > 0 ? "Locked once stock has moved." : "" },
-      { name: "sellingPrice", label: `Selling price (${currency})`, value: p ? pesos(p.sellingPrice) : "", required: true, inputmode: "decimal" },
+      { name: "sellingPrice", label: `${priceName} (${currency})`, value: p ? pesos(p.sellingPrice) : "", required: true, inputmode: "decimal", ...(priceName === "Selling price" ? {} : { hint: "What the business expects for one unit. Resellers set their own selling price above it." }) },
       { name: "reorderLevel", label: "Reorder level", value: p ? formatQuantity(p.reorderLevel) : "0", inputmode: "decimal", hint: "Shows Low stock when stock left is at or below this." },
     ];
   }
@@ -379,7 +382,7 @@ export function mount(container, session, { data = defaultData, api = defaultApi
             <div class="pd-stock" data-role="stock-left"><span>Stock left</span><b>${r.available} ${r.unit}</b></div>
             <dl class="pd-fields">
               ${field("Category", r.category)}${field("Unit", r.unit)}
-              ${p.sellingPrice > 0 ? field("Selling price", r.price, "price") : ""}
+              ${p.sellingPrice > 0 ? field(priceName, r.price, "price") : ""}
             </dl>
             <details class="dd-fold dd-quiet" data-role="fold-history" ${historyOpen ? "open" : ""}><summary><span class="dd-when-closed">View stock history</span><span class="dd-when-open">Hide stock history</span></summary>
               <div data-role="history">

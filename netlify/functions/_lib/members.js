@@ -32,7 +32,7 @@ const UID = /^[A-Za-z0-9:_-]{1,128}$/;
 
 // Roles an Owner may give in this workspace.
 export function assignableRoles(workspaceTemplateId) {
-  return ["manager", ...(workspaceTemplateId === "distributor" ? ["staff"] : [])];
+  return ["manager", ...(workspaceTemplateId === "distributor" || workspaceTemplateId === "reseller" ? ["staff"] : [])];
 }
 
 const view = (m) => ({

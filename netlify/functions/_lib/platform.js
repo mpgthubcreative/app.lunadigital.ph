@@ -303,7 +303,7 @@ const OVERVIEW_LIMIT = 500;
 // months prepaid). Recurring income = businesses still on a MONTHLY plan in a
 // workspace that was sold monthly (legacy Distributor / Baby plans); a
 // Household / Bridal business on old monthly terms never counts.
-const WORKSPACE_BILLING = { distributor: "annual", "household-payroll": "annual", "bridal-expense": "term", "baby-expense": "monthly" };
+const WORKSPACE_BILLING = { distributor: "annual", reseller: "annual", "household-payroll": "annual", "bridal-expense": "term", "baby-expense": "monthly" };
 const MONTHLY_WORKSPACES = new Set(["distributor", "baby-expense"]);
 const ATTENTION_ORDER = { overdue: 0, expired: 1, trial_ended: 2, due: 3, trial: 4, expiring: 5 };
 const createdDayOf = (b) => (b.createdAt?.toDate ? businessDate(BILLING_TIMEZONE, b.createdAt.toDate()) : null);

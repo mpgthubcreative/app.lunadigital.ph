@@ -66,6 +66,10 @@ export const PERMISSIONS = Object.freeze({
   "expenses.delete": { module: "expenses", group: "Expenses", label: "Delete expenses" },
 
   "imports.run": { module: "imports", group: "Imports", label: "Run spreadsheet imports" },
+  // Reseller Package (2026-10-31).
+  "resellers.view": { module: "resellers", group: "Resellers", label: "View resellers, their commission and payouts" },
+  "resellers.manage": { module: "resellers", group: "Resellers", label: "Add resellers and manage their private menu links" },
+  "resellers.pay": { module: "resellers", group: "Resellers", label: "Adjust final commission and record commission payouts" },
 
   // Phase 14: Household / Kasambahay Payroll.
   "household.view": { module: "household", group: "Household Staff", label: "View household staff and daily wages" },

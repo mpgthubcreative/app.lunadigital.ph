@@ -216,7 +216,7 @@ export async function resolveCustomHost({ db, label, domain, appOrigin }) {
   if (state !== "live") return { status: state };
   const workspace = biz.workspaceTemplateId ?? null;
   let storeSlug = null;
-  if (workspace === "distributor") {
+  if (workspace === "distributor" || workspace === "reseller") {
     const s = await db.collection("businesses").doc(r.businessId).collection("storefront").doc("settings").get();
     storeSlug = s.exists && typeof s.data().slug === "string" ? s.data().slug : null;
   }

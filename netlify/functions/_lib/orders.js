@@ -24,6 +24,15 @@
 //   counters/orders-{YYYYMMDD}      next order sequence for that local day     (server only)
 //   idempotencyKeys/{key}           create-once guard                          (server only)
 //   usage/{YYYY-MM}.ordersCreated   plan limit counter (never decremented)     (server only)
+//   resellers/{resellerId}          Reseller Package: earned / paid commission (server only)
+//
+// Reseller orders (Reseller Package, 2026-10-31): order.reseller { id, name },
+// order.resellerId, each line's basePrice (the owner price snapshot) next to
+// its unitPrice (the reseller's selling price, what the customer pays), and
+// order.commission { calculated, final, adjusted } (shared/resellers.js).
+// Every change that moves an order's final commission moves its reseller's
+// earned total in the SAME transaction, and never below what's already been
+// paid to them (a payout reversal comes first).
 //                                   Phase 18: checked against the business's CURRENT
 //                                   effective limit read in the create transaction;
 //                                   80% / 100% warnings (./metering.js)
@@ -49,6 +58,7 @@ import {
 import { prorate } from "../../../shared/quantity.js";
 import { businessDate } from "../../../shared/metrics.js";
 import { prepareMovements } from "./inventory.js";
+import { orderCalculatedCommission, commissionFor, earnedOf, lineCommission, checkSellingPrice, validateFinalCommission } from "../../../shared/resellers.js";
 import { prepareNotifications } from "./notifications.js";
 import { recordDailyMetrics, adjustCurrentMetrics } from "./metrics.js";
 import { checkMonthlyLimit, prepareMonthlyAlerts, meterActivity, noteLimitReached } from "./metering.js";
@@ -123,6 +133,37 @@ async function specialPrices(tx, tenant, customerId, productIds) {
 }
 const priceOf = (special, productId, product) => (special.has(productId) ? { unitPrice: special.get(productId), customerPrice: true } : { unitPrice: product.sellingPrice });
 
+// ---------- Reseller commission (Reseller Package) ----------
+
+const resellerRef = (tenant, id) => tenant.doc("resellers", id);
+// An existing line keeps its price snapshots (and the owner price of a reseller line).
+const keepLine = (prior, quantity) => ({ lineId: prior.lineId, productId: prior.productId, sku: prior.sku, name: prior.name, unit: prior.unit, quantity, unitPrice: prior.unitPrice, ...(prior.customerPrice ? { customerPrice: true } : {}), ...(Number.isSafeInteger(prior.basePrice) ? { basePrice: prior.basePrice } : {}) });
+// Lines with their per-line commission (reseller orders only).
+const withCommission = (lines) => lines.map((l) => (Number.isSafeInteger(l.basePrice) ? { ...l, commission: lineCommission(l) } : l));
+// Reads the resellers whose earned total changes (call before any write),
+// checks earned never drops below paid, and returns apply() for the writes.
+// changes: [{ resellerId, delta }].
+async function prepareEarned(tx, tenant, changes, FieldValue) {
+  const merged = new Map();
+  for (const c of changes) if (c.resellerId && c.delta) merged.set(c.resellerId, (merged.get(c.resellerId) || 0) + c.delta);
+  const ids = [...merged.keys()].filter((id) => merged.get(id) !== 0);
+  const snaps = await Promise.all(ids.map((id) => tx.get(resellerRef(tenant, id))));
+  snaps.forEach((snap, i) => {
+    if (!snap.exists) throw new OrderError("reseller-not-found", "Reseller not found");
+    const r = snap.data();
+    const next = (r.earned || 0) + merged.get(ids[i]);
+    if (next < (r.paid || 0)) throw new OrderError("commission-below-paid", `${r.name} has already been paid ₱${((r.paid || 0) / 100).toLocaleString("en-PH", { minimumFractionDigits: 2 })} in commission. Reverse that payout on Resellers first, then make this change.`);
+  });
+  return {
+    apply() {
+      ids.forEach((id, i) => tx.update(snaps[i].ref, { earned: FieldValue.increment(merged.get(id)), updatedAt: FieldValue.serverTimestamp() }));
+    },
+  };
+}
+// An edited reseller order: the lines' new calculated commission; an Owner
+// override is kept (shared/resellers.js commissionFor).
+const recommission = (order, lines) => (order.resellerId ? commissionFor(orderCalculatedCommission(lines), order.commission) : null);
+
 function movementsFor(lines, type, orderId, orderNumber, reason) {
   return lines.map((l) => ({ productId: l.productId, movement: { type, quantity: l.quantity, referenceType: "order", referenceId: orderId, note: orderNumber, reason } }));
 }
@@ -131,7 +172,11 @@ function movementsFor(lines, type, orderId, orderNumber, reason) {
 
 // notify(order) (optional): notification events for this new order (e.g. the
 // public menu link's "new online order"), written in the same transaction.
-export async function createOrder({ db, tenant, FieldValue, business, entitlements, input, idempotencyKey, actor, canDiscount, canLinkCustomers = false, notify = null, now = new Date() }) {
+// reseller (Reseller Package): { id, name, prices: Map(productId -> selling
+// price) } from the reseller's private menu link. Each line is sold at the
+// reseller's price (never below the owner price) with the owner price kept
+// beside it; no discount, no customer special price.
+export async function createOrder({ db, tenant, FieldValue, business, entitlements, input, idempotencyKey, actor, canDiscount, canLinkCustomers = false, notify = null, reseller = null, now = new Date() }) {
   if (!isValidIdempotencyKey(idempotencyKey)) throw new OrderError("invalid-input", "A valid idempotency key is required");
   const data = validateOrderInput(input);
   if (data.customerId && !canLinkCustomers) throw new OrderError("customer-not-allowed", "You can't link orders to saved customers");
@@ -141,7 +186,8 @@ export async function createOrder({ db, tenant, FieldValue, business, entitlemen
 
   const day = businessDate(business.timezone, now); // throws on a bad timezone
   const prefix = orderPrefixFor(business);
-  const requestHash = hashRequest({ uid: actor.uid, data });
+  if (reseller && data.discount > 0) throw new OrderError("discount-not-allowed", "Reseller orders have no discount");
+  const requestHash = hashRequest(reseller ? { uid: actor.uid, data, reseller: reseller.id, prices: [...reseller.prices.entries()].sort() } : { uid: actor.uid, data });
 
   const idemRef = tenant.doc("idempotencyKeys", idempotencyKey);
   const replay = (prior) => {
@@ -185,17 +231,23 @@ export async function createOrder({ db, tenant, FieldValue, business, entitlemen
       for (const r of plan.results) {
         if (r.product.status !== "active") throw new OrderError("product-inactive", `${r.product.name} is inactive`);
       }
-      const special = await specialPrices(tx, tenant, data.customerId, plan.results.map((r) => r.productId));
-      const lines = plan.results.map((r, i) => ({
-        lineId: `L${i + 1}`,
-        productId: r.productId,
-        sku: r.product.sku,
-        name: r.product.name,
-        unit: r.product.unit,
-        quantity: data.items[i].quantity,
-        ...priceOf(special, r.productId, r.product),
-      }));
+      const special = reseller ? new Map() : await specialPrices(tx, tenant, data.customerId, plan.results.map((r) => r.productId));
+      const resellerSnap = reseller ? await tx.get(resellerRef(tenant, reseller.id)) : null;
+      if (reseller && (!resellerSnap.exists || resellerSnap.data().status !== "active")) throw new OrderError("reseller-inactive", "This reseller link isn't active");
+      const lines = plan.results.map((r, i) => {
+        const base = { lineId: `L${i + 1}`, productId: r.productId, sku: r.product.sku, name: r.product.name, unit: r.product.unit, quantity: data.items[i].quantity };
+        if (!reseller) return { ...base, ...priceOf(special, r.productId, r.product) };
+        const selling = reseller.prices.has(r.productId) ? reseller.prices.get(r.productId) : r.product.sellingPrice;
+        try {
+          checkSellingPrice(selling, r.product.sellingPrice);
+        } catch (err) {
+          throw new OrderError(err.code, err.code === "below-owner-price" ? `${r.product.name}: ${err.message}` : err.message);
+        }
+        return { ...base, unitPrice: selling, basePrice: r.product.sellingPrice };
+      });
       const totals = computeTotals(lines, data.discount);
+      if (reseller) totals.lines = withCommission(totals.lines);
+      const commission = reseller ? commissionFor(orderCalculatedCommission(totals.lines)) : null;
 
       const stamp = FieldValue.serverTimestamp();
       const order = {
@@ -236,6 +288,7 @@ export async function createOrder({ db, tenant, FieldValue, business, entitlemen
         cancelledBy: null,
         cancelledAt: null,
         cancellationReason: null,
+        ...(reseller ? { reseller: { id: reseller.id, name: resellerSnap.data().name }, resellerId: reseller.id, commission } : {}),
       };
 
       const alerts = await prepareMonthlyAlerts(tx, { tenant, meterId: "ordersCreated", period: quota.period, before: quota.used, after: quota.used + 1, limit: quota.limit });
@@ -249,6 +302,7 @@ export async function createOrder({ db, tenant, FieldValue, business, entitlemen
       recordDailyMetrics({ tx, tenant, FieldValue, timezone: business.timezone, at: now, operational: { orderCount: 1 } });
       adjustCurrentMetrics({ tx, tenant, FieldValue, operational: { pendingFulfillment: 1, unpaidOrders: totals.total > 0 ? 1 : 0 }, financial: { receivablesOutstanding: totals.total } });
       applyCustomerStats(tx, { tenant, FieldValue, customerId: data.customerId, orders: 1, total: totals.total, balance: totals.total, lastOrder: orderNumber });
+      if (reseller) tx.update(resellerSnap.ref, { earned: FieldValue.increment(commission.final), orderCount: FieldValue.increment(1), lastOrderAt: stamp, updatedAt: stamp });
       plan.commit({ actor, FieldValue });
       return { orderId: ref.id, orderNumber, replayed: false, order: { ...order, createdAt: null, updatedAt: null } };
     }, TX_OPTIONS);
@@ -303,21 +357,24 @@ export async function updateOrder({ db, tenant, FieldValue, business = null, ord
 
     const plan = moves.length ? await prepareMovements(tx, { tenant, items: moves }) : null;
     const fresh = new Map(plan ? plan.results.map((r) => [r.productId, r.product]) : []);
-    const special = await specialPrices(tx, tenant, link.data.customerId, data.items.filter((i) => !oldLines.has(i.productId)).map((i) => i.productId));
+    const special = order.resellerId ? new Map() : await specialPrices(tx, tenant, link.data.customerId, data.items.filter((i) => !oldLines.has(i.productId)).map((i) => i.productId));
     let n = order.items.length;
     const lines = data.items.map((i) => {
       const prior = oldLines.get(i.productId);
-      if (prior) return { lineId: prior.lineId, productId: prior.productId, sku: prior.sku, name: prior.name, unit: prior.unit, quantity: i.quantity, unitPrice: prior.unitPrice, ...(prior.customerPrice ? { customerPrice: true } : {}) };
+      if (prior) return keepLine(prior, i.quantity);
       const p = fresh.get(i.productId);
       if (!p || p.status !== "active") throw new OrderError("product-inactive", "A new product on the order is unavailable");
       n += 1;
       // New products are added at their current trusted price (the customer's special one first).
       for (const c of changes) if (c.productId === i.productId) c.sku = p.sku;
-      return { lineId: `L${n}`, productId: i.productId, sku: p.sku, name: p.name, unit: p.unit, quantity: i.quantity, ...priceOf(special, i.productId, p) };
+      return { lineId: `L${n}`, productId: i.productId, sku: p.sku, name: p.name, unit: p.unit, quantity: i.quantity, ...priceOf(special, i.productId, p), ...(order.resellerId ? { basePrice: p.sellingPrice } : {}) };
     });
     const totals = computeTotals(lines, data.discount);
+    if (order.resellerId) totals.lines = withCommission(totals.lines);
     const amountPaid = order.amountPaid || 0;
     if (totals.total < amountPaid) throw new OrderError("below-paid", "The new total would be less than what's already been paid");
+    const commission = recommission(order, totals.lines);
+    const earned = await prepareEarned(tx, tenant, commission ? [{ resellerId: order.resellerId, delta: commission.final - earnedOf(order) }] : [], FieldValue);
 
     const customerChanged = JSON.stringify(order.customer) !== JSON.stringify(link.data.customer) || (order.customerId ?? null) !== link.data.customerId;
     const entry = historyEntry("edited", actor, {
@@ -330,10 +387,12 @@ export async function updateOrder({ db, tenant, FieldValue, business = null, ord
         ...(customerChanged ? { customer: true } : {}),
         ...(data.source !== order.source ? { source: { from: order.source, to: data.source } } : {}),
         ...((order.deliveryAddress || null) !== (data.deliveryAddress || null) ? { deliveryAddress: true } : {}),
+        ...(commission && commission.calculated !== order.commission?.calculated ? { commission: { calculated: { from: order.commission?.calculated ?? 0, to: commission.calculated }, final: { from: order.commission?.final ?? 0, to: commission.final } } } : {}),
       },
     });
 
     tx.update(ref, {
+      ...(commission ? { commission } : {}),
       customer: link.data.customer,
       customerId: link.data.customerId,
       customerNameLower: link.data.customer.name.toLocaleLowerCase("en"),
@@ -355,6 +414,7 @@ export async function updateOrder({ db, tenant, FieldValue, business = null, ord
     });
     adjustBalanceGauges(tx, { tenant, FieldValue, order, newTotal: totals.total });
     moveCustomerStats(tx, { tenant, FieldValue, order, newCustomerId: link.data.customerId, newTotal: totals.total });
+    earned.apply();
     if (plan) plan.commit({ actor, FieldValue });
     return { orderId, revision: order.revision + 1, total: totals.total };
   }, TX_OPTIONS);
@@ -417,20 +477,23 @@ async function correctFulfilled(tx, { tenant, FieldValue, business, ref, orderId
 
   const plan = moves.length ? await prepareMovements(tx, { tenant, items: moves }) : null;
   const results = new Map(plan ? plan.results.map((r) => [r.productId, r]) : []);
-  const special = await specialPrices(tx, tenant, data.customerId, data.items.filter((i) => !oldLines.has(i.productId)).map((i) => i.productId));
+  const special = order.resellerId ? new Map() : await specialPrices(tx, tenant, data.customerId, data.items.filter((i) => !oldLines.has(i.productId)).map((i) => i.productId));
   let n = order.items.length;
   const lines = data.items.map((i) => {
     const prior = oldLines.get(i.productId);
-    if (prior) return { lineId: prior.lineId, productId: prior.productId, sku: prior.sku, name: prior.name, unit: prior.unit, quantity: i.quantity, unitPrice: prior.unitPrice, ...(prior.customerPrice ? { customerPrice: true } : {}) };
+    if (prior) return keepLine(prior, i.quantity);
     const p = results.get(i.productId)?.product;
     if (!p || p.status !== "active") throw new OrderError("product-inactive", "A new product on the order is unavailable");
     n += 1;
     for (const c of changes) if (c.productId === i.productId) c.sku = p.sku;
-    return { lineId: `L${n}`, productId: i.productId, sku: p.sku, name: p.name, unit: p.unit, quantity: i.quantity, ...priceOf(special, i.productId, p) };
+    return { lineId: `L${n}`, productId: i.productId, sku: p.sku, name: p.name, unit: p.unit, quantity: i.quantity, ...priceOf(special, i.productId, p), ...(order.resellerId ? { basePrice: p.sellingPrice } : {}) };
   });
   const totals = computeTotals(lines, data.discount);
+  if (order.resellerId) totals.lines = withCommission(totals.lines);
   const amountPaid = order.amountPaid || 0;
   if (totals.total < amountPaid) throw new OrderError("below-paid", "The new total would be less than what's already been paid");
+  const commission = recommission(order, totals.lines);
+  const earned = await prepareEarned(tx, tenant, commission ? [{ resellerId: order.resellerId, delta: commission.final - earnedOf(order) }] : [], FieldValue);
 
   const costLines = totals.lines.map((l) => {
     // kept original cost + whatever extra units cost today (correction_out)
@@ -457,6 +520,7 @@ async function correctFulfilled(tx, { tenant, FieldValue, business, ref, orderId
   });
   const stamp = FieldValue.serverTimestamp();
   tx.update(ref, {
+    ...(commission ? { commission } : {}),
     customer: data.customer,
     customerId: data.customerId,
     customerNameLower: data.customer.name.toLocaleLowerCase("en"),
@@ -497,8 +561,111 @@ async function correctFulfilled(tx, { tenant, FieldValue, business, ref, orderId
   const rollupBefore = fulfilledOrderContribution(order, costs.lines);
   const rollupAfter = fulfilledOrderContribution({ ...order, items: totals.lines, discount: totals.discount, customerId: link.data.customerId }, costLines);
   applyRollup(tx, { tenant, FieldValue, day: order.fulfilledDay, delta: diffRollup(rollupAfter, rollupBefore) });
+  earned.apply();
   if (plan) plan.commit({ actor, FieldValue });
   return { orderId, revision: order.revision + 1, total: totals.total, corrected: true, delta };
+}
+
+// ---------- Reseller & commission (Reseller Package, Owner / Admin) ----------
+//
+// The order's Edit for what only the Owner decides about a reseller sale:
+//   resellerId     who sold it (null = Direct Sale / No Reseller)
+//   prices         { lineId: selling price } (open orders only: a fulfilled
+//                  order's sales are already booked; correct it first)
+//   finalCommission  a number = the Owner's override (the calculated one is
+//                  kept beside it); null = back to the calculated one;
+//                  undefined = unchanged (an override survives other edits)
+// Below the owner price only with an explicit final commission (never a
+// silent negative commission). Earned totals move with it, never below what
+// a reseller was already paid. History and the audit log keep before / after.
+export async function editResellerSale({ db, tenant, FieldValue, orderId, resellerId = undefined, prices = null, finalCommission = undefined, expectedRevision = null, actor, now = new Date() }) {
+  const ref = orderRef(tenant, orderId);
+  if (resellerId !== undefined && resellerId !== null && !/^[A-Za-z0-9]{8,40}$/.test(resellerId)) throw new OrderError("invalid-input", "Invalid reseller");
+  if (prices !== null && (typeof prices !== "object" || Array.isArray(prices))) throw new OrderError("invalid-input", "Invalid prices");
+  if (finalCommission !== undefined && finalCommission !== null) {
+    try {
+      validateFinalCommission(finalCommission);
+    } catch (err) {
+      throw new OrderError(err.code, err.message);
+    }
+  }
+  return db.runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    if (!snap.exists) throw new OrderError("not-found", "Order not found");
+    const order = snap.data();
+    if (expectedRevision !== null && expectedRevision !== order.revision) throw new OrderError("stale-order", "This order was changed by someone else. Reload and try again");
+    if (order.fulfillmentStatus === "cancelled") throw new OrderError("not-pending", "A cancelled order can't be changed");
+    const nextId = resellerId === undefined ? order.resellerId ?? null : resellerId;
+    const priceChanges = prices ? Object.entries(prices) : [];
+    if (priceChanges.length && order.fulfillmentStatus === "fulfilled") throw new OrderError("not-pending", "This order is fulfilled: its sales are booked. Correct the order first if a price was wrong");
+    if (priceChanges.length && !nextId) throw new OrderError("invalid-input", "Selling prices are for reseller sales");
+    // The new reseller (if any) must exist; a NEW attribution needs them active.
+    const nextSnap = nextId ? await tx.get(resellerRef(tenant, nextId)) : null;
+    if (nextId && !nextSnap.exists) throw new OrderError("reseller-not-found", "Reseller not found");
+    if (nextId && nextId !== (order.resellerId ?? null) && nextSnap.data().status !== "active") throw new OrderError("reseller-inactive", "That reseller is inactive");
+
+    // Lines: a direct sale gains owner price snapshots (its own prices) when attributed.
+    const byLine = new Map(order.items.map((l) => [l.lineId, l]));
+    for (const [lineId, price] of priceChanges) {
+      if (!byLine.has(lineId)) throw new OrderError("invalid-input", "Unknown order line");
+      if (!Number.isSafeInteger(price) || price < 0) throw new OrderError("invalid-price", "Enter a selling price, e.g. 650 or 650.50");
+    }
+    let lines = order.items.map((l) => {
+      const basePrice = Number.isSafeInteger(l.basePrice) ? l.basePrice : l.unitPrice;
+      const unitPrice = prices && Object.hasOwn(prices, l.lineId) ? prices[l.lineId] : l.unitPrice;
+      return nextId ? { ...keepLine(l, l.quantity), unitPrice, basePrice } : keepLine(l, l.quantity);
+    });
+    const totals = computeTotals(lines, order.discount || 0);
+    lines = nextId ? withCommission(totals.lines) : totals.lines;
+    const amountPaid = order.amountPaid || 0;
+    if (totals.total < amountPaid) throw new OrderError("below-paid", "The new total would be less than what's already been paid");
+
+    let commission = null;
+    if (nextId) {
+      const calculated = orderCalculatedCommission(lines);
+      const sameReseller = nextId === (order.resellerId ?? null);
+      const previous = sameReseller ? order.commission : null;
+      if (finalCommission === undefined) commission = commissionFor(calculated, previous);
+      else if (finalCommission === null) commission = commissionFor(calculated);
+      else commission = { calculated, final: finalCommission, adjusted: finalCommission !== calculated, ...(finalCommission !== calculated ? { adjustedBy: { uid: actor.uid, name: actor.name ?? null }, adjustedAt: now } : {}) };
+      if (calculated < 0 && !(finalCommission !== undefined && finalCommission !== null) && !(commission.adjusted && previous?.adjusted)) {
+        throw new OrderError("below-owner-price", "Selling price is below the owner price. Set the final commission yourself (₱0 or more) to accept it.");
+      }
+    }
+    const before = earnedOf(order);
+    const after = nextId ? commission.final : 0;
+    const earned = await prepareEarned(tx, tenant, [{ resellerId: order.resellerId, delta: -before }, { resellerId: nextId, delta: after }], FieldValue);
+
+    const changes = {
+      ...((order.resellerId ?? null) !== nextId ? { reseller: { from: order.reseller?.name ?? null, to: nextId ? nextSnap.data().name : null } } : {}),
+      ...(priceChanges.length ? { prices: priceChanges.map(([lineId, to]) => ({ lineId, name: byLine.get(lineId).name, from: byLine.get(lineId).unitPrice, to })).filter((c) => c.from !== c.to) } : {}),
+      ...(JSON.stringify([order.commission?.calculated ?? null, order.commission?.final ?? null]) !== JSON.stringify([commission?.calculated ?? null, commission?.final ?? null]) ? { commission: { calculated: { from: order.commission?.calculated ?? null, to: commission?.calculated ?? null }, final: { from: order.commission?.final ?? null, to: commission?.final ?? null } } } : {}),
+      ...(totals.total !== order.total ? { total: { from: order.total, to: totals.total } } : {}),
+    };
+    if (!Object.keys(changes).length) return { orderId, revision: order.revision, unchanged: true };
+    const stamp = FieldValue.serverTimestamp();
+    tx.update(ref, {
+      items: lines,
+      subtotal: totals.subtotal,
+      total: totals.total,
+      balance: totals.total - amountPaid,
+      paymentStatus: paymentStatusFor({ total: totals.total, verifiedPaid: order.verifiedPaid || 0, pendingPaid: order.pendingPaid || 0 }),
+      reseller: nextId ? { id: nextId, name: nextSnap.data().name } : null,
+      resellerId: nextId,
+      commission,
+      statusHistory: appendHistory(order, historyEntry("commission", actor, { from: order.fulfillmentStatus, to: order.fulfillmentStatus, changes })),
+      revision: order.revision + 1,
+      updatedBy: actor,
+      updatedAt: stamp,
+    });
+    if (totals.total !== order.total) {
+      adjustBalanceGauges(tx, { tenant, FieldValue, order, newTotal: totals.total });
+      moveCustomerStats(tx, { tenant, FieldValue, order, newCustomerId: order.customerId ?? null, newTotal: totals.total });
+    }
+    tx.set(tenant.collection("auditLog").doc(), { type: "order.commission_changed", orderId, orderNumber: order.orderNumber, actor, changes, at: stamp });
+    earned.apply();
+    return { orderId, revision: order.revision + 1, total: totals.total, commission };
+  }, TX_OPTIONS);
 }
 
 // ---------- Delete an accidental open order ----------
@@ -514,6 +681,7 @@ export async function deleteOrder({ db, tenant, FieldValue, orderId, reason = nu
     if (!isOpenFulfillment(order.fulfillmentStatus)) throw new OrderError("not-deletable", "Only open orders can be deleted; fulfilled orders stay in history");
     if ((order.amountPaid || 0) > 0) throw new OrderError("not-deletable", "An order with payments can't be deleted");
     const plan = await prepareMovements(tx, { tenant, items: movementsFor(order.items, "release", orderId, order.orderNumber, "order_deleted") });
+    const earned = await prepareEarned(tx, tenant, [{ resellerId: order.resellerId, delta: -earnedOf(order) }], FieldValue);
 
     tx.delete(ref);
     tx.set(tenant.collection("auditLog").doc(), {
@@ -522,7 +690,7 @@ export async function deleteOrder({ db, tenant, FieldValue, orderId, reason = nu
       orderNumber: order.orderNumber,
       actor,
       reason: why,
-      snapshot: { customer: order.customer, customerId: order.customerId ?? null, source: order.source, items: order.items, subtotal: order.subtotal, discount: order.discount, total: order.total, orderDate: order.orderDate, fulfillmentStatus: order.fulfillmentStatus, statusHistory: order.statusHistory, createdBy: order.createdBy },
+      snapshot: { customer: order.customer, customerId: order.customerId ?? null, source: order.source, items: order.items, subtotal: order.subtotal, discount: order.discount, total: order.total, orderDate: order.orderDate, fulfillmentStatus: order.fulfillmentStatus, statusHistory: order.statusHistory, createdBy: order.createdBy, ...(order.resellerId ? { reseller: order.reseller, commission: order.commission } : {}) },
       at: FieldValue.serverTimestamp(),
     });
     // It never was a real order: off the day's order count and the open /
@@ -530,6 +698,7 @@ export async function deleteOrder({ db, tenant, FieldValue, orderId, reason = nu
     recordDailyMetrics({ tx, tenant, FieldValue, timezone: null, day: order.orderDate, operational: { orderCount: -1 } });
     adjustCurrentMetrics({ tx, tenant, FieldValue, operational: { pendingFulfillment: -1, unpaidOrders: (order.balance || 0) > 0 ? -1 : 0 }, financial: { receivablesOutstanding: -(order.balance || 0) } });
     applyCustomerStats(tx, { tenant, FieldValue, customerId: order.customerId, orders: -1, total: -order.total, balance: -(order.balance || 0) });
+    earned.apply();
     plan.commit({ actor, FieldValue });
     return { orderId, deleted: true };
   }, TX_OPTIONS);
@@ -637,6 +806,7 @@ export async function cancelOrder({ db, tenant, FieldValue, business, orderId, r
     }
     if ((order.amountPaid || 0) > 0) throw new OrderError("has-payments", "This order has payments. Void them first, then cancel the order");
     const plan = await prepareMovements(tx, { tenant, items: movementsFor(order.items, "release", orderId, order.orderNumber, "order_cancelled") });
+    const earned = await prepareEarned(tx, tenant, [{ resellerId: order.resellerId, delta: -earnedOf(order) }], FieldValue);
     const stamp = FieldValue.serverTimestamp();
 
     tx.update(ref, {
@@ -662,6 +832,7 @@ export async function cancelOrder({ db, tenant, FieldValue, business, orderId, r
     });
     // A cancelled order stops counting for its customer.
     applyCustomerStats(tx, { tenant, FieldValue, customerId: order.customerId, orders: -1, total: -order.total, balance: -(order.balance || 0) });
+    earned.apply();
     plan.commit({ actor, FieldValue });
     return { orderId, cancelled: true };
   }, TX_OPTIONS);

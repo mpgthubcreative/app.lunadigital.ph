@@ -27,15 +27,15 @@ const ent = (templateId, planId = "pro", overrides = {}) => computeEntitlements(
 const access = (templateId, role = "owner", planId = "pro") => ({ entitlements: ent(templateId, planId), permissions: resolvePermissions(role) });
 
 describe("registry", () => {
-  it("has exactly the four approved templates, each structurally valid", () => {
-    expect(WORKSPACE_TEMPLATE_IDS).toEqual(["distributor", "household-payroll", "baby-expense", "bridal-expense"]);
+  it("has exactly the approved templates (2026-10-31: + Reseller Package), each structurally valid", () => {
+    expect(WORKSPACE_TEMPLATE_IDS).toEqual(["distributor", "reseller", "household-payroll", "baby-expense", "bridal-expense"]);
     for (const id of WORKSPACE_TEMPLATE_IDS) {
       expect(validateWorkspaceTemplate(WORKSPACE_TEMPLATES[id], CTX), id).toEqual([]);
     }
   });
 
   it("every workspace is live: Distributor, (14) Household Payroll, (15) Baby, (16) Bridal", () => {
-    for (const t of ["distributor", "household-payroll", "baby-expense", "bridal-expense"]) expect(WORKSPACE_TEMPLATES[t].status, t).toBe("live");
+    for (const t of ["distributor", "reseller", "household-payroll", "baby-expense", "bridal-expense"]) expect(WORKSPACE_TEMPLATES[t].status, t).toBe("live");
   });
 
   it("is frozen: nothing can be changed at runtime", () => {
@@ -343,7 +343,7 @@ describe("stored snapshot validation fails closed", () => {
 
   it("Phase 16 strict: bridal-expense v2 is the only accepted version; stale, malformed or keyless snapshots fail closed", () => {
     // grocery is rolling out (Luna Household v4); Bridal snapshots without the key read it as off.
-    expect(ROLLING_OUT_MODULE_IDS).toEqual(["grocery"]);
+    expect(ROLLING_OUT_MODULE_IDS).toEqual(["grocery", "resellers"]);
     expect(WORKSPACE_TEMPLATES["bridal-expense"].upgradingFrom).toBeUndefined();
     const s = ent("bridal-expense", "growth");
     expect(s.workspaceTemplateVersion).toBe(2);

@@ -78,6 +78,7 @@ export const EXPENSE_FIELDS = Object.freeze(["date", "category", "amount", "paye
 //               payment an expense was recorded from (never sent by the browser)
 export const EXPENSE_PROFILES = Object.freeze({
   distributor: Object.freeze({ id: "distributor", categories: "fixed", fields: EXPENSE_FIELDS, ref: null, link: null }),
+  reseller: Object.freeze({ id: "reseller", categories: "fixed", fields: EXPENSE_FIELDS, ref: null, link: null }),
   // Phase 18.6: Baby expenses also record who paid (paidBy, split shares).
   "baby-expense": Object.freeze({ id: "baby-expense", categories: "tenant", fields: Object.freeze([...EXPENSE_FIELDS, "providerId", "paidBy"]), ref: "providerId", refLabel: "provider", link: "scheduleId", payers: true }),
   // Luna Household (household-payroll v3): household spending on the same

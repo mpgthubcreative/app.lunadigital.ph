@@ -117,7 +117,7 @@ describe("console views", () => {
     expect([...f.querySelectorAll(".field label")].slice(0, 6).map((l) => l.textContent.replace(" *", ""))).toEqual(["Product", "Term", "Start", "Business / workspace name", "Owner name", "Owner email"]);
     // Sold products only: no Distributor+ / Household+ / Starter / Growth / Pro.
     // ... and no Luna Bridal Custom (legacy since 2026-10-25).
-    expect([...f.elements.planId.options].map((o) => o.textContent)).toEqual(["Luna Distributor", "Luna Household", "Baby Basic", "Baby Plus", "Luna Bridal"]);
+    expect([...f.elements.planId.options].map((o) => o.textContent)).toEqual(["Luna Distributor", "Luna Reseller", "Luna Household", "Baby Basic", "Baby Plus", "Luna Bridal"]);
     expect([...f.elements.termMonths.options].map((o) => o.textContent)).toEqual(["6 months · ₱1,299", "12 months · ₱2,390 · Best Value"]);
     // The 30-day free trial is the default start.
     expect(f.elements.start.value).toBe("trial");
