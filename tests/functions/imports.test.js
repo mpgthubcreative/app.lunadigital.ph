@@ -48,13 +48,13 @@ describe("mapping helpers", () => {
   it("guesses columns from common header names and maps rows (blank rows dropped)", () => {
     const headers = ["Item Code", "Description", "UOM", "SRP", "Group"];
     const m = autoMap("products", headers);
-    expect(m).toEqual({ sku: 0, name: 1, category: 4, unit: 2, sellingPrice: 3, reorderLevel: null });
+    expect(m).toEqual({ sku: 0, name: 1, category: 4, unit: 2, sellingPrice: 3, stock: null, cogs: null, trackInventory: null, reorderLevel: null });
     expect(mapRows("products", [["A1", "Wings", "pcs", "10", "Frozen"], ["", "", "", "", ""]], m)).toEqual([{ n: 2, values: { sku: "A1", name: "Wings", category: "Frozen", unit: "pcs", sellingPrice: "10" } }]);
   });
   it("converts with the same validators as the screens", () => {
     expect(convertRow("products", { sku: "a-1", name: "W", unit: "KG", sellingPrice: "PHP 1,250.5", reorderLevel: "2.5" }).input).toMatchObject({ sku: "A-1", unit: "kg", sellingPrice: 125050, reorderLevel: 2500 });
     expect(convertRow("products", { sku: "a 1", name: "W", unit: "pcs", sellingPrice: "1" }).errors[0]).toMatch(/SKU/);
-    expect(convertRow("products", { sku: "A", name: "W", unit: "pcs", sellingPrice: "-5" }).errors[0]).toMatch(/Selling price/);
+    expect(convertRow("products", { sku: "A", name: "W", unit: "pcs", sellingPrice: "-5" }).errors[0]).toMatch(/Price "-5"/);
     expect(convertRow("customers", { name: "X", email: "bad" }).errors[0]).toMatch(/email/);
     expect(convertRow("customers", { name: "X", stats: "1" }).errors[0]).toMatch(/Unknown field/);
   });

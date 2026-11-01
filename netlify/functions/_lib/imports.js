@@ -18,7 +18,7 @@
 import { IMPORT_TYPES, IMPORT_MAX_ROWS, IMPORT_CHUNK_ROWS, IMPORT_PREVIEW_TTL_MS, IMPORT_SCHEMA_VERSION, ImportError, convertRow, duplicateKeys } from "../../../shared/imports.js";
 import { InventoryError } from "../../../shared/inventory.js";
 import { CustomerError } from "../../../shared/customers.js";
-import { createProduct } from "./inventory.js";
+import { createProduct, setTrackInventory, setProductUnitCost } from "./inventory.js";
 import { createCustomer } from "./customers.js";
 import { checkMonthlyLimit, prepareMonthlyAlerts, meterActivity, noteLimitReached } from "./metering.js";
 
@@ -69,7 +69,7 @@ export async function previewImport({ db, tenant, FieldValue, type, fileName, ro
   const results = rows.map((r) => {
     if (!r || typeof r !== "object" || !Number.isSafeInteger(r.n) || r.n < 1 || !r.values || typeof r.values !== "object" || Array.isArray(r.values)) throw new ImportError("invalid-input", "Invalid row");
     const c = convertRow(type, r.values);
-    return { n: r.n, values: Object.fromEntries(keys.filter((k) => typeof r.values[k] === "string").map((k) => [k, r.values[k]])), input: c.input ?? null, status: c.errors ? "error" : "ready", action: c.errors ? "none" : "create", messages: c.errors ?? [] };
+    return { n: r.n, values: Object.fromEntries(keys.filter((k) => typeof r.values[k] === "string").map((k) => [k, r.values[k]])), input: c.input ?? null, ...(c.extra ? { extra: c.extra } : {}), status: c.errors ? "error" : "ready", action: c.errors ? "none" : "create", messages: c.errors ?? c.notes ?? [] };
   });
   const valid = results.filter((r) => r.input);
 
@@ -194,7 +194,16 @@ async function startCommitOnce({ db, tenant, FieldValue, business, entitlements,
   }, TX_OPTIONS);
 }
 
-async function importRow({ db, tenant, FieldValue, type, chunkRef, index, row, actor }) {
+// Products (2026-11-01): created untracked first (sellable at once), then
+// Track inventory ON with the row's starting stock, or just its COGS.
+async function productExtras({ db, tenant, FieldValue, productId, extra, canSetCost, actor }) {
+  if (!extra) return;
+  const unitCost = canSetCost ? extra.unitCost ?? null : null;
+  if (extra.trackInventory) await setTrackInventory({ db, tenant, FieldValue, productId, track: true, stock: extra.stock ?? null, unitCost, actor });
+  else if (unitCost !== null) await setProductUnitCost({ db, tenant, FieldValue, productId, unitCost, actor });
+}
+
+async function importRow({ db, tenant, FieldValue, type, chunkRef, index, row, actor, canSetCost = false }) {
   const hooks = {
     read: async (tx) => {
       const c = await tx.get(chunkRef);
@@ -215,7 +224,11 @@ async function importRow({ db, tenant, FieldValue, type, chunkRef, index, row, a
       tx.update(chunkRef, { [`results.${index}`]: { outcome, reason } });
     }, TX_OPTIONS);
   try {
-    if (type === "products") await createProduct({ db, tenant, FieldValue, input: row.input, actor, hooks });
+    if (type === "products") {
+      // Older previews (before 2026-11-01) have no extra: tracked, as then.
+      const { productId } = await createProduct({ db, tenant, FieldValue, input: row.input, actor, hooks, trackInventory: row.extra ? false : true, needsPrice: row.extra?.needsPrice === true });
+      await productExtras({ db, tenant, FieldValue, productId, extra: row.extra, canSetCost, actor });
+    }
     else await createCustomer({ db, tenant, FieldValue, input: row.input, actor, hooks });
     return "created";
   } catch (err) {
@@ -250,7 +263,7 @@ function summarize(job, chunks) {
 }
 
 // Imports up to a time budget; call again until { done: true }.
-export async function commitImport({ db, tenant, FieldValue, business, entitlements, jobId, includeWarnings = false, actor, now = new Date(), budgetMs = COMMIT_BUDGET_MS, canImport }) {
+export async function commitImport({ db, tenant, FieldValue, business, entitlements, jobId, includeWarnings = false, actor, now = new Date(), budgetMs = COMMIT_BUDGET_MS, canImport, canSetCost = false }) {
   const ref = jobRef(tenant, jobId);
   const pre = await ref.get();
   if (!pre.exists) throw new ImportError("not-found", "Import not found");
@@ -274,7 +287,7 @@ export async function commitImport({ db, tenant, FieldValue, business, entitleme
         remaining += 1;
         continue;
       }
-      await importRow({ db, tenant, FieldValue, type: job.type, chunkRef, index: j, row, actor });
+      await importRow({ db, tenant, FieldValue, type: job.type, chunkRef, index: j, row, actor, canSetCost });
       processed += 1;
     }
     chunks.push((await chunkRef.get()).data());

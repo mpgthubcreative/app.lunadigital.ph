@@ -5,12 +5,18 @@
 // validators (validateProductInput / validateCustomerInput), so an import
 // can never create something the screens couldn't.
 //
-// Deliberately NOT imported: orders, payments, expenses, inventory
-// movements (stock is entered with Inventory's opening count), sales /
-// COGS history. Existing records are never updated by an import: a row
-// matching one is skipped with a warning.
+// Deliberately NOT imported: orders, payments, expenses, sales / COGS
+// history. Existing records are never updated by an import: a row matching
+// one is skipped with a warning.
+//
+// Products (2026-11-01, forgiving): only the product name is required. No
+// SKU → one is made from the name; no unit → pcs; no price → imported as
+// "No price yet" (kept off the menus until it has one). Optional Stock,
+// COGS and Track Inventory: a row with stock tracks inventory with that
+// starting stock; without stock it doesn't track (never "out of stock"),
+// unless the Track Inventory column says otherwise.
 
-import { validateProductInput, InventoryError } from "./inventory.js";
+import { validateProductInput, InventoryError, skuFromName } from "./inventory.js";
 import { validateCustomerInput, phoneKey, CustomerError } from "./customers.js";
 import { parseCentavos, parseQuantity, UNITS, QuantityError } from "./quantity.js";
 
@@ -39,11 +45,14 @@ export const IMPORT_TYPES = Object.freeze({
     module: "inventory",
     permission: "products.manage",
     fields: [
-      field("sku", "SKU", { required: true, synonyms: ["item code", "code", "product code", "stock code"] }),
       field("name", "Name", { required: true, synonyms: ["product", "product name", "item", "item name", "description"] }),
+      field("sku", "SKU", { synonyms: ["item code", "code", "product code", "stock code"] }),
       field("category", "Category", { synonyms: ["group", "type"] }),
-      field("unit", "Unit", { required: true, synonyms: ["uom", "unit of measure", "units"] }),
-      field("sellingPrice", "Selling price", { required: true, synonyms: ["price", "srp", "unit price", "retail price"] }),
+      field("unit", "Unit", { synonyms: ["uom", "unit of measure", "units"] }),
+      field("sellingPrice", "Price", { synonyms: ["selling price", "srp", "unit price", "retail price", "owner price", "base price", "owner/base price", "owner base price"] }),
+      field("stock", "Stock", { synonyms: ["qty", "quantity", "on hand", "stock on hand", "inventory", "stocks"] }),
+      field("cogs", "COGS", { synonyms: ["cost", "unit cost", "cost price", "capital"] }),
+      field("trackInventory", "Track Inventory", { synonyms: ["track stock", "track", "tracked"] }),
       field("reorderLevel", "Reorder level", { synonyms: ["reorder", "reorder point", "min stock", "minimum stock", "minimum"] }),
     ],
   },
@@ -125,7 +134,12 @@ function unitId(text) {
 }
 const money = (text) => String(text).replace(/₱|php|p(?=\d)/gi, "").replace(/\s/g, "");
 
+const YES = new Set(["yes", "y", "true", "on", "1", "track", "tracked"]);
+const NO = new Set(["no", "n", "false", "off", "0", "not tracked", "untracked"]);
+
 // values -> { input } for createProduct / createCustomer, or { errors: [] }.
+// Products also return { extra: { trackInventory, stock, unitCost, needsPrice },
+// notes: [] } (what the row creates beyond the product itself).
 export function convertRow(type, values) {
   for (const [k, v] of Object.entries(values || {})) {
     if (!IMPORT_TYPES[type].fields.some((f) => f.key === k)) return { errors: [`Unknown field ${k}`] };
@@ -135,14 +149,44 @@ export function convertRow(type, values) {
   const errors = [];
   try {
     if (type === "products") {
-      const unit = unitId(values.unit ?? "");
+      const blank = (k) => !String(values[k] ?? "").trim();
+      const unit = blank("unit") ? "pcs" : unitId(values.unit);
       if (!unit) errors.push(`Unit "${values.unit ?? ""}" isn't one of ${Object.values(UNITS).map((u) => u.label).join(", ")}`);
-      let sellingPrice = null;
-      try {
-        sellingPrice = parseCentavos(money(values.sellingPrice ?? ""));
-      } catch {
-        errors.push(`Selling price "${values.sellingPrice ?? ""}" isn't an amount like 1250.50`);
+      const notes = [];
+      let sellingPrice = 0;
+      const needsPrice = blank("sellingPrice");
+      if (needsPrice) notes.push("No price yet: set one before selling it");
+      else {
+        try {
+          sellingPrice = parseCentavos(money(values.sellingPrice));
+        } catch {
+          errors.push(`Price "${values.sellingPrice}" isn't an amount like 1250.50`);
+        }
       }
+      let stock = null;
+      if (unit && !blank("stock")) {
+        try {
+          stock = parseQuantity(String(values.stock).replace(/,/g, ""), unit);
+        } catch (err) {
+          errors.push(`Stock: ${err.message}`);
+        }
+      }
+      let unitCost = null;
+      if (!blank("cogs")) {
+        try {
+          unitCost = parseCentavos(money(values.cogs)); // ₱0 is a valid COGS
+        } catch {
+          errors.push(`COGS "${values.cogs}" isn't an amount like 180 or 0`);
+        }
+      }
+      let trackInventory = stock !== null;
+      if (!blank("trackInventory")) {
+        const t = String(values.trackInventory).trim().toLowerCase();
+        if (YES.has(t)) trackInventory = true;
+        else if (NO.has(t)) trackInventory = false;
+        else errors.push(`Track Inventory "${values.trackInventory}": use Yes or No`);
+      }
+      if (!trackInventory && stock !== null) notes.push("Track Inventory is No: the stock figure isn't recorded");
       let reorderLevel = 0;
       if (unit && values.reorderLevel) {
         try {
@@ -152,8 +196,9 @@ export function convertRow(type, values) {
         }
       }
       if (errors.length) return { errors };
-      const input = validateProductInput({ sku: values.sku ?? "", name: values.name ?? "", ...(values.category ? { category: values.category } : {}), unit, sellingPrice, reorderLevel });
-      return { input };
+      const sku = blank("sku") ? skuFromName(values.name) : values.sku;
+      const input = validateProductInput({ sku, name: values.name ?? "", ...(values.category ? { category: values.category } : {}), unit, sellingPrice, reorderLevel });
+      return { input, extra: { trackInventory, stock: trackInventory ? stock : null, unitCost, needsPrice }, notes };
     }
     const raw = Object.fromEntries(Object.entries(values).filter(([, v]) => v !== ""));
     const clean = validateCustomerInput(raw);

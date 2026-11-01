@@ -100,7 +100,7 @@ describe("the import flow", () => {
     container.querySelector('[data-act="download-preview"]').click();
     const [name, bytes] = d.download.mock.calls[0];
     expect(name).toBe("luna-import-products-error.xlsx");
-    expect(readXlsx(bytes).rows).toEqual([["Row", "Status", "SKU", "Name", "Category", "Unit", "Selling price", "Reorder level", "Message"], ["3", "Error", "W-1", "Wings again", "", "pcs", "1", "", "SKU W-1 is also on row 2 of this file"]]);
+    expect(readXlsx(bytes).rows).toEqual([["Row", "Status", "Name", "SKU", "Category", "Unit", "Price", "Stock", "COGS", "Track Inventory", "Reorder level", "Message"], ["3", "Error", "Wings again", "W-1", "", "pcs", "1", "", "", "", "", "SKU W-1 is also on row 2 of this file"]]);
     container.querySelector('[data-act="filter"][data-filter="warning"]').click();
     container.querySelector('[data-act="download-preview"]').click();
     expect(readXlsx(d.download.mock.calls[1][1]).rows[1].at(-1)).toBe(`'=HYPERLINK("x") possible duplicate`);

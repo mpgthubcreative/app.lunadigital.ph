@@ -10,10 +10,15 @@
 // already on the order adds to that row's quantity (one line per product,
 // as the server requires); a row's product can be changed or the row
 // removed until Create order. Create order stays the only primary action.
+// Quick Add Product (2026-11-01): "+ Quick Add Product" makes a product right
+// here (Name + Price; Category / Stock / COGS optional) and puts it on the
+// order, without leaving New Order. No stock entered → Track inventory OFF
+// (sellable at once); stock entered → ON. Products that don't track
+// inventory show no "available" figure and are never out of stock.
 
 import { html, render } from "../../lib/html.js";
 import { formatCentavos } from "../../lib/format.js";
-import { ORDER_SOURCES, ORDER_SOURCE_IDS, computeTotals, parseQuantity, parseCentavos, formatQuantity, UNITS, canUseModule } from "@shared/index.js";
+import { ORDER_SOURCES, ORDER_SOURCE_IDS, computeTotals, parseQuantity, parseCentavos, formatQuantity, UNITS, canUseModule, snapshotWorkspaceTemplateId } from "@shared/index.js";
 
 const newKey = () => (globalThis.crypto && crypto.randomUUID ? crypto.randomUUID() : `k${Date.now()}${Math.random().toString(36).slice(2)}`).replace(/[^A-Za-z0-9_-]/g, "");
 
@@ -44,6 +49,11 @@ export function openOrderEditor({ session, deps, order = null, prefill = null })
   const canLink = canUseModule({ entitlements: session.entitlements, permissions: perms }, "customers") && typeof deps.searchCustomers === "function";
   // Save to Customers: new orders, for whoever may add customers.
   const canSave = canLink && !order && perms["customers.manage"] === true && typeof deps.api === "function";
+  // Quick Add Product: whoever may add products (Inventory module), not while correcting.
+  const canQuickAdd = !correcting && typeof deps.api === "function" && perms["products.manage"] === true && canUseModule({ entitlements: session.entitlements, permissions: perms }, "inventory");
+  const canCost = perms["inventory.costs"] === true;
+  const priceLabel = snapshotWorkspaceTemplateId(session.entitlements) === "reseller" ? "Owner/Base Price" : "Price";
+  const availableOf = (p) => (p && p.trackInventory !== false ? p.available ?? null : null);
   const state = {
     customer: { name: (order ?? prefill)?.customer?.name ?? "", phone: (order ?? prefill)?.customer?.phone ?? "", notes: order?.customer?.notes ?? "" },
     customerId: (order ?? prefill)?.customerId ?? null,
@@ -86,7 +96,7 @@ export function openOrderEditor({ session, deps, order = null, prefill = null })
     // Availability of products already on an edited order.
     if (order) {
       deps.getProducts(state.lines.map((l) => l.productId)).then((products) => {
-        for (const l of state.lines) l.available = products[l.productId]?.available ?? null;
+        for (const l of state.lines) l.available = availableOf(products[l.productId]);
         paintLines();
       });
     }
@@ -143,7 +153,26 @@ export function openOrderEditor({ session, deps, order = null, prefill = null })
             <div class="oe-items-head" aria-hidden="true"><span>Product</span><span>Qty</span><span>Unit price</span><span>Total</span><span></span></div>
             <div class="oe-items" data-role="lines"></div>
             <p class="stat-hint oe-hint" data-role="items-hint" aria-live="polite"></p>
-            <button type="button" class="btn btn-compact oe-add-item" data-act="add-item">+ Add Item</button>
+            <div class="oe-add-row"><button type="button" class="btn btn-compact oe-add-item" data-act="add-item">+ Add Item</button>${canQuickAdd ? html`<button type="button" class="btn btn-compact" data-act="quick-add">+ Quick Add Product</button>` : ""}</div>
+            ${canQuickAdd
+              ? html`<div class="oe-quick" data-role="quick-add" hidden>
+                  <h3 class="oe-quick-title">Quick Add Product</h3>
+                  <div class="oe-pair">
+                    <div class="field"><label for="qaName">Product name *</label><input class="input" id="qaName" name="qaName" maxlength="120" autocomplete="off" placeholder="e.g. Nipple Tape" /></div>
+                    <div class="field"><label for="qaPrice">${priceLabel} (${currency}) *</label><input class="input" id="qaPrice" name="qaPrice" inputmode="decimal" autocomplete="off" placeholder="e.g. 250" /></div>
+                  </div>
+                  <details class="form-more"><summary>Category, stock${canCost ? ", COGS" : ""} (optional)</summary>
+                    <div class="field"><label for="qaCategory">Category</label><input class="input" id="qaCategory" name="qaCategory" maxlength="60" autocomplete="off" /></div>
+                    <div class="oe-pair">
+                      <div class="field"><label for="qaStock">Stock on hand</label><input class="input" id="qaStock" name="qaStock" inputmode="numeric" autocomplete="off" placeholder="Blank = not tracked" /></div>
+                      ${canCost ? html`<div class="field"><label for="qaCost">COGS (${currency})</label><input class="input" id="qaCost" name="qaCost" inputmode="decimal" autocomplete="off" placeholder="Optional, 0 is fine" /></div>` : ""}
+                    </div>
+                    <p class="stat-hint">Leave stock blank to sell without tracking inventory. Enter it to track stock from now on.</p>
+                  </details>
+                  <p class="form-error" data-role="qa-error" role="alert" hidden></p>
+                  <div class="oe-quick-actions"><button type="button" class="btn btn-compact" data-act="qa-cancel">Cancel</button><button type="button" class="btn btn-compact btn-primary" data-act="qa-save">Add product</button></div>
+                </div>`
+              : ""}
           </section>
           <section class="oe-section" data-role="oe-money">
             ${canDiscount ? html`<div class="field oe-discount"><label for="oeDiscount">Discount (${currency})</label><input class="input" id="oeDiscount" name="discount" value="${state.discountText}" inputmode="decimal" autocomplete="off" /></div>` : ""}
@@ -214,7 +243,7 @@ export function openOrderEditor({ session, deps, order = null, prefill = null })
     const productOptions = (l) => {
       const list = state.products || [];
       const own = l.productId && !list.some((p) => p.id === l.productId) ? [{ id: l.productId, sku: l.sku, name: l.name, sellingPrice: l.unitPrice }] : [];
-      return html`<option value="" ${l.productId ? "" : "selected"}>${list.length || own.length ? "Choose a product…" : state.products === null ? "Loading products…" : "No active products yet"}</option>${[...own, ...list].map((p) => html`<option value="${p.id}" ${p.id === l.productId ? "selected" : ""}>${p.name} · ${formatCentavos(state.prices.get(p.id) ?? p.sellingPrice, currency)}${state.prices.has(p.id) ? " (special)" : ""}</option>`)}`;
+      return html`<option value="" ${l.productId ? "" : "selected"}>${list.length || own.length ? "Choose a product…" : state.products === null ? "Loading products…" : canQuickAdd ? "No products yet: use + Quick Add Product" : "No active products yet"}</option>${[...own, ...list].map((p) => html`<option value="${p.id}" ${p.id === l.productId ? "selected" : ""}>${p.name} · ${formatCentavos(state.prices.get(p.id) ?? p.sellingPrice, currency)}${state.prices.has(p.id) ? " (special)" : ""}</option>`)}`;
     };
     const unitOf = (l) => UNITS[l.unit]?.label ?? l.unit ?? "";
     function paintLines() {
@@ -254,7 +283,7 @@ export function openOrderEditor({ session, deps, order = null, prefill = null })
         form.elements[`qty-${state.lines.indexOf(row)}`]?.focus();
         return;
       }
-      const line = { productId: p.id, sku: p.sku, name: p.name, unit: p.unit, unitPrice: state.prices.get(p.id) ?? p.sellingPrice, special: state.prices.has(p.id), quantityText: i === null ? addQty : state.lines[i].quantityText || "1", reservedHere: state.reservedBy[p.id] || 0, available: p.available ?? null };
+      const line = { productId: p.id, sku: p.sku, name: p.name, unit: p.unit, unitPrice: state.prices.get(p.id) ?? p.sellingPrice, special: state.prices.has(p.id), quantityText: i === null ? addQty : state.lines[i].quantityText || "1", reservedHere: state.reservedBy[p.id] || 0, available: availableOf(p) };
       if (i === null) state.lines.push(line);
       else state.lines[i] = line;
       state.hint = "";
@@ -297,9 +326,9 @@ export function openOrderEditor({ session, deps, order = null, prefill = null })
         productSelect,
         state.products.length
           ? html`<option value="">Choose a product (${state.products.length})…</option>${state.products.map(
-              (p) => html`<option value="${p.id}">${p.sku} · ${p.name} · ${formatCentavos(state.prices.get(p.id) ?? p.sellingPrice, currency)}${state.prices.has(p.id) ? " (special)" : ""} · ${formatQuantity(p.available)} ${UNITS[p.unit]?.label ?? p.unit} left</option>`
+              (p) => html`<option value="${p.id}">${p.sku} · ${p.name} · ${formatCentavos(state.prices.get(p.id) ?? p.sellingPrice, currency)}${state.prices.has(p.id) ? " (special)" : ""}${p.trackInventory === false ? "" : ` · ${formatQuantity(p.available)} ${UNITS[p.unit]?.label ?? p.unit} left`}</option>`
             )}`
-          : html`<option value="">No active products yet: add them in Inventory</option>`
+          : html`<option value="">${canQuickAdd ? "No products yet: use + Quick Add Product below" : "No active products yet: add them in Inventory"}</option>`
       );
       productSelect.value = "";
     }
@@ -422,11 +451,86 @@ export function openOrderEditor({ session, deps, order = null, prefill = null })
         paintLines();
         paintProducts();
       }
+      if (act === "quick-add") openQuickAdd();
+      if (act === "qa-cancel") closeQuickAdd();
+      if (act === "qa-save") quickAdd();
       if (act === "add-item") {
         state.lines.push({ productId: null, sku: "", name: "", unit: null, unitPrice: 0, quantityText: "1", reservedHere: 0, available: null });
         state.hint = "";
         paintLines();
         form.elements[`item-${state.lines.length - 1}`]?.focus();
+      }
+    });
+
+    // ---------- Quick Add Product ----------
+    const quickEl = form.querySelector('[data-role="quick-add"]');
+    function openQuickAdd() {
+      if (!quickEl) return;
+      quickEl.hidden = false;
+      quickEl.querySelector('[data-role="qa-error"]').hidden = true;
+      form.elements.qaName.focus();
+    }
+    function closeQuickAdd() {
+      if (!quickEl) return;
+      quickEl.hidden = true;
+      for (const n of ["qaName", "qaPrice", "qaCategory", "qaStock", "qaCost"]) if (form.elements[n]) form.elements[n].value = "";
+    }
+    const money = (text) => text.replace(/[₱,\s]/g, "");
+    let quickBusy = false;
+    async function quickAdd() {
+      if (quickBusy) return;
+      const err = quickEl.querySelector('[data-role="qa-error"]');
+      err.hidden = true;
+      const v = (n) => (form.elements[n]?.value ?? "").trim();
+      try {
+        if (!v("qaName")) throw new Error("Enter the product name");
+        if (!v("qaPrice")) throw new Error(`Enter the ${priceLabel.toLowerCase()}`);
+        let price;
+        try {
+          price = parseCentavos(money(v("qaPrice")));
+        } catch {
+          throw new Error(`${priceLabel}: enter an amount like 250 or 250.50`);
+        }
+        const product = { name: v("qaName"), sellingPrice: price };
+        if (v("qaCategory")) product.category = v("qaCategory");
+        if (v("qaStock")) {
+          try {
+            product.stock = parseQuantity(v("qaStock").replace(/,/g, ""), "pcs");
+          } catch {
+            throw new Error("Stock: a whole number, 0 or more, or leave it blank");
+          }
+        }
+        if (canCost && v("qaCost")) {
+          try {
+            product.unitCost = parseCentavos(money(v("qaCost")));
+          } catch {
+            throw new Error("COGS: an amount like 180 or 0, or leave it blank");
+          }
+        }
+        quickBusy = true;
+        quickEl.querySelector('[data-act="qa-save"]').disabled = true;
+        const r = await deps.api("products", { method: "POST", body: { action: "quickAdd", product } });
+        const p = { ...r.product, id: r.productId };
+        state.products = [...(state.products || []), p].sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+        closeQuickAdd();
+        paintProducts();
+        setProduct(null, p);
+        state.hint = `${p.name} added to your products${p.trackInventory === false ? " (stock not tracked)" : ""} and to this order.`;
+        form.querySelector('[data-role="items-hint"]').textContent = state.hint;
+      } catch (e) {
+        err.textContent = e.message || "Couldn't add the product.";
+        err.hidden = false;
+      } finally {
+        quickBusy = false;
+        const b = quickEl.querySelector('[data-act="qa-save"]');
+        if (b) b.disabled = false;
+      }
+    }
+    // Enter inside Quick Add adds the product (it never submits the order).
+    quickEl?.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && e.target.tagName === "INPUT") {
+        e.preventDefault();
+        quickAdd();
       }
     });
 

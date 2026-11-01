@@ -315,7 +315,8 @@ export async function viewResellerMenu({ db, token }) {
     .filter((d) => !hidden.has(d.id) && Number.isSafeInteger(d.data().sellingPrice) && d.data().sellingPrice > 0)
     .map((d) => {
       const p = d.data();
-      const available = Number.isSafeInteger(p.available) ? p.available : 0;
+      // Track Inventory OFF (2026-11-01): never out of stock.
+      const available = p.trackInventory === false ? STORE_MAX_LINE_QTY * QTY_SCALE : Number.isSafeInteger(p.available) ? p.available : 0;
       return { id: d.id, name: p.name || "", category: p.category || "", unit: p.unit, unitLabel: unitLabel(p.unit), ownerPrice: p.sellingPrice, sellingPrice: mine.has(d.id) && mine.get(d.id) >= p.sellingPrice ? mine.get(d.id) : p.sellingPrice, max: available >= QTY_SCALE ? Math.min(available - (available % QTY_SCALE), STORE_MAX_LINE_QTY * QTY_SCALE) : 0 };
     })
     .filter((p) => p.max > 0)

@@ -141,7 +141,7 @@ const priceOf = (special, productId, product) => (special.has(productId) ? { uni
 
 const resellerRef = (tenant, id) => tenant.doc("resellers", id);
 // An existing line keeps its price snapshots (and the owner price of a reseller line).
-const keepLine = (prior, quantity) => ({ lineId: prior.lineId, productId: prior.productId, sku: prior.sku, name: prior.name, unit: prior.unit, quantity, unitPrice: prior.unitPrice, ...(prior.customerPrice ? { customerPrice: true } : {}), ...(Number.isSafeInteger(prior.basePrice) ? { basePrice: prior.basePrice } : {}) });
+const keepLine = (prior, quantity) => ({ lineId: prior.lineId, productId: prior.productId, sku: prior.sku, name: prior.name, unit: prior.unit, quantity, unitPrice: prior.unitPrice, ...(prior.customerPrice ? { customerPrice: true } : {}), ...(Number.isSafeInteger(prior.basePrice) ? { basePrice: prior.basePrice } : {}), ...(prior.untracked === true ? { untracked: true } : {}) });
 // Lines with their per-line commission (reseller orders only).
 const withCommission = (lines) => lines.map((l) => (Number.isSafeInteger(l.basePrice) ? { ...l, commission: lineCommission(l) } : l));
 // Reseller earned totals follow the order in the same transaction
@@ -151,8 +151,13 @@ const prepareEarned = (tx, tenant, changes, FieldValue) => _prepareEarned(tx, te
 // override is kept (shared/resellers.js commissionFor).
 const recommission = (order, lines) => (order.resellerId ? commissionFor(orderCalculatedCommission(lines), order.commission) : null);
 
+// Track Inventory (2026-11-01): a line whose stock was never set aside
+// (line.untracked: the product didn't track inventory when it was added)
+// moves no stock on release / fulfillment, whatever the product does now.
+const untrackedOf = (line) => (line?.untracked === true ? { untracked: true } : {});
+const lineFlag = (result) => (result && result.tracked === false ? { untracked: true } : {});
 function movementsFor(lines, type, orderId, orderNumber, reason) {
-  return lines.map((l) => ({ productId: l.productId, movement: { type, quantity: l.quantity, referenceType: "order", referenceId: orderId, note: orderNumber, reason } }));
+  return lines.map((l) => ({ productId: l.productId, movement: { type, quantity: l.quantity, referenceType: "order", referenceId: orderId, note: orderNumber, reason, ...untrackedOf(l) } }));
 }
 
 // ---------- Create ----------
@@ -222,7 +227,7 @@ export async function createOrder({ db, tenant, FieldValue, business, entitlemen
       const resellerSnap = reseller ? await tx.get(resellerRef(tenant, reseller.id)) : null;
       if (reseller && (!resellerSnap.exists || resellerSnap.data().status !== "active")) throw new OrderError("reseller-inactive", "This reseller link isn't active");
       const lines = plan.results.map((r, i) => {
-        const base = { lineId: `L${i + 1}`, productId: r.productId, sku: r.product.sku, name: r.product.name, unit: r.product.unit, quantity: data.items[i].quantity };
+        const base = { lineId: `L${i + 1}`, productId: r.productId, sku: r.product.sku, name: r.product.name, unit: r.product.unit, quantity: data.items[i].quantity, ...lineFlag(r) };
         if (!reseller) return { ...base, ...priceOf(special, r.productId, r.product) };
         const selling = reseller.prices.has(r.productId) ? reseller.prices.get(r.productId) : r.product.sellingPrice;
         try {
@@ -331,19 +336,20 @@ export async function updateOrder({ db, tenant, FieldValue, business = null, ord
     for (const [productId, quantity] of newQty) {
       const before = oldLines.get(productId);
       const delta = quantity - (before ? before.quantity : 0);
-      if (delta > 0) moves.push({ productId, movement: { type: "reservation", quantity: delta, referenceType: "order", referenceId: orderId, note: order.orderNumber, reason: "order_edited" } });
-      if (delta < 0) moves.push({ productId, movement: { type: "release", quantity: -delta, referenceType: "order", referenceId: orderId, note: order.orderNumber, reason: "order_edited" } });
+      if (delta > 0) moves.push({ productId, movement: { type: "reservation", quantity: delta, referenceType: "order", referenceId: orderId, note: order.orderNumber, reason: "order_edited", ...untrackedOf(before) } });
+      if (delta < 0) moves.push({ productId, movement: { type: "release", quantity: -delta, referenceType: "order", referenceId: orderId, note: order.orderNumber, reason: "order_edited", ...untrackedOf(before) } });
       if (delta !== 0) changes.push({ productId, sku: before ? before.sku : null, from: before ? before.quantity : 0, to: quantity });
     }
     for (const [productId, line] of oldLines) {
       if (!newQty.has(productId)) {
-        moves.push({ productId, movement: { type: "release", quantity: line.quantity, referenceType: "order", referenceId: orderId, note: order.orderNumber, reason: "order_edited" } });
+        moves.push({ productId, movement: { type: "release", quantity: line.quantity, referenceType: "order", referenceId: orderId, note: order.orderNumber, reason: "order_edited", ...untrackedOf(line) } });
         changes.push({ productId, sku: line.sku, from: line.quantity, to: 0 });
       }
     }
 
     const plan = moves.length ? await prepareMovements(tx, { tenant, items: moves }) : null;
     const fresh = new Map(plan ? plan.results.map((r) => [r.productId, r.product]) : []);
+    const freshFlag = new Map(plan ? plan.results.map((r) => [r.productId, lineFlag(r)]) : []);
     const special = order.resellerId ? new Map() : await specialPrices(tx, tenant, link.data.customerId, data.items.filter((i) => !oldLines.has(i.productId)).map((i) => i.productId));
     let n = order.items.length;
     const lines = data.items.map((i) => {
@@ -354,7 +360,7 @@ export async function updateOrder({ db, tenant, FieldValue, business = null, ord
       n += 1;
       // New products are added at their current trusted price (the customer's special one first).
       for (const c of changes) if (c.productId === i.productId) c.sku = p.sku;
-      return { lineId: `L${n}`, productId: i.productId, sku: p.sku, name: p.name, unit: p.unit, quantity: i.quantity, ...priceOf(special, i.productId, p), ...(order.resellerId ? { basePrice: p.sellingPrice } : {}) };
+      return { lineId: `L${n}`, productId: i.productId, sku: p.sku, name: p.name, unit: p.unit, quantity: i.quantity, ...priceOf(special, i.productId, p), ...(order.resellerId ? { basePrice: p.sellingPrice } : {}), ...(freshFlag.get(i.productId) || {}) };
     });
     const totals = computeTotals(lines, data.discount);
     if (order.resellerId) totals.lines = withCommission(totals.lines);
@@ -444,10 +450,10 @@ async function correctFulfilled(tx, { tenant, FieldValue, business, ref, orderId
       if (delta < 0) {
         const keep = prorate(oldCost, quantity, oldQ);
         keptCost.set(productId, keep);
-        moves.push({ productId, movement: mv("correction_in", -delta, { value: oldCost - keep }) });
+        moves.push({ productId, movement: mv("correction_in", -delta, { value: oldCost - keep, ...untrackedOf(before) }) });
       } else {
         keptCost.set(productId, oldCost);
-        if (delta > 0) moves.push({ productId, movement: mv("correction_out", delta) });
+        if (delta > 0) moves.push({ productId, movement: mv("correction_out", delta, untrackedOf(before)) });
       }
     } else {
       keptCost.set(productId, 0);
@@ -457,7 +463,7 @@ async function correctFulfilled(tx, { tenant, FieldValue, business, ref, orderId
   }
   for (const [productId, line] of oldLines) {
     if (!newQty.has(productId)) {
-      moves.push({ productId, movement: mv("correction_in", line.quantity, { value: costByLine.get(line.lineId) ?? 0 }) });
+      moves.push({ productId, movement: mv("correction_in", line.quantity, { value: costByLine.get(line.lineId) ?? 0, ...untrackedOf(line) }) });
       changes.push({ productId, sku: line.sku, from: line.quantity, to: 0, inventory: line.quantity });
     }
   }
@@ -473,7 +479,7 @@ async function correctFulfilled(tx, { tenant, FieldValue, business, ref, orderId
     if (!p || p.status !== "active") throw new OrderError("product-inactive", "A new product on the order is unavailable");
     n += 1;
     for (const c of changes) if (c.productId === i.productId) c.sku = p.sku;
-    return { lineId: `L${n}`, productId: i.productId, sku: p.sku, name: p.name, unit: p.unit, quantity: i.quantity, ...priceOf(special, i.productId, p), ...(order.resellerId ? { basePrice: p.sellingPrice } : {}) };
+    return { lineId: `L${n}`, productId: i.productId, sku: p.sku, name: p.name, unit: p.unit, quantity: i.quantity, ...priceOf(special, i.productId, p), ...(order.resellerId ? { basePrice: p.sellingPrice } : {}), ...lineFlag(results.get(i.productId)) };
   });
   const totals = computeTotals(lines, data.discount);
   if (order.resellerId) totals.lines = withCommission(totals.lines);

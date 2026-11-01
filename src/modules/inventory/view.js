@@ -9,16 +9,20 @@ export const qty = (scaled, unit) => `${formatQuantity(scaled)} ${unitLabel(unit
 const signed = (scaled, unit) => `${scaled > 0 ? "+" : scaled < 0 ? "−" : "±"}${formatQuantity(Math.abs(scaled))} ${unitLabel(unit)}`;
 const avg = (costUnits, currency) => (costUnits === null || costUnits === undefined ? "—" : formatCentavos(costUnitsToCentavos(costUnits), currency));
 
+// Track Inventory OFF (2026-11-01): "Not tracked" instead of a misleading 0.
+export const NOT_TRACKED = "Not tracked";
 export function productRow(p, costs, { seesCosts, currency = "PHP" }) {
+  const tracked = p.trackInventory !== false;
   const row = {
     id: p.id,
     sku: p.sku,
     name: p.name,
     category: p.category || "—",
     unit: unitLabel(p.unit),
-    onHand: formatQuantity(p.onHand),
-    reserved: formatQuantity(p.reserved),
-    available: formatQuantity(p.available),
+    tracked,
+    onHand: tracked ? formatQuantity(p.onHand) : "—",
+    reserved: tracked ? formatQuantity(p.reserved) : "—",
+    available: tracked ? formatQuantity(p.available) : NOT_TRACKED,
     reorderLevel: formatQuantity(p.reorderLevel),
     price: formatCentavos(p.sellingPrice, currency),
     status: p.status,
@@ -28,7 +32,7 @@ export function productRow(p, costs, { seesCosts, currency = "PHP" }) {
   if (seesCosts) {
     row.avgCost = costs ? avg(costs.avgCostUnits, currency) : "—";
     const hasCost = Boolean(costs) && costs.avgCostUnits !== null && costs.avgCostUnits !== undefined;
-    row.value = hasCost ? formatCentavos(inventoryValue(p.onHand, costs.avgCostUnits), currency) : "—";
+    row.value = hasCost && tracked ? formatCentavos(inventoryValue(p.onHand, costs.avgCostUnits), currency) : "—";
     // Phase 18.6: estimated profit per unit at today's price and average
     // cost. An estimate only: an order's real COGS is the cost snapshot
     // taken when it was fulfilled, never re-priced with a later cost.

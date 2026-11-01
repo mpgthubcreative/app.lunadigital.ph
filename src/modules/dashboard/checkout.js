@@ -55,7 +55,11 @@ export function mountCheckout(host, session, deps) {
     (state.products || [])
       .map((p) => ({ p, ...lineOf(p) }))
       .filter((l) => l.quantity !== 0);
-  const left = (p) => (p.available ?? 0) - (lineOf(p).quantity || 0);
+  // Track Inventory OFF (2026-11-01): no stock cap, never out of stock.
+  const NO_CAP = 999999 * QTY_SCALE;
+  const capOf = (p) => (p.trackInventory === false ? NO_CAP : p.available ?? 0);
+  const leftText = (p) => (p.trackInventory === false ? "Stock not tracked" : capOf(p) <= 0 ? "Out of stock" : `${formatQuantity(Math.max(0, left(p)))} ${unitOf(p)} left`);
+  const left = (p) => capOf(p) - (lineOf(p).quantity || 0);
 
   function shell() {
     const opt = (id) => html`<option value="${id}" ${state.customer.source === id ? "selected" : ""}>${ORDER_SOURCES[id].label}</option>`;
@@ -88,14 +92,14 @@ export function mountCheckout(host, session, deps) {
     const l = lineOf(p);
     const q = l.quantity || 0;
     const step = QTY_SCALE;
-    const out = (p.available ?? 0) <= 0;
+    const out = capOf(p) <= 0;
     const shown = state.text.get(p.id) ?? (q ? formatQuantity(q) : "0");
     return html`<li class="co-row${q ? " is-picked" : ""}${out ? " is-out" : ""}" data-product="${p.id}">
-      <span class="co-info"><span class="co-name">${p.name}</span><span class="co-sub">${p.sku} · ${money(p.sellingPrice)} · <span data-role="left">${out ? "Out of stock" : `${formatQuantity(Math.max(0, left(p)))} ${unitOf(p)} left`}</span></span><span class="form-error" data-role="co-qty-error" ${l.error ? "" : "hidden"}>${l.error || ""}</span></span>
+      <span class="co-info"><span class="co-name">${p.name}</span><span class="co-sub">${p.sku} · ${money(p.sellingPrice)} · <span data-role="left">${leftText(p)}</span></span><span class="form-error" data-role="co-qty-error" ${l.error ? "" : "hidden"}>${l.error || ""}</span></span>
       <span class="co-qty">
         <button type="button" class="co-step" data-act="co-dec" data-id="${p.id}" aria-label="One less ${p.name}" ${q > 0 ? "" : "disabled"}>−</button>
         <input class="co-num" data-role="co-num" data-id="${p.id}" inputmode="decimal" value="${shown}" aria-label="Quantity of ${p.name}" autocomplete="off" />
-        <button type="button" class="co-step" data-act="co-inc" data-id="${p.id}" aria-label="One more ${p.name}" ${(l.quantity ?? 0) + step <= (p.available ?? 0) ? "" : "disabled"}>+</button>
+        <button type="button" class="co-step" data-act="co-inc" data-id="${p.id}" aria-label="One more ${p.name}" ${(l.quantity ?? 0) + step <= capOf(p) ? "" : "disabled"}>+</button>
       </span>
     </li>`;
   }
@@ -122,9 +126,9 @@ export function mountCheckout(host, session, deps) {
       const err = li.querySelector('[data-role="co-qty-error"]');
       err.textContent = l.error || "";
       err.hidden = !l.error;
-      li.querySelector('[data-role="left"]').textContent = (p.available ?? 0) <= 0 ? "Out of stock" : `${formatQuantity(Math.max(0, left(p)))} ${unitOf(p)} left`;
+      li.querySelector('[data-role="left"]').textContent = leftText(p);
       li.querySelector('[data-act="co-dec"]').disabled = !(q > 0);
-      li.querySelector('[data-act="co-inc"]').disabled = !((l.quantity ?? 0) + QTY_SCALE <= (p.available ?? 0));
+      li.querySelector('[data-act="co-inc"]').disabled = !((l.quantity ?? 0) + QTY_SCALE <= capOf(p));
       return;
     }
     const tmp = document.createElement("ul");
@@ -211,7 +215,7 @@ export function mountCheckout(host, session, deps) {
     const p = byId(el.dataset.id);
     if (el.dataset.act === "co-inc" && p) {
       const q = lineOf(p).quantity || 0;
-      setQty(p, Math.min(p.available ?? 0, q + QTY_SCALE));
+      setQty(p, Math.min(capOf(p), q + QTY_SCALE));
     } else if (el.dataset.act === "co-dec" && p) {
       const q = lineOf(p).quantity || 0;
       setQty(p, Math.max(0, q - QTY_SCALE));

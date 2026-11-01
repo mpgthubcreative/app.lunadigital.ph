@@ -68,7 +68,7 @@ export function createImportsHandler({ getAdmin: loadAdmin, now = () => new Date
           return respond(201, { success: true, ...(await previewImport({ ...common, type: body.type, fileName: body.fileName, rows: body.rows, mapping: body.mapping ?? null, now: now() })) });
         case "commit":
           if (body.includeWarnings !== undefined && typeof body.includeWarnings !== "boolean") throw new RequestError("invalid-request", "includeWarnings must be true or false.", 400);
-          return respond(200, { success: true, ...(await commitImport({ ...common, business: ctx.business, entitlements: ctx.entitlements, jobId: body.jobId, includeWarnings: body.includeWarnings === true, now: now(), canImport })) });
+          return respond(200, { success: true, ...(await commitImport({ ...common, business: ctx.business, entitlements: ctx.entitlements, jobId: body.jobId, includeWarnings: body.includeWarnings === true, now: now(), canImport, canSetCost: ctx.permissions["inventory.costs"] === true })) });
         default:
           return respond(200, { success: true, ...(await cancelImport({ ...common, jobId: body.jobId, canImport })) });
       }

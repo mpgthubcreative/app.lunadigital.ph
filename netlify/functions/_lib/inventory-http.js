@@ -38,6 +38,8 @@ const STATUS = {
   "no-cost-basis": 409,
   "no-change": 409,
   "unit-locked": 409,
+  untracked: 409,
+  "forbidden-cost": 403,
 };
 
 // Service errors carry safe, user-facing messages; anything else is a 500.

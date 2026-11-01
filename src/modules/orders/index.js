@@ -23,7 +23,7 @@ import { formDialog } from "../../components/form-dialog.js";
 import { confirmDialog, toast as defaultToast } from "../../components/feedback.js";
 import { api as defaultApi } from "../../lib/api.js";
 import { formatCentavos } from "../../lib/format.js";
-import { ORDER_SOURCES, ORDER_SOURCE_IDS, sourceText, FULFILLMENT_STATUSES, PAYMENT_STATUSES, PAYMENT_STATES, isDayId, isOpenFulfillment } from "@shared/index.js";
+import { ORDER_SOURCES, ORDER_SOURCE_IDS, sourceText, FULFILLMENT_STATUSES, PAYMENT_STATUSES, PAYMENT_STATES, isDayId, isOpenFulfillment, isModuleEnabled } from "@shared/index.js";
 import * as ordersData from "./data.js";
 import { listOrderPayments } from "../payments/data.js";
 import { listProducts } from "../inventory/data.js";
@@ -73,6 +73,21 @@ export function mount(container, session, { data = defaultDeps.data, payments = 
   const fromUrl = new URLSearchParams(typeof location === "undefined" ? "" : location.search);
   const initial = Object.fromEntries([["fulfillmentStatus", FULFILLMENT_STATUSES], ["paymentStatus", PAYMENT_STATUSES], ["source", ORDER_SOURCES]].filter(([k, allowed]) => fromUrl.get(k) && Object.hasOwn(allowed, fromUrl.get(k))).map(([k]) => [k, fromUrl.get(k)]));
   const state = { filters: initial, cursors: [], rows: [], hasMore: false, loading: true, error: null };
+  // "How do you want to start?" (2026-11-01): while the business has no
+  // orders yet, three ways to start; none is required or permanent. Add
+  // products as I go opens New Order straight away (Quick Add Product there).
+  const canImport = perms["products.manage"] === true && perms["imports.run"] === true && isModuleEnabled(session.entitlements, "imports") && isModuleEnabled(session.entitlements, "inventory");
+  const canInventory = isModuleEnabled(session.entitlements, "inventory") && perms["inventory.view"] === true;
+  const startCard = () =>
+    html`<section class="card start-card" data-role="start-card">
+      <h2 class="start-title">How do you want to start?</h2>
+      <p class="stat-hint">You can start taking orders now and complete your product list later. Change your approach any time.</p>
+      <div class="start-options">
+        <button type="button" class="start-option is-main" data-act="new"><b>Add products as I go</b><span>Start a New Order now and add each product the first time you sell it.</span></button>
+        ${canImport ? html`<a class="start-option" href="/imports" data-link data-role="start-import"><b>Import my products</b><span>Already have a product list? Upload an Excel file: only the product name is required.</span></a>` : ""}
+        ${canInventory ? html`<a class="start-option" href="/inventory" data-link data-role="start-inventory"><b>Set up inventory manually</b><span>A small catalog? Add your products and stock first.</span></a>` : ""}
+      </div>
+    </section>`;
   let alive = true;
   const editorDeps = { listActiveProducts: () => listActiveProducts(businessId), searchCustomers: (term) => searchCustomers(businessId, term), getProducts: (ids) => data.getProducts(businessId, ids), api };
 
@@ -118,7 +133,7 @@ export function mount(container, session, { data = defaultDeps.data, payments = 
               : !state.rows.length
                 ? filtered || state.cursors.length
                   ? emptyState({ iconName: "orders", title: "No orders match these filters", body: "Remove a filter to see more." })
-                  : examplesState({ title: "No orders yet", body: "Here's how your orders will look:", items: ORDER_EXAMPLES, helper: can.create ? "Tap + New order to add your first one (from a chat, a call or a walk-in)." : "Orders appear here as your team enters them.", role: "order-examples", wrap: true })
+                  : html`${can.create ? startCard() : ""}${examplesState({ title: "No orders yet", body: "Here's how your orders will look:", items: ORDER_EXAMPLES, helper: can.create ? "Tap + New order to add your first one (from a chat, a call or a walk-in)." : "Orders appear here as your team enters them.", role: "order-examples", wrap: true })}`
                 : html`<div class="table-wrap"><table class="table table-compact rows" data-role="orders">
                     <thead><tr><th class="m-only"></th><th>Order #</th><th>Customer</th><th class="num">Total</th><th>Latest payment</th><th>Payment</th><th>Fulfillment</th><th><span class="visually-hidden">Details</span></th></tr></thead>
                     <tbody>${state.rows.map((o) => {

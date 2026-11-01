@@ -4065,6 +4065,9 @@ button.wl-person-name:hover .wl-edit, button.wl-person-name:focus-visible .wl-ed
 .pd-stock { display: flex; justify-content: space-between; align-items: baseline; gap: var(--space-3); padding: var(--space-3); border-radius: var(--radius); background: var(--surface-sunken); margin-bottom: var(--space-3); }
 .pd-stock span { color: var(--text-muted); font-size: var(--text-sm); }
 .pd-stock b { font-size: var(--text-lg); font-variant-numeric: tabular-nums; }
+.pd-track { display: flex; justify-content: space-between; align-items: center; gap: var(--space-3); padding: 0 var(--space-3); }
+.pd-track span { color: var(--text-muted); font-size: var(--text-sm); }
+.pd-track-hint { margin: var(--space-1) var(--space-3) var(--space-3); }
 .pd-fields { margin: 0 0 var(--space-2); }
 .pd-field { display: flex; justify-content: space-between; gap: var(--space-3); padding: var(--space-2) 0; border-top: 1px solid var(--border); }
 .pd-field:first-child { border-top: 0; }
@@ -4721,6 +4724,13 @@ button.wl-person-name:hover .wl-edit, button.wl-person-name:focus-visible .wl-ed
 .oe-hint:empty { display: none; }
 .oe-hint { margin: var(--space-1) 0 0; color: var(--luna-primary); }
 .oe-add-item { margin-top: var(--space-2); }
+/* Quick Add Product (2026-11-01): a small inline card inside New Order. */
+.oe-add-row { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.oe-add-row .btn { margin-top: var(--space-2); }
+.oe-quick { margin-top: var(--space-3); padding: var(--space-3); border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-muted); }
+.oe-quick-title { margin: 0 0 var(--space-2); font-size: var(--text-sm, 0.95rem); }
+.oe-quick-actions { display: flex; justify-content: flex-end; gap: var(--space-2); margin-top: var(--space-2); }
+.oe-quick-actions .btn { min-height: 44px; }
 @media (max-width: 719px) {
   .oe-items-head { display: none; }
   .oe-item { grid-template-columns: 5rem minmax(0, 1fr) auto 2.75rem; grid-template-areas: "prod prod prod rm" "qty price total total" "note note note note"; row-gap: var(--space-1); }
@@ -4995,3 +5005,14 @@ tr.is-muted td, li.is-muted { opacity: 0.6; }
 .rp-commission li { display: grid; grid-template-columns: 1fr auto; gap: 2px var(--space-3); padding: var(--space-2) 0; border-top: 1px solid var(--border); }
 .rp-c-amt { text-align: right; font-variant-numeric: tabular-nums; }
 .rp-c-state { grid-column: 1 / -1; }
+
+/* "How do you want to start?" (2026-11-01): three starting paths on Orders
+   while a business has no orders yet. Add products as I go leads. */
+.start-card { margin-bottom: var(--space-3); }
+.start-title { margin: 0 0 var(--space-1); font-size: var(--text-lg); }
+.start-options { display: grid; grid-template-columns: 1fr; gap: var(--space-2); margin-top: var(--space-3); }
+@media (min-width: 768px) { .start-options { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+.start-option { display: flex; flex-direction: column; gap: var(--space-1); min-height: 44px; padding: var(--space-3); border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); color: inherit; text-align: left; text-decoration: none; font: inherit; cursor: pointer; }
+.start-option span { color: var(--text-muted); font-size: var(--text-sm); }
+.start-option:hover, .start-option:focus-visible { border-color: var(--luna-primary); }
+.start-option.is-main { border-color: var(--luna-primary); background: var(--surface-muted); }

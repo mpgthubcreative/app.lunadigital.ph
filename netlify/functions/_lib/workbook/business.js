@@ -68,7 +68,9 @@ const INVENTORY_COLUMNS = [
   { header: "Product", format: "text", width: 30, value: (p) => p.name },
   { header: "Category", format: "text", width: 18, value: (p) => p.category },
   { header: "Unit", format: "text", width: 8, value: (p) => UNITS[p.unit]?.label ?? p.unit },
-  { header: "Stock Left", format: "quantity", width: 11, value: (p) => p.available },
+  // Track Inventory OFF (2026-11-01): Stock Left blank, never a misleading 0.
+  { header: "Track Inventory", format: "bool", width: 10, value: (p) => p.trackInventory !== false },
+  { header: "Stock Left", format: "quantity", width: 11, value: (p) => (p.trackInventory === false ? null : p.available) },
   { header: "Selling Price", format: "money", width: 14, value: (p) => p.sellingPrice },
 ];
 const CUSTOMER_COLUMNS = [

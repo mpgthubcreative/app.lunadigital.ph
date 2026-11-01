@@ -349,14 +349,14 @@ describe("Luna Business workbook", () => {
     expect(dataOf(wb.bytes, "Payments")).toEqual([[serial("2026-10-18"), ids.orderNumber, "Marian Santos", "100", "GCash", "GC77", "Carlo Reyes"]]);
     expect(rowsOf(wb.bytes, "Users")[0]).toEqual(["Name", "Email", "Role", "Status"]);
     expect(dataOf(wb.bytes, "Users").map((r) => r[2])).toContain("Owner");
-    expect(dataOf(wb.bytes, "Inventory")).toEqual([["Hayst Choco", "Coffee", "pcs", "19", "80"], ["Hayst Kopi", "Coffee", "pcs", "18", "75"]]);
+    expect(dataOf(wb.bytes, "Inventory")).toEqual([["Hayst Choco", "Coffee", "pcs", "Yes", "19", "80"], ["Hayst Kopi", "Coffee", "pcs", "Yes", "18", "75"]]);
     expect(rowsOf(wb.bytes, "Operating Expenses")[0]).toEqual(["Date", "Expense", "Amount"]);
     expect(dataOf(wb.bytes, "Operating Expenses")).toEqual([[serial("2026-10-01"), "Rent", "2500"], [serial("2026-10-05"), "Water", "1000"]]);
     expect(rowsOf(wb.bytes, "Operating Expenses").at(-1)).toEqual(["Total", "", "3500"]);
     expect(rowsOf(wb.bytes, "COGS")[0]).toEqual(["Product", "Unit Cost"]);
     expect(dataOf(wb.bytes, "COGS").sort()).toEqual([["Hayst Choco", "50"], ["Hayst Kopi", "43"]]);
     expectCleanSheet(wb.bytes, "Orders", { money: ["F", "G", "H"], dates: ["B"] });
-    expectCleanSheet(wb.bytes, "Inventory", { money: ["E"] });
+    expectCleanSheet(wb.bytes, "Inventory", { money: ["F"] });
     expectCleanSheet(wb.bytes, "Operating Expenses", { money: ["C"], dates: ["A"] });
     expectCleanSheet(wb.bytes, "COGS", { money: ["B"] });
     expectCleanSheet(wb.bytes, "Customers", {});

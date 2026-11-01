@@ -24,13 +24,15 @@ import {
   PRODUCT_SCHEMA_VERSION,
   validateProductInput,
   isLowStock,
+  planUntracked,
+  skuFromName,
   isValidProductId,
   planMovement,
   countMovement,
   InventoryError,
   MOVEMENT_TYPES,
 } from "../../../shared/inventory.js";
-import { inventoryValue, formatQuantity, UNITS, isCentavos, centavosToCostUnits, costUnitsToCentavos, MAX_CENTAVOS } from "../../../shared/quantity.js";
+import { inventoryValue, formatQuantity, UNITS, isCentavos, isQuantity, centavosToCostUnits, costUnitsToCentavos, MAX_CENTAVOS } from "../../../shared/quantity.js";
 import { adjustCurrentMetrics } from "./metrics.js";
 import { createHash } from "node:crypto";
 import { isValidIdempotencyKey } from "../../../shared/orders.js";
@@ -83,7 +85,10 @@ function audit(tx, tenant, FieldValue, entry) {
 
 // hooks (imports): { read(tx) before any write, may throw; write(tx, productId) }
 // let an import mark its row done in the SAME transaction (idempotent).
-export async function createProduct({ db, tenant, FieldValue, input, actor, hooks = null }) {
+// trackInventory (2026-11-01): false creates an untracked product (Quick Add,
+// import without stock); omitted = tracked, as before. needsPrice: imported
+// without a price (kept off the menus until a price is saved).
+export async function createProduct({ db, tenant, FieldValue, input, actor, hooks = null, trackInventory = true, needsPrice = false }) {
   const data = validateProductInput(input);
   const productRef = tenant.collection("products").doc();
   const skuRef = tenant.doc("skuIndex", data.sku);
@@ -104,7 +109,9 @@ export async function createProduct({ db, tenant, FieldValue, input, actor, hook
       reserved: 0,
       available: 0,
       movementCount: 0,
-      isLowStock: isLowStock({ status: "active", available: 0, reorderLevel: data.reorderLevel }),
+      ...(trackInventory === false ? { trackInventory: false } : {}),
+      ...(needsPrice ? { needsPrice: true } : {}),
+      isLowStock: isLowStock({ status: "active", available: 0, reorderLevel: data.reorderLevel, trackInventory }),
       createdBy: actor,
       createdAt: now,
       updatedBy: actor,
@@ -136,10 +143,10 @@ export async function updateProduct({ db, tenant, FieldValue, productId, changes
     }
 
     const merged = { ...current, ...data };
-    const low = isLowStock({ status: merged.status, available: merged.available, reorderLevel: merged.reorderLevel });
+    const low = isLowStock({ status: merged.status, available: merged.available, reorderLevel: merged.reorderLevel, trackInventory: merged.trackInventory });
     const crossing = low && !current.isLowStock ? lowStockEvent(productId, merged, merged.available) : null;
     const notes = await prepareNotifications(tx, { tenant, actor, events: crossing ? [crossing.event] : [] });
-    const update = { ...data, isLowStock: low, ...(crossing ? { lowStockEpisode: crossing.episode } : {}), updatedBy: actor, updatedAt: FieldValue.serverTimestamp() };
+    const update = { ...data, ...(current.needsPrice && data.sellingPrice !== undefined ? { needsPrice: false } : {}), isLowStock: low, ...(crossing ? { lowStockEpisode: crossing.episode } : {}), updatedBy: actor, updatedAt: FieldValue.serverTimestamp() };
     if (data.name !== undefined) update.nameLower = lower(data.name);
     if (data.category !== undefined) update.categoryLower = lower(data.category);
 
@@ -189,7 +196,7 @@ export async function setProductStatus({ db, tenant, FieldValue, productId, stat
     const current = snap.data();
     if (current.status === status) return { productId, product: current };
     if (status === "inactive" && current.reserved > 0) throw new InventoryError("has-reservations", "A product with reserved stock can't be deactivated");
-    const low = isLowStock({ status, available: current.available, reorderLevel: current.reorderLevel });
+    const low = isLowStock({ status, available: current.available, reorderLevel: current.reorderLevel, trackInventory: current.trackInventory });
     const crossing = low && !current.isLowStock ? lowStockEvent(productId, current, current.available) : null;
     const notes = await prepareNotifications(tx, { tenant, actor, events: crossing ? [crossing.event] : [] });
     tx.update(productRef, { status, isLowStock: low, ...(crossing ? { lowStockEpisode: crossing.episode } : {}), updatedBy: actor, updatedAt: FieldValue.serverTimestamp() });
@@ -198,6 +205,86 @@ export async function setProductStatus({ db, tenant, FieldValue, productId, stat
     notes.commit({ FieldValue });
     return { productId, product: { ...current, status, isLowStock: low } };
   }, TX_OPTIONS);
+}
+
+// Track inventory ON / OFF (2026-11-01), one transaction.
+// ON: optionally with the stock on hand now (scaled quantity): the product's
+// first stock is a Starting stock (at unitCost, or "no cost yet"); a product
+// with stock history gets a stock count to that figure. Without a stock
+// figure it simply starts tracking at what's on record (0 for a product that
+// never tracked). Nothing historical is invented: order lines sold while
+// untracked stay untracked (they never set stock aside).
+// OFF: refused while open orders have stock set aside for it; the stock on
+// record stays as it is (not used while untracked) and low stock clears.
+export async function setTrackInventory({ db, tenant, FieldValue, productId, track, stock = null, unitCost = null, actor }) {
+  if (typeof track !== "boolean") throw new InventoryError("invalid-input", "Choose whether to track inventory");
+  if (stock !== null && (!Number.isSafeInteger(stock) || stock < 0)) throw new InventoryError("invalid-quantity", "Enter the stock on hand (0 or more)");
+  if (unitCost !== null && (!isCentavos(unitCost) || unitCost > MAX_CENTAVOS)) throw new InventoryError("invalid-cost", "Enter a unit cost of ₱0 or more");
+  const { product: productRef } = refs(tenant, productId);
+  return db.runTransaction(async (tx) => {
+    const snap = await tx.get(productRef);
+    if (!snap.exists) throw new InventoryError("not-found", "Product not found");
+    const current = snap.data();
+    const tracked = current.trackInventory !== false;
+    if (tracked === track) return { productId, trackInventory: track, unchanged: true };
+    const stamp = FieldValue.serverTimestamp();
+    if (!track) {
+      if ((current.reserved || 0) > 0) throw new InventoryError("has-reservations", "Open orders have stock set aside for this product. Fulfill or cancel them first, then turn off Track inventory");
+      tx.update(productRef, { trackInventory: false, isLowStock: false, updatedBy: actor, updatedAt: stamp });
+      gaugeWrites(tx, { tenant, FieldValue, lowStockDelta: current.isLowStock ? -1 : 0 });
+      audit(tx, tenant, FieldValue, { type: "product.tracking", productId, actor, before: { trackInventory: true }, after: { trackInventory: false } });
+      return { productId, trackInventory: false };
+    }
+    // ON, with the stock counted now (if given).
+    const first = (current.movementCount || 0) === 0 && (current.onHand || 0) === 0 && (current.reserved || 0) === 0;
+    let movement = null;
+    if (stock !== null && stock > 0 && first) movement = { type: "opening", quantity: stock, ...(unitCost !== null ? { unitCost } : { unitCost: null, noCost: true }), note: "Track inventory turned on" };
+    // Stock history (tracked before): more stock at a known cost is a receipt;
+    // otherwise a stock count to the figure entered.
+    else if (stock !== null && !first && stock > current.onHand && unitCost !== null) movement = { type: "receipt", quantity: stock - current.onHand, unitCost, note: "Track inventory turned on" };
+    else if (stock !== null && !first && stock !== current.onHand) movement = { type: "count", onHand: stock, reason: "count_correction", note: "Track inventory turned on" };
+    const plan = movement ? await prepareMovements(tx, { tenant, items: [{ productId, movement }], forceTracked: true }) : null;
+    const available = plan ? plan.results[0].next.available : (current.onHand || 0) - (current.reserved || 0);
+    const low = isLowStock({ status: current.status, available, reorderLevel: current.reorderLevel, trackInventory: true });
+    tx.update(productRef, { trackInventory: true, updatedBy: actor, updatedAt: stamp, ...(plan ? {} : { isLowStock: low }) });
+    if (!plan) gaugeWrites(tx, { tenant, FieldValue, lowStockDelta: (low ? 1 : 0) - (current.isLowStock ? 1 : 0) });
+    audit(tx, tenant, FieldValue, { type: "product.tracking", productId, actor, before: { trackInventory: false }, after: { trackInventory: true, stock } });
+    const moved = plan ? plan.commit({ actor, FieldValue }) : null;
+    return { productId, trackInventory: true, available, ...(moved ? { transactionId: moved[0].transactionId } : {}) };
+  }, TX_OPTIONS);
+}
+
+// Quick Add Product (2026-11-01): a product made in a few seconds, e.g. from
+// inside New Order. Name + price only; category, stock and unit cost are
+// optional. The SKU is made from the name (editable later); unit pcs.
+// No stock entered -> Track inventory OFF (sellable at once, never "out of
+// stock"); stock entered -> Track inventory ON with that starting stock.
+// input: { name, sellingPrice, category?, stock? (scaled), unitCost? }.
+// canSetCost: inventory.costs (a unit cost is refused without it).
+const QUICK_FIELDS = ["name", "sellingPrice", "category", "stock", "unitCost"];
+export async function quickAddProduct({ db, tenant, FieldValue, input, canSetCost = false, actor, sku = null }) {
+  if (!input || typeof input !== "object" || Array.isArray(input)) throw new InventoryError("invalid-input", "Invalid product");
+  for (const k of Object.keys(input)) if (!QUICK_FIELDS.includes(k)) throw new InventoryError("invalid-input", `Field ${k} can't be set here`);
+  const stock = input.stock === undefined || input.stock === null ? null : input.stock;
+  if (stock !== null && !isQuantity(stock, "pcs")) throw new InventoryError("invalid-quantity", "Stock: a whole number, 0 or more (or leave it blank)");
+  const unitCost = input.unitCost === undefined || input.unitCost === null ? null : input.unitCost;
+  if (unitCost !== null && !canSetCost) throw new InventoryError("forbidden-cost", "You can't set product costs. Leave COGS blank");
+  if (unitCost !== null && (!isCentavos(unitCost) || unitCost > MAX_CENTAVOS)) throw new InventoryError("invalid-cost", "COGS: ₱0 or more (or leave it blank)");
+  const base = { name: input.name, sellingPrice: input.sellingPrice, unit: "pcs", reorderLevel: 0, ...(input.category ? { category: input.category } : {}) };
+  let created = null;
+  for (let attempt = 0; attempt < 5 && !created; attempt++) {
+    try {
+      created = await createProduct({ db, tenant, FieldValue, input: { ...base, sku: sku && attempt === 0 ? sku : skuFromName(input.name) }, actor, trackInventory: false });
+    } catch (err) {
+      if (err.code !== "duplicate-sku") throw err;
+    }
+  }
+  if (!created) throw new InventoryError("duplicate-sku", "Couldn't make a unique SKU for this product. Try again");
+  const { productId } = created;
+  if (stock !== null) await setTrackInventory({ db, tenant, FieldValue, productId, track: true, stock, unitCost, actor });
+  else if (unitCost !== null) await setProductUnitCost({ db, tenant, FieldValue, productId, unitCost, actor });
+  const snap = await tenant.doc("products", productId).get();
+  return { productId, product: snap.data(), trackInventory: stock !== null };
 }
 
 // Deletion only for products that never moved: no stock, no reservations,
@@ -209,7 +296,7 @@ export async function deleteUnusedProduct({ db, tenant, FieldValue, productId, a
     const snap = await tx.get(productRef);
     if (!snap.exists) throw new InventoryError("not-found", "Product not found");
     const p = snap.data();
-    if (p.movementCount > 0 || p.onHand !== 0 || p.reserved !== 0) {
+    if (p.movementCount > 0 || p.onHand !== 0 || p.reserved !== 0 || (p.orderUses || 0) > 0) {
       throw new InventoryError("product-in-use", "Products with stock history can't be deleted. Deactivate it instead");
     }
     tx.delete(productRef);
@@ -228,7 +315,11 @@ export async function deleteUnusedProduct({ db, tenant, FieldValue, productId, a
 // { results, commit } where commit() performs all the writes. Callers
 // that write their own documents (Phase 7 orders) do their reads first,
 // call prepareMovements, then write, then commit().
-export async function prepareMovements(tx, { tenant, items }) {
+// An item is UNTRACKED (no stock change; cost still booked) when its product
+// doesn't track inventory, or the movement says so (an order line whose
+// stock was never set aside: movement.untracked). forceTracked: the
+// Track-inventory switch recording the product's first stock.
+export async function prepareMovements(tx, { tenant, items, forceTracked = false }) {
   if (!Array.isArray(items) || !items.length) throw new InventoryError("invalid-input", "No movements");
   const ids = items.map((i) => i.productId);
   if (new Set(ids).size !== ids.length) throw new InventoryError("invalid-input", "Combine quantities per product into one movement");
@@ -250,12 +341,14 @@ export async function prepareMovements(tx, { tenant, items }) {
       reorderLevel: product.reorderLevel,
       movementCount: product.movementCount,
       avgCostUnits: costs.avgCostUnits ?? null,
+      trackInventory: forceTracked ? true : product.trackInventory,
     };
+    if (item.movement?.untracked === true || (!forceTracked && product.trackInventory === false)) return { item, refs: r, product, costs, state, plan: planUntracked(state, item.movement) };
     // A stock count becomes the adjustment that reaches it (from THIS read).
     if (item.movement?.type === "count") item.movement = countMovement(state, item.movement);
     return { item, refs: r, product, costs, state, plan: planMovement(state, item.movement) };
   });
-  for (const p of planned) p.crossing = p.plan.next.isLowStock && !p.product.isLowStock ? lowStockEvent(p.item.productId, p.product, p.plan.next.available) : null;
+  for (const p of planned) p.crossing = !p.plan.untracked && p.plan.next.isLowStock && !p.product.isLowStock ? lowStockEvent(p.item.productId, p.product, p.plan.next.available) : null;
   const notes = await prepareNotifications(tx, { tenant, events: planned.map((p) => p.crossing?.event) });
 
   function commit({ actor, FieldValue }) {
@@ -263,6 +356,12 @@ export async function prepareMovements(tx, { tenant, items }) {
     let lowStockDelta = 0;
     for (const { item, refs: r, product, costs, state, plan, crossing } of planned) {
       const m = item.movement;
+      // Untracked: nothing in stock moves; the product only counts its order
+      // use (so a product on orders is never deleted).
+      if (plan.untracked) {
+        if (m.type === "reservation" || m.type === "correction_out") tx.update(r.product, { orderUses: FieldValue.increment(1), updatedAt: now });
+        continue;
+      }
       const { next } = plan;
       const seq = next.movementCount;
       const txRef = tenant.collection("inventoryTransactions").doc();
@@ -312,13 +411,13 @@ export async function prepareMovements(tx, { tenant, items }) {
     }
     gaugeWrites(tx, { tenant, FieldValue, lowStockDelta });
     notes.commit({ FieldValue, actor });
-    return planned.map(({ item, plan }) => ({ productId: item.productId, transactionId: plan.transactionId, next: plan.next, costConsumed: plan.costConsumed }));
+    return planned.map(({ item, plan }) => ({ productId: item.productId, transactionId: plan.transactionId ?? null, next: plan.next, costConsumed: plan.costConsumed, tracked: !plan.untracked }));
   }
 
   // `product`: the trusted product fields read in THIS transaction, so callers
   // (orders) price and snapshot lines from the same reads, never from the browser.
   const snapshot = (p) => ({ sku: p.sku, name: p.name, unit: p.unit, sellingPrice: p.sellingPrice, status: p.status });
-  return { results: planned.map(({ item, plan, product }) => ({ productId: item.productId, next: plan.next, costConsumed: plan.costConsumed, product: snapshot(product) })), commit };
+  return { results: planned.map(({ item, plan, product }) => ({ productId: item.productId, next: plan.next, costConsumed: plan.costConsumed, tracked: !plan.untracked, product: snapshot(product) })), commit };
 }
 
 // One movement on one product, in its own transaction.

@@ -35,7 +35,8 @@ export function readSpreadsheet(fileName, bytes) {
 
 export function templateWorkbook(type) {
   const def = IMPORT_TYPES[type];
-  const example = type === "products" ? ["WINGS-1KG", "Chicken Wings 1kg", "Frozen", "pcs", 250.5, 10] : ["ABC Store", "ABC Trading", "0917 123 4567", "owner@abcstore.ph", "12 Rizal St, Cebu City", "Delivers Tuesdays"];
+  // Products (2026-11-01): only the name is required; the example row shows the optional columns.
+  const example = type === "products" ? ["Nipple Tape", "", "Beauty", "pcs", 250, 30, 0, "Yes", ""] : ["ABC Store", "ABC Trading", "0917 123 4567", "owner@abcstore.ph", "12 Rizal St, Cebu City", "Delivers Tuesdays"];
   return writeXlsx([{ name: def.label, rows: [def.fields.map((f) => f.label + (f.required ? " *" : "")), example] }]);
 }
 
@@ -71,7 +72,7 @@ export function mount(container, session, { api = defaultApi, data = defaultData
         <input class="input" type="file" name="file" accept=".xlsx,.csv" aria-label="Spreadsheet" />
       </div>
       <p class="stat-hint">Up to ${IMPORT_MAX_ROWS} rows, first sheet only. Nothing is saved until you confirm. Existing ${def().label.toLowerCase()} are never changed: matching rows are skipped.</p>
-      ${s.type === "products" ? html`<p class="stat-hint">Products start with 0 stock. Enter stock afterwards with Inventory → Opening count.</p>` : ""}
+      ${s.type === "products" ? html`<p class="stat-hint" data-role="products-hint">Only the product name is required: a file with just Product and Price works. Category, Stock, COGS, SKU and Track Inventory are optional. Rows with stock track inventory; rows without it are sold without counting stock. Rows with no price are imported and flagged so you can add one later.</p>` : ""}
     </form>`;
   }
 

@@ -190,11 +190,14 @@ export async function resolveStore({ db, slug }) {
 const unitLabel = (u) => UNITS[u]?.label ?? u ?? "";
 // What a customer may see of one product (no cost, stock level, SKU or ids
 // beyond the product id needed to order it).
+// Track Inventory OFF (2026-11-01): never sold out, no "Only N left"; shown
+// while active and on the menu, like any product.
 function publicProduct(id, p) {
+  const tracked = p.trackInventory !== false;
   const available = Number.isSafeInteger(p.available) ? p.available : 0;
   // The menu orders whole units, so less than one left (e.g. 0.4 kg) is sold out.
-  const orderable = available >= QTY_SCALE;
-  const low = orderable && available <= STORE_LOW_STOCK_SHOWN * QTY_SCALE;
+  const orderable = !tracked || available >= QTY_SCALE;
+  const low = tracked && orderable && available <= STORE_LOW_STOCK_SHOWN * QTY_SCALE;
   return {
     id,
     name: p.name || "",

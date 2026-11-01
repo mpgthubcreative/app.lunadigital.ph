@@ -24,6 +24,14 @@
 //   correction_out  -onHand from unreserved stock at the current average
 //                   (a fulfilled order corrected up); returns cost consumed
 // No movement may oversell: there is no backorder policy yet.
+//
+// Track Inventory (2026-11-01): per product. Missing / true = tracked (every
+// product before this date: unchanged). trackInventory: false = untracked:
+// orders never reserve or deduct it and it's never out of stock or low;
+// fulfillment still books its cost (qty × the current unit cost, if any).
+// Each order line remembers whether its stock was reserved (line.untracked),
+// so turning tracking on later never fulfils stock that was never set aside.
+// Manual stock movements need tracking on (Track inventory → stock count).
 
 import {
   UNITS,
@@ -102,6 +110,13 @@ export function normalizeSku(input) {
   return typeof input === "string" ? input.trim().toUpperCase() : "";
 }
 
+// A SKU made from a product's name (2026-11-01: Quick Add, imports without a
+// SKU column): "Nipple Tape" -> "NIPPLE-TAPE-7Q2K". Editable later.
+export const skuFromName = (name, rand = () => Math.random().toString(36).slice(2, 6)) => {
+  const base = String(name || "").toUpperCase().normalize("NFKD").replace(/[^A-Z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 24).replace(/-+$/, "") || "ITEM";
+  return `${base}-${rand().toUpperCase().replace(/[^A-Z0-9]/g, "0").padEnd(4, "0").slice(0, 4)}`;
+};
+
 export function isValidSku(sku) {
   return SKU.test(sku) && !/\.\.|^\.|\.$/.test(sku);
 }
@@ -160,8 +175,22 @@ export function validateProductInput(input, { existing = null } = {}) {
   return out;
 }
 
-export function isLowStock({ status, available, reorderLevel }) {
-  return status === "active" && available <= reorderLevel;
+export function isLowStock({ status, available, reorderLevel, trackInventory }) {
+  return status === "active" && trackInventory !== false && available <= reorderLevel;
+}
+export const tracksInventory = (product) => product?.trackInventory !== false;
+
+// An order movement on an UNTRACKED product (or an order line whose stock was
+// never set aside): no stock changes; fulfillment / correction_out book the
+// cost at the current unit cost. Stock movements are refused.
+const UNTRACKED_MOVEMENTS = new Set(["reservation", "release", "fulfillment", "correction_in", "correction_out"]);
+export function planUntracked(state, movement) {
+  if (!UNTRACKED_MOVEMENTS.has(movement?.type)) throw new InventoryError("untracked", "This product doesn't track stock. Turn on Track inventory to record stock for it");
+  if (!isQuantity(movement.quantity, state.unit) || movement.quantity === 0) throw new InventoryError("invalid-quantity", `Quantity must be more than 0 and valid for ${UNITS[state.unit]?.label ?? "this unit"}`);
+  if (movement.type === "reservation" && state.status !== "active") throw new InventoryError("product-inactive", "Inactive products can't be ordered");
+  const costConsumed = movement.type === "fulfillment" || movement.type === "correction_out" ? costOfQuantity(movement.quantity, state.avgCostUnits ?? 0) : 0;
+  const next = { onHand: state.onHand, reserved: state.reserved, available: state.onHand - state.reserved, avgCostUnits: state.avgCostUnits ?? null, movementCount: state.movementCount || 0, isLowStock: false };
+  return { next, delta: { onHand: 0, reserved: 0 }, costConsumed, valueBefore: 0, valueAfter: 0, untracked: true };
 }
 
 // ---------- Movements ----------
@@ -178,7 +207,10 @@ export function planMovement(state, movement) {
   if (!isQuantity(quantity, state.unit) || quantity === 0) {
     throw new InventoryError("invalid-quantity", `Quantity must be more than 0 and valid for ${UNITS[state.unit]?.label ?? "this unit"}`);
   }
-  if (def.needsCost && !isCentavos(movement.unitCost)) throw new InventoryError("invalid-cost", "Unit cost must be a whole number of centavos, 0 or more");
+  // noCost (2026-11-01): a starting stock whose cost isn't known yet (import,
+  // Quick Add): the product keeps "no cost set" instead of a made-up ₱0.
+  const noCost = movement.type === "opening" && movement.noCost === true && (movement.unitCost === null || movement.unitCost === undefined);
+  if (def.needsCost && !noCost && !isCentavos(movement.unitCost)) throw new InventoryError("invalid-cost", "Unit cost must be a whole number of centavos, 0 or more");
 
   const onHand = state.onHand;
   const reserved = state.reserved;
@@ -193,7 +225,7 @@ export function planMovement(state, movement) {
         throw new InventoryError("opening-not-allowed", "An opening balance can only be recorded before any other stock movement");
       }
       nextOnHand = quantity;
-      nextAvg = centavosToCostUnits(movement.unitCost);
+      nextAvg = noCost ? state.avgCostUnits ?? null : centavosToCostUnits(movement.unitCost);
       break;
     case "receipt":
       nextOnHand = onHand + quantity;
@@ -252,7 +284,7 @@ export function planMovement(state, movement) {
     avgCostUnits: nextAvg ?? null,
     movementCount: (state.movementCount || 0) + 1,
   };
-  next.isLowStock = isLowStock({ status: state.status, available: next.available, reorderLevel: state.reorderLevel });
+  next.isLowStock = isLowStock({ status: state.status, available: next.available, reorderLevel: state.reorderLevel, trackInventory: state.trackInventory });
 
   return {
     next,

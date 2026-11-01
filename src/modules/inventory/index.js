@@ -129,16 +129,16 @@ export function mount(container, session, { data = defaultData, api = defaultApi
     const menuSwitch =
       onMenu === null
         ? ""
-        : html`<span class="menu-toggle" data-role="menu-toggle"><span class="menu-toggle-label">Menu</span>${can.manage ? html`<button type="button" class="menu-switch" role="switch" aria-checked="${onMenu}" data-act="menu" data-id="${r.id}" aria-label="Show ${r.name} on menu">${onMenu ? "ON" : "OFF"}</button>` : html`<b class="menu-state">${onMenu ? "ON" : "OFF"}</b>`}</span>`;
-    const primary = can.adjust ? html`<button type="button" class="btn btn-compact" data-act="${r.hasMovements ? "adjust" : "opening"}" data-id="${r.id}">${r.hasMovements ? "Update stock" : "Starting stock"}</button>` : "";
+        : html`<span class="menu-toggle" data-role="menu-toggle"><span class="menu-toggle-label">Menu</span>${can.manage ? html`<button type="button" class="menu-switch" role="switch" aria-checked="${onMenu ? "true" : "false"}" data-act="menu" data-id="${r.id}" aria-label="Show ${r.name} on menu">${onMenu ? "ON" : "OFF"}</button>` : html`<b class="menu-state">${onMenu ? "ON" : "OFF"}</b>`}</span>`;
+    const primary = can.adjust && r.tracked ? html`<button type="button" class="btn btn-compact" data-act="${r.hasMovements ? "adjust" : "opening"}" data-id="${r.id}">${r.hasMovements ? "Update stock" : "Starting stock"}</button>` : "";
     const low = r.isLowStock ? html` ${badge("Low stock", "warning")}` : "";
     return html`<tr data-product="${r.id}" class="${r.isLowStock ? "row-warning" : ""}" data-open>
-      ${mobileCell({ title: r.name, sub: `${r.sku} · ${r.reserved} set aside · ${r.price}`, end: html`${r.available} <small>${r.unit} left</small>` })}
+      ${mobileCell({ title: r.name, sub: r.tracked ? `${r.sku} · ${r.reserved} set aside · ${r.price}` : `${r.sku} · ${r.price}`, end: r.tracked ? html`${r.available} <small>${r.unit} left</small>` : html`<small class="stat-hint" data-role="not-tracked">Stock not tracked</small>` })}
       <td class="cell-strong">${r.sku}</td>
       <td>${r.name}${low}${menuSwitch ? html`<div class="menu-toggle-d">${menuSwitch}</div>` : ""}</td>
       <td class="col-secondary">${r.category}</td>
       <td class="col-secondary">${r.unit}</td>
-      <td class="num cell-strong" data-col="available">${r.available}</td>
+      <td class="num${r.tracked ? " cell-strong" : " stat-hint"}" data-col="available">${r.available}</td>
       <td class="num col-secondary" data-col="onHand">${r.onHand}</td>
       <td class="num col-secondary" data-col="reserved">${r.reserved}</td>
       ${can.costs ? html`<td class="num col-secondary" data-col="avgCost">${r.avgCost}</td><td class="num col-secondary${r.isLoss ? " text-danger" : ""}" data-col="profit">${r.profitPerUnit}</td>` : ""}
@@ -329,6 +329,40 @@ export function mount(container, session, { data = defaultData, api = defaultApi
     if (ok) await done(kind === "receipt" ? "Stock received" : "Starting stock recorded");
   }
 
+  // ---- Track inventory ON / OFF (2026-11-01) ----
+  // ON asks for the stock on hand now (blank: start at what's on record);
+  // a first stock can carry its unit cost. OFF keeps the record as it is.
+  async function setTracking(p, on) {
+    if (!on) {
+      const yes = await confirmDialog({ title: `Stop tracking stock for ${p.name}?`, body: "It can still be ordered and sold. Luna stops setting stock aside and deducting it, and it's never shown as out of stock. You can turn tracking back on any time.", confirmLabel: "Turn off" });
+      if (!yes) return;
+      try {
+        await send("products", { action: "setTracking", productId: p.id, track: false });
+        await done("Stock tracking turned off");
+      } catch (err) {
+        toast(err.message, "danger");
+      }
+      return;
+    }
+    const first = !(p.movementCount > 0) && !(p.onHand > 0);
+    const ok = await formDialog({
+      title: `Track inventory: ${p.name}`,
+      intro: "Luna will set stock aside for orders and deduct it when they're fulfilled.",
+      fields: [
+        { name: "stock", label: `Stock on hand now (${unitLabel(p.unit)})`, inputmode: UNITS[p.unit]?.decimals ? "decimal" : "numeric", hint: first ? "Leave blank to start at 0." : `Leave blank to keep ${formatQuantity(p.onHand || 0)} on record.` },
+        ...(can.costs && first ? [{ name: "unitCost", label: `Cost per unit (${currency})`, inputmode: "decimal", hint: "Optional. ₱0 is fine." }] : []),
+      ],
+      submitLabel: "Turn on",
+      onSubmit: (v) => {
+        const body = { action: "setTracking", productId: p.id, track: true };
+        if (String(v.stock ?? "").trim()) body.stock = parseQuantity(v.stock, p.unit);
+        if (String(v.unitCost ?? "").trim()) body.unitCost = parseCost(v.unitCost);
+        return send("products", body);
+      },
+    });
+    if (ok) await done("Stock tracking turned on");
+  }
+
   // ---- product master ----
   function productFields(p = null) {
     return [
@@ -379,7 +413,9 @@ export function mount(container, session, { data = defaultData, api = defaultApi
         html`<div role="dialog" aria-modal="true" aria-label="Details for ${p.name}" class="modal pd" data-role="details">
           <div class="modal-header"><h2 class="card-title pd-title">${p.sku} · ${p.name}</h2>${p.status === "active" ? "" : html`<p class="pd-flag">${badge("Inactive", "neutral")}</p>`}</div>
           <div class="modal-body">
-            <div class="pd-stock" data-role="stock-left"><span>Stock left</span><b>${r.available} ${r.unit}</b></div>
+            ${r.tracked ? html`<div class="pd-stock" data-role="stock-left"><span>Stock left</span><b>${r.available} ${r.unit}</b></div>` : html`<div class="pd-stock" data-role="stock-left"><span>Stock</span><b class="stat-hint">Not tracked</b></div>`}
+            <div class="pd-track" data-role="track-inventory"><span>Track inventory</span>${can.manage ? html`<button type="button" class="menu-switch" role="switch" aria-checked="${r.tracked ? "true" : "false"}" data-act="d-track" aria-label="Track inventory for ${p.name}">${r.tracked ? "ON" : "OFF"}</button>` : html`<b class="menu-state">${r.tracked ? "ON" : "OFF"}</b>`}</div>
+            <p class="stat-hint pd-track-hint">${r.tracked ? "Orders set stock aside and deduct it when fulfilled." : "Sold without counting stock: never out of stock. Turn on to start tracking."}</p>
             <dl class="pd-fields">
               ${field("Category", r.category)}${field("Unit", r.unit)}
               ${p.sellingPrice > 0 ? field(priceName, r.price, "price") : ""}
@@ -400,9 +436,9 @@ export function mount(container, session, { data = defaultData, api = defaultApi
             </details>
           </div>
           <div class="modal-footer">
-            ${can.receive && p.status === "active" ? html`<button type="button" class="btn" data-act="d-receipt">Receive</button>` : ""}
-            ${can.adjust && !(p.movementCount > 0) ? html`<button type="button" class="btn" data-act="d-opening">Starting stock</button>` : ""}
-            ${can.adjust && p.movementCount > 0 ? html`<button type="button" class="btn" data-act="d-adjust">Update stock</button>` : ""}
+            ${r.tracked && can.receive && p.status === "active" ? html`<button type="button" class="btn" data-act="d-receipt">Receive</button>` : ""}
+            ${r.tracked && can.adjust && !(p.movementCount > 0) ? html`<button type="button" class="btn" data-act="d-opening">Starting stock</button>` : ""}
+            ${r.tracked && can.adjust && p.movementCount > 0 ? html`<button type="button" class="btn" data-act="d-adjust">Update stock</button>` : ""}
             ${can.manage ? html`<button type="button" class="btn" data-act="d-edit">Edit product</button>` : ""}
             ${can.manage && !(p.movementCount > 0) ? html`<button type="button" class="btn btn-danger-ghost" data-act="d-delete">Delete</button>` : ""}
             <button type="button" class="btn btn-ghost" data-act="close">Close</button>
@@ -439,6 +475,10 @@ export function mount(container, session, { data = defaultData, api = defaultApi
       if (next) {
         close();
         return next();
+      }
+      if (act === "d-track") {
+        close();
+        return setTracking(p, !r.tracked);
       }
       if (act === "d-delete") {
         const yes = await confirmDialog({ title: `Delete ${p.name}?`, body: "Only products that never had stock can be deleted. This can't be undone.", confirmLabel: "Delete", danger: true });
