@@ -4974,7 +4974,8 @@ button.wl-person-name:hover .wl-edit, button.wl-person-name:focus-visible .wl-ed
    Resellers page, the reseller block on an order, the commission report. */
 .rs-card { margin: 0 0 var(--space-3); padding: var(--space-3); }
 .rs-h { font-size: var(--text-base, 1rem); font-weight: 700; margin: 0 0 var(--space-2); }
-.rs-figs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-2); margin: 0; }
+.rs-figs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-2); margin: 0; }
+@media (min-width: 560px) { .rs-figs { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
 .rs-figs dt { font-size: 12px; color: var(--text-muted); }
 .rs-figs dd { margin: 0; font-weight: 700; font-variant-numeric: tabular-nums; }
 .rs-row { align-items: flex-start; }

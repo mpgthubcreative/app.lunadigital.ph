@@ -30,7 +30,10 @@
 // order.resellerId, each line's basePrice (the owner price snapshot) next to
 // its unitPrice (the reseller's selling price, what the customer pays), and
 // order.commission { calculated, final, adjusted } (shared/resellers.js).
-// Every change that moves an order's final commission moves its reseller's
+// Commission is EARNED as verified customer payments come in (2026-11-01:
+// final × verified ÷ total; a new order has earned nothing). Every change
+// that moves an order's earned commission (its total, final commission,
+// reseller, cancellation, or a payment in ./payments.js) moves its reseller's
 // earned total in the SAME transaction, and never below what's already been
 // paid to them (a payout reversal comes first).
 //                                   Phase 18: checked against the business's CURRENT
@@ -59,6 +62,7 @@ import { prorate } from "../../../shared/quantity.js";
 import { businessDate } from "../../../shared/metrics.js";
 import { prepareMovements } from "./inventory.js";
 import { orderCalculatedCommission, commissionFor, earnedOf, lineCommission, checkSellingPrice, validateFinalCommission } from "../../../shared/resellers.js";
+import { prepareEarned as _prepareEarned } from "./reseller-earned.js";
 import { prepareNotifications } from "./notifications.js";
 import { recordDailyMetrics, adjustCurrentMetrics } from "./metrics.js";
 import { checkMonthlyLimit, prepareMonthlyAlerts, meterActivity, noteLimitReached } from "./metering.js";
@@ -140,26 +144,9 @@ const resellerRef = (tenant, id) => tenant.doc("resellers", id);
 const keepLine = (prior, quantity) => ({ lineId: prior.lineId, productId: prior.productId, sku: prior.sku, name: prior.name, unit: prior.unit, quantity, unitPrice: prior.unitPrice, ...(prior.customerPrice ? { customerPrice: true } : {}), ...(Number.isSafeInteger(prior.basePrice) ? { basePrice: prior.basePrice } : {}) });
 // Lines with their per-line commission (reseller orders only).
 const withCommission = (lines) => lines.map((l) => (Number.isSafeInteger(l.basePrice) ? { ...l, commission: lineCommission(l) } : l));
-// Reads the resellers whose earned total changes (call before any write),
-// checks earned never drops below paid, and returns apply() for the writes.
-// changes: [{ resellerId, delta }].
-async function prepareEarned(tx, tenant, changes, FieldValue) {
-  const merged = new Map();
-  for (const c of changes) if (c.resellerId && c.delta) merged.set(c.resellerId, (merged.get(c.resellerId) || 0) + c.delta);
-  const ids = [...merged.keys()].filter((id) => merged.get(id) !== 0);
-  const snaps = await Promise.all(ids.map((id) => tx.get(resellerRef(tenant, id))));
-  snaps.forEach((snap, i) => {
-    if (!snap.exists) throw new OrderError("reseller-not-found", "Reseller not found");
-    const r = snap.data();
-    const next = (r.earned || 0) + merged.get(ids[i]);
-    if (next < (r.paid || 0)) throw new OrderError("commission-below-paid", `${r.name} has already been paid ₱${((r.paid || 0) / 100).toLocaleString("en-PH", { minimumFractionDigits: 2 })} in commission. Reverse that payout on Resellers first, then make this change.`);
-  });
-  return {
-    apply() {
-      ids.forEach((id, i) => tx.update(snaps[i].ref, { earned: FieldValue.increment(merged.get(id)), updatedAt: FieldValue.serverTimestamp() }));
-    },
-  };
-}
+// Reseller earned totals follow the order in the same transaction
+// (./reseller-earned.js); the error is an OrderError.
+const prepareEarned = (tx, tenant, changes, FieldValue) => _prepareEarned(tx, tenant, changes, FieldValue, (code, message) => new OrderError(code, message));
 // An edited reseller order: the lines' new calculated commission; an Owner
 // override is kept (shared/resellers.js commissionFor).
 const recommission = (order, lines) => (order.resellerId ? commissionFor(orderCalculatedCommission(lines), order.commission) : null);
@@ -302,7 +289,7 @@ export async function createOrder({ db, tenant, FieldValue, business, entitlemen
       recordDailyMetrics({ tx, tenant, FieldValue, timezone: business.timezone, at: now, operational: { orderCount: 1 } });
       adjustCurrentMetrics({ tx, tenant, FieldValue, operational: { pendingFulfillment: 1, unpaidOrders: totals.total > 0 ? 1 : 0 }, financial: { receivablesOutstanding: totals.total } });
       applyCustomerStats(tx, { tenant, FieldValue, customerId: data.customerId, orders: 1, total: totals.total, balance: totals.total, lastOrder: orderNumber });
-      if (reseller) tx.update(resellerSnap.ref, { earned: FieldValue.increment(commission.final), orderCount: FieldValue.increment(1), lastOrderAt: stamp, updatedAt: stamp });
+      if (reseller) tx.update(resellerSnap.ref, { orderCount: FieldValue.increment(1), lastOrderAt: stamp, updatedAt: stamp });
       plan.commit({ actor, FieldValue });
       return { orderId: ref.id, orderNumber, replayed: false, order: { ...order, createdAt: null, updatedAt: null } };
     }, TX_OPTIONS);
@@ -374,7 +361,7 @@ export async function updateOrder({ db, tenant, FieldValue, business = null, ord
     const amountPaid = order.amountPaid || 0;
     if (totals.total < amountPaid) throw new OrderError("below-paid", "The new total would be less than what's already been paid");
     const commission = recommission(order, totals.lines);
-    const earned = await prepareEarned(tx, tenant, commission ? [{ resellerId: order.resellerId, delta: commission.final - earnedOf(order) }] : [], FieldValue);
+    const earned = await prepareEarned(tx, tenant, commission ? [{ resellerId: order.resellerId, delta: earnedOf({ ...order, total: totals.total, commission }) - earnedOf(order) }] : [], FieldValue);
 
     const customerChanged = JSON.stringify(order.customer) !== JSON.stringify(link.data.customer) || (order.customerId ?? null) !== link.data.customerId;
     const entry = historyEntry("edited", actor, {
@@ -493,7 +480,7 @@ async function correctFulfilled(tx, { tenant, FieldValue, business, ref, orderId
   const amountPaid = order.amountPaid || 0;
   if (totals.total < amountPaid) throw new OrderError("below-paid", "The new total would be less than what's already been paid");
   const commission = recommission(order, totals.lines);
-  const earned = await prepareEarned(tx, tenant, commission ? [{ resellerId: order.resellerId, delta: commission.final - earnedOf(order) }] : [], FieldValue);
+  const earned = await prepareEarned(tx, tenant, commission ? [{ resellerId: order.resellerId, delta: earnedOf({ ...order, total: totals.total, commission }) - earnedOf(order) }] : [], FieldValue);
 
   const costLines = totals.lines.map((l) => {
     // kept original cost + whatever extra units cost today (correction_out)
@@ -633,7 +620,7 @@ export async function editResellerSale({ db, tenant, FieldValue, orderId, resell
       }
     }
     const before = earnedOf(order);
-    const after = nextId ? commission.final : 0;
+    const after = nextId ? earnedOf({ ...order, resellerId: nextId, total: totals.total, commission }) : 0;
     const earned = await prepareEarned(tx, tenant, [{ resellerId: order.resellerId, delta: -before }, { resellerId: nextId, delta: after }], FieldValue);
 
     const changes = {

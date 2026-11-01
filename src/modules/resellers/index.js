@@ -4,10 +4,14 @@
 //                         link (no Luna account for them).
 //   one row per reseller  Commission earned · paid · remaining · Unpaid /
 //                         Partially Paid / Paid; tap for details
-//   details               the same summary; Copy link · Share · Pay
-//                         Commission; ⋯ Regenerate link / Edit / Deactivate;
-//                         recent orders (final commission, "Adjusted from");
+//   details               potential (full) commission + the same summary;
+//                         Copy link · Share · Pay Commission; ⋯ Regenerate
+//                         link / Edit / Deactivate; recent orders (final
+//                         commission, "Adjusted from", earned so far);
 //                         payout history (⋯ Reverse, kept in the ledger)
+// Earned (2026-11-01) = the part of the final commission the customer's
+// VERIFIED payments cover; Pay Commission is capped at earned − paid. The link
+// is permanent: it always shows the current menu; only Regenerate changes it.
 // Money comes from the server (/api/resellers); nothing is worked out here.
 // Customer payments stay on Orders / Payments: a payout is Business →
 // Reseller, a separate record.
@@ -152,16 +156,17 @@ export function mount(container, session, { api = defaultApi, toast = defaultToa
           <div class="modal-header"><h2 class="card-title">${r.name}${r.status === "active" ? "" : html` ${badge("Inactive", "neutral")}`}</h2></div>
           <div class="modal-body">
             <dl class="pay-figures" data-role="summary">
+              <div><dt>Potential commission</dt><dd data-k="potential">${money(r.potential ?? r.earned)}</dd></div>
               <div><dt>Commission earned</dt><dd data-k="earned">${money(r.earned)}</dd></div>
               <div><dt>Commission paid</dt><dd data-k="paid">${money(r.paid)}</dd></div>
-              <div><dt>Remaining</dt><dd data-k="remaining">${money(r.remaining)}</dd></div>
+              <div><dt>Remaining payable</dt><dd data-k="remaining">${money(r.remaining)}</dd></div>
             </dl>
             <p class="pay-status">${payoutBadge(r.payoutStatus)}</p>
             ${r.status === "active"
               ? html`<div class="rs-link" data-role="link">
                   ${path ? html`<input class="input" readonly value="${fullLink(path)}" data-role="link-text" aria-label="${r.name}'s private menu link" />` : ""}
                   <div class="link-actions">${can.manage ? html`<button type="button" class="btn btn-compact" data-x="copy">Copy link</button><button type="button" class="btn btn-compact" data-x="share">Share link</button>` : ""}</div>
-                  <p class="stat-hint">${r.name} opens it without signing in. Luna knows the orders are ${r.name}'s.</p>
+                  <p class="stat-hint">${r.name} opens it without signing in. Luna knows the orders are ${r.name}'s. It's the same link every time and always shows your current menu, prices and stock.</p>
                 </div>`
               : html`<p class="stat-hint" data-role="inactive-note">Inactive: ${r.name}'s link doesn't work. Reactivate to turn it back on.</p>`}
             ${r.notes ? html`<p class="od-note"><span class="od-k">Notes</span> ${r.notes}</p>` : ""}
@@ -170,7 +175,7 @@ export function mount(container, session, { api = defaultApi, toast = defaultToa
               ? html`<ul class="od-pays" data-role="orders">${d.orders.map(
                   (o) => html`<li class="od-pay" data-order="${o.id}"><span class="od-pay-main"><span class="od-pay-date">${short(o.orderDate)} · ${o.orderNumber}${o.fulfillmentStatus === "cancelled" ? html` ${badge("Cancelled", "neutral")}` : ""}</span>
                     <span class="od-pay-amt">${o.customer} · ${money(o.total)}</span>
-                    <span class="od-sub">Commission <b>${money(o.fulfillmentStatus === "cancelled" ? 0 : o.commission?.final ?? 0)}</b>${o.commission?.adjusted ? ` · Adjusted from ${money(o.commission.calculated)}` : ""}${o.payout && o.fulfillmentStatus !== "cancelled" && o.payout.final > 0 ? ` · ${COMMISSION_STATUSES[o.payout.status]?.label}` : ""}</span></span></li>`
+                    <span class="od-sub">Commission <b>${money(o.potential ?? (o.fulfillmentStatus === "cancelled" ? 0 : o.commission?.final ?? 0))}</b>${o.commission?.adjusted ? ` · Adjusted from ${money(o.commission.calculated)}` : ""}${o.earned !== undefined && o.earned < (o.potential ?? 0) ? ` · Earned ${money(o.earned)} (customer paid ${money(o.verifiedPaid ?? 0)})` : ""}${o.payout && o.fulfillmentStatus !== "cancelled" && o.payout.final > 0 ? ` · ${COMMISSION_STATUSES[o.payout.status]?.label}` : ""}</span></span></li>`
                 )}</ul>`
               : html`<p class="stat-hint">No orders yet. Orders ${r.name} makes from their link appear here.</p>`}
             <h3 class="section-title od-section">Payout history</h3>
@@ -235,7 +240,7 @@ export function mount(container, session, { api = defaultApi, toast = defaultToa
           const idempotencyKey = newKey();
           const ok = await formDialog({
             title: `Pay commission to ${r.name}`,
-            intro: `Still owed: ${money(r.remaining)}. Pay all of it or part.`,
+            intro: `Earned and still owed: ${money(r.remaining)}. Pay all of it or part. Commission the customers haven't paid for yet can't be paid out.`,
             fields: [
               { name: "amount", label: "Amount (₱)", value: String(r.remaining / 100), required: true, inputmode: "decimal" },
               { name: "date", label: "Payment date", type: "date", value: today, max: today },

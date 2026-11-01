@@ -8,7 +8,7 @@
 // subscription.trialStatus unconverted, so every trialOpen() check (badge,
 // Continue with Luna, invitations, add-ons) still treated it as a trial.
 
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { buildWorld, request } from "../helpers/tenants.js";
 import { createOperatorHandler } from "../../netlify/functions/operator.js";
 import { createSubscriptionHandler } from "../../netlify/functions/subscription.js";
@@ -16,6 +16,12 @@ import { createBusiness, addMember, ensureAuthUser, setOperator } from "../../ne
 import { businessDate } from "../../shared/metrics.js";
 import { addMonths, shiftDay, planBilling } from "../../shared/plan-billing.js";
 import { PLAN_SEED } from "../../shared/plans.seed.js";
+
+// The test world is October 2026 (the fake Firestore stamps server time as
+// 2026-10-07), so code that reads the real clock for "this month" must see
+// October too; otherwise these tests fail every month after October.
+vi.useFakeTimers({ toFake: ["Date"] });
+vi.setSystemTime(new Date("2026-10-15T02:00:00Z"));
 
 const NOW = new Date();
 const TODAY = businessDate("Asia/Manila", NOW);

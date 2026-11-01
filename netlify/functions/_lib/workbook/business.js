@@ -12,8 +12,10 @@
 // inventory.costs). No averages, stock value or profit: unit costs only.
 // Reseller Package (2026-10-31; Resellers module + resellers.view): Orders
 // gain Reseller, the prices (selling / owner), Owner Amount, Calculated and
-// Final Commission, Commission Paid / Remaining / Status (payouts settle the
-// oldest commission first); plus Resellers and Commission Payouts sheets.
+// Final Commission, Commission Earned (2026-11-01: the part the customer's
+// verified payments cover), Commission Paid / Remaining / Status (payouts
+// settle the oldest earned commission first); plus Resellers and Commission
+// Payouts sheets.
 // A Distributor workbook is unchanged.
 
 import { ordersQuery, paymentsQuery, productsQuery, expensesQuery, customersQuery } from "../../../../shared/list-queries.js";
@@ -25,7 +27,7 @@ import { UNITS, formatQuantity } from "../../../../shared/quantity.js";
 import { ROLE_TEMPLATES } from "../../../../shared/permissions.js";
 import { loginName } from "../activation.js";
 import { byText } from "./common.js";
-import { allocatePayouts, earnedOf, ownerAmountOf, commissionSummary, COMMISSION_STATUSES, PAYOUT_METHODS } from "../../../../shared/resellers.js";
+import { allocatePayouts, earnedOf, potentialOf, ownerAmountOf, commissionSummary, COMMISSION_STATUSES, PAYOUT_METHODS } from "../../../../shared/resellers.js";
 
 const label = (map, key) => map[key]?.label ?? key ?? "";
 const unitText = (u) => (u && u !== "pcs" ? ` ${UNITS[u]?.label ?? u}` : "");
@@ -103,7 +105,8 @@ async function resellerOrderColumns(x, resellers) {
     { header: "Selling / Owner Price", format: "text", width: 40, value: (o) => (o.resellerId ? priceText(o.items) : "") },
     { header: "Owner Amount", format: "money", width: 14, total: true, value: (o) => (o.resellerId ? ownerAmountOf(o.items) : o.total) },
     { header: "Calculated Commission", format: "money", width: 14, total: true, value: (o) => (o.resellerId ? o.commission?.calculated ?? 0 : 0) },
-    { header: "Final Commission", format: "money", width: 14, total: true, value: (o) => earnedOf(o) },
+    { header: "Final Commission", format: "money", width: 14, total: true, value: (o) => potentialOf(o) },
+    { header: "Commission Earned", format: "money", width: 14, total: true, value: (o) => earnedOf(o) },
     { header: "Commission Paid", format: "money", width: 14, total: true, value: (o) => of(o)?.paid ?? 0 },
     { header: "Commission Remaining", format: "money", width: 14, total: true, value: (o) => of(o)?.remaining ?? 0 },
     { header: "Commission Status", format: "text", width: 16, value: (o) => (o.resellerId ? COMMISSION_STATUSES[of(o)?.status ?? "none"]?.label ?? "" : "") },

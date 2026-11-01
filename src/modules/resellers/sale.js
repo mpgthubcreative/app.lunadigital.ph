@@ -1,5 +1,6 @@
 // Reseller Package (2026-10-31): one order's reseller and commission, in the
-// order's View details (Orders): who sold it and the final commission
+// order's View details (Orders): who sold it and the final commission (and
+// how much of it the customer's verified payments have earned so far)
 // ("Adjusted from ₱300" when the Owner changed it), and the Owner's one
 // "Reseller & commission" edit: Direct sale or a reseller, the selling
 // prices (open orders), and the final commission (blank = calculated).
@@ -7,7 +8,7 @@
 import { html } from "../../lib/html.js";
 import { formDialog } from "../../components/form-dialog.js";
 import { formatCentavos } from "../../lib/format.js";
-import { parseCentavos } from "@shared/index.js";
+import { parseCentavos, earnedOf, potentialOf } from "@shared/index.js";
 
 export function resellerBlock(order, money) {
   const c = order.commission;
@@ -15,6 +16,7 @@ export function resellerBlock(order, money) {
   return html`<dl class="od-totals od-reseller" data-role="reseller">
     <div><dt>Reseller</dt><dd data-role="reseller-name">${order.reseller?.name ?? ""}</dd></div>
     <div><dt>Commission</dt><dd data-role="commission">${money(c?.final ?? 0)}${c?.adjusted ? html` <small class="stat-hint" data-role="adjusted">Adjusted from ${money(c.calculated)}</small>` : ""}</dd></div>
+    ${potentialOf(order) ? html`<div><dt>Earned so far</dt><dd data-role="commission-earned">${money(earnedOf(order))} <small class="stat-hint">as the customer's verified payments come in</small></dd></div>` : ""}
   </dl>`;
 }
 

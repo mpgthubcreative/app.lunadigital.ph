@@ -24,9 +24,14 @@
 //
 // Reseller Package (2026-10-31): one more simple question, "How much
 // commission did each reseller earn?" for the same period: Total Commission
-// and one line per reseller (final commission, by the order's date) with its
-// payout state (Paid ₱100 · Remaining ₱200 / Paid / Unpaid). From
+// Earned and one line per reseller with what's paid / remaining. From
 // /api/resellers report; no sales, owner amount or COGS here.
+// 2026-11-01: earned = the part of the final commission the customers'
+// VERIFIED payments cover, dated by those payments (never the full potential
+// commission of unpaid orders). And in the Reseller workspace the main figure
+// is Owner Net Profit: net profit without the reseller commission of the
+// period's fulfilled reseller orders (the server deducts it once; the
+// reseller's markup is never the owner's profit).
 
 import { html, render } from "../../lib/html.js";
 import { pageHeader, emptyState, card, skeleton } from "../../components/ui.js";
@@ -89,21 +94,24 @@ export function mount(container, session, { api = defaultApi, now = () => new Da
 
   function summary(r) {
     const o = r.overview;
-    const series = (r.series || []).filter((s) => s.netProfit !== null && s.netProfit !== undefined);
+    // Reseller workspace: the owner's own profit (commission excluded).
+    const owner = "ownerNetProfit" in o;
+    const key = owner ? "ownerNetProfit" : "netProfit";
+    const series = (r.series || []).filter((s) => s[key] !== null && s[key] !== undefined).map((s) => ({ ...s, netProfit: s[key] }));
     const sku = r.skuMargins;
-    const profit = o.estimatedOperatingProfit;
+    const profit = owner ? o.ownerNetProfit : o.estimatedOperatingProfit;
     // No orders in the range: say what this page will show (never example figures).
     const none = !o.ordersCreated && !o.grossSales;
     return html`
       ${none ? html`<p class="banner banner-info rp-empty" role="note" data-role="report-empty">No orders in this period yet. Once you take and fulfill orders, this page shows your total sales, profit by day and each product's margin.</p>` : ""}
       <div class="rp-totals" data-role="totals">
-        ${total("sales", "Total Sales", money(o.grossSales))}
+        ${total("sales", "Total Sales", money(o.grossSales), { note: owner && o.resellerCommission ? `incl. ${money(o.resellerCommission)} reseller commission` : "" })}
         ${total("orders", "Total Orders", o.ordersCreated === null || o.ordersCreated === undefined ? NO_DATA : o.ordersCreated.toLocaleString("en-PH"), { note: o.fulfilledOrders ? `${o.fulfilledOrders.toLocaleString("en-PH")} fulfilled` : "" })}
-        ${total("net-profit", "Total Net Profit", money(profit), { main: true, loss: profit < 0, note: profitNote(profit) })}
+        ${total("net-profit", owner ? "Owner Net Profit" : "Total Net Profit", money(profit), { main: true, loss: profit < 0, note: owner ? [profitNote(profit), "reseller commission excluded"].filter(Boolean).join(" · ") : profitNote(profit) })}
         ${total("sku-margin", "Overall SKU Margin", pct(sku?.overall.marginPct), { loss: sku?.overall.marginPct < 0, note: sku ? "Current prices and costs" : "" })}
       </div>
       <section class="card rp-section" data-chart="net-profit">
-        <h2 class="rp-title">Net Profit <span class="hint">${r.range.granularity === "day" ? "by day" : "by month"}</span></h2>
+        <h2 class="rp-title">${owner ? "Owner Net Profit" : "Net Profit"} <span class="hint">${r.range.granularity === "day" ? "by day" : "by month"}</span></h2>
         ${series.length
           ? html`<div class="chart">${profitColumns(series.map((s) => ({ label: shortPeriod(s.period), value: s.netProfit })), { format: (v) => compactMoney(v).replace(/\.0(?=[kM])/, ""), aria: series.map((s) => `${shortPeriod(s.period)} ${formatCentavos(s.netProfit, currency)}`).join(", ") })}</div>`
           : html`<p class="stat-hint">No sales or costs recorded in this period yet.</p>`}
@@ -129,10 +137,10 @@ export function mount(container, session, { api = defaultApi, now = () => new Da
 
   // Reseller commissions for the period (Reseller Package).
   function commissionSection(c) {
-    const state_ = (row) => (row.status === "paid" ? "Paid" : row.status === "partial" ? `Paid ${money(row.paid)} · Remaining ${money(row.remaining)}` : COMMISSION_STATUSES[row.status]?.label ?? "");
+    const state_ = (row) => (row.status === "paid" ? "Paid" : row.status === "partial" ? `${money(row.paid)} paid · ${money(row.remaining)} remaining` : COMMISSION_STATUSES[row.status]?.label ?? "");
     return html`<section class="card rp-section" data-section="commissions">
       <h2 class="rp-title">Reseller commissions</h2>
-      <div class="rp-totals">${total("commission", "Total Commission", money(c.total), { main: true })}</div>
+      <div class="rp-totals">${total("commission", "Total Commission Earned", money(c.total), { main: true, note: "From customers' verified payments" })}</div>
       ${c.rows.length
         ? html`<ul class="rp-commission" data-role="commission-rows">${c.rows.map((row) => html`<li data-reseller="${row.resellerId}"><span class="rp-c-name">${row.name}</span><b class="rp-c-amt">${money(row.earned)}</b><span class="rp-c-state stat-hint">${state_(row)}</span></li>`)}</ul>`
         : html`<p class="stat-hint">No reseller commission in this period.</p>`}

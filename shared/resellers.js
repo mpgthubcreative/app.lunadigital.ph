@@ -9,14 +9,23 @@
 //   Calculated Commission (selling − owner) × qty, summed over the order
 //   Final Commission      what counts: the calculated one, or the Owner's
 //                         override (both kept; "Adjusted from ₱150")
+//   Potential Commission  the final commission of a live order: what the
+//                         reseller earns once the customer pays in full
+//   Earned Commission     (2026-11-01) the part of the final commission the
+//                         customer has actually paid for: final × verified
+//                         customer payments ÷ order total (capped 0..1).
+//                         Payments waiting for verification, rejected or
+//                         voided ones never count; a cancelled order earns 0
 //   Commission Paid       payouts (Business → Reseller), a ledger of records,
 //                         never one overwritten amount; separate from the
 //                         customer's payments (Customer → Business)
-//   Status                Unpaid / Partially Paid / Paid from final vs paid
+//   Status                Unpaid / Partially Paid / Paid from earned vs paid
+// Three separate figures: customer payment progress, commission earned, and
+// commission paid to the reseller. A payout never exceeds earned − paid.
 // Payouts are made to a reseller, not to one order. Where a per-order view is
 // needed (export, report), payouts settle the OLDEST earned commission first.
-// Earned date = the order's date; payout date is its own (a commission earned
-// in October and paid in November stays October's).
+// Earned date = the day of the customer payment that earned it (its received
+// day); payout date is its own (earned in October, paid in November: October).
 
 import { isCentavos, lineAmount, MAX_CENTAVOS } from "./quantity.js";
 
@@ -92,8 +101,43 @@ export function commissionFor(calculated, previous = null) {
   if (previous && previous.adjusted === true && Number.isSafeInteger(previous.final)) return { calculated, final: previous.final, adjusted: true, ...(previous.adjustedBy ? { adjustedBy: previous.adjustedBy } : {}), ...(previous.adjustedAt ? { adjustedAt: previous.adjustedAt } : {}) };
   return { calculated, final: Math.max(0, calculated), adjusted: false };
 }
-// What an order contributes to its reseller's earned total right now.
-export const earnedOf = (order) => (order && order.resellerId && order.fulfillmentStatus !== "cancelled" && Number.isSafeInteger(order.commission?.final) ? order.commission.final : 0);
+// The full (potential) commission of an order: its final commission while
+// it's live.
+export const potentialOf = (order) => (order && order.resellerId && order.fulfillmentStatus !== "cancelled" && Number.isSafeInteger(order.commission?.final) ? Math.max(0, order.commission.final) : 0);
+// final × collected ÷ total, ratio capped to 0..1, rounded half up to the
+// centavo (exact integer arithmetic: no float drift on large amounts).
+export function recognizedCommission(final, collected, total) {
+  if (!Number.isSafeInteger(final) || final <= 0 || !Number.isSafeInteger(total) || total <= 0) return 0;
+  const c = Math.min(Math.max(Number.isSafeInteger(collected) ? collected : 0, 0), total);
+  if (c === total) return final;
+  return Number((BigInt(final) * BigInt(c) * 2n + BigInt(total)) / (2n * BigInt(total)));
+}
+// What an order contributes to its reseller's earned total right now: the
+// part of its final commission covered by VERIFIED customer payments.
+export const earnedOf = (order) => recognizedCommission(potentialOf(order), order?.verifiedPaid ?? 0, order?.total);
+// When an order's commission was earned: one dated piece per verified
+// customer payment (oldest first), each the growth in recognized commission
+// that payment brought. payments: [{ amount, day }] (verified only). The
+// pieces always add up to earnedOf(order); anything not explained by the
+// listed payments (e.g. a payment record outside the read) is dated to the
+// last payment, or the order date.
+export function earnedPieces(order, payments) {
+  const total = earnedOf(order);
+  if (!total) return [];
+  const final = potentialOf(order);
+  const list = [...(payments || [])].filter((p) => Number.isSafeInteger(p.amount) && p.amount > 0).sort((a, b) => (a.day < b.day ? -1 : a.day > b.day ? 1 : 0));
+  const out = [];
+  let cum = 0;
+  let given = 0;
+  for (const p of list) {
+    cum += p.amount;
+    const upTo = Math.min(recognizedCommission(final, cum, order.total), total);
+    if (upTo > given) out.push({ day: p.day, amount: upTo - given });
+    given = Math.max(given, upTo);
+  }
+  if (given < total) out.push({ day: list.length ? list[list.length - 1].day : order.orderDate, amount: total - given });
+  return out;
+}
 
 export function validateFinalCommission(value) {
   if (!Number.isSafeInteger(value) || value < 0 || value > MAX_CENTAVOS) throw new ResellerError("invalid-amount", "Enter a commission of ₱0 or more");
@@ -146,18 +190,20 @@ export function allocatePayouts(orders, paid) {
   return out;
 }
 
-// The commission report for a period: earned (final) by earning date, per
-// reseller, with how much of THAT period's commission has been paid
-// (oldest-first). Direct sales (no reseller) never count.
-//   resellers: [{ id, name, paid }]; orders: [{ id, resellerId, date, final }] (all, any date)
+// The commission report for a period: commission EARNED (from verified
+// customer payments) by the day it was earned, per reseller, with how much of
+// THAT period's commission has been paid (oldest-first). Direct sales (no
+// reseller) never count.
+//   resellers: [{ id, name, paid }]; orders: earned pieces [{ id, orderId?, resellerId, date, final }] (all, any date)
 export function commissionReport({ resellers, orders, from, to }) {
   const rows = resellers.map((r) => {
     const mine = orders.filter((o) => o.resellerId === r.id);
     const alloc = allocatePayouts(mine, r.paid);
     const inRange = mine.filter((o) => o.date >= from && o.date <= to);
     const earned = inRange.reduce((t, o) => t + Math.max(0, o.final || 0), 0);
+    const count = new Set(inRange.map((o) => o.orderId ?? o.id)).size;
     const paid = inRange.reduce((t, o) => t + (alloc.get(o.id)?.paid || 0), 0);
-    return { resellerId: r.id, name: r.name, orders: inRange.length, ...commissionSummary(earned, paid) };
+    return { resellerId: r.id, name: r.name, orders: count, ...commissionSummary(earned, paid) };
   });
   const shown = rows.filter((r) => r.earned > 0 || r.orders > 0).sort((a, b) => b.earned - a.earned || a.name.localeCompare(b.name));
   return { from, to, total: shown.reduce((t, r) => t + r.earned, 0), rows: shown };

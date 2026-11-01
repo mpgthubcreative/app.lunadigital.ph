@@ -22,6 +22,8 @@
 // reservation back and removes the object.
 //
 // Payments never touch Sales or COGS (those belong to fulfillment).
+// Reseller orders (2026-11-01): a verified payment moves the reseller's
+// earned commission in the same transaction (commissionFollows below).
 
 import { applyRollup, paymentContribution, diffRollup } from "./reports.js";
 import { sniffImageType, STORED_IMAGE_TYPES } from "../../../shared/image-type.js";
@@ -45,6 +47,8 @@ import { recordDailyMetrics, adjustCurrentMetrics } from "./metrics.js";
 import { prepareNotifications, prepareResolution } from "./notifications.js";
 import { reserveStorage, prepareStorageFinalize, releaseStorageReservation } from "./storage-usage.js";
 import { meterActivity, noteLimitReached } from "./metering.js";
+import { prepareEarned } from "./reseller-earned.js";
+import { earnedOf } from "../../../shared/resellers.js";
 
 const TX_OPTIONS = { maxAttempts: 10 };
 const peso = (c) => `₱${(c / 100).toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -149,6 +153,14 @@ function balanceGauges(tx, { tenant, FieldValue, before, after }) {
   adjustCurrentMetrics({ tx, tenant, FieldValue, ...(unpaid ? { operational: { unpaidOrders: unpaid } } : {}), ...(after !== before ? { financial: { receivablesOutstanding: after - before } } : {}) });
 }
 
+// Reseller orders (2026-11-01): a VERIFIED payment earns the reseller the
+// matching share of the order's final commission; a pending one earns
+// nothing; voiding / reducing a verified one takes it back (refused while
+// that commission is already paid out: reverse the payout first). Read
+// before any write; apply() with the payment's writes.
+const commissionFollows = (tx, tenant, FieldValue, order, fields, action) =>
+  prepareEarned(tx, tenant, order.resellerId ? [{ resellerId: order.resellerId, delta: earnedOf({ ...order, ...fields }) - earnedOf(order) }] : [], FieldValue, (code, message) => new PaymentError(code, message), { action });
+
 const historyAt = () => new Date();
 const lastPaymentOf = (id, p) => ({ id, amount: p.amount, method: p.method, reference: p.reference || null, hasProof: Boolean(p.proof), state: p.state, via: p.via || null, day: p.receivedDay || null });
 
@@ -201,6 +213,7 @@ export async function recordPayment({ db, bucket, tenant, FieldValue, business, 
 
       const verified = canVerify === true;
       const fields = orderPaymentFields(order, verified ? { verifiedDelta: data.amount } : { pendingDelta: data.amount });
+      const earned = await commissionFollows(tx, tenant, FieldValue, order, fields, "record this payment");
       const label = PAYMENT_METHODS[data.method].label;
       // The payment's authoritative state (Phase 8 policy, decided here on
       // the server). Phase 13: the notification follows THIS state only.
@@ -257,6 +270,7 @@ export async function recordPayment({ db, bucket, tenant, FieldValue, business, 
     applyCustomerStats(tx, { tenant, FieldValue, customerId: order.customerId, balance: fields.balance - (order.total - (order.amountPaid || 0)) });
       if (notes) notes.commit({ FieldValue });
       if (file) file.commit({ FieldValue });
+      earned.apply();
       meterActivity(tx, { tenant, FieldValue, timezone: business.timezone, now, counts: { paymentsRecorded: 1 } });
       return { paymentId: paymentRef.id, orderId, state: payment.state, ...fields };
     }, TX_OPTIONS);
@@ -317,6 +331,7 @@ export async function updatePayment({ db, bucket, tenant, FieldValue, business, 
       const delta = merged.amount - payment.amount;
       const verified = payment.state === "verified";
       const fields = orderPaymentFields(order, verified ? { verifiedDelta: delta } : { pendingDelta: delta });
+      const earned = await commissionFollows(tx, tenant, FieldValue, order, fields, "change this payment");
       const entries = [];
       const at = historyAt();
       if (delta) entries.push({ type: "amount", at, actor, from: payment.amount, to: merged.amount, label: `Payment amount changed ${peso(payment.amount)} → ${peso(merged.amount)}` });
@@ -364,6 +379,7 @@ export async function updatePayment({ db, bucket, tenant, FieldValue, business, 
     applyCustomerStats(tx, { tenant, FieldValue, customerId: order.customerId, balance: fields.balance - (order.total - (order.amountPaid || 0)) });
       }
       if (file) file.commit({ FieldValue });
+      earned.apply();
       return { paymentId, orderId: payment.orderId, ...fields };
     }, TX_OPTIONS);
   } catch (err) {
@@ -385,12 +401,14 @@ export async function verifyPayment({ db, tenant, FieldValue, paymentId, actor }
     const orderRef = tenant.doc("orders", payment.orderId);
     const order = (await tx.get(orderRef)).data();
     const fields = orderPaymentFields(order, { verifiedDelta: payment.amount, pendingDelta: -payment.amount });
+    const earned = await commissionFollows(tx, tenant, FieldValue, order, fields, "verify this payment");
     const resolution = await prepareResolution(tx, { tenant, type: "payment.awaiting_verification", key: paymentId });
     const stamp = FieldValue.serverTimestamp();
     const entry = { type: "verified", at: historyAt(), actor, label: "Payment marked verified" };
     tx.update(r.payment, { state: "verified", verifiedBy: actor, verifiedAt: stamp, history: append(payment.history, entry), revision: (payment.revision || 1) + 1, updatedBy: actor, updatedAt: stamp });
     tx.update(orderRef, { ...fields, ...(order.lastPayment?.id === paymentId ? { lastPayment: { ...order.lastPayment, state: "verified" } } : {}), statusHistory: append(order.statusHistory, { ...entry, paymentId }), updatedBy: actor, updatedAt: stamp });
     resolution.commit({ FieldValue });
+    earned.apply();
     return { paymentId, orderId: payment.orderId, ...fields };
   }, TX_OPTIONS);
 }
@@ -412,6 +430,7 @@ export async function voidPayment({ db, tenant, FieldValue, business, paymentId,
     const orderRef = tenant.doc("orders", payment.orderId);
     const order = (await tx.get(orderRef)).data();
     const fields = orderPaymentFields(order, payment.state === "verified" ? { verifiedDelta: -payment.amount } : { pendingDelta: -payment.amount });
+    const earned = await commissionFollows(tx, tenant, FieldValue, order, fields, "remove this payment");
     const resolution = payment.state === "for_verification" ? await prepareResolution(tx, { tenant, type: "payment.awaiting_verification", key: paymentId }) : null;
     const stamp = FieldValue.serverTimestamp();
     const entry = { type: "voided", at: historyAt(), actor, reason: why, amount: payment.amount, label: `Payment removed ${peso(payment.amount)}` };
@@ -433,6 +452,7 @@ export async function voidPayment({ db, tenant, FieldValue, business, paymentId,
     balanceGauges(tx, { tenant, FieldValue, before: order.total - (order.amountPaid || 0), after: fields.balance });
     applyCustomerStats(tx, { tenant, FieldValue, customerId: order.customerId, balance: fields.balance - (order.total - (order.amountPaid || 0)) });
     if (resolution) resolution.commit({ FieldValue });
+    earned.apply();
     return { paymentId, orderId: payment.orderId, voided: true, ...fields };
   }, TX_OPTIONS);
 }

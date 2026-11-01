@@ -3,6 +3,9 @@
 // commission (calculated vs final), payouts as a ledger (Unpaid / Partially
 // Paid / Paid), the simple report, and isolation: a link sees only its own
 // reseller, a business only its own resellers.
+// 2026-11-01: commission is EARNED from verified customer payments (final ×
+// verified ÷ total); payouts are capped at earned − paid; the report dates
+// earned commission by the customer payment; Owner Net Profit excludes it.
 
 import { describe, it, expect, beforeEach } from "vitest";
 import { createProduct, recordMovement, updateProduct } from "../../netlify/functions/_lib/inventory.js";
@@ -12,7 +15,10 @@ import { createResellerMenuHandler } from "../../netlify/functions/reseller-menu
 import { createPayHandler } from "../../netlify/functions/pay.js";
 import { createOrdersHandler } from "../../netlify/functions/orders.js";
 import { tenantDb } from "../../netlify/functions/_lib/tenant-db.js";
-import { createOrder, cancelOrder, updateOrder } from "../../netlify/functions/_lib/orders.js";
+import { createOrder, cancelOrder, updateOrder, fulfillOrder } from "../../netlify/functions/_lib/orders.js";
+import { recordPayment, verifyPayment, voidPayment, updatePayment } from "../../netlify/functions/_lib/payments.js";
+import { createExpense } from "../../netlify/functions/_lib/expenses.js";
+import { createReportsHandler } from "../../netlify/functions/reports.js";
 import { FieldValue } from "../helpers/fake-firebase.js";
 import { buildWorld, request } from "../helpers/tenants.js";
 import { QTY_SCALE } from "../../shared/quantity.js";
@@ -70,6 +76,12 @@ async function sell(token, items, extra) {
   return menu({ action: "order", token, idempotencyKey: key(), order: ORDER(items, extra) });
 }
 const summary = async (id, businessId = "res-a") => ok(await owner({ action: "detail", resellerId: id }, businessId)).reseller;
+const orderIdOf = (orderNumber, businessId = "res-a") => [...world.db.docs.entries()].find(([p, d]) => p.startsWith(`businesses/${businessId}/orders/`) && d.orderNumber === orderNumber)[0].split("/").pop();
+// The customer pays the business (Customer → Business): verified by the
+// Owner unless { verify: false } (waiting for verification).
+let refN = 0;
+const customerPays = (orderId, amount, { verify = true, businessId = "res-a" } = {}) =>
+  recordPayment({ db: world.db, bucket: world.bucket, tenant: tenantDb(world.db, businessId), FieldValue, business: { id: businessId, timezone: "Asia/Manila" }, orderId, input: { amount, method: "cash", reference: `CASH-${++refN}` }, actor: setup, canVerify: verify, now: NOW });
 
 describe("resellers: name only, a private link each", () => {
   it("Name is the only required field; no phone, email or login; each gets its own private link", async () => {
@@ -120,7 +132,7 @@ describe("the private menu: owner price, selling price, commission", () => {
     const v = ok(await menu({ action: "view", token: riza.token }));
     expect(v.products).toEqual([expect.objectContaining({ id: a, name: "Product A", ownerPrice: 50000, sellingPrice: 50000 })]);
     expect(JSON.stringify(v)).not.toMatch(/cost|30000|avgCost/i);
-    expect(v.commission).toEqual({ earned: 0, paid: 0, remaining: 0, status: "none" });
+    expect(v.commission).toEqual({ earned: 0, paid: 0, remaining: 0, status: "none", potential: 0 });
     expect((await menu({ action: "setPrice", token: riza.token, productId: a, price: 49999 }))).toMatchObject({ status: 409, body: { error: "below-owner-price", message: "Selling price is below the owner price." } });
     expect(ok(await menu({ action: "setPrice", token: riza.token, productId: a, price: 50000 }))).toMatchObject({ commission: 0 });
     expect(ok(await menu({ action: "setPrice", token: riza.token, productId: a, price: 65000 }))).toMatchObject({ commission: 15000 });
@@ -136,12 +148,17 @@ describe("the private menu: owner price, selling price, commission", () => {
     const order = [...world.db.docs.entries()].find(([p, d]) => p.startsWith("businesses/res-a/orders/") && d.orderNumber === r.orderNumber)[1];
     expect(order).toMatchObject({ reseller: { id: riza.id, name: "Riza" }, resellerId: riza.id, total: 130000, commission: { calculated: 30000, final: 30000, adjusted: false }, paymentStatus: "unpaid", fulfillmentStatus: "pending", sourceNote: "Reseller · Riza · Pickup" });
     expect(order.items[0]).toMatchObject({ unitPrice: 65000, basePrice: 50000, commission: 30000, lineSubtotal: 130000 });
-    expect(await summary(riza.id)).toMatchObject({ earned: 30000, paid: 0, remaining: 30000, payoutStatus: "unpaid" });
+    // Nothing earned until the customer pays: ₱300 is the potential.
+    expect(await summary(riza.id)).toMatchObject({ potential: 30000, earned: 0, paid: 0, remaining: 0, payoutStatus: "none" });
     // Stock: one business inventory (reserved like any order).
     expect(docAt(`businesses/res-a/products/${a}`).available).toBe(Q(48));
     // Her own orders, read-only.
-    const mine = ok(await menu({ action: "view", token: riza.token })).orders;
-    expect(mine).toEqual([expect.objectContaining({ orderNumber: r.orderNumber, total: 130000, ownerAmount: 100000, commission: 30000, payout: "unpaid", paymentStatus: "unpaid", fulfillmentStatus: "pending" })]);
+    let mine = ok(await menu({ action: "view", token: riza.token })).orders;
+    expect(mine).toEqual([expect.objectContaining({ orderNumber: r.orderNumber, total: 130000, ownerAmount: 100000, commission: 30000, earned: 0, payout: "none", paymentStatus: "unpaid", fulfillmentStatus: "pending" })]);
+    await customerPays(orderIdOf(r.orderNumber), 130000);
+    expect(await summary(riza.id)).toMatchObject({ potential: 30000, earned: 30000, paid: 0, remaining: 30000, payoutStatus: "unpaid" });
+    mine = ok(await menu({ action: "view", token: riza.token })).orders;
+    expect(mine[0]).toMatchObject({ commission: 30000, earned: 30000, payout: "unpaid", paymentStatus: "paid" });
   });
 
   it("Yanie at the owner price: commission ₱0 (valid); several items; a price below the owner price can't be ordered", async () => {
@@ -173,12 +190,16 @@ describe("the private menu: owner price, selling price, commission", () => {
 });
 
 describe("commission: override, history, payouts", () => {
-  async function rizaSale(sellingPrice = 65000, qty = 2) {
+  // paid: the customer has paid the whole order (verified), so the whole
+  // commission is earned.
+  async function rizaSale({ sellingPrice = 65000, qty = 2, paid = true } = {}) {
     const a = await product("res-a", { sku: `A${++k}`, name: "Product A", price: 50000 });
     const riza = await reseller("Riza");
     const r = ok(await sell(riza.token, [{ productId: a, quantity: Q(qty), sellingPrice }]), 201);
     const [path, order] = [...world.db.docs.entries()].find(([p, d]) => p.startsWith("businesses/res-a/orders/") && d.orderNumber === r.orderNumber);
-    return { a, riza, orderId: path.split("/").pop(), order };
+    const orderId = path.split("/").pop();
+    const payment = paid ? await customerPays(orderId, order.total) : null;
+    return { a, riza, orderId, order, paymentId: payment?.paymentId ?? null };
   }
 
   it("Owner overrides ₱300 → ₱250: both kept; the report uses ₱250; the reseller can't change it", async () => {
@@ -214,15 +235,15 @@ describe("commission: override, history, payouts", () => {
   });
 
   it("override after a partial payout is fine; reducing below what's paid is refused until a payout is reversed (kept in the ledger)", async () => {
-    const { riza, orderId } = await rizaSale();
+    const { riza, orderId, paymentId } = await rizaSale();
     ok(await owner({ action: "pay", resellerId: riza.id, idempotencyKey: key(), payout: { amount: 10000 } }), 201);
     ok(await owner({ action: "editSale", orderId, finalCommission: 25000 }));
     expect(await summary(riza.id)).toMatchObject({ earned: 25000, paid: 10000, remaining: 15000, payoutStatus: "partial" });
     ok(await owner({ action: "pay", resellerId: riza.id, idempotencyKey: key(), payout: { amount: 15000 } }), 201);
     expect((await owner({ action: "editSale", orderId, finalCommission: 20000 })).body).toMatchObject({ error: "commission-below-paid" });
-    // Cancelling the order would also leave a negative balance: refused the same way.
+    // Removing the customer's payment would take back paid-out commission: refused the same way.
     const tenant = tenantDb(world.db, "res-a");
-    await expect(cancelOrder({ db: world.db, tenant, FieldValue, business: { timezone: "Asia/Manila" }, orderId, reason: "Customer backed out", actor: setup })).rejects.toMatchObject({ code: "commission-below-paid" });
+    await expect(voidPayment({ db: world.db, tenant, FieldValue, business: { timezone: "Asia/Manila" }, paymentId, reason: "Bounced transfer", actor: setup })).rejects.toMatchObject({ code: "commission-below-paid" });
     const payoutId = ok(await owner({ action: "detail", resellerId: riza.id })).payouts.find((p) => p.amount === 15000).id;
     expect((await owner({ action: "reversePayout", payoutId, reason: "x" })).status).toBe(400);
     ok(await owner({ action: "reversePayout", payoutId, reason: "Paid twice by mistake" }));
@@ -233,7 +254,7 @@ describe("commission: override, history, payouts", () => {
   });
 
   it("an order edit keeps the owner price snapshot and an override; a new price later never rewrites history; cancel releases the commission", async () => {
-    const { a, riza, orderId } = await rizaSale();
+    const { a, riza, orderId } = await rizaSale({ paid: false });
     const tenant = tenantDb(world.db, "res-a");
     // November: the owner raises the price; October's order keeps ₱500.
     await updateProduct({ db: world.db, tenant, FieldValue, productId: a, changes: { sellingPrice: 55000 }, actor: setup });
@@ -241,20 +262,20 @@ describe("commission: override, history, payouts", () => {
     let o = docAt(`businesses/res-a/orders/${orderId}`);
     expect(o.items[0]).toMatchObject({ unitPrice: 65000, basePrice: 50000, commission: 45000 });
     expect(o.commission).toMatchObject({ calculated: 45000, final: 45000, adjusted: false });
-    expect((await summary(riza.id)).earned).toBe(45000);
+    expect(await summary(riza.id)).toMatchObject({ potential: 45000, earned: 0 });
     ok(await owner({ action: "editSale", orderId, finalCommission: 40000 }));
     await updateOrder({ db: world.db, tenant, FieldValue, orderId, input: { customer: { name: "Marian Santos", phone: "", notes: "" }, source: "other", sourceNote: "Reseller · Riza", items: [{ productId: a, quantity: Q(2) }] }, actor: setup, canDiscount: false });
     o = docAt(`businesses/res-a/orders/${orderId}`);
     expect(o.commission).toMatchObject({ calculated: 30000, final: 40000, adjusted: true }); // the override survives
     // Back to calculated, then cancel: nothing earned.
     ok(await owner({ action: "editSale", orderId, finalCommission: null }));
-    expect((await summary(riza.id)).earned).toBe(30000);
+    expect(await summary(riza.id)).toMatchObject({ potential: 30000, earned: 0 });
     await cancelOrder({ db: world.db, tenant, FieldValue, business: { timezone: "Asia/Manila" }, orderId, reason: "Customer backed out", actor: setup });
-    expect(await summary(riza.id)).toMatchObject({ earned: 0, payoutStatus: "none" });
+    expect(await summary(riza.id)).toMatchObject({ potential: 0, earned: 0, payoutStatus: "none" });
   });
 
   it("editSale: selling price (open orders), another reseller, Direct Sale; below the owner price needs an explicit final commission", async () => {
-    const { riza, orderId } = await rizaSale();
+    const { riza, orderId } = await rizaSale({ paid: false });
     const yanie = await reseller("Yanie");
     const line = docAt(`businesses/res-a/orders/${orderId}`).items[0].lineId;
     ok(await owner({ action: "editSale", orderId, prices: { [line]: 70000 } }));
@@ -264,6 +285,7 @@ describe("commission: override, history, payouts", () => {
     expect(docAt(`businesses/res-a/orders/${orderId}`).commission).toMatchObject({ calculated: -10000, final: 0, adjusted: true });
     ok(await owner({ action: "editSale", orderId, prices: { [line]: 65000 }, finalCommission: null }));
     ok(await owner({ action: "editSale", orderId, resellerId: yanie.id }));
+    await customerPays(orderId, 130000);
     expect((await summary(riza.id)).earned).toBe(0);
     expect((await summary(yanie.id)).earned).toBe(30000);
     ok(await owner({ action: "editSale", orderId, resellerId: null }));
@@ -279,32 +301,43 @@ describe("direct sales and the report", () => {
     const tenant = tenantDb(world.db, "res-a");
     const direct = await createOrder({ db: world.db, tenant, FieldValue, business: { timezone: "Asia/Manila" }, entitlements: docAt("businesses/res-a").entitlements, input: { customer: { name: "Walk-in", phone: "", notes: "" }, source: "walk_in", items: [{ productId: a, quantity: Q(1) }] }, idempotencyKey: key(), actor: setup, canDiscount: false, now: NOW });
     expect(docAt(`businesses/res-a/orders/${direct.orderId}`)).not.toHaveProperty("resellerId");
-    ok(await sell(riza.token, [{ productId: a, quantity: Q(1), sellingPrice: 60000 }]), 201);
+    const r = ok(await sell(riza.token, [{ productId: a, quantity: Q(1), sellingPrice: 60000 }]), 201);
+    await customerPays(orderIdOf(r.orderNumber), 60000);
+    await customerPays(direct.orderId, 50000);
     const rep = ok(await owner({ action: "report", from: "2026-10-01", to: "2026-10-31" })).report;
     expect(rep.total).toBe(10000);
     expect(rep.rows.map((r) => r.name)).toEqual(["Riza"]);
   });
 
-  it("Today / this month / custom: earned by the order's date; an October commission paid in November stays October's", async () => {
+  it("Today / this month / custom: earned on the day the customer's verified payment came in; payouts don't move it", async () => {
     const a = await product("res-a", { sku: "A1", name: "Product A", price: 50000 });
     const riza = await reseller("Riza");
     const yanie = await reseller("Yanie");
     const veah = await reseller("Veah");
+    const sale = async (who, qty, price) => orderIdOf(ok(await sell(who.token, [{ productId: a, quantity: Q(qty), sellingPrice: price }]), 201).orderNumber);
     NOW = new Date("2026-10-10T02:00:00Z");
-    ok(await sell(riza.token, [{ productId: a, quantity: Q(2), sellingPrice: 65000 }]), 201); // ₱300
-    ok(await sell(yanie.token, [{ productId: a, quantity: Q(3), sellingPrice: 65000 }]), 201); // ₱450
+    const r1 = await sale(riza, 2, 65000); // ₱300 potential, ₱1,300
+    const y1 = await sale(yanie, 3, 65000); // ₱450, ₱1,950
+    await customerPays(r1, 130000);
+    await customerPays(y1, 195000);
     NOW = new Date("2026-10-20T02:00:00Z");
-    ok(await sell(veah.token, [{ productId: a, quantity: Q(5), sellingPrice: 60000 }]), 201); // ₱500
+    const v1 = await sale(veah, 5, 60000); // ₱500, ₱3,000
+    await customerPays(v1, 300000);
     ok(await owner({ action: "pay", resellerId: yanie.id, idempotencyKey: key(), payout: { amount: 45000, date: "2026-10-20" } }), 201);
+    // An October order the customer pays half of in October, the rest in November.
+    const r2 = await sale(riza, 1, 70000); // ₱200 potential, ₱700
+    await customerPays(r2, 35000); // → ₱100 earned in October
     NOW = new Date("2026-11-02T02:00:00Z");
     ok(await owner({ action: "pay", resellerId: riza.id, idempotencyKey: key(), payout: { amount: 10000, date: "2026-11-02" } }), 201);
-    ok(await sell(riza.token, [{ productId: a, quantity: Q(1), sellingPrice: 70000 }]), 201); // ₱200 in November
+    await customerPays(r2, 35000); // → ₱100 more, earned in November
+    await sale(riza, 1, 90000); // November, unpaid: earns nothing (₱400 potential)
     const report = async (from, to) => ok(await owner({ action: "report", from, to })).report;
     const oct = await report("2026-10-01", "2026-10-31");
-    expect(oct.total).toBe(125000);
-    expect(oct.rows.map((r) => [r.name, r.earned, r.paid, r.remaining, r.status])).toEqual([["Veah", 50000, 0, 50000, "unpaid"], ["Yanie", 45000, 45000, 0, "paid"], ["Riza", 30000, 10000, 20000, "partial"]]);
-    expect((await report("2026-11-01", "2026-11-02")).rows).toEqual([expect.objectContaining({ name: "Riza", earned: 20000, paid: 0, status: "unpaid" })]);
+    expect(oct.total).toBe(135000);
+    expect(oct.rows.map((r) => [r.name, r.earned, r.paid, r.remaining, r.status])).toEqual([["Veah", 50000, 0, 50000, "unpaid"], ["Yanie", 45000, 45000, 0, "paid"], ["Riza", 40000, 10000, 30000, "partial"]]);
+    expect((await report("2026-11-01", "2026-11-02")).rows).toEqual([expect.objectContaining({ name: "Riza", earned: 10000, paid: 0, status: "unpaid", orders: 1 })]);
     expect((await report("2026-10-10", "2026-10-10")).total).toBe(75000);
+    expect(await summary(riza.id)).toMatchObject({ potential: 30000 + 20000 + 40000, earned: 50000, paid: 10000, remaining: 40000 });
     expect((await owner({ action: "report", from: "2026-10-31", to: "2026-10-01" })).status).toBe(400);
   });
 });
@@ -318,6 +351,7 @@ describe("isolation: links and tenants", () => {
     const other = await reseller("Bea", "res-b");
     ok(await sell(yanie.token, [{ productId: a, quantity: Q(1), sellingPrice: 80000 }]), 201);
     const r = ok(await sell(riza.token, [{ productId: a, quantity: Q(1), sellingPrice: 60000 }]), 201);
+    await customerPays(orderIdOf(r.orderNumber), 60000);
     const rv = ok(await menu({ action: "view", token: riza.token }));
     expect(rv.orders.map((o) => o.orderNumber)).toEqual([r.orderNumber]);
     expect(rv.commission.earned).toBe(10000);
@@ -363,17 +397,18 @@ describe("Download Excel (Reseller workspace)", () => {
     const r = ok(await sell(riza.token, [{ productId: a, quantity: Q(2), sellingPrice: 65000 }]), 201);
     const orderId = [...world.db.docs.entries()].find(([p, d]) => p.startsWith("businesses/res-a/orders/") && d.orderNumber === r.orderNumber)[0].split("/").pop();
     ok(await owner({ action: "editSale", orderId, finalCommission: 25000 }));
+    await customerPays(orderId, 130000);
     ok(await owner({ action: "pay", resellerId: riza.id, idempotencyKey: key(), payout: { amount: 10000, method: "gcash" } }), 201);
     const bytes = await workbook(world.uids["owner-res-a"], "res-a");
     expect(sheetNames(bytes)).toEqual(expect.arrayContaining(["Orders", "Resellers", "Commission Payouts"]));
     const orders = rows(bytes, "Orders");
     const head = orders[0];
-    for (const h of ["Reseller", "Selling / Owner Price", "Owner Amount", "Calculated Commission", "Final Commission", "Commission Paid", "Commission Remaining", "Commission Status"]) expect(head).toContain(h);
+    for (const h of ["Reseller", "Selling / Owner Price", "Owner Amount", "Calculated Commission", "Final Commission", "Commission Earned", "Commission Paid", "Commission Remaining", "Commission Status"]) expect(head).toContain(h);
     const line = orders.find((row) => row[0] === r.orderNumber);
     const col = (h) => line[head.indexOf(h)];
     expect(col("Reseller")).toBe("Riza");
     expect(col("Selling / Owner Price")).toBe("Product A @ ₱650.00 (owner ₱500.00)");
-    expect([col("Owner Amount"), col("Calculated Commission"), col("Final Commission"), col("Commission Paid"), col("Commission Remaining")]).toEqual(["1000", "300", "250", "100", "150"]);
+    expect([col("Owner Amount"), col("Calculated Commission"), col("Final Commission"), col("Commission Earned"), col("Commission Paid"), col("Commission Remaining")]).toEqual(["1000", "300", "250", "250", "100", "150"]);
     expect(col("Commission Status")).toBe("Partially Paid");
     expect(rows(bytes, "Resellers")[1]).toEqual(["Riza", "Active", "250", "100", "150", "Partially Paid"]);
     expect(rows(bytes, "Commission Payouts")[1].slice(1, 4)).toEqual(["Riza", "100", "GCash"]);
@@ -383,5 +418,239 @@ describe("Download Excel (Reseller workspace)", () => {
     const bytes = await workbook(world.uids.ownera, "biz-a");
     expect(sheetNames(bytes)).not.toContain("Resellers");
     expect(rows(bytes, "Orders")[0]).not.toContain("Reseller");
+  });
+});
+
+
+describe("one permanent private link per reseller (2026-11-01)", () => {
+  it("the same link always shows the live menu: new products, stock, owner price; no new link needed; reactivate keeps it", async () => {
+    const tenant = tenantDb(world.db, "res-a");
+    const a = await product("res-a", { sku: "A1", name: "Product A", price: 50000, qty: 10 });
+    const riza = await reseller("Riza");
+    const first = ok(await menu({ action: "view", token: riza.token }));
+    expect(first.products.map((p) => [p.name, p.ownerPrice, p.max])).toEqual([["Product A", 50000, Q(10)]]);
+    // The owner adds a product, receives stock and raises the owner price.
+    await product("res-a", { sku: "B1", name: "Product B", price: 20000, qty: 5 });
+    await recordMovement({ db: world.db, tenant, FieldValue, productId: a, actor: setup, movement: { type: "receipt", quantity: Q(15), unitCost: 0, note: "delivery" } });
+    await updateProduct({ db: world.db, tenant, FieldValue, productId: a, changes: { sellingPrice: 55000 }, actor: setup });
+    const later = ok(await menu({ action: "view", token: riza.token }));
+    expect(later.products.map((p) => [p.name, p.ownerPrice, p.max])).toEqual([["Product A", 55000, Q(25)], ["Product B", 20000, Q(5)]]);
+    // Copy link is still the very same link.
+    expect(ok(await owner({ action: "link", resellerId: riza.id })).path).toBe(`/reseller#${riza.token}`);
+    // Deactivate stops it; Reactivate brings back the SAME link.
+    ok(await owner({ action: "setStatus", resellerId: riza.id, status: "inactive" }));
+    expect((await menu({ action: "view", token: riza.token })).status).toBe(404);
+    ok(await owner({ action: "setStatus", resellerId: riza.id, status: "active" }));
+    expect(ok(await menu({ action: "view", token: riza.token })).reseller.name).toBe("Riza");
+    expect(ok(await owner({ action: "link", resellerId: riza.id })).path).toBe(`/reseller#${riza.token}`);
+    // Only Regenerate changes it: the old one stops, the new one is the permanent link.
+    const fresh = ok(await owner({ action: "link", resellerId: riza.id, rotate: true })).path.split("#")[1];
+    expect((await menu({ action: "view", token: riza.token })).status).toBe(404);
+    expect(ok(await menu({ action: "view", token: fresh })).reseller.name).toBe("Riza");
+    expect(ok(await owner({ action: "link", resellerId: riza.id })).path).toBe(`/reseller#${fresh}`);
+  });
+});
+
+describe("commission is earned from verified customer payments (2026-11-01)", () => {
+  // THE example: P1 owner ₱200 / sells ₱250 (₱50), P2 owner ₱150 / sells ₱250
+  // (₱100): customer ₱500, owner ₱350, potential ₱150.
+  async function example() {
+    const p1 = await product("res-a", { sku: "P1", name: "Product 1", price: 20000, cost: 10000 });
+    const p2 = await product("res-a", { sku: "P2", name: "Product 2", price: 15000, cost: 0 });
+    const riza = await reseller("Riza");
+    const r = ok(await sell(riza.token, [{ productId: p1, quantity: Q(1), sellingPrice: 25000 }, { productId: p2, quantity: Q(1), sellingPrice: 25000 }]), 201);
+    expect(r).toMatchObject({ total: 50000, ownerAmount: 35000, commission: 15000 });
+    return { riza, orderId: orderIdOf(r.orderNumber), p1, p2 };
+  }
+  const pay = (riza, amount) => owner({ action: "pay", resellerId: riza.id, idempotencyKey: key(), payout: { amount, method: "cash" } });
+
+  it("THE test case: ₱200 verified → ₱60 earned; pay Riza ₱20 → ₱40 left; customer pays ₱300 → ₱150 earned, ₱130 left; pay ₱130 → Paid", async () => {
+    const { riza, orderId } = await example();
+    expect(await summary(riza.id)).toMatchObject({ potential: 15000, earned: 0, paid: 0, remaining: 0 });
+    expect((await pay(riza, 100)).body).toMatchObject({ error: "commission-overpaid" }); // nothing earned yet
+    await customerPays(orderId, 20000); // 40%
+    expect(await summary(riza.id)).toMatchObject({ potential: 15000, earned: 6000, paid: 0, remaining: 6000, payoutStatus: "unpaid" });
+    expect(ok(await pay(riza, 2000), 201)).toMatchObject({ earned: 6000, paid: 2000, remaining: 4000, status: "partial" });
+    // Not the unearned ₱130: only the earned ₱40 can be paid out.
+    expect((await pay(riza, 13000)).body).toMatchObject({ error: "commission-overpaid" });
+    expect((await pay(riza, 4001)).body).toMatchObject({ error: "commission-overpaid" });
+    let v = ok(await menu({ action: "view", token: riza.token }));
+    expect(v.commission).toEqual({ potential: 15000, earned: 6000, paid: 2000, remaining: 4000, status: "partial" });
+    expect(v.orders[0]).toMatchObject({ commission: 15000, earned: 6000 });
+    await customerPays(orderId, 30000); // now ₱500 of ₱500
+    expect(await summary(riza.id)).toMatchObject({ earned: 15000, paid: 2000, remaining: 13000, payoutStatus: "partial" });
+    expect(ok(await pay(riza, 13000), 201)).toMatchObject({ earned: 15000, paid: 15000, remaining: 0, status: "paid" });
+    v = ok(await menu({ action: "view", token: riza.token }));
+    expect(v.commission).toEqual({ potential: 15000, earned: 15000, paid: 15000, remaining: 0, status: "paid" });
+    // The report: ₱150 earned for Riza, never more.
+    const rep = ok(await owner({ action: "report", from: "2026-10-01", to: "2026-10-31" })).report;
+    expect(rep).toMatchObject({ total: 15000, rows: [expect.objectContaining({ name: "Riza", earned: 15000, paid: 15000, remaining: 0, status: "paid" })] });
+  });
+
+  it("20% / 40% / 100%: earned follows verified payments only; pending and rejected payments never count", async () => {
+    const { riza, orderId } = await example();
+    const tenant = tenantDb(world.db, "res-a");
+    const pending = await customerPays(orderId, 10000, { verify: false }); // proof submitted, not verified
+    expect((await summary(riza.id)).earned).toBe(0);
+    await voidPayment({ db: world.db, tenant, FieldValue, business: { timezone: "Asia/Manila" }, paymentId: pending.paymentId, reason: "Rejected: wrong reference", actor: setup });
+    expect((await summary(riza.id)).earned).toBe(0);
+    const p20 = await customerPays(orderId, 10000, { verify: false });
+    expect((await summary(riza.id)).earned).toBe(0);
+    await verifyPayment({ db: world.db, tenant, FieldValue, paymentId: p20.paymentId, actor: setup }); // 20%
+    expect((await summary(riza.id)).earned).toBe(3000);
+    await customerPays(orderId, 10000); // 40%
+    expect((await summary(riza.id)).earned).toBe(6000);
+    // An edited verified payment restates it: ₱100 → ₱50 (30%).
+    await updatePayment({ db: world.db, bucket: world.bucket, tenant, FieldValue, business: { id: "res-a", timezone: "Asia/Manila" }, paymentId: p20.paymentId, changes: { amount: 5000 }, actor: setup });
+    expect((await summary(riza.id)).earned).toBe(4500);
+    await customerPays(orderId, 35000); // 100%
+    expect((await summary(riza.id)).earned).toBe(15000);
+  });
+
+  it("the Owner's final commission is what's earned from: ₱150 → ₱120 at 40% = ₱48", async () => {
+    const { riza, orderId } = await example();
+    ok(await owner({ action: "editSale", orderId, finalCommission: 12000 }));
+    await customerPays(orderId, 20000);
+    expect(await summary(riza.id)).toMatchObject({ potential: 12000, earned: 4800, remaining: 4800 });
+    // An override that follows a payment restates earned too.
+    ok(await owner({ action: "editSale", orderId, finalCommission: null }));
+    expect((await summary(riza.id)).earned).toBe(6000);
+  });
+
+  it("rounding to the centavo: ₱100 commission, a third paid → ₱33.33; the pieces add up exactly", async () => {
+    const p = await product("res-a", { sku: "R1", name: "Round", price: 20000 });
+    const riza = await reseller("Riza");
+    const r = ok(await sell(riza.token, [{ productId: p, quantity: Q(1), sellingPrice: 30000 }]), 201); // ₱300, ₱100 commission
+    const orderId = orderIdOf(r.orderNumber);
+    await customerPays(orderId, 10000);
+    expect((await summary(riza.id)).earned).toBe(3333);
+    await customerPays(orderId, 10000);
+    expect((await summary(riza.id)).earned).toBe(6667);
+    await customerPays(orderId, 10000);
+    expect((await summary(riza.id)).earned).toBe(10000);
+    expect(ok(await owner({ action: "report", from: "2026-10-01", to: "2026-10-31" })).report.total).toBe(10000);
+  });
+
+  it("a removed (refunded) verified payment takes its commission back; refused while it's paid out, until the payout is reversed; history kept", async () => {
+    const { riza, orderId } = await example();
+    const tenant = tenantDb(world.db, "res-a");
+    const full = await customerPays(orderId, 50000);
+    ok(await pay(riza, 15000), 201);
+    await expect(voidPayment({ db: world.db, tenant, FieldValue, business: { timezone: "Asia/Manila" }, paymentId: full.paymentId, reason: "Refunded to customer", actor: setup })).rejects.toMatchObject({ code: "commission-below-paid" });
+    expect(docAt(`businesses/res-a/orders/${orderId}`).verifiedPaid).toBe(50000); // nothing changed
+    const payoutId = ok(await owner({ action: "detail", resellerId: riza.id })).payouts[0].id;
+    ok(await owner({ action: "reversePayout", payoutId, reason: "Customer refunded" }));
+    await voidPayment({ db: world.db, tenant, FieldValue, business: { timezone: "Asia/Manila" }, paymentId: full.paymentId, reason: "Refunded to customer", actor: setup });
+    expect(await summary(riza.id)).toMatchObject({ earned: 0, paid: 0, remaining: 0 });
+    // Unpaid now: cancelling it leaves nothing earned; both records stay.
+    await cancelOrder({ db: world.db, tenant, FieldValue, business: { timezone: "Asia/Manila" }, orderId, reason: "Customer backed out", actor: setup });
+    expect(await summary(riza.id)).toMatchObject({ potential: 0, earned: 0 });
+    const d = ok(await owner({ action: "detail", resellerId: riza.id }));
+    expect(d.payouts[0]).toMatchObject({ state: "reversed", reversal: { reason: "Customer refunded" } });
+    expect(docAt(`businesses/res-a/payments/${full.paymentId}`)).toMatchObject({ state: "voided", voidReason: "Refunded to customer" });
+  });
+
+  it("an unpaid cancelled order earns nothing; Riza's earned never includes another reseller's payments", async () => {
+    const { riza, orderId, p1 } = await example();
+    const yanie = await reseller("Yanie");
+    const y = ok(await sell(yanie.token, [{ productId: p1, quantity: Q(2), sellingPrice: 30000 }]), 201); // ₱200 potential
+    await customerPays(orderIdOf(y.orderNumber), 60000);
+    const tenant = tenantDb(world.db, "res-a");
+    await cancelOrder({ db: world.db, tenant, FieldValue, business: { timezone: "Asia/Manila" }, orderId, reason: "Customer backed out", actor: setup });
+    expect(await summary(riza.id)).toMatchObject({ potential: 0, earned: 0 });
+    expect(await summary(yanie.id)).toMatchObject({ potential: 20000, earned: 20000 });
+  });
+});
+
+describe("Reports: Owner Net Profit excludes the reseller's commission (2026-11-01)", () => {
+  const BIZ = { id: "res-a", timezone: "Asia/Manila" };
+  async function reportOf(from = "2026-10-01", to = "2026-10-15", businessId = "res-a", who = "owner") {
+    const res = await createReportsHandler(deps())({ ...request({ uid: world.uids[`${who}-${businessId}`], businessId }), queryStringParameters: { from, to } });
+    expect(res.statusCode, res.body.slice(0, 300)).toBe(200);
+    return JSON.parse(res.body);
+  }
+  const fulfill = (orderId) => fulfillOrder({ db: world.db, tenant: tenantDb(world.db, "res-a"), FieldValue, business: BIZ, orderId, actor: setup, now: NOW });
+
+  it("COGS ₱100, owner ₱200, reseller sells ₱250: owner gross profit ₱100 (not ₱150, never ₱50); direct sales and expenses as usual", async () => {
+    const p = await product("res-a", { sku: "C1", name: "Cost 100", price: 20000, cost: 10000 });
+    const z = await product("res-a", { sku: "Z1", name: "Cost 0", price: 15000, cost: 0 });
+    const riza = await reseller("Riza");
+    const tenant = tenantDb(world.db, "res-a");
+    // Reseller sale: ₱250 to the customer, ₱50 Riza's.
+    const r = ok(await sell(riza.token, [{ productId: p, quantity: Q(1), sellingPrice: 25000 }]), 201);
+    await fulfill(orderIdOf(r.orderNumber));
+    let rep = await reportOf();
+    expect(rep.overview).toMatchObject({ grossSales: 25000, cogs: 10000, estimatedOperatingProfit: 15000, resellerCommission: 5000, ownerSales: 20000, ownerNetProfit: 10000 });
+    // A direct sale of the ₱0-COGS product: all of it is the owner's.
+    const direct = await createOrder({ db: world.db, tenant, FieldValue, business: BIZ, entitlements: docAt("businesses/res-a").entitlements, input: { customer: { name: "Walk-in", phone: "", notes: "" }, source: "walk_in", items: [{ productId: z, quantity: Q(1) }] }, idempotencyKey: key(), actor: setup, canDiscount: false, now: NOW });
+    await fulfill(direct.orderId);
+    // An operating expense of ₱30.
+    await createExpense({ db: world.db, tenant, FieldValue, business: BIZ, workspace: "reseller", input: { date: "2026-10-15", category: "packaging", amount: 3000, method: "cash" }, actor: setup, now: NOW });
+    rep = await reportOf();
+    // ₱200 owner revenue + ₱150 direct − ₱100 COGS − ₱30 expenses = ₱220.
+    expect(rep.overview).toMatchObject({ grossSales: 40000, netSales: 40000, cogs: 10000, operatingExpenses: 3000, resellerCommission: 5000, ownerSales: 35000, ownerNetProfit: 22000 });
+    const day = rep.series.find((s) => s.period === "2026-10-15");
+    expect(day).toMatchObject({ netProfit: 27000, resellerCommission: 5000, ownerNetProfit: 22000 });
+  });
+
+  it("an Owner override: the owner keeps what the reseller doesn't (₱150 → ₱120: owner revenue ₱380 of ₱500); partial customer payment doesn't change the fulfilled-sale basis", async () => {
+    const p1 = await product("res-a", { sku: "P1", name: "Product 1", price: 20000, cost: 10000 });
+    const p2 = await product("res-a", { sku: "P2", name: "Product 2", price: 15000, cost: 0 });
+    const riza = await reseller("Riza");
+    const r = ok(await sell(riza.token, [{ productId: p1, quantity: Q(1), sellingPrice: 25000 }, { productId: p2, quantity: Q(1), sellingPrice: 25000 }]), 201);
+    const orderId = orderIdOf(r.orderNumber);
+    ok(await owner({ action: "editSale", orderId, finalCommission: 12000 }));
+    await customerPays(orderId, 20000); // 40% paid
+    await fulfill(orderId);
+    const rep = await reportOf();
+    // Sales are booked at fulfillment (Luna's existing basis); the owner's share
+    // of what's still unpaid is a receivable, as for any order.
+    expect(rep.overview).toMatchObject({ grossSales: 50000, cogs: 10000, resellerCommission: 12000, ownerSales: 38000, ownerNetProfit: 28000, paymentsReceived: 20000 });
+    // The commission report is separate: ₱48 earned so far.
+    expect(ok(await owner({ action: "report", from: "2026-10-01", to: "2026-10-31" })).report.total).toBe(4800);
+  });
+
+  it("open (unfulfilled) and cancelled reseller orders add nothing; a Distributor report has no owner-profit fields; Staff without money access see none", async () => {
+    const p = await product("res-a", { sku: "C1", name: "Cost 100", price: 20000, cost: 10000 });
+    const riza = await reseller("Riza");
+    const open = ok(await sell(riza.token, [{ productId: p, quantity: Q(1), sellingPrice: 25000 }]), 201);
+    const gone = ok(await sell(riza.token, [{ productId: p, quantity: Q(1), sellingPrice: 25000 }]), 201);
+    await cancelOrder({ db: world.db, tenant: tenantDb(world.db, "res-a"), FieldValue, business: BIZ, orderId: orderIdOf(gone.orderNumber), reason: "Customer backed out", actor: setup });
+    expect(open.orderNumber).toBeTruthy();
+    const rep = await reportOf();
+    expect(rep.overview.resellerCommission ?? 0).toBe(0);
+    expect(rep.overview.ownerNetProfit ?? null).toBe(rep.overview.estimatedOperatingProfit ?? null);
+    const res = await createReportsHandler(deps())({ ...request({ uid: world.uids.ownera, businessId: "biz-a" }), queryStringParameters: { from: "2026-10-01", to: "2026-10-15" } });
+    expect(JSON.parse(res.body).overview).not.toHaveProperty("ownerNetProfit");
+    const staff = await createReportsHandler(deps())({ ...request({ uid: world.uids["staff-res-a"], businessId: "res-a" }), queryStringParameters: { from: "2026-10-01", to: "2026-10-15" } });
+    if (staff.statusCode === 200) expect(JSON.stringify(JSON.parse(staff.body).overview)).not.toMatch(/ownerNetProfit|resellerCommission/);
+  });
+});
+
+describe("recompute earned totals saved under the old rule (2026-11-01 migration)", () => {
+  it("earned = Σ (final × verified ÷ total); dry run changes nothing; never below what's paid (blocked)", async () => {
+    const { recomputeEarned } = await import("../../netlify/functions/_lib/resellers.js");
+    const tenant = tenantDb(world.db, "res-a");
+    const a = await product("res-a", { sku: "M1", name: "Migrate", price: 20000 });
+    const riza = await reseller("Riza");
+    const yanie = await reseller("Yanie");
+    const r1 = orderIdOf(ok(await sell(riza.token, [{ productId: a, quantity: Q(2), sellingPrice: 25000 }]), 201).orderNumber); // ₱100 potential, ₱500
+    await customerPays(r1, 20000); // 40% → ₱40
+    orderIdOf(ok(await sell(yanie.token, [{ productId: a, quantity: Q(1), sellingPrice: 30000 }]), 201).orderNumber); // ₱100, unpaid
+    // As stored before 2026-11-01: the full commission at order time, and a payout of it.
+    world.db.seed(`businesses/res-a/resellers/${riza.id}`, { ...docAt(`businesses/res-a/resellers/${riza.id}`), earned: 10000 });
+    world.db.seed(`businesses/res-a/resellers/${yanie.id}`, { ...docAt(`businesses/res-a/resellers/${yanie.id}`), earned: 10000, paid: 10000 });
+    const dry = await recomputeEarned({ db: world.db, tenant, FieldValue, resellerId: riza.id, actor: setup });
+    expect(dry).toMatchObject({ before: 10000, after: 4000, potential: 10000, changed: true, blocked: false });
+    expect(docAt(`businesses/res-a/resellers/${riza.id}`).earned).toBe(10000);
+    expect(await recomputeEarned({ db: world.db, tenant, FieldValue, resellerId: riza.id, apply: true, actor: setup })).toMatchObject({ after: 4000, applied: true });
+    expect(docAt(`businesses/res-a/resellers/${riza.id}`).earned).toBe(4000);
+    const y = await recomputeEarned({ db: world.db, tenant, FieldValue, resellerId: yanie.id, apply: true, actor: setup });
+    expect(y).toMatchObject({ before: 10000, after: 0, paid: 10000, blocked: true });
+    expect(y.applied).toBeUndefined();
+    expect(docAt(`businesses/res-a/resellers/${yanie.id}`).earned).toBe(10000);
+    // Then later payments keep it exact.
+    await customerPays(r1, 30000);
+    expect((await summary(riza.id)).earned).toBe(10000);
   });
 });

@@ -6,7 +6,7 @@
 // recount tool. Concurrency is covered on the emulator
 // (tests/emulator/metering-concurrency.test.js).
 
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { createOrder, deleteOrder, cancelOrder } from "../../netlify/functions/_lib/orders.js";
 import { createProduct, recordMovement } from "../../netlify/functions/_lib/inventory.js";
 import { recordPayment, voidPayment } from "../../netlify/functions/_lib/payments.js";
@@ -25,6 +25,12 @@ import { FieldValue } from "../helpers/fake-firebase.js";
 import { buildWorld, request, clearInboxes } from "../helpers/tenants.js";
 import { notificationId } from "../../shared/notifications.js";
 import { QTY_SCALE } from "../../shared/quantity.js";
+
+// The test world is October 2026 (the fake Firestore stamps server time as
+// 2026-10-07), so code that reads the real clock for "this month" must see
+// October too; otherwise these tests fail every month after October.
+vi.useFakeTimers({ toFake: ["Date"] });
+vi.setSystemTime(new Date("2026-10-08T02:00:00Z"));
 // A fresh request key per Record call (the API requires one).
 let recordKeyN = 0;
 const rk = () => `test-record-key-${String(++recordKeyN).padStart(6, "0")}`;

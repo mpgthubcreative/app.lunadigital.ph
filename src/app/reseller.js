@@ -2,8 +2,11 @@
 // No login: the link IS the reseller (Luna knows it's Riza; she never picks
 // her name). The token stays in the address's # part (never sent to the
 // server as a page address) so a bookmark keeps working.
-//   My commission   earned · paid · remaining · Unpaid / Partially Paid /
-//                   Paid (read-only: only the Owner records payouts)
+//   My commission   potential · earned · paid · remaining payable · Unpaid /
+//                   Partially Paid / Paid (read-only: only the Owner records
+//                   payouts). Earned (2026-11-01) grows as her customers'
+//                   payments are verified; potential is the full commission
+//                   once every customer has paid
 //   Sell            each product: Owner price, Your selling price (remembered),
 //                   Your commission; quantities; below the owner price shows
 //                   "Selling price is below the owner price." and can't be
@@ -14,7 +17,8 @@
 //   Done            the order number, a customer-ready summary (her selling
 //                   prices only: never the owner price or commission) to
 //                   copy, and the customer's payment link
-//   My orders       her own orders only: status, payment, commission
+//   My orders       her own orders only: status, payment, commission (and
+//                   how much of it is earned so far)
 // The server (/api/reseller-menu) prices every line again from her link.
 
 import { html, render } from "../lib/html.js";
@@ -78,11 +82,12 @@ export function renderResellerPage(root, { token = window.location.hash.slice(1)
     return html`<section class="card rs-card" data-role="my-commission">
       <h2 class="rs-h">My commission</h2>
       <dl class="rs-figs">
+        <div><dt>Potential</dt><dd data-k="potential">${money(c.potential ?? c.earned)}</dd></div>
         <div><dt>Earned</dt><dd data-k="earned">${money(c.earned)}</dd></div>
         <div><dt>Paid</dt><dd data-k="paid">${money(c.paid)}</dd></div>
-        <div><dt>Remaining</dt><dd data-k="remaining">${money(c.remaining)}</dd></div>
+        <div><dt>Remaining payable</dt><dd data-k="remaining">${money(c.remaining)}</dd></div>
       </dl>
-      <p class="stat-hint" data-role="payout-status">${c.status === "none" ? "No commission yet." : COMMISSION_STATUSES[c.status]?.label}</p>
+      <p class="stat-hint" data-role="payout-status">${c.status === "none" ? (c.potential ? "Commission is earned as your customers' payments are verified." : "No commission yet.") : COMMISSION_STATUSES[c.status]?.label}</p>
     </section>`;
   }
 
@@ -165,6 +170,7 @@ export function renderResellerPage(root, { token = window.location.hash.slice(1)
         <div class="co-grand"><dt>Customer pays</dt><dd>${money(r.total)}</dd></div>
         <div><dt>Owner amount</dt><dd>${money(r.ownerAmount)}</dd></div>
         <div><dt>Your commission</dt><dd data-role="done-commission">${money(r.commission)}</dd></div>
+        <div><dt></dt><dd class="stat-hint" data-role="done-earned-note">Earned as the customer pays</dd></div>
       </dl>
       <h3 class="rs-h">For your customer</h3>
       <pre class="rs-customer" data-role="customer-summary">${customerSummary({ business: state.view.business.name, orderNumber: r.orderNumber, customer: state.form.customerName, items: r.items, total: r.total, payUrl, currency: currency() })}</pre>
@@ -180,7 +186,7 @@ export function renderResellerPage(root, { token = window.location.hash.slice(1)
       <h2 class="rs-h">My orders</h2>
       ${list.length
         ? html`<ul class="store-lines">${list.map(
-            (o) => html`<li class="co-line" data-order="${o.orderNumber}"><span class="co-line-main"><span class="co-name">${o.orderNumber} · ${o.customer}</span><span class="co-sub">${formatDayId(o.orderDate).replace(/, \d{4}$/, "")} · ${FULFILLMENT_STATUSES[o.fulfillmentStatus]?.label ?? o.fulfillmentStatus} · ${PAYMENT_STATUSES[o.paymentStatus]?.label ?? o.paymentStatus} · Commission ${money(o.commission)}${o.commission && o.payout !== "none" ? ` (${COMMISSION_STATUSES[o.payout]?.label})` : ""}</span></span><span class="co-amt"><b>${money(o.total)}</b>${o.fulfillmentStatus !== "cancelled" && o.paymentStatus !== "paid" ? html`<button type="button" class="btn btn-compact btn-ghost" data-act="paylink" data-order="${o.orderNumber}">Payment link</button>` : ""}</span></li>`
+            (o) => html`<li class="co-line" data-order="${o.orderNumber}"><span class="co-line-main"><span class="co-name">${o.orderNumber} · ${o.customer}</span><span class="co-sub">${formatDayId(o.orderDate).replace(/, \d{4}$/, "")} · ${FULFILLMENT_STATUSES[o.fulfillmentStatus]?.label ?? o.fulfillmentStatus} · ${PAYMENT_STATUSES[o.paymentStatus]?.label ?? o.paymentStatus} · Commission ${money(o.commission)}${o.commission && (o.earned ?? o.commission) < o.commission ? ` · earned ${money(o.earned ?? 0)}` : ""}${o.earned && o.payout !== "none" ? ` (${COMMISSION_STATUSES[o.payout]?.label})` : ""}</span></span><span class="co-amt"><b>${money(o.total)}</b>${o.fulfillmentStatus !== "cancelled" && o.paymentStatus !== "paid" ? html`<button type="button" class="btn btn-compact btn-ghost" data-act="paylink" data-order="${o.orderNumber}">Payment link</button>` : ""}</span></li>`
           )}</ul>`
         : html`<p class="stat-hint">Orders you create appear here.</p>`}
     </section>`;

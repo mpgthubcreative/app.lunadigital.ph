@@ -5,9 +5,10 @@
 // /api/reseller-menu with their private link):
 //   resellers/{id}              { name, nameLower, notes, status, earned, paid,
 //                                 orderCount, lastOrderAt, createdBy, ... }
-//                               earned = Σ final commission of their orders
-//                               that aren't cancelled (moved by ./orders.js
-//                               in the same transaction as the order);
+//                               earned = Σ EARNED commission of their live
+//                               orders: final × verified customer payments ÷
+//                               total (2026-11-01; moved by ./orders.js and
+//                               ./payments.js in the same transaction);
 //                               paid = Σ payouts not reversed
 //   resellerLinks/{resellerId}  { token, hash, createdAt, createdBy } the
 //                               CURRENT private menu link (the Owner's Copy
@@ -52,6 +53,8 @@ import {
   isResellerId,
   resellerMenuPath,
   earnedOf,
+  potentialOf,
+  earnedPieces,
   ownerAmountOf,
   PAYOUT_METHODS,
 } from "../../../shared/resellers.js";
@@ -156,6 +159,23 @@ async function ordersOf(tenant, resellerId) {
   return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
 }
 const commissionRow = (o) => ({ id: o.id, date: o.orderDate, final: earnedOf(o) });
+const potentialTotal = (orders) => orders.reduce((t, o) => t + potentialOf(o), 0);
+// Verified customer payments of these orders, by order: [{ amount, day }]
+// (only orders with something verified are read; 30 ids per query).
+async function verifiedPaymentsOf(tenant, orders) {
+  const ids = orders.filter((o) => (o.verifiedPaid || 0) > 0).map((o) => o.id);
+  const out = new Map();
+  for (let i = 0; i < ids.length; i += 30) {
+    const snap = await tenant.collection("payments").where("orderId", "in", ids.slice(i, i + 30)).get();
+    for (const d of snap.docs) {
+      const p = d.data();
+      if (p.state !== "verified") continue;
+      if (!out.has(p.orderId)) out.set(p.orderId, []);
+      out.get(p.orderId).push({ amount: p.amount, day: p.receivedDay });
+    }
+  }
+  return out;
+}
 
 // One reseller: summary, payouts (newest first) and recent orders with
 // their oldest-first payout state.
@@ -168,11 +188,11 @@ export async function resellerDetail({ tenant, resellerId }) {
   const alloc = allocatePayouts(orders.filter((o) => earnedOf(o) > 0 || o.fulfillmentStatus !== "cancelled").map(commissionRow), r.paid || 0);
   const payouts = payoutSnap.docs.map((d) => ({ id: d.id, ...d.data() })).sort((a, b) => (a.date === b.date ? (iso(b.at) || "").localeCompare(iso(a.at) || "") : a.date < b.date ? 1 : -1));
   return {
-    reseller: rowOf(snap.id, r),
+    reseller: { ...rowOf(snap.id, r), potential: potentialTotal(orders) },
     orders: orders
       .sort((a, b) => (a.orderDate === b.orderDate ? String(b.orderNumber).localeCompare(String(a.orderNumber)) : a.orderDate < b.orderDate ? 1 : -1))
       .slice(0, 50)
-      .map((o) => ({ id: o.id, orderNumber: o.orderNumber, orderDate: o.orderDate, customer: o.customer?.name ?? "", total: o.total, fulfillmentStatus: o.fulfillmentStatus, paymentStatus: o.paymentStatus, commission: o.commission ?? null, payout: alloc.get(o.id) ?? null })),
+      .map((o) => ({ id: o.id, orderNumber: o.orderNumber, orderDate: o.orderDate, customer: o.customer?.name ?? "", total: o.total, verifiedPaid: o.verifiedPaid || 0, fulfillmentStatus: o.fulfillmentStatus, paymentStatus: o.paymentStatus, commission: o.commission ?? null, potential: potentialOf(o), earned: earnedOf(o), payout: alloc.get(o.id) ?? null })),
     payouts: payouts.map((p) => ({ id: p.id, amount: p.amount, date: p.date, method: p.method ? PAYOUT_METHODS[p.method]?.label ?? p.method : null, reference: p.reference ?? null, notes: p.notes ?? null, state: p.state, by: p.by?.name ?? null, reversal: p.reversal ? { reason: p.reversal.reason, by: p.reversal.by?.name ?? null, at: iso(p.reversal.at) } : null })),
   };
 }
@@ -214,8 +234,30 @@ export async function reversePayout({ db, tenant, FieldValue, payoutId, reason, 
   }, TX_OPTIONS);
 }
 
-// HOW MUCH COMMISSION DID EACH RESELLER EARN? (final commission, by the
-// order's date; payouts settle the oldest first).
+// One-off repair / migration (2026-11-01): a reseller's stored earned total
+// recomputed from their orders (Σ earned = final × verified ÷ total). Earned
+// totals stored before 2026-11-01 counted the full final commission at order
+// time. Never lowered below what's already paid out (blocked: reverse a
+// payout first). apply: false only reports.
+export async function recomputeEarned({ db, tenant, FieldValue, resellerId, apply = false, actor }) {
+  if (!isResellerId(resellerId)) throw new ResellerError("invalid-input", "Invalid reseller");
+  return db.runTransaction(async (tx) => {
+    const snap = await tx.get(resellerRef(tenant, resellerId));
+    if (!snap.exists) throw new ResellerError("not-found", "Reseller not found");
+    const orders = (await tx.get(tenant.collection("orders").where("resellerId", "==", resellerId).limit(MAX_ORDERS_READ))).docs.map((d) => d.data());
+    const r = snap.data();
+    const after = orders.reduce((t, o) => t + earnedOf(o), 0);
+    const out = { resellerId, name: r.name, before: r.earned || 0, after, paid: r.paid || 0, potential: potentialTotal(orders), orders: orders.length, changed: after !== (r.earned || 0), blocked: after < (r.paid || 0) };
+    if (!apply || !out.changed || out.blocked) return out;
+    tx.update(snap.ref, { earned: after, updatedAt: FieldValue.serverTimestamp() });
+    audit(tx, tenant, { type: "reseller.earned_recomputed", resellerId, before: out.before, after, actor: who(actor) });
+    return { ...out, applied: true };
+  }, TX_OPTIONS);
+}
+
+// HOW MUCH COMMISSION DID EACH RESELLER EARN? (earned commission, by the
+// day the customer's verified payment came in; payouts settle the oldest
+// first).
 export async function resellerReport({ tenant, from, to }) {
   const day = /^\d{4}-\d{2}-\d{2}$/;
   if (!day.test(from || "") || !day.test(to || "") || from > to) throw new ResellerError("invalid-input", "Choose a valid date range");
@@ -223,8 +265,11 @@ export async function resellerReport({ tenant, from, to }) {
   const resellers = rSnap.docs.map((d) => ({ id: d.id, name: d.data().name, paid: d.data().paid || 0 }));
   // One equality query per reseller (single-field index; a handful of resellers).
   const lists = await Promise.all(resellers.map((r) => ordersOf(tenant, r.id)));
-  const orders = lists.flat().map((o) => ({ id: o.id, resellerId: o.resellerId, date: o.orderDate, final: earnedOf(o) }));
-  return commissionReport({ resellers, orders, from, to });
+  const all = lists.flat();
+  // Earned on the day the customer's verified payment was received.
+  const payments = await verifiedPaymentsOf(tenant, all);
+  const pieces = all.flatMap((o) => earnedPieces(o, payments.get(o.id)).map((p, i) => ({ id: `${o.id}#${i}`, orderId: o.id, resellerId: o.resellerId, date: p.day, final: p.amount })));
+  return commissionReport({ resellers, orders: pieces, from, to });
 }
 
 // ---------- Public side: the reseller's private menu (/api/reseller-menu) ----------
@@ -279,14 +324,14 @@ export async function viewResellerMenu({ db, token }) {
   return {
     business: { name: settings.displayName || business.name, currency: business.currency },
     reseller: { name: reseller.name },
-    commission: commissionSummary(reseller.earned, reseller.paid),
+    commission: { ...commissionSummary(reseller.earned, reseller.paid), potential: potentialTotal(orders) },
     fulfillment: waysOf(settings),
     paymentMethods: (Array.isArray(settings.paymentMethods) ? settings.paymentMethods : []).filter((m) => PAYMENT_METHODS[m]).map((id) => ({ id, label: PAYMENT_METHODS[id].label })),
     products,
     orders: orders
       .sort((a, b) => (a.orderDate === b.orderDate ? String(b.orderNumber).localeCompare(String(a.orderNumber)) : a.orderDate < b.orderDate ? 1 : -1))
       .slice(0, 30)
-      .map((o) => ({ orderNumber: o.orderNumber, orderDate: o.orderDate, customer: o.customer?.name ?? "", total: o.total, ownerAmount: ownerAmountOf(o.items), commission: o.fulfillmentStatus === "cancelled" ? 0 : o.commission?.final ?? 0, payout: alloc.get(o.id)?.status ?? "none", paymentStatus: o.paymentStatus, fulfillmentStatus: o.fulfillmentStatus, items: (o.items || []).map((l) => ({ name: l.name, quantity: l.quantity, unitLabel: unitLabel(l.unit), sellingPrice: l.unitPrice, lineSubtotal: l.lineSubtotal })) })),
+      .map((o) => ({ orderNumber: o.orderNumber, orderDate: o.orderDate, customer: o.customer?.name ?? "", total: o.total, ownerAmount: ownerAmountOf(o.items), commission: potentialOf(o), earned: earnedOf(o), payout: alloc.get(o.id)?.status ?? "none", paymentStatus: o.paymentStatus, fulfillmentStatus: o.fulfillmentStatus, items: (o.items || []).map((l) => ({ name: l.name, quantity: l.quantity, unitLabel: unitLabel(l.unit), sellingPrice: l.unitPrice, lineSubtotal: l.lineSubtotal })) })),
   };
 }
 

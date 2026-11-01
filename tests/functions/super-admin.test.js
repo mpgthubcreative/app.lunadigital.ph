@@ -7,7 +7,7 @@
 // Overview + Action Center, subscription actions, member removal and a
 // recoverable business delete, and plan pricing edited in Super Admin.
 
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { buildWorld, request, roomForTeam } from "../helpers/tenants.js";
 import { createOperatorHandler } from "../../netlify/functions/operator.js";
 import { createWorkbookHandler } from "../../netlify/functions/workbook.js";
@@ -24,6 +24,12 @@ import { planBilling, priceLabel, termLabel, subscriptionTerms, attentionOf, acc
 import { limitRows } from "../../shared/metering.js";
 import { SUBSCRIPTION_ACTIONS, businessIdFromName } from "../../shared/operators.js";
 import { accessPolicy } from "../../shared/subscription.js";
+
+// The test world is October 2026 (the fake Firestore stamps server time as
+// 2026-10-07), so code that reads the real clock for "this month" must see
+// October too; otherwise these tests fail every month after October.
+vi.useFakeTimers({ toFake: ["Date"] });
+vi.setSystemTime(new Date("2026-10-19T04:00:00Z"));
 
 const MB = 1024 * 1024;
 const GB = 1024 * MB;

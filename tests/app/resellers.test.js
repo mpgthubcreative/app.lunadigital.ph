@@ -51,8 +51,11 @@ const LIST = [
   { id: "resVeah000001", name: "Veah", status: "inactive", earned: 0, paid: 0, remaining: 0, payoutStatus: "none", orderCount: 0 },
 ];
 const DETAIL = {
-  reseller: LIST[0],
-  orders: [{ id: "ord000000001", orderNumber: "ORD-20261015-001", orderDate: "2026-10-15", customer: "Marian", total: 130000, fulfillmentStatus: "pending", paymentStatus: "unpaid", commission: { calculated: 35000, final: 30000, adjusted: true }, payout: { final: 30000, paid: 10000, remaining: 20000, status: "partial" } }],
+  reseller: { ...LIST[0], potential: 45000 },
+  orders: [
+    { id: "ord000000002", orderNumber: "ORD-20261016-001", orderDate: "2026-10-16", customer: "Joy", total: 50000, verifiedPaid: 20000, fulfillmentStatus: "pending", paymentStatus: "partial", commission: { calculated: 15000, final: 15000, adjusted: false }, potential: 15000, earned: 6000, payout: { final: 6000, paid: 0, remaining: 6000, status: "unpaid" } },
+    { id: "ord000000001", orderNumber: "ORD-20261015-001", orderDate: "2026-10-15", customer: "Marian", total: 130000, verifiedPaid: 130000, fulfillmentStatus: "pending", paymentStatus: "paid", commission: { calculated: 35000, final: 30000, adjusted: true }, potential: 30000, earned: 30000, payout: { final: 30000, paid: 10000, remaining: 20000, status: "partial" } },
+  ],
   payouts: [{ id: "cpPayout00001", amount: 10000, date: "2026-10-15", method: "GCash", reference: null, notes: null, state: "paid", by: "owner", reversal: null }],
 };
 function fakeApi(extra = {}) {
@@ -106,8 +109,11 @@ describe("Resellers page (Owner)", () => {
     container.querySelector('tr[data-reseller="resRiza000001"] [data-act="open"]').click();
     await until(() => document.querySelector('[data-role="payouts"]'));
     const view = document.querySelector('[data-role="reseller-view"]');
-    expect(view.querySelector('[data-role="summary"]').textContent).toMatch(/Commission earned\s*₱300\.00[\s\S]*Commission paid\s*₱100\.00[\s\S]*Remaining\s*₱200\.00/);
+    expect(view.querySelector('[data-role="summary"]').textContent).toMatch(/Potential commission\s*₱450\.00[\s\S]*Commission earned\s*₱300\.00[\s\S]*Commission paid\s*₱100\.00[\s\S]*Remaining payable\s*₱200\.00/);
     expect(view.querySelector('[data-role="orders"]').textContent).toMatch(/Commission\s*₱300\.00 · Adjusted from ₱350\.00/);
+    // A partly paid order: earned so far, from the customer's verified payments.
+    expect(view.querySelector('[data-order="ord000000002"]').textContent).toMatch(/Commission\s*₱150\.00 · Earned ₱60\.00 \(customer paid ₱200\.00\)/);
+    expect(view.querySelector('[data-role="link"]').textContent).toMatch(/same link every time/);
     expect(view.querySelector('[data-role="payouts"]').textContent).toMatch(/Oct 15[\s\S]*₱100\.00 · GCash/);
     view.querySelector('[data-x="pay"]').click();
     const f = lastForm();
@@ -138,7 +144,7 @@ describe("Resellers page (Owner)", () => {
 const VIEW = {
   business: { name: "Res A", currency: "PHP" },
   reseller: { name: "Riza" },
-  commission: { earned: 30000, paid: 10000, remaining: 20000, status: "partial" },
+  commission: { potential: 45000, earned: 30000, paid: 10000, remaining: 20000, status: "partial" },
   fulfillment: ["pickup", "delivery"],
   paymentMethods: [{ id: "gcash", label: "GCash" }],
   products: [{ id: "prodA0000001", name: "Product A", category: "", unit: "pcs", unitLabel: "pcs", ownerPrice: 50000, sellingPrice: 50000, max: 10000 }],
@@ -158,7 +164,7 @@ describe("the reseller's private menu (no login)", () => {
     const calls = [];
     await renderResellerPage(container, { token: "tokTOKtokTOKtokTOKtokTOKtokTOKtokTOKto", fetchImpl: menuFetch(calls), origin: "https://app.test" });
     expect(container.querySelector('[data-role="who"]').textContent).toBe("Reseller: Riza");
-    expect(container.querySelector('[data-role="my-commission"]').textContent).toMatch(/Earned\s*₱300\.00[\s\S]*Paid\s*₱100\.00[\s\S]*Remaining\s*₱200\.00[\s\S]*Partially Paid/);
+    expect(container.querySelector('[data-role="my-commission"]').textContent).toMatch(/Potential\s*₱450\.00[\s\S]*Earned\s*₱300\.00[\s\S]*Paid\s*₱100\.00[\s\S]*Remaining payable\s*₱200\.00[\s\S]*Partially Paid/);
     expect(container.querySelector('[data-role="my-commission"] button')).toBeNull();
     expect(container.querySelector('[data-role="owner-price"]').textContent).toBe("Owner price ₱500.00");
     expect(container.querySelector('[data-role="commission"]').textContent).toBe("Your commission ₱0.00");
@@ -268,9 +274,24 @@ describe("Reports: reseller commissions", () => {
     mountReports(container, shop(), { api, now: () => new Date("2026-10-31T04:00:00Z") });
     await until(() => container.querySelector('[data-section="commissions"]'));
     const s = container.querySelector('[data-section="commissions"]');
-    expect(s.querySelector('[data-total="commission"]').textContent).toMatch(/Total Commission\s*₱1,250\.00/);
-    expect([...s.querySelectorAll('[data-role="commission-rows"] li')].map((li) => li.textContent.replace(/\s+/g, " ").trim())).toEqual(["Veah₱500.00Unpaid", "Yanie₱450.00Paid", "Riza₱300.00Paid ₱100.00 · Remaining ₱200.00"]);
+    expect(s.querySelector('[data-total="commission"]').textContent).toMatch(/Total Commission Earned\s*₱1,250\.00/);
+    expect([...s.querySelectorAll('[data-role="commission-rows"] li')].map((li) => li.textContent.replace(/\s+/g, " ").trim())).toEqual(["Veah₱500.00Unpaid", "Yanie₱450.00Paid", "Riza₱300.00₱100.00 paid · ₱200.00 remaining"]);
     expect(api).toHaveBeenCalledWith("resellers", { method: "POST", body: { action: "report", from: "2026-10-01", to: "2026-10-31" } });
+  });
+
+  it("the Reseller workspace's main figure is Owner Net Profit (reseller commission excluded), its graph too", async () => {
+    const api = vi.fn(async (path) => {
+      if (path === "resellers") return { report: { total: 0, rows: [] } };
+      return { access: { financials: true }, range: { granularity: "day" }, overview: { grossSales: 40000, ordersCreated: 2, fulfilledOrders: 2, estimatedOperatingProfit: 27000, resellerCommission: 5000, ownerSales: 35000, ownerNetProfit: 22000 }, series: [{ period: "2026-10-15", netProfit: 27000, resellerCommission: 5000, ownerNetProfit: 22000 }], skuMargins: null };
+    });
+    mountReports(container, shop(), { api, now: () => new Date("2026-10-31T04:00:00Z") });
+    await until(() => container.querySelector('[data-total="net-profit"]'));
+    const t = container.querySelector('[data-total="net-profit"]').textContent.replace(/\s+/g, " ");
+    expect(t).toMatch(/Owner Net Profit ?₱220\.00/);
+    expect(t).toMatch(/reseller commission excluded/);
+    expect(container.querySelector('[data-total="sales"]').textContent).toMatch(/incl\. ₱50\.00 reseller commission/);
+    expect(container.querySelector('[data-chart="net-profit"]').textContent).toMatch(/Owner Net Profit/);
+    expect(container.querySelector('[data-chart="net-profit"] [aria-label]')?.getAttribute("aria-label") ?? container.querySelector('[data-chart="net-profit"]').innerHTML).toMatch(/₱220\.00/);
   });
 
   it("a Distributor business's Reports never ask for commissions", async () => {

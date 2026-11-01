@@ -16,9 +16,32 @@ import { financialSummary, grossMarginPct, skuMargins } from "../../../shared/fi
 import { costUnitsToCentavos } from "../../../shared/quantity.js";
 import { OPERATIONAL_COUNTERS, FINANCIAL_COUNTERS } from "../../../shared/metrics.js";
 import { canUseModule } from "../../../shared/modules.js";
+import { snapshotWorkspaceTemplateId } from "../../../shared/workspaces.js";
+import { potentialOf } from "../../../shared/resellers.js";
 
 const ROLLUPS = "reportRollups";
 const SKU_MARGIN_LIMIT = 500;
+const RESELLER_ORDERS_READ = 2000;
+
+// Reseller workspace (2026-11-01): the reseller's commission is not the
+// owner's money. Owner Net Profit = net profit − the FINAL commission of the
+// reseller orders fulfilled in the period, on the same fulfilled-order basis
+// as sales and COGS (so customer sales − commission = the owner's revenue:
+// the owner/base amount, or more when the Owner lowered the commission).
+// Deducted once, here; nothing else subtracts it. -> Map day -> commission.
+async function fulfilledCommissionByDay(tenant, from, to) {
+  const rSnap = await tenant.collection("resellers").limit(200).get();
+  const lists = await Promise.all(rSnap.docs.map((d) => tenant.collection("orders").where("resellerId", "==", d.id).limit(RESELLER_ORDERS_READ).get()));
+  const byDay = new Map();
+  for (const snap of lists)
+    for (const d of snap.docs) {
+      const o = d.data();
+      if (o.fulfillmentStatus !== "fulfilled" || !o.fulfilledDay || o.fulfilledDay < from || o.fulfilledDay > to) continue;
+      const c = potentialOf(o);
+      if (c) byDay.set(o.fulfilledDay, (byDay.get(o.fulfilledDay) || 0) + c);
+    }
+  return byDay;
+}
 
 // ---------- 1. Writes ----------
 
@@ -114,6 +137,18 @@ export async function buildReport({ db, tenant, from, to, permissions, entitleme
     sections: [],
   };
 
+  // Reseller workspace: Owner Net Profit (reseller commission excluded).
+  if (financials && snapshotWorkspaceTemplateId(entitlements) === "reseller") {
+    const byDay = await fulfilledCommissionByDay(tenant, from, to);
+    const inBucket = (b, day) => (plan.granularity === "day" ? b.period === day : day.slice(0, 7) === b.period && day >= from && day <= to);
+    report.series.forEach((row, i) => {
+      const c = [...byDay].filter(([day]) => inBucket(plan.buckets[i], day)).reduce((t, [, v]) => t + v, 0);
+      row.resellerCommission = row.netProfit === null ? null : c;
+      row.ownerNetProfit = row.netProfit === null ? null : row.netProfit - c;
+    });
+    report.ownerCommission = [...byDay.values()].reduce((t, v) => t + v, 0);
+  }
+
   if (financials) {
     const s = totalFin ? financialSummary(totalFin) : null;
     Object.assign(report.overview, {
@@ -127,9 +162,12 @@ export async function buildReport({ db, tenant, from, to, permissions, entitleme
       operatingExpenses: s ? s.operatingExpenses : null,
       estimatedOperatingProfit: s ? s.estimatedOperatingProfit : null,
       paymentsReceived: s ? s.paymentsReceived : null,
+      ...("ownerCommission" in report ? { resellerCommission: s ? report.ownerCommission : null, ownerSales: s && s.netSales !== null ? s.netSales - report.ownerCommission : null, ownerNetProfit: s && s.estimatedOperatingProfit !== null ? s.estimatedOperatingProfit - report.ownerCommission : null } : {}),
       averageOrderValue: s && s.netSales !== null && totalOps && totalOps.fulfilledOrders ? Math.round(s.netSales / totalOps.fulfilledOrders) : null,
     });
   }
+
+  delete report.ownerCommission;
 
   // Payments (payments module + payments.view)
   if (can("payments")) {
