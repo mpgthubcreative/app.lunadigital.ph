@@ -3,9 +3,13 @@
 //   { action: "update", orderId, expectedRevision?, order: { ...same shape } }                                                     orders.update
 //   { action: "fulfill", orderId }                                                                                                 orders.fulfill
 //   { action: "cancel", orderId, reason }                                                                                          orders.cancel
-//   { action: "delete", orderId, reason? }   accidental open, unpaid order                                                       orders.cancel
+//   { action: "delete", orderId, reason? }   accidental open order, no payment records, never fulfilled                         orders.cancel
+//   { action: "reopen", orderId, stage, reason, expectedRevision? }   fulfilled -> pending / preparing / ready (reversed)  orders.correct
 // update on a FULFILLED order is a correction: also needs orders.correct, and
-// a reason when quantities, products or the discount change.
+// a reason when quantities, products, selling prices or the discount change.
+// cancel on a FULFILLED order (2026-11-03) also needs orders.correct.
+// Reseller workspace (2026-11-03): order.resellerId and each item's
+// sellingPrice / finalCommission need resellers.pay (Owner / Admin).
 // A non-zero discount (or changing it) also needs orders.discount.
 // Prices, names, totals, stock and costs are never accepted from the
 // browser; the server computes them from trusted documents.
@@ -13,7 +17,8 @@
 import { respond, withErrorHandling, requireMethod, parseJsonBody, RequestError } from "./_lib/http.js";
 import { getAdmin } from "./_lib/firebase-admin.js";
 import { requireTenant } from "./_lib/tenant.js";
-import { createOrder, updateOrder, fulfillOrder, cancelOrder, deleteOrder, setFulfillmentStage } from "./_lib/orders.js";
+import { createOrder, updateOrder, fulfillOrder, cancelOrder, deleteOrder, setFulfillmentStage, reopenOrder } from "./_lib/orders.js";
+import { snapshotWorkspaceTemplateId } from "../../shared/workspaces.js";
 import { dropPayLink } from "./_lib/pay-links.js";
 import { actorOf, only } from "./_lib/inventory-http.js";
 import { OrderError } from "../../shared/orders.js";
@@ -30,6 +35,7 @@ const ACTIONS = {
   fulfill: { permission: "orders.fulfill", fields: ["action", "orderId"] },
   stage: { permission: "orders.fulfill", fields: ["action", "orderId", "stage"] },
   cancel: { permission: "orders.cancel", fields: ["action", "orderId", "reason"] },
+  reopen: { permission: "orders.correct", fields: ["action", "orderId", "stage", "reason", "expectedRevision"] },
 };
 
 const STATUS = {
@@ -53,6 +59,12 @@ const STATUS = {
   "customer-not-found": 409,
   "customer-inactive": 409,
   "invalid-customer": 400,
+  "not-fulfilled": 409,
+  "reseller-not-allowed": 403,
+  "reseller-not-found": 404,
+  "reseller-inactive": 409,
+  "below-owner-price": 400,
+  "commission-below-paid": 409,
 };
 
 async function mapErrors(fn) {
@@ -89,13 +101,16 @@ export function createOrdersHandler({ getAdmin: loadAdmin, now = () => new Date(
     // Linking an order to a saved customer needs the Customers module and
     // customers.view (keeping an order's existing link doesn't).
     const canLinkCustomers = canUseModule({ entitlements: ctx.entitlements, permissions: ctx.permissions }, "customers");
+    const canCorrect = ctx.permissions["orders.correct"] === true;
+    // Reseller sales in New Order / Edit: the Owner's call (resellers.pay).
+    const canResell = snapshotWorkspaceTemplateId(ctx.entitlements) === "reseller" && canUseModule({ entitlements: ctx.entitlements, permissions: ctx.permissions }, "resellers") && ctx.permissions["resellers.pay"] === true;
     const result = await mapErrors(async () => {
       switch (body.action) {
         case "create":
-          return createOrder({ ...common, business: ctx.business, entitlements: ctx.entitlements, input: body.order, idempotencyKey: body.idempotencyKey, canDiscount, canLinkCustomers, now: now() });
+          return createOrder({ ...common, business: ctx.business, entitlements: ctx.entitlements, input: body.order, idempotencyKey: body.idempotencyKey, canDiscount, canLinkCustomers, canResell, now: now() });
         case "update":
           if (body.expectedRevision !== undefined && !Number.isSafeInteger(body.expectedRevision)) throw new RequestError("invalid-request", "Invalid revision.", 400);
-          return updateOrder({ ...common, business: ctx.business, orderId: body.orderId, input: body.order, expectedRevision: body.expectedRevision ?? null, canDiscount, canLinkCustomers, canCorrect: ctx.permissions["orders.correct"] === true, reason: body.reason ?? null });
+          return updateOrder({ ...common, business: ctx.business, orderId: body.orderId, input: body.order, expectedRevision: body.expectedRevision ?? null, canDiscount, canLinkCustomers, canCorrect, canResell, reason: body.reason ?? null });
         case "stage":
           return setFulfillmentStage({ ...common, orderId: body.orderId, stage: body.stage });
         case "delete": {
@@ -104,10 +119,13 @@ export function createOrdersHandler({ getAdmin: loadAdmin, now = () => new Date(
           await dropPayLink({ db, tenant: ctx.tenant, orderId: body.orderId }).catch((err) => console.error("orders: dropping a payment link failed:", err?.message));
           return r;
         }
+        case "reopen":
+          if (body.expectedRevision !== undefined && !Number.isSafeInteger(body.expectedRevision)) throw new RequestError("invalid-request", "Invalid revision.", 400);
+          return reopenOrder({ ...common, business: ctx.business, orderId: body.orderId, stage: body.stage, reason: body.reason, expectedRevision: body.expectedRevision ?? null });
         case "fulfill":
           return fulfillOrder({ ...common, business: ctx.business, orderId: body.orderId, now: now() });
         default:
-          return cancelOrder({ ...common, business: ctx.business, orderId: body.orderId, reason: body.reason, now: now() });
+          return cancelOrder({ ...common, business: ctx.business, orderId: body.orderId, reason: body.reason, canCorrect, now: now() });
       }
     });
 

@@ -133,7 +133,8 @@ describe("orders link customers; stats move in the same transaction", () => {
   it("walk-in orders change no customer", async () => {
     await product();
     const { customerId } = await newCustomer();
-    const { orderId } = await orderFor(null);
+    // "Walk-in" (New Order's Walk-in / No saved customer) saves nobody (2026-11-03).
+    const { orderId } = await orderFor(null, 10, { name: "Walk-in" });
     expect(order(orderId).customerId).toBeNull();
     expect(stats(customerId).orderCount).toBe(0);
   });

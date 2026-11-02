@@ -101,6 +101,27 @@ export function commissionFor(calculated, previous = null) {
   if (previous && previous.adjusted === true && Number.isSafeInteger(previous.final)) return { calculated, final: previous.final, adjusted: true, ...(previous.adjustedBy ? { adjustedBy: previous.adjustedBy } : {}), ...(previous.adjustedAt ? { adjustedAt: previous.adjustedAt } : {}) };
   return { calculated, final: Math.max(0, calculated), adjusted: false };
 }
+// Per-line Final Commission (2026-11-03): the Owner may set a line's final
+// commission (line.finalCommission, the calculated one stays in
+// line.commission). A line's final = its override, else max(0, calculated).
+// The order's commission block from its lines and the previous block:
+//   an ORDER-level override (Reseller & commission, scope not "lines") is
+//   kept as before; otherwise final = the sum of the line finals, adjusted
+//   when any line has an override (scope "lines", "₱140 · adjusted from ₱150").
+// Quantity / selling price changes move the calculated figures; overrides
+// stay until cleared.
+export const lineFinalCommission = (l) => (Number.isSafeInteger(l.finalCommission) ? l.finalCommission : Math.max(0, Number.isSafeInteger(l.commission) ? l.commission : lineCommission(l)));
+export function orderCommission(lines, previous = null) {
+  const list = Array.isArray(lines) ? lines : [];
+  const calculated = orderCalculatedCommission(list);
+  if (previous && previous.adjusted === true && previous.scope !== "lines") return commissionFor(calculated, previous);
+  const final = list.reduce((t, l) => t + lineFinalCommission(l), 0);
+  const adjusted = list.some((l) => Number.isSafeInteger(l.finalCommission));
+  return adjusted ? { calculated, final, adjusted: true, scope: "lines" } : { calculated, final: Math.max(0, calculated), adjusted: false };
+}
+// A line sold below the owner price needs the Owner's final commission for it.
+export const needsLineCommission = (l) => Number.isSafeInteger(l.basePrice) && l.unitPrice < l.basePrice && !Number.isSafeInteger(l.finalCommission);
+
 // The full (potential) commission of an order: its final commission while
 // it's live.
 export const potentialOf = (order) => (order && order.resellerId && order.fulfillmentStatus !== "cancelled" && Number.isSafeInteger(order.commission?.final) ? Math.max(0, order.commission.final) : 0);

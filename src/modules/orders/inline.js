@@ -7,6 +7,10 @@
 //   Fulfillment ▾   Pending / Preparing / Ready change the stage; Fulfilled
 //                   and Cancelled go through the protected fulfil / cancel
 //                   engines (stock, Sales, COGS), never a bare status write.
+//                   A fulfilled order (2026-11-03, orders.correct) can go back
+//                   to Pending / Preparing / Ready ("Reverse fulfillment",
+//                   with a reason) or be cancelled: stock, sales and COGS are
+//                   reversed by the server, not just relabelled.
 // Permissions decide every control; the server re-checks all of it.
 
 import { html } from "../../lib/html.js";
@@ -80,8 +84,9 @@ export async function copyPending(textPromise, { clipboard = globalThis.navigato
   return text;
 }
 
+export const canReverse = (o, can) => o.fulfillmentStatus === "fulfilled" && can.correct && can.fulfill;
 export function fulfillmentCell(o, can) {
-  if (!can.fulfill || !isOpenFulfillment(o.fulfillmentStatus)) return badge(fulfillmentLabel(o.fulfillmentStatus), FULFILLMENT_TONE[o.fulfillmentStatus] || "neutral");
+  if (!can.fulfill || !(isOpenFulfillment(o.fulfillmentStatus) || canReverse(o, can))) return badge(fulfillmentLabel(o.fulfillmentStatus), FULFILLMENT_TONE[o.fulfillmentStatus] || "neutral");
   const choices = Object.entries(FULFILLMENT_STATUSES).filter(([k]) => k !== "cancelled" || can.cancel);
   return html`<select class="select select-compact select-chip" data-act="fulfillment" data-id="${o.id}" data-tone="${FULFILLMENT_TONE[o.fulfillmentStatus] || "neutral"}" aria-label="Fulfillment of ${o.orderNumber}">
     ${choices.map(([k, v]) => html`<option value="${k}" ${o.fulfillmentStatus === k ? "selected" : ""}>${v.label}</option>`)}
@@ -93,10 +98,23 @@ export function inlineOrderActions({ can, api, toast, currency, businessId, list
   const cancelDialog = (order) =>
     formDialog({
       title: `Cancel ${order.orderNumber}`,
-      intro: "Reserved stock is released. The order stays in history.",
+      intro: order.fulfillmentStatus === "fulfilled" ? "This order is fulfilled. Cancelling reverses it: tracked stock comes back, and its sales and COGS leave the day it was fulfilled. Payments must be removed first. The order and its history stay." : "Reserved stock is released. The order stays in history.",
       fields: [{ name: "reason", label: "Reason", type: "textarea", required: true }],
       submitLabel: "Cancel order",
       onSubmit: (v) => api("orders", { method: "POST", body: { action: "cancel", orderId: order.id, reason: v.reason } }),
+    });
+  // Fulfilled -> an open stage: the fulfillment is reversed (stock back and
+  // set aside again; sales and COGS off the fulfillment day).
+  const reverseDialog = (order, stage = null) =>
+    formDialog({
+      title: `Reverse fulfillment of ${order.orderNumber}`,
+      intro: "Tracked stock comes back and is set aside for this order again, and its sales and COGS leave the day it was fulfilled. Payments and commission stay as they are. You can fulfill it again later.",
+      fields: [
+        { name: "stage", label: "Move it back to", type: "select", value: stage || "ready", options: ["pending", "preparing", "ready"].map((k) => ({ value: k, label: FULFILLMENT_STATUSES[k].label })) },
+        { name: "reason", label: "Reason", type: "textarea", required: true, placeholder: "e.g. Marked fulfilled by mistake; not picked up yet" },
+      ],
+      submitLabel: "Reverse fulfillment",
+      onSubmit: (v) => api("orders", { method: "POST", body: { action: "reopen", orderId: order.id, stage: v.stage, reason: v.reason, expectedRevision: order.revision } }),
     });
 
   // Payment ▾: Paid / Partially paid record a payment; Paid on a
@@ -135,12 +153,19 @@ export function inlineOrderActions({ can, api, toast, currency, businessId, list
       if (select) select.value = o.fulfillmentStatus;
     };
     try {
+      if (o.fulfillmentStatus === "fulfilled" && isOpenFulfillment(choice)) {
+        const result = await reverseDialog(o, choice);
+        if (!result) return reset();
+        toast(`${o.orderNumber}: fulfillment reversed (${fulfillmentLabel(result.fulfillmentStatus ?? choice)})`, "success");
+        return reload();
+      }
       if (isOpenFulfillment(choice)) {
         await api("orders", { method: "POST", body: { action: "stage", orderId: o.id, stage: choice } });
         toast(`${o.orderNumber}: ${fulfillmentLabel(choice)}`, "success");
         return reload();
       }
       if (choice === "fulfilled") {
+        if (o.fulfillmentStatus === "fulfilled") return reset();
         const ok = await confirmDialog({ title: `Fulfill ${o.orderNumber}?`, body: "Stock leaves inventory and the sale counts toward today.", confirmLabel: "Mark fulfilled" });
         if (!ok) return reset();
         await api("orders", { method: "POST", body: { action: "fulfill", orderId: o.id } });
@@ -160,5 +185,5 @@ export function inlineOrderActions({ can, api, toast, currency, businessId, list
     }
   }
 
-  return { onPaymentChoice, onFulfillmentChoice, cancelDialog };
+  return { onPaymentChoice, onFulfillmentChoice, cancelDialog, reverseDialog };
 }

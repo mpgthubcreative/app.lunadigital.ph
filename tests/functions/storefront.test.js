@@ -136,7 +136,9 @@ describe("a customer's order = a normal Luna order", () => {
 
     const orders = docsUnder("businesses/biz-a/orders/");
     expect(orders).toHaveLength(1);
-    expect(orders[0]).toMatchObject({ source: "online_store", sourceNote: "Delivery · GCash", deliveryAddress: "12 Mabini St, Taguig", notes: "Gate is blue", customer: { name: "Marian Santos", phone: "0917 123 4567" }, customerId: null, discount: 0, total: 22500, paymentStatus: "unpaid", fulfillmentStatus: "pending", createdBy: { uid: "online-store", name: "Online store" } });
+    expect(orders[0]).toMatchObject({ source: "online_store", sourceNote: "Delivery · GCash", deliveryAddress: "12 Mabini St, Taguig", notes: "Gate is blue", customer: { name: "Marian Santos", phone: "0917 123 4567" }, customerId: expect.any(String), discount: 0, total: 22500, paymentStatus: "unpaid", fulfillmentStatus: "pending", createdBy: { uid: "online-store", name: "Online store" } });
+    // The customer is saved to the business's Customers (2026-11-03).
+    expect(docAt(`businesses/biz-a/customers/${orders[0].customerId}`)).toMatchObject({ name: "Marian Santos", phone: "0917 123 4567", address: "12 Mabini St, Taguig", savedFrom: "order", stats: { orderCount: 1, totalOrdered: 22500 } });
     expect(docAt(`businesses/biz-a/products/${kopi}`)).toMatchObject({ reserved: Q(2), available: Q(18) });
     expect(docAt("businesses/biz-a/metrics/2026-10-18").orderCount).toBe(1);
     // Staff who fulfil orders hear about it (the owner here).

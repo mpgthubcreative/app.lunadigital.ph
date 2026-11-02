@@ -55,6 +55,15 @@ export function phoneKey(phone) {
   return d.length >= 7 ? d : null;
 }
 
+// Addresses compared for "same customer" (2026-11-03): lower case, letters
+// and digits only, single spaces. Conservative on purpose: no fuzzy match.
+export const addressKey = (a) => (typeof a === "string" ? a.toLocaleLowerCase("en").replace(/[^\p{L}\p{N}]+/gu, " ").trim() : "") || null;
+// "0917••••567": enough to tell two same-name customers apart on screen.
+export const maskedPhone = (p) => {
+  const d = typeof p === "string" ? p.replace(/\D/g, "") : "";
+  return d.length >= 7 ? `${d.slice(0, 4)}••••${d.slice(-3)}` : "";
+};
+
 // Full validation for a new customer; `partial` for an edit (only the keys
 // present change). Returns the cleaned fields.
 export function validateCustomerInput(input, { partial = false } = {}) {

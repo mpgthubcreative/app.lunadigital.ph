@@ -6,8 +6,10 @@
 //   fulfilled  consume stock, snapshot the cost consumed per line, and
 //              recognize sales, discount and COGS on the business-local
 //              day of fulfillment
-//   cancelled  (only from pending) release reservations; no sales, no COGS
-// A fulfilled order can't be cancelled; reversals belong to Returns later.
+//   cancelled  release reservations; no sales, no COGS
+// Fulfilled is not a dead end (2026-11-03): Owner / Admin (orders.correct)
+// can put a fulfilled order back to Pending / Preparing / Ready or cancel it;
+// its stock, sales and COGS are reversed, never just relabelled.
 // Payment is separate from fulfillment (Phase 8): new orders are unpaid.
 
 import { isValidCustomerId } from "./customers.js";
@@ -85,7 +87,7 @@ export function parseSourceText(value) {
 
 // "open" stages hold reserved stock and can still be edited, fulfilled or
 // cancelled; preparing / ready are operational stages for the Phase 8 row
-// dropdown (no transition action yet). fulfilled and cancelled are final.
+// dropdown. cancelled is final; fulfilled can be reversed (orders.correct).
 export const FULFILLMENT_STATUSES = Object.freeze({
   pending: { label: "Pending", open: true },
   preparing: { label: "Preparing", open: true },
@@ -139,9 +141,17 @@ function text(value, { field, max, required = false }) {
 // customerId (Phase 9) links a saved customer; the server then copies the
 // name and phone from the customer record. Without it the order is a
 // walk-in and the typed name is required.
+// Reseller sales from New Order / Edit (2026-11-03, Owner / Admin):
+// resellerId (string = sold by that reseller, null = Direct sale, absent =
+// unchanged) and, per item, sellingPrice (the customer's price) and
+// finalCommission (centavos = the Owner's line override, null = back to the
+// calculated one, absent = unchanged). Both only on a reseller sale.
+// newCustomer (2026-11-03): true = the person typed is a NEW customer even if
+// someone with the same name is already in Customers (the Owner chose
+// "Create as new customer").
 export function validateOrderInput(input, { requireItems = true } = {}) {
   if (!input || typeof input !== "object" || Array.isArray(input)) throw new OrderError("invalid-input", "Invalid order");
-  const allowed = ["customer", "customerId", "source", "sourceNote", "deliveryAddress", "items", "discount", "notes"];
+  const allowed = ["customer", "customerId", "source", "sourceNote", "deliveryAddress", "items", "discount", "notes", "resellerId", "newCustomer"];
   for (const key of Object.keys(input)) if (!allowed.includes(key)) throw new OrderError("invalid-input", `Field ${key} can't be set here`);
 
   const c = input.customer || {};
@@ -166,22 +176,28 @@ export function validateOrderInput(input, { requireItems = true } = {}) {
 
   if (!Array.isArray(input.items)) throw new OrderError("invalid-input", "Items are required");
   if (requireItems && !input.items.length) throw new OrderError("invalid-input", "Add at least one product");
+  const resellerId = input.resellerId === undefined ? undefined : input.resellerId === null || input.resellerId === "" ? null : input.resellerId;
+  if (resellerId && (typeof resellerId !== "string" || !/^[A-Za-z0-9]{8,40}$/.test(resellerId))) throw new OrderError("invalid-input", "Invalid reseller");
+  if (input.newCustomer !== undefined && typeof input.newCustomer !== "boolean") throw new OrderError("invalid-input", "Invalid customer choice");
   if (input.items.length > MAX_ORDER_LINES) throw new OrderError("invalid-input", `At most ${MAX_ORDER_LINES} products per order`);
   const seen = new Set();
   const items = input.items.map((item) => {
     if (!item || typeof item !== "object" || Array.isArray(item)) throw new OrderError("invalid-input", "Invalid item");
-    for (const key of Object.keys(item)) if (!["productId", "quantity"].includes(key)) throw new OrderError("invalid-input", `Item field ${key} can't be set (prices and names come from the product)`);
+    for (const key of Object.keys(item)) if (!["productId", "quantity", "sellingPrice", "finalCommission"].includes(key)) throw new OrderError("invalid-input", `Item field ${key} can't be set (prices and names come from the product)`);
+    if ((item.sellingPrice !== undefined || item.finalCommission !== undefined) && !resellerId) throw new OrderError("invalid-input", "Selling prices and commission are for reseller sales");
+    if (item.sellingPrice !== undefined && !isCentavos(item.sellingPrice)) throw new OrderError("invalid-price", "Enter a selling price, e.g. 650 or 650.50");
+    if (item.finalCommission !== undefined && item.finalCommission !== null && !isCentavos(item.finalCommission)) throw new OrderError("invalid-amount", "Enter a commission of ₱0 or more");
     if (typeof item.productId !== "string" || !PRODUCT_ID.test(item.productId)) throw new OrderError("invalid-input", "Invalid product");
     if (seen.has(item.productId)) throw new OrderError("invalid-input", "Each product can appear once; combine the quantities");
     seen.add(item.productId);
     if (!Number.isSafeInteger(item.quantity) || item.quantity <= 0) throw new OrderError("invalid-quantity", "Quantity must be more than 0");
-    return { productId: item.productId, quantity: item.quantity };
+    return { productId: item.productId, quantity: item.quantity, ...(item.sellingPrice !== undefined ? { sellingPrice: item.sellingPrice } : {}), ...(item.finalCommission !== undefined ? { finalCommission: item.finalCommission } : {}) };
   });
 
   const discount = input.discount === undefined || input.discount === null ? 0 : input.discount;
   if (!isCentavos(discount)) throw new OrderError("invalid-discount", "Discount must be a whole number of centavos, 0 or more");
 
-  return { customer, customerId, source, sourceNote, deliveryAddress, items, discount, notes: text(input.notes, { field: "Notes", max: 500 }) };
+  return { customer, customerId, source, sourceNote, deliveryAddress, items, discount, notes: text(input.notes, { field: "Notes", max: 500 }), ...(resellerId !== undefined ? { resellerId } : {}), newCustomer: input.newCustomer === true };
 }
 
 // Server-priced lines -> totals. lines: [{ quantity, unitPrice }].

@@ -59,6 +59,12 @@ export const MOVEMENT_TYPES = Object.freeze({
   fulfillment: { label: "Fulfilled", sign: -1, needsCost: false },
   correction_in: { label: "Order correction", sign: +1, needsCost: false },
   correction_out: { label: "Order correction", sign: -1, needsCost: false },
+  // Order reversals (2026-11-03): a fulfilled order put back to an open stage
+  // (its units come back AND are set aside again), or cancelled after
+  // fulfillment (its units come back, free). Both at the cost the
+  // fulfillment booked, so COGS reverses exactly.
+  unfulfillment: { label: "Fulfillment reversed", sign: +1, needsCost: false },
+  cancel_return: { label: "Returned: order cancelled", sign: +1, needsCost: false },
 });
 
 // Movements a browser may request through /api/inventory. Reservation,
@@ -183,7 +189,7 @@ export const tracksInventory = (product) => product?.trackInventory !== false;
 // An order movement on an UNTRACKED product (or an order line whose stock was
 // never set aside): no stock changes; fulfillment / correction_out book the
 // cost at the current unit cost. Stock movements are refused.
-const UNTRACKED_MOVEMENTS = new Set(["reservation", "release", "fulfillment", "correction_in", "correction_out"]);
+const UNTRACKED_MOVEMENTS = new Set(["reservation", "release", "fulfillment", "correction_in", "correction_out", "unfulfillment", "cancel_return"]);
 export function planUntracked(state, movement) {
   if (!UNTRACKED_MOVEMENTS.has(movement?.type)) throw new InventoryError("untracked", "This product doesn't track stock. Turn on Track inventory to record stock for it");
   if (!isQuantity(movement.quantity, state.unit) || movement.quantity === 0) throw new InventoryError("invalid-quantity", `Quantity must be more than 0 and valid for ${UNITS[state.unit]?.label ?? "this unit"}`);
@@ -254,8 +260,15 @@ export function planMovement(state, movement) {
       nextReserved = reserved - quantity;
       break;
     case "correction_in":
+    case "cancel_return":
       if (!isCentavos(movement.value)) throw new InventoryError("invalid-cost", "Correction value must be whole centavos");
       nextOnHand = onHand + quantity;
+      nextAvg = movingAverageByValue({ onHand, avgCostUnits: state.avgCostUnits ?? 0, qty: quantity, valueCentavos: movement.value });
+      break;
+    case "unfulfillment":
+      if (!isCentavos(movement.value)) throw new InventoryError("invalid-cost", "Correction value must be whole centavos");
+      nextOnHand = onHand + quantity;
+      nextReserved = reserved + quantity;
       nextAvg = movingAverageByValue({ onHand, avgCostUnits: state.avgCostUnits ?? 0, qty: quantity, valueCentavos: movement.value });
       break;
     case "correction_out":

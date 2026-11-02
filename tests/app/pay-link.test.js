@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 // Distributor 2026-10-22: the customer's payment page (/pay/{token}), the
 // Owner's Payment link sheet, Not accepted / Receipt, the New Order
-// customer choices (saved / new + Save to Customers / Walk-in) and the
+// customer choices (saved / new, saved automatically / Walk-in) and the
 // Customer profile's figures.
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
@@ -237,45 +237,99 @@ describe("New Order: saved, new or walk-in customer", () => {
     form().elements[name].dispatchEvent(new Event("input", { bubbles: true }));
   };
 
-  it("new customer + Save to Customers: the customer is saved (name, contact, delivery address), then the order is linked to it; a retry doesn't save them twice", async () => {
-    let fail = true;
-    const api = vi.fn(async (endpoint) => {
-      if (endpoint === "customers") return { customerId: "custNEW0000000001" };
-      if (fail) {
-        fail = false;
-        throw new Error("Network down");
-      }
-      return { orderNumber: "NW-1" };
-    });
+  // 2026-11-03: a typed customer is saved by the server with the order; no
+  // checkbox, no separate customers call. Same name only = the Owner chooses.
+  it("new customer: no extra step; the order goes with the typed name, contact and address (the server saves them to Customers)", async () => {
+    const api = vi.fn(async () => ({ orderNumber: "NW-1", customerSaved: "new" }));
     const done = openOrderEditor({ session: owner(), deps: deps(api) });
     typeIn("name", "Lim Mart");
     typeIn("phone", "0917 555 0101");
     typeIn("deliveryAddress", "8 Osmeña Blvd");
-    const box = form().querySelector('[name="saveCustomer"]');
-    box.checked = true;
-    box.dispatchEvent(new Event("change", { bubbles: true }));
-    form().dispatchEvent(new Event("submit", { cancelable: true }));
+    form().elements.name.dispatchEvent(new Event("change", { bubbles: true }));
     await flush();
-    expect(form().querySelector('[data-role="error"]').textContent).toBe("Network down");
-    form().dispatchEvent(new Event("submit", { cancelable: true }));
-    await flush();
-    expect(api.mock.calls.filter(([e]) => e === "customers")).toEqual([["customers", { method: "POST", body: { action: "create", customer: { name: "Lim Mart", phone: "0917 555 0101", address: "8 Osmeña Blvd" } } }]]);
-    expect(api.mock.calls.at(-1)[1].body.order).toMatchObject({ customerId: "custNEW0000000001", customer: { name: "Lim Mart" }, deliveryAddress: "8 Osmeña Blvd" });
-    await done;
-  });
-
-  it("new customer, not saved: a one-time name on the order, no customer record; Walk-in fills 'Walk-in' and the source", async () => {
-    const api = vi.fn(async () => ({ orderNumber: "NW-2" }));
-    let done = openOrderEditor({ session: owner(), deps: deps(api) });
-    typeIn("name", "Juan (one time)");
+    expect(form().querySelector('[name="saveCustomer"]')).toBeNull();
+    expect(form().querySelector('[data-role="auto-save"]').textContent).toMatch(/Saved to Customers automatically/);
     form().dispatchEvent(new Event("submit", { cancelable: true }));
     await flush();
     expect(api.mock.calls.map(([e]) => e)).toEqual(["orders"]);
+    expect(api.mock.calls[0][1].body.order).toMatchObject({ customer: { name: "Lim Mart", phone: "0917 555 0101" }, deliveryAddress: "8 Osmeña Blvd" });
     expect(api.mock.calls[0][1].body.order).not.toHaveProperty("customerId");
+    expect(api.mock.calls[0][1].body.order).not.toHaveProperty("newCustomer");
     await done;
-    done = openOrderEditor({ session: owner(), deps: deps(api) });
+  });
+
+  it("same name, nothing else matching: 'Similar customers found' (masked phone, address); the order waits for Use this customer or Create as new customer", async () => {
+    const maria = { id: "custMARIA00000001", name: "Maria Santos", phone: "09171234567", address: "Makati" };
+    const api = vi.fn(async () => ({ orderNumber: "NW-3" }));
+    const d = { ...deps(api), searchCustomers: vi.fn(async () => [maria, { id: "custMARIANA000001", name: "Mariana Cruz" }]) };
+    let done = openOrderEditor({ session: owner(), deps: d });
+    typeIn("name", "maria  santos");
+    form().dispatchEvent(new Event("submit", { cancelable: true }));
+    await flush();
+    expect(api).not.toHaveBeenCalled();
+    const box = form().querySelector('[data-role="similar-customers"]');
+    expect(box.textContent).toMatch(/Similar customers found/);
+    expect(box.textContent).toMatch(/Maria Santos · 0917••••567/);
+    expect(box.textContent).toMatch(/Makati/);
+    expect(box.textContent).not.toMatch(/Mariana/);
+    expect(form().querySelector('[data-role="similar-tip"]').textContent).toMatch(/phone number, an address or a clearer name/);
+    expect(form().querySelector('[data-role="error"]').textContent).toMatch(/already exists/);
+    // Create as new: allowed, same exact name, no forced suffix.
+    form().querySelector('[data-act="new-customer"]').click();
+    form().dispatchEvent(new Event("submit", { cancelable: true }));
+    await flush();
+    expect(api.mock.calls.at(-1)[1].body.order).toMatchObject({ customer: { name: "maria  santos" }, newCustomer: true });
+    await done;
+    // Use this customer: the order is linked to her by id.
+    api.mockClear();
+    done = openOrderEditor({ session: owner(), deps: d });
+    typeIn("name", "Maria Santos");
+    form().dispatchEvent(new Event("submit", { cancelable: true }));
+    await flush();
+    form().querySelector('[data-act="use-customer"]').click();
+    form().dispatchEvent(new Event("submit", { cancelable: true }));
+    await flush();
+    expect(api.mock.calls.at(-1)[1].body.order).toMatchObject({ customerId: "custMARIA00000001", customer: { name: "Maria Santos", phone: "09171234567" }, deliveryAddress: "Makati" });
+    await done;
+  });
+
+  it("same name + same phone (formatting ignored), or same name + same address: no question; the server links that customer", async () => {
+    const maria = { id: "custMARIA00000001", name: "Maria Santos", phone: "09171234567", address: "BGC, Taguig" };
+    const api = vi.fn(async () => ({ orderNumber: "NW-4", customerSaved: "matched" }));
+    const d = { ...deps(api), searchCustomers: vi.fn(async () => [maria]) };
+    let done = openOrderEditor({ session: owner(), deps: d });
+    typeIn("name", "Maria Santos");
+    typeIn("phone", "0917 123 4567");
+    form().dispatchEvent(new Event("submit", { cancelable: true }));
+    await flush();
+    expect(api).toHaveBeenCalledTimes(1);
+    expect(api.mock.calls.at(-1)[1].body.order).not.toHaveProperty("newCustomer");
+    await done;
+    done = openOrderEditor({ session: owner(), deps: d });
+    typeIn("name", "Maria Santos");
+    typeIn("deliveryAddress", "bgc taguig");
+    form().dispatchEvent(new Event("submit", { cancelable: true }));
+    await flush();
+    expect(api).toHaveBeenCalledTimes(2);
+    await done;
+    // Same name, DIFFERENT phone: not her; the Owner is asked (never merged).
+    done = openOrderEditor({ session: owner(), deps: d });
+    typeIn("name", "Maria Santos");
+    typeIn("phone", "0999 888 7777");
+    form().dispatchEvent(new Event("submit", { cancelable: true }));
+    await flush();
+    expect(api).toHaveBeenCalledTimes(2);
+    expect(form().querySelector('[data-role="similar-customers"]')).toBeTruthy();
+    form().querySelector('[data-act="cancel"]').click();
+    await done;
+  });
+
+  it("Walk-in fills 'Walk-in' and the source; nothing is saved for it", async () => {
+    const api = vi.fn(async () => ({ orderNumber: "NW-2" }));
+    const done = openOrderEditor({ session: owner(), deps: deps(api) });
     form().querySelector('[data-act="walk-in"]').click();
     expect([form().elements.name.value, form().elements.source.value]).toEqual(["Walk-in", "walk_in"]);
+    expect(form().querySelector('[data-role="auto-save"]')).toBeNull();
     form().dispatchEvent(new Event("submit", { cancelable: true }));
     await flush();
     expect(api.mock.calls.at(-1)[1].body.order).toMatchObject({ customer: { name: "Walk-in" }, source: "walk_in" });
@@ -283,11 +337,19 @@ describe("New Order: saved, new or walk-in customer", () => {
     await done;
   });
 
-  it("Save to Customers is offered only to whoever may add customers", () => {
+  it("editing an order with no saved customer: Save as a new customer (customers.manage only) links it", async () => {
+    const order = { id: "ord1", orderNumber: "NW-9", revision: 3, fulfillmentStatus: "pending", customer: { name: "Lim Mart", phone: "" }, customerId: null, source: "viber", items: [], discount: 0 };
+    const api = vi.fn(async (endpoint) => (endpoint === "customers" ? { customerId: "custNEW0000000001" } : { orderId: "ord1" }));
+    openOrderEditor({ session: owner(), deps: deps(api), order });
+    form().querySelector('[data-act="save-new"]').click();
+    await flush();
+    expect(api).toHaveBeenCalledWith("customers", { method: "POST", body: { action: "create", customer: { name: "Lim Mart" } } });
+    expect(form().querySelector('[data-role="linked"]').textContent).toMatch(/Saved customer: Lim Mart/);
+    form().querySelector('[data-act="cancel"]').click();
     const s = sessionFixture({ roleTemplate: "staff" });
     delete s.member.permissions["customers.manage"];
-    openOrderEditor({ session: s, deps: deps(vi.fn()) });
-    expect(form().querySelector('[name="saveCustomer"]')).toBeNull();
+    openOrderEditor({ session: s, deps: deps(vi.fn()), order });
+    expect(form().querySelector('[data-act="save-new"]')).toBeNull();
     expect(form().querySelector('[data-act="walk-in"]')).toBeTruthy();
   });
 });

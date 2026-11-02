@@ -10,20 +10,26 @@
 //   Fulfillment ▾   Pending / Preparing / Ready change the stage; Fulfilled
 //                   and Cancelled go through the protected fulfil / cancel
 //                   engines (stock, Sales, COGS), never a bare status write.
+//                   A fulfilled order can be reversed or cancelled (./inline.js).
 // View details: "Fulfilled · Paid", the customer (if any), stacked product
 // lines, Total strongest, compact payments, activity folded; Edit and
-// Close, everything else under ⋯ More.
+// Close, everything else under ⋯ More (one place to manage the order:
+// payment, fulfil, reverse fulfillment, cancel, delete when safe).
+// Reseller sales (2026-11-03): each line leads with the Owner/Base Price,
+// then "Sell ₱250 · Commission ₱50"; totals show Owner amount, Customer
+// total and Commission. The customer never sees these (menus and payment
+// links show the selling price only).
 // Permissions decide every control; the server re-checks all of it.
 
 import { html, render } from "../../lib/html.js";
 import { pageHeader, emptyState, badge, filterBar, bindFilterBar, mobileCell, openButton, bindRowOpen, skeleton } from "../../components/ui.js";
 import { examplesState } from "../../components/examples.js";
-import { orderPermissions, paymentCell, fulfillmentCell, latestPaymentCell, copyPending, inlineOrderActions } from "./inline.js";
+import { orderPermissions, paymentCell, fulfillmentCell, latestPaymentCell, copyPending, inlineOrderActions, canReverse } from "./inline.js";
 import { formDialog } from "../../components/form-dialog.js";
 import { confirmDialog, toast as defaultToast } from "../../components/feedback.js";
 import { api as defaultApi } from "../../lib/api.js";
 import { formatCentavos } from "../../lib/format.js";
-import { ORDER_SOURCES, ORDER_SOURCE_IDS, sourceText, FULFILLMENT_STATUSES, PAYMENT_STATUSES, PAYMENT_STATES, isDayId, isOpenFulfillment, isModuleEnabled } from "@shared/index.js";
+import { ORDER_SOURCES, ORDER_SOURCE_IDS, sourceText, FULFILLMENT_STATUSES, PAYMENT_STATUSES, PAYMENT_STATES, isDayId, isOpenFulfillment, isModuleEnabled, lineFinalCommission, ownerAmountOf, lineAmount } from "@shared/index.js";
 import * as ordersData from "./data.js";
 import { listOrderPayments } from "../payments/data.js";
 import { listProducts } from "../inventory/data.js";
@@ -160,7 +166,7 @@ export function mount(container, session, { data = defaultDeps.data, payments = 
   }
 
   // Payment ▾ / Fulfillment ▾: the shared engine (./inline.js), same as the Dashboard.
-  const { onPaymentChoice, onFulfillmentChoice, cancelDialog } = inlineOrderActions({ can, api, toast, currency, businessId, listOrderPayments: payments.listOrderPayments, reload: () => load() });
+  const { onPaymentChoice, onFulfillmentChoice, cancelDialog, reverseDialog } = inlineOrderActions({ can, api, toast, currency, businessId, listOrderPayments: payments.listOrderPayments, reload: () => load() });
 
   // ---- View details ----
   async function openDetail(orderId) {
@@ -186,7 +192,10 @@ export function mount(container, session, { data = defaultDeps.data, payments = 
     const open = isOpenFulfillment(order.fulfillmentStatus);
     const fulfilled = order.fulfillmentStatus === "fulfilled";
     const canEdit = can.update && (open || (fulfilled && can.correct));
-    const canDelete = can.cancel && open && !(order.amountPaid > 0);
+    // Delete only what has no history (2026-11-03): never fulfilled, no
+    // payment records. Anything else is cancelled instead (server re-checks).
+    const canDelete = can.cancel && open && !(order.amountPaid > 0) && !(order.paymentCount > 0) && !(order.statusHistory || []).some((h) => h.type === "fulfilled");
+    const reversible = canReverse(order, can);
     const canRecord = can.recordPayment && order.fulfillmentStatus !== "cancelled" && (order.balance ?? 0) > 0;
     // Reseller Package: who sold it and the commission (Owner / Admin decide).
     const resellerWs = snapshotWorkspaceTemplateId(session.entitlements) === "reseller";
@@ -198,10 +207,16 @@ export function mount(container, session, { data = defaultDeps.data, payments = 
       ...(canRecord ? [html`<button type="button" class="menu-item" data-act="pay-link">Payment link</button>`] : []),
       ...(canRecord ? [html`<button type="button" class="menu-item" data-act="record">Record payment</button>`] : []),
       ...(open && can.fulfill ? [html`<button type="button" class="menu-item" data-act="fulfill">Mark fulfilled</button>`] : []),
-      ...(open && can.cancel ? [html`<button type="button" class="menu-item" data-act="cancel">Cancel order</button>`] : []),
+      ...(reversible ? [html`<button type="button" class="menu-item" data-act="reverse">Reverse fulfillment</button>`] : []),
+      ...((open || (fulfilled && can.correct)) && can.cancel ? [html`<button type="button" class="menu-item" data-act="cancel">Cancel order</button>`] : []),
       ...(canDelete ? [html`<button type="button" class="menu-item menu-danger" data-act="delete">Delete order</button>`] : []),
     ];
     const costByLine = new Map((costs?.lines || []).map((l) => [l.lineId, l.costConsumed]));
+    // A reseller sale, seen by whoever may see resellers: owner price first.
+    const resale = resellerWs && Boolean(order.resellerId) && perms["resellers.view"] === true;
+    // A final commission set for the whole order (Reseller & commission): the
+    // lines show their calculated figure; the order's final is below.
+    const wholeOrderCommission = order.commission?.adjusted === true && order.commission.scope !== "lines";
     const money = (c) => formatCentavos(c, currency);
     const day = (at) => (when(at, timezone) || "").replace(/,? \d{1,2}:\d{2}.*$/, "");
     // A plain walk-in (no name typed) shows no customer block.
@@ -229,12 +244,15 @@ export function mount(container, session, { data = defaultDeps.data, payments = 
           ${order.deliveryAddress ? html`<p class="od-note"><span class="od-k">Deliver to</span> ${order.deliveryAddress}</p>` : ""}
           ${order.notes ? html`<p class="od-note" data-role="notes"><span class="od-k">Note</span> ${order.notes}</p>` : ""}
           ${order.cancellationReason ? html`<p class="od-note"><span class="od-k">Cancelled because</span> ${order.cancellationReason}</p>` : ""}
-          <ul class="od-items" data-role="items">${order.items.map(
-            (l) => html`<li class="od-item"><span class="od-item-main"><span class="od-name">${l.name}</span><span class="od-sub">${qtyText(l.quantity, l.unit)} × ${money(l.unitPrice)}${resellerWs && Number.isSafeInteger(l.basePrice) ? html` <span data-role="owner-price">(owner ${money(l.basePrice)})</span>` : ""}${costs ? html` · cost ${money(costByLine.get(l.lineId) ?? 0)}` : ""}</span></span><b class="od-amt">${money(l.lineSubtotal)}</b></li>`
+          <ul class="od-items" data-role="items">${order.items.map((l) =>
+            resale && Number.isSafeInteger(l.basePrice)
+              ? html`<li class="od-item" data-role="resale-line"><span class="od-item-main"><span class="od-name">${l.name}</span><span class="od-sub">Qty ${qtyText(l.quantity, l.unit)} · <b data-role="owner-price">Owner/Base Price ${money(l.basePrice)}</b></span><span class="od-sub od-quiet" data-role="sell-line">Sell ${money(l.unitPrice)} · ${wholeOrderCommission ? "Calculated commission" : "Commission"} ${money(wholeOrderCommission ? Math.max(0, l.commission ?? 0) : lineFinalCommission(l))}${Number.isSafeInteger(l.finalCommission) && l.finalCommission !== Math.max(0, l.commission ?? 0) ? html` <small data-role="line-adjusted">· adjusted from ${money(Math.max(0, l.commission ?? 0))}</small>` : ""}${costs ? html` · cost ${money(costByLine.get(l.lineId) ?? 0)}` : ""}</span></span><b class="od-amt">${money(lineAmount(l.quantity, l.basePrice))}</b></li>`
+              : html`<li class="od-item"><span class="od-item-main"><span class="od-name">${l.name}</span><span class="od-sub">${qtyText(l.quantity, l.unit)} × ${money(l.unitPrice)}${resellerWs && Number.isSafeInteger(l.basePrice) ? html` <span data-role="owner-price">(owner ${money(l.basePrice)})</span>` : ""}${costs ? html` · cost ${money(costByLine.get(l.lineId) ?? 0)}` : ""}</span></span><b class="od-amt">${money(l.lineSubtotal)}</b></li>`
           )}</ul>
           <dl class="od-totals" data-role="totals">
+            ${resale ? html`<div><dt>Owner amount</dt><dd data-role="owner-amount">${money(ownerAmountOf(order.items))}</dd></div>` : ""}
             ${order.discount ? html`<div><dt>Subtotal</dt><dd>${money(order.subtotal)}</dd></div><div><dt>Discount</dt><dd>−${money(order.discount)}</dd></div>` : ""}
-            <div class="od-grand"><dt>Total</dt><dd data-role="total">${money(order.total)}</dd></div>
+            <div class="od-grand"><dt>${resale ? "Customer total" : "Total"}</dt><dd data-role="total">${money(order.total)}</dd></div>
             <div><dt>Paid</dt><dd>${money(order.amountPaid)}</dd></div>
             ${(order.balance ?? 0) > 0 ? html`<div class="od-due"><dt>Balance</dt><dd>${money(order.balance)}</dd></div>` : ""}
             ${costs ? html`<div class="od-quiet"><dt>COGS</dt><dd data-role="cogs">${money(costs.cogs)}</dd></div><div class="od-quiet"><dt>Gross profit</dt><dd data-role="profit">${money(costs.grossProfit)}</dd></div>` : ""}
@@ -305,7 +323,7 @@ export function mount(container, session, { data = defaultDeps.data, payments = 
         return after(
           formDialog({
             title: `Delete ${order.orderNumber}?`,
-            intro: "For orders entered by mistake. Reserved stock is released and a record of the deletion is kept. Fulfilled orders can't be deleted.",
+            intro: "For orders entered by mistake. Reserved stock is released and a record of the deletion is kept. Orders with payments or a fulfillment are cancelled instead, so their history stays.",
             fields: [{ name: "reason", label: "Reason (optional)", type: "textarea" }],
             submitLabel: "Delete order",
             onSubmit: (v) => api("orders", { method: "POST", body: { action: "delete", orderId: order.id, ...(v.reason ? { reason: v.reason } : {}) } }),
@@ -323,7 +341,7 @@ export function mount(container, session, { data = defaultDeps.data, payments = 
         return undefined;
       }
       if (act === "fulfill") {
-        const ok = await confirmDialog({ title: `Fulfill ${order.orderNumber}?`, body: "Stock leaves inventory and the sale counts toward today. This can't be undone (returns come later).", confirmLabel: "Mark fulfilled" });
+        const ok = await confirmDialog({ title: `Fulfill ${order.orderNumber}?`, body: "Stock leaves inventory and the sale counts toward today. If it was a mistake, Reverse fulfillment puts it back.", confirmLabel: "Mark fulfilled" });
         if (!ok) return undefined;
         try {
           return await after(api("orders", { method: "POST", body: { action: "fulfill", orderId: order.id } }), "Order fulfilled");
@@ -332,6 +350,7 @@ export function mount(container, session, { data = defaultDeps.data, payments = 
         }
       }
       if (act === "cancel") return after(cancelDialog(order), "Order cancelled");
+      if (act === "reverse") return after(reverseDialog(order), "Fulfillment reversed");
       return undefined;
     });
   }

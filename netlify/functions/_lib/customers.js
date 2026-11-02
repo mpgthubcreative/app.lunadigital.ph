@@ -11,7 +11,7 @@
 // totalOrdered is the sum of those orders' totals (pending included);
 // outstandingBalance the sum of their balances.
 
-import { validateCustomerInput, phoneKey, isValidCustomerId, CustomerError, CUSTOMER_SCHEMA_VERSION, EMPTY_CUSTOMER_STATS } from "../../../shared/customers.js";
+import { validateCustomerInput, phoneKey, addressKey, isValidCustomerId, CustomerError, CUSTOMER_SCHEMA_VERSION, EMPTY_CUSTOMER_STATS } from "../../../shared/customers.js";
 import { isValidProductId } from "../../../shared/inventory.js";
 import { MAX_CENTAVOS } from "../../../shared/quantity.js";
 // Contention on a hot customer is retried like orders and payments.
@@ -161,6 +161,95 @@ export async function readCustomerForOrder(tx, tenant, customerId, { requireActi
   const c = snap.data();
   if (requireActive && c.status !== "active") throw new CustomerError("customer-inactive", `${c.name} is inactive. Reactivate them or choose another customer`);
   return c;
+}
+
+// Customers from orders (2026-11-03): the customer typed on a new order
+// (New Order, the menu link, a reseller's link) is saved to Customers once,
+// with no second step. SAME NAME IS A WARNING, NOT A MATCH:
+//   same name + same phone, or same name + same address  -> that customer
+//                                                          (one, active)
+//   nobody with that name                                -> a new customer
+//   same name only (or several strong matches)           -> a new customer
+//                                                          only if the Owner
+//                                                          chose it (forceNew);
+//                                                          otherwise unlinked
+// New Order shows the Owner the same-name customers first ("Use this
+// customer" / "Create as new customer"); a public order with a same-name-only
+// customer stays unlinked for the Owner to link later. Phones compare by
+// phoneKey (spaces, dashes, +63 ignored); addresses after lower-casing and
+// dropping punctuation and spacing only (no fuzzy matching). A phone with a
+// different name never merges (households share numbers).
+// Call before any write. Returns { match: { id, data, ref, addPhone } } |
+// { create: true } | { skip: "walk-in" | "same-name" | "inactive" }.
+const nameKey = (name) => (typeof name === "string" ? name.trim().replace(/\s+/g, " ").toLocaleLowerCase("en") : "");
+export async function findOrderCustomer(tx, tenant, { name, phone, address = null, forceNew = false }) {
+  const key = nameKey(name);
+  if (!key || /^walk-?in$/.test(key)) return { skip: "walk-in" };
+  if (forceNew) return { create: true };
+  const pk = phoneKey(phone);
+  const ak = addressKey(address);
+  const snap = await tx.get(tenant.collection("customers").where("nameLower", "==", key).limit(10));
+  if (snap.empty) return { create: true };
+  const strong = snap.docs.filter((d) => (pk && d.data().phoneKey === pk) || (ak && addressKey(d.data().address) === ak));
+  if (strong.length !== 1) return { skip: "same-name" };
+  const pick = strong[0];
+  if (pick.data().status !== "active") return { skip: "inactive" };
+  const c = pick.data();
+  // A phone typed on the order fills a record that has none (never replaces one).
+  const addPhone = pk && !c.phoneKey && (c.history?.length ?? 0) < MAX_HISTORY_ENTRIES ? phone : null;
+  return { match: { id: pick.id, data: c, ref: pick.ref, addPhone } };
+}
+
+// The writes for findOrderCustomer's answer, inside the order's transaction:
+// a new record (name, phone, the delivery address) already counting this
+// order, or the phone added to a matched one. Returns the customerId, or
+// null when the details aren't a valid customer (the order goes on unlinked).
+export function saveOrderCustomer(tx, { tenant, FieldValue, found, customer, address = null, order, actor }) {
+  const stamp = FieldValue.serverTimestamp();
+  const from = { orderId: order.id, orderNumber: order.orderNumber };
+  if (found.match) {
+    const { id, data: c, ref, addPhone } = found.match;
+    if (addPhone) {
+      tx.update(ref, {
+        phone: addPhone,
+        phoneKey: phoneKey(addPhone),
+        history: append(c.history, { type: "edited", at: new Date(), actor, changes: { phone: { from: null, to: addPhone } }, label: `Phone added from order ${order.orderNumber}`, ...from }),
+        revision: (c.revision || 1) + 1,
+        updatedBy: actor,
+        updatedAt: stamp,
+      });
+    }
+    return id;
+  }
+  let data;
+  try {
+    data = validateCustomerInput({ name: customer.name, ...(customer.phone ? { phone: customer.phone } : {}), ...(address ? { address } : {}) });
+  } catch {
+    return null;
+  }
+  const ref = tenant.collection("customers").doc();
+  tx.create(ref, {
+    schemaVersion: CUSTOMER_SCHEMA_VERSION,
+    name: data.name,
+    nameLower: data.name.toLocaleLowerCase("en"),
+    company: null,
+    phone: data.phone ?? null,
+    phoneKey: phoneKey(data.phone),
+    email: null,
+    address: data.address ?? null,
+    notes: null,
+    status: "active",
+    // This order already counts (applyCustomerStats isn't used for it).
+    stats: { ...EMPTY_CUSTOMER_STATS, orderCount: 1, totalOrdered: order.total, outstandingBalance: order.total, lastOrderAt: stamp, lastOrderNumber: order.orderNumber },
+    history: [{ type: "created", at: new Date(), actor, label: `Saved from order ${order.orderNumber}`, ...from }],
+    savedFrom: "order",
+    revision: 1,
+    createdBy: actor,
+    createdAt: stamp,
+    updatedBy: actor,
+    updatedAt: stamp,
+  });
+  return ref.id;
 }
 
 // Moves a customer's statistics by the given deltas (no read needed). The

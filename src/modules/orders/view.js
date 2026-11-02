@@ -45,7 +45,7 @@ export function orderRow(o, { currency = "PHP", timezone } = {}) {
   };
 }
 
-const HISTORY_LABEL = { created: "Order created", edited: "Order edited", corrected: "Order corrected", fulfilled: "Fulfilled", cancelled: "Cancelled", commission: "Reseller / commission changed" };
+const HISTORY_LABEL = { created: "Order created", edited: "Order edited", corrected: "Order corrected", fulfilled: "Fulfilled", cancelled: "Cancelled", commission: "Reseller / commission changed", reopened: "Fulfillment reversed", stage: "Stage changed" };
 const signedQty = (n) => `${n > 0 ? "+" : n < 0 ? "−" : ""}${formatQuantity(Math.abs(n))}`;
 
 // "Oct 8, 2026, 10:42 AM • Carlo • Qty changed 10 → 8" plus the automatic
@@ -69,16 +69,23 @@ export function historyRows(order, { currency = "PHP", timezone } = {}) {
     // Reseller Package: who sold it, selling prices, and the commission.
     if (h.changes?.reseller) lines.push(`Reseller ${h.changes.reseller.from ?? "Direct sale"} → ${h.changes.reseller.to ?? "Direct sale"}`);
     for (const p of h.changes?.prices || []) lines.push(`${p.name}: selling price ${formatCentavos(p.from, currency)} → ${formatCentavos(p.to, currency)}`);
+    // Per-line final commission (2026-11-03): null = the calculated one.
+    for (const c of h.changes?.lineCommissions || []) lines.push(`${c.name}: commission ${c.from === null ? "calculated" : formatCentavos(c.from, currency)} → ${c.to === null ? "calculated" : formatCentavos(c.to, currency)}`);
     if (h.changes?.commission) {
       const c = h.changes.commission;
       const m = (v) => (v === null || v === undefined ? "none" : formatCentavos(v, currency));
       if (c.final.from !== c.final.to) lines.push(`Final commission ${m(c.final.from)} → ${m(c.final.to)}`);
       if (c.calculated.from !== c.calculated.to) effects.push(`Calculated commission ${m(c.calculated.from)} → ${m(c.calculated.to)}`);
     }
+    // Reversals (2026-11-03): what it went back to; stock and sales were reversed.
+    if (h.type === "reopened") effects.push(`Back to ${fulfillmentLabel(h.to)} · stock back and set aside again · sales and COGS reversed`);
+    if (h.type === "cancelled" && h.reversed) effects.push("Fulfillment reversed · stock returned · sales and COGS reversed");
+    if (h.customerSaved === "new") effects.push("Customer saved to Customers");
+    if (h.customerSaved === "matched") effects.push("Linked to their saved customer record");
     if (h.reason) lines.push(`Reason: ${h.reason}`);
     const actor = h.actor?.name ?? "";
     const stamp = when(h.at, timezone);
-    const summary = lines.length && (h.type === "edited" || h.type === "corrected" || h.type === "commission") ? lines.join(" · ") : HISTORY_LABEL[h.type] || h.type;
+    const summary = lines.length && (h.type === "edited" || h.type === "corrected" || h.type === "commission") ? lines.join(" · ") : h.type === "reopened" || (h.type === "cancelled" && h.reason) ? [HISTORY_LABEL[h.type], ...lines].join(" · ") : HISTORY_LABEL[h.type] || h.type;
     return { type: h.type, label: HISTORY_LABEL[h.type] || h.type, actor, when: stamp, headline: [stamp, actor, summary].filter(Boolean).join(" • "), effects, details: lines.join(" · ") };
   });
 }

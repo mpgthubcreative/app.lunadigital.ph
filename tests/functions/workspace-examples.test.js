@@ -84,7 +84,8 @@ describe("Distributor: a new workspace stores nothing for its examples", () => {
     expect(rep2.overview.ordersCreated).toBe(1);
     // Customers list = the real one only (no example balances anywhere).
     ok(await post(createCustomersHandler, owner, "biz-a", { action: "create", customer: { name: "Real Buyer" } }));
-    expect(docsOf("biz-a", "customers").map((k) => world.db.docs.get(k).name)).toEqual(["Real Buyer"]);
+    // (Aling Nena: saved from her real order, 2026-11-03.)
+    expect(docsOf("biz-a", "customers").map((k) => world.db.docs.get(k).name).sort()).toEqual(["Aling Nena", "Real Buyer"]);
     // Another tenant: still nothing.
     for (const col of ["orders", "customers", "products"]) expect(docsOf("biz-b", col), col).toEqual([]);
     expect(await workbookText(world.uids.ownerb, "biz-b")).not.toMatch(/Aling Nena|Real Buyer|Kopi/);

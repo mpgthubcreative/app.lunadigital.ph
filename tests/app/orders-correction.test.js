@@ -78,7 +78,7 @@ describe("Edit -> Save on a fulfilled order", () => {
     const { d, detail } = await openDetail(session("owner"), fulfilledOrder.id);
     // Owner pilot: Edit and Close; Record payment (a balance remains) sits under ⋯ More.
     expect(footer(detail)).toEqual(["⋯ More", "Edit", "Close"]);
-    expect([...detail.querySelectorAll('[data-role="more-menu"] button')].map((b) => b.textContent.trim())).toEqual(["Payment link", "Record payment"]);
+    expect([...detail.querySelectorAll('[data-role="more-menu"] button')].map((b) => b.textContent.trim())).toEqual(["Payment link", "Record payment", "Reverse fulfillment", "Cancel order"]);
     detail.querySelector('[data-act="edit"]').click();
     await flush();
     const form = document.querySelector(".modal-backdrop form");
@@ -97,10 +97,13 @@ describe("Edit -> Save on a fulfilled order", () => {
     expect(footer(detail)).toEqual(["⋯ More", "Close"]); // no Edit
   });
 
-  it("no correction / reversal / COGS buttons exist anywhere", async () => {
+  // 2026-11-03: Reverse fulfillment exists, but only inside ⋯ More (one place
+  // to manage the order), never as extra buttons.
+  it("no separate correction / COGS buttons; Reverse fulfillment only under ⋯ More", async () => {
     const { detail } = await openDetail(session("owner"), fulfilledOrder.id);
-    expect(document.body.textContent).not.toMatch(/Fix Mistake|Reverse|Financial Correction|COGS Adjustment/i);
-    expect(detail.querySelectorAll(".modal-footer button").length).toBeLessThanOrEqual(5); // ⋯ More (Payment link, Record payment), Edit, Close
+    expect(document.body.textContent).not.toMatch(/Fix Mistake|Financial Correction|COGS Adjustment/i);
+    expect([...detail.querySelectorAll('[data-act="reverse"]')].every((b) => b.closest('[data-role="more-menu"]'))).toBe(true);
+    expect(footer(detail)).toEqual(["⋯ More", "Edit", "Close"]); // everything else is inside ⋯ More
   });
 });
 

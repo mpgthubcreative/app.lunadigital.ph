@@ -9,14 +9,25 @@
 //   create   reserve + count the order (metrics/{day}.orderCount, usage) - no sales, no COGS
 //   fulfill  consume stock, snapshot cost per line (orderCosts), and record
 //            grossSales / discounts / cogs on the business-local FULFILLMENT day
-//   cancel   release reservations (open orders only) - no sales, no COGS
+//   cancel   release reservations - no sales, no COGS; a FULFILLED order
+//            (orders.correct, 2026-11-03) first has its fulfillment reversed
+//            (below) and its units come back free (cancel_return)
 //   correct  edit a FULFILLED order (orders.correct): units that come back
 //            return at their ORIGINAL cost snapshot, extra units are consumed
 //            at today's average, and the sales / discount / COGS deltas post
 //            to the original fulfillment day. History is appended, never
 //            rewritten.
-//   delete   remove an accidental OPEN, unpaid order: release reservations,
-//            audit snapshot; plan usage keeps counting it
+//   reopen   (2026-11-03, orders.correct) a fulfilled order back to Pending /
+//            Preparing / Ready: its units come back AND are set aside again
+//            (unfulfillment) at the cost the fulfillment booked; the sales,
+//            discount, COGS and report rollups leave the fulfillment day.
+//            orderCosts keeps the reversed fulfillment in reversals[]; the
+//            next fulfill books afresh. Payments and commission don't move
+//            (commission follows verified payments, not fulfillment).
+//   delete   remove an accidental OPEN order with no payment records that was
+//            never fulfilled: release reservations, audit snapshot; plan
+//            usage keeps counting it. Anything with history is cancelled
+//            instead.
 //
 // Documents (businesses/{bid}/...):
 //   orders/{orderId}                order, line snapshots, statusHistory      (orders.view)
@@ -41,7 +52,8 @@
 //                                   80% / 100% warnings (./metering.js)
 
 import { applyRollup, fulfilledOrderContribution, diffRollup } from "./reports.js";
-import { readCustomerForOrder, applyCustomerStats } from "./customers.js";
+import { readCustomerForOrder, applyCustomerStats, findOrderCustomer, saveOrderCustomer } from "./customers.js";
+import { isModuleEnabled } from "../../../shared/modules.js";
 import { customerSnapshot } from "../../../shared/customers.js";
 import { createHash } from "node:crypto";
 import {
@@ -61,7 +73,7 @@ import {
 import { prorate } from "../../../shared/quantity.js";
 import { businessDate } from "../../../shared/metrics.js";
 import { prepareMovements } from "./inventory.js";
-import { orderCalculatedCommission, commissionFor, earnedOf, lineCommission, checkSellingPrice, validateFinalCommission } from "../../../shared/resellers.js";
+import { orderCalculatedCommission, orderCommission, needsLineCommission, earnedOf, lineCommission, checkSellingPrice, validateFinalCommission } from "../../../shared/resellers.js";
 import { prepareEarned as _prepareEarned } from "./reseller-earned.js";
 import { prepareNotifications } from "./notifications.js";
 import { recordDailyMetrics, adjustCurrentMetrics } from "./metrics.js";
@@ -141,15 +153,55 @@ const priceOf = (special, productId, product) => (special.has(productId) ? { uni
 
 const resellerRef = (tenant, id) => tenant.doc("resellers", id);
 // An existing line keeps its price snapshots (and the owner price of a reseller line).
-const keepLine = (prior, quantity) => ({ lineId: prior.lineId, productId: prior.productId, sku: prior.sku, name: prior.name, unit: prior.unit, quantity, unitPrice: prior.unitPrice, ...(prior.customerPrice ? { customerPrice: true } : {}), ...(Number.isSafeInteger(prior.basePrice) ? { basePrice: prior.basePrice } : {}), ...(prior.untracked === true ? { untracked: true } : {}) });
+const keepLine = (prior, quantity) => ({ lineId: prior.lineId, productId: prior.productId, sku: prior.sku, name: prior.name, unit: prior.unit, quantity, unitPrice: prior.unitPrice, ...(prior.customerPrice ? { customerPrice: true } : {}), ...(Number.isSafeInteger(prior.basePrice) ? { basePrice: prior.basePrice } : {}), ...(Number.isSafeInteger(prior.finalCommission) ? { finalCommission: prior.finalCommission } : {}), ...(prior.untracked === true ? { untracked: true } : {}) });
 // Lines with their per-line commission (reseller orders only).
 const withCommission = (lines) => lines.map((l) => (Number.isSafeInteger(l.basePrice) ? { ...l, commission: lineCommission(l) } : l));
 // Reseller earned totals follow the order in the same transaction
 // (./reseller-earned.js); the error is an OrderError.
 const prepareEarned = (tx, tenant, changes, FieldValue) => _prepareEarned(tx, tenant, changes, FieldValue, (code, message) => new OrderError(code, message));
-// An edited reseller order: the lines' new calculated commission; an Owner
-// override is kept (shared/resellers.js commissionFor).
-const recommission = (order, lines) => (order.resellerId ? commissionFor(orderCalculatedCommission(lines), order.commission) : null);
+// Reseller sales from New Order / Edit (2026-11-03, Owner / Admin: canResell).
+// A line of a reseller sale: the owner price snapshot (basePrice), the
+// selling price (typed, else the line's own) and the line's final commission
+// override (typed; null clears it; absent keeps it). A direct sale's lines
+// carry none of these.
+function resellerLine(line, item, basePrice) {
+  const { finalCommission, commission, ...rest } = line;
+  const fc = item.finalCommission !== undefined ? item.finalCommission : finalCommission;
+  return { ...rest, unitPrice: item.sellingPrice !== undefined ? item.sellingPrice : line.unitPrice, basePrice, ...(Number.isSafeInteger(fc) ? { finalCommission: fc } : {}) };
+}
+function directLine(line) {
+  const { basePrice, commission, finalCommission, ...rest } = line;
+  return rest;
+}
+// Below the owner price only with the Owner's commission for that line (or
+// an order-level final commission already set): never a silent negative.
+function checkBelowOwner(lines, commission) {
+  if (commission?.adjusted && commission.scope !== "lines") return;
+  const bad = lines.find(needsLineCommission);
+  if (bad) throw new OrderError("below-owner-price", `${bad.name}: selling price is below the owner price. Set its commission (₱0 or more) to accept it.`);
+}
+// Who sold it, read before any write: the reseller (a NEW attribution needs
+// them active). Returns { id, name } | null.
+async function readSeller(tx, tenant, nextId, currentId) {
+  if (!nextId) return null;
+  const snap = await tx.get(resellerRef(tenant, nextId));
+  if (!snap.exists) throw new OrderError("reseller-not-found", "Reseller not found");
+  if (nextId !== currentId && snap.data().status !== "active") throw new OrderError("reseller-inactive", "That reseller is inactive");
+  return { id: nextId, name: snap.data().name, ref: snap.ref };
+}
+const lineFieldsSent = (items) => items.some((i) => i.sellingPrice !== undefined || i.finalCommission !== undefined);
+// The history / audit "changes" of a reseller side edit.
+function resellerChanges(order, nextSeller, lines, commission) {
+  const before = new Map(order.items.map((l) => [l.productId, l]));
+  const prices = lines.filter((l) => before.has(l.productId) && order.resellerId && before.get(l.productId).unitPrice !== l.unitPrice).map((l) => ({ lineId: l.lineId, name: l.name, from: before.get(l.productId).unitPrice, to: l.unitPrice }));
+  const lineCommissions = lines.filter((l) => (before.get(l.productId)?.finalCommission ?? null) !== (l.finalCommission ?? null)).map((l) => ({ lineId: l.lineId, name: l.name, from: before.get(l.productId)?.finalCommission ?? null, to: l.finalCommission ?? null }));
+  return {
+    ...((order.resellerId ?? null) !== (nextSeller?.id ?? null) ? { reseller: { from: order.reseller?.name ?? null, to: nextSeller?.name ?? null } } : {}),
+    ...(prices.length ? { prices } : {}),
+    ...(lineCommissions.length ? { lineCommissions } : {}),
+    ...(JSON.stringify([order.commission?.calculated ?? null, order.commission?.final ?? null]) !== JSON.stringify([commission?.calculated ?? null, commission?.final ?? null]) ? { commission: { calculated: { from: order.commission?.calculated ?? null, to: commission?.calculated ?? null }, final: { from: order.commission?.final ?? null, to: commission?.final ?? null } } } : {}),
+  };
+}
 
 // Track Inventory (2026-11-01): a line whose stock was never set aside
 // (line.untracked: the product didn't track inventory when it was added)
@@ -168,10 +220,24 @@ function movementsFor(lines, type, orderId, orderNumber, reason) {
 // price) } from the reseller's private menu link. Each line is sold at the
 // reseller's price (never below the owner price) with the owner price kept
 // beside it; no discount, no customer special price.
-export async function createOrder({ db, tenant, FieldValue, business, entitlements, input, idempotencyKey, actor, canDiscount, canLinkCustomers = false, notify = null, reseller = null, now = new Date() }) {
+// canResell (2026-11-03): Owner / Admin of a reseller workspace may sell for
+// a reseller right in New Order (input resellerId, each item's sellingPrice
+// and finalCommission).
+// Customers (2026-11-03): an order typed with a customer's name and no saved
+// customer is linked in Customers in the SAME transaction: an existing
+// record only on a strong match (same name + same phone or address,
+// ./customers.js findOrderCustomer), a new record when nobody has that name
+// (or the Owner chose newCustomer). Same name only is never a match: the
+// order stays unlinked (New Order asks the Owner first). Needs the business's
+// Customers module, not the person's permission. "Walk-in" saves nothing.
+// An automatic link doesn't apply customer special prices (those are for a
+// customer picked on purpose, whose prices the form shows).
+export async function createOrder({ db, tenant, FieldValue, business, entitlements, input, idempotencyKey, actor, canDiscount, canLinkCustomers = false, canResell = false, notify = null, reseller = null, now = new Date() }) {
   if (!isValidIdempotencyKey(idempotencyKey)) throw new OrderError("invalid-input", "A valid idempotency key is required");
   const data = validateOrderInput(input);
   if (data.customerId && !canLinkCustomers) throw new OrderError("customer-not-allowed", "You can't link orders to saved customers");
+  if (data.resellerId && (reseller || !canResell)) throw new OrderError("reseller-not-allowed", "Only the Owner or an Admin can record a reseller sale here");
+  const sellerId = reseller ? reseller.id : data.resellerId || null;
   if (data.discount > 0 && !canDiscount) throw new OrderError("discount-not-allowed", "You don't have permission to give discounts");
   const limit = entitlements && entitlements.limits && entitlements.limits.ordersPerMonth;
   if (!Number.isSafeInteger(limit) || limit < 0) throw new OrderError("business-misconfigured", "This business has no valid order limit");
@@ -218,17 +284,22 @@ export async function createOrder({ db, tenant, FieldValue, business, entitlemen
       const ref = tenant.collection("orders").doc();
 
       const linked = data.customerId ? await readCustomerForOrder(tx, tenant, data.customerId) : null;
-      const customer = linked ? customerSnapshot(linked, data.customer.notes) : data.customer;
+      const found = !data.customerId && isModuleEnabled(entitlements, "customers") ? await findOrderCustomer(tx, tenant, { ...data.customer, address: data.deliveryAddress, forceNew: data.newCustomer }) : null;
+      const matched = found?.match ? { ...found.match.data, phone: found.match.addPhone ?? found.match.data.phone } : null;
+      const customer = linked ? customerSnapshot(linked, data.customer.notes) : matched ? customerSnapshot(matched, data.customer.notes) : data.customer;
       const plan = await prepareMovements(tx, { tenant, items: movementsFor(data.items, "reservation", ref.id, orderNumber, "order_created") });
       for (const r of plan.results) {
         if (r.product.status !== "active") throw new OrderError("product-inactive", `${r.product.name} is inactive`);
       }
-      const special = reseller ? new Map() : await specialPrices(tx, tenant, data.customerId, plan.results.map((r) => r.productId));
-      const resellerSnap = reseller ? await tx.get(resellerRef(tenant, reseller.id)) : null;
+      const special = sellerId ? new Map() : await specialPrices(tx, tenant, data.customerId, plan.results.map((r) => r.productId));
+      const resellerSnap = sellerId ? await tx.get(resellerRef(tenant, sellerId)) : null;
       if (reseller && (!resellerSnap.exists || resellerSnap.data().status !== "active")) throw new OrderError("reseller-inactive", "This reseller link isn't active");
+      if (!reseller && sellerId && (!resellerSnap.exists || resellerSnap.data().status !== "active")) throw new OrderError("reseller-inactive", "That reseller is inactive");
       const lines = plan.results.map((r, i) => {
         const base = { lineId: `L${i + 1}`, productId: r.productId, sku: r.product.sku, name: r.product.name, unit: r.product.unit, quantity: data.items[i].quantity, ...lineFlag(r) };
-        if (!reseller) return { ...base, ...priceOf(special, r.productId, r.product) };
+        if (!sellerId) return { ...base, ...priceOf(special, r.productId, r.product) };
+        // The Owner's reseller sale: the typed selling price and line commission.
+        if (!reseller) return resellerLine({ ...base, unitPrice: r.product.sellingPrice }, data.items[i], r.product.sellingPrice);
         const selling = reseller.prices.has(r.productId) ? reseller.prices.get(r.productId) : r.product.sellingPrice;
         try {
           checkSellingPrice(selling, r.product.sellingPrice);
@@ -238,8 +309,9 @@ export async function createOrder({ db, tenant, FieldValue, business, entitlemen
         return { ...base, unitPrice: selling, basePrice: r.product.sellingPrice };
       });
       const totals = computeTotals(lines, data.discount);
-      if (reseller) totals.lines = withCommission(totals.lines);
-      const commission = reseller ? commissionFor(orderCalculatedCommission(totals.lines)) : null;
+      if (sellerId) totals.lines = withCommission(totals.lines);
+      const commission = sellerId ? orderCommission(totals.lines) : null;
+      if (sellerId && !reseller) checkBelowOwner(totals.lines, commission);
 
       const stamp = FieldValue.serverTimestamp();
       const order = {
@@ -266,7 +338,7 @@ export async function createOrder({ db, tenant, FieldValue, business, entitlemen
         balance: totals.total,
         paymentStatus: "unpaid",
         fulfillmentStatus: "pending",
-        statusHistory: [historyEntry("created", actor, { to: "pending" })],
+        statusHistory: [historyEntry("created", actor, { to: "pending", ...(found?.match ? { customerSaved: "matched" } : found?.create ? { customerSaved: "new" } : {}) })],
         notes: data.notes || null,
         revision: 1,
         idempotencyKey,
@@ -280,11 +352,15 @@ export async function createOrder({ db, tenant, FieldValue, business, entitlemen
         cancelledBy: null,
         cancelledAt: null,
         cancellationReason: null,
-        ...(reseller ? { reseller: { id: reseller.id, name: resellerSnap.data().name }, resellerId: reseller.id, commission } : {}),
+        ...(sellerId ? { reseller: { id: sellerId, name: resellerSnap.data().name }, resellerId: sellerId, commission } : {}),
       };
 
       const alerts = await prepareMonthlyAlerts(tx, { tenant, meterId: "ordersCreated", period: quota.period, before: quota.used, after: quota.used + 1, limit: quota.limit });
       const notes = notify ? await prepareNotifications(tx, { tenant, actor, events: notify({ orderId: ref.id, ...order }) }) : null;
+      // The customer typed here, saved / linked (no reads after this point).
+      const autoId = found && (found.match || found.create) ? saveOrderCustomer(tx, { tenant, FieldValue, found, customer, address: data.deliveryAddress || null, order: { id: ref.id, orderNumber, total: totals.total }, actor }) : null;
+      if (autoId) order.customerId = autoId;
+      else delete order.statusHistory[0].customerSaved;
       tx.create(idemRef, { orderId: ref.id, orderNumber, requestHash, uid: actor.uid, createdAt: stamp });
       tx.create(ref, order);
       tx.set(counterRef, { next: seq + 1, day, updatedAt: stamp });
@@ -293,15 +369,47 @@ export async function createOrder({ db, tenant, FieldValue, business, entitlemen
       notes?.commit({ FieldValue });
       recordDailyMetrics({ tx, tenant, FieldValue, timezone: business.timezone, at: now, operational: { orderCount: 1 } });
       adjustCurrentMetrics({ tx, tenant, FieldValue, operational: { pendingFulfillment: 1, unpaidOrders: totals.total > 0 ? 1 : 0 }, financial: { receivablesOutstanding: totals.total } });
-      applyCustomerStats(tx, { tenant, FieldValue, customerId: data.customerId, orders: 1, total: totals.total, balance: totals.total, lastOrder: orderNumber });
-      if (reseller) tx.update(resellerSnap.ref, { orderCount: FieldValue.increment(1), lastOrderAt: stamp, updatedAt: stamp });
+      // A customer created just now already counts this order.
+      if (!(autoId && found.create)) applyCustomerStats(tx, { tenant, FieldValue, customerId: order.customerId, orders: 1, total: totals.total, balance: totals.total, lastOrder: orderNumber });
+      if (sellerId) tx.update(resellerSnap.ref, { orderCount: FieldValue.increment(1), lastOrderAt: stamp, updatedAt: stamp });
       plan.commit({ actor, FieldValue });
-      return { orderId: ref.id, orderNumber, replayed: false, order: { ...order, createdAt: null, updatedAt: null } };
+      return { orderId: ref.id, orderNumber, replayed: false, ...(autoId ? { customerId: autoId, customerSaved: found.create ? "new" : "matched" } : found?.skip === "same-name" ? { customerSaved: "same-name" } : {}), order: { ...order, createdAt: null, updatedAt: null } };
     }, TX_OPTIONS);
   }
 }
 
 // ---------- Edit (open orders) and correction (fulfilled orders) ----------
+
+// The reseller side of an edit / correction, after its lines are built and
+// before any write: who sold it (input resellerId, absent = unchanged), each
+// line's owner price / selling price / commission override, the commission
+// block (an order-level override is kept; line overrides survive quantity
+// and price changes) and the earned change (never below what the reseller
+// was paid: ./reseller-earned.js). Changing any of it needs canResell.
+const nextSellerOf = (order, data) => (data.resellerId === undefined ? order.resellerId ?? null : data.resellerId);
+async function sellerSide(tx, { tenant, FieldValue, order, data, lines, discount, canResell }) {
+  const currentId = order.resellerId ?? null;
+  const nextId = nextSellerOf(order, data);
+  if ((nextId !== currentId || lineFieldsSent(data.items)) && !canResell) throw new OrderError("reseller-not-allowed", "Only the Owner or an Admin can change the reseller, selling prices or commission");
+  const seller = await readSeller(tx, tenant, nextId, currentId);
+  const sent = new Map(data.items.map((i) => [i.productId, i]));
+  const shaped = lines.map((l) => (nextId ? resellerLine(l, sent.get(l.productId) || {}, Number.isSafeInteger(l.basePrice) ? l.basePrice : l.unitPrice) : currentId ? directLine(l) : l));
+  const totals = computeTotals(shaped, discount);
+  if (nextId) totals.lines = withCommission(totals.lines);
+  // Setting or clearing a LINE commission replaces a whole-order override
+  // (the Owner is now deciding per line); otherwise an override is kept.
+  const lineDecided = data.items.some((i) => i.finalCommission !== undefined);
+  const commission = nextId ? orderCommission(totals.lines, nextId === currentId && !lineDecided ? order.commission : null) : null;
+  if (nextId) checkBelowOwner(totals.lines, commission);
+  if (totals.total < (order.amountPaid || 0)) throw new OrderError("below-paid", "The new total would be less than what's already been paid");
+  const earned = await prepareEarned(tx, tenant, [{ resellerId: currentId, delta: -earnedOf(order) }, { resellerId: nextId, delta: nextId ? earnedOf({ ...order, resellerId: nextId, total: totals.total, commission }) : 0 }], FieldValue);
+  const changes = currentId || nextId ? resellerChanges(order, seller, totals.lines, commission) : {};
+  const fields = currentId || nextId ? { reseller: seller ? { id: seller.id, name: seller.name } : null, resellerId: nextId, commission } : {};
+  return { totals, commission, earned, changes, fields };
+}
+const sellerAudit = (tx, { tenant, FieldValue, orderId, order, actor, changes }) => {
+  if (Object.keys(changes).length) tx.set(tenant.collection("auditLog").doc(), { type: "order.commission_changed", orderId, orderNumber: order.orderNumber, actor, changes, at: FieldValue.serverTimestamp() });
+};
 
 // One "Edit -> Save" for the user; the server decides what it means.
 //   open order       existing lines keep their price/name snapshot; new
@@ -309,7 +417,7 @@ export async function createOrder({ db, tenant, FieldValue, business, entitlemen
 //                    DIFFERENCE moves (20 -> 15 releases 5, 20 -> 30 reserves 10)
 //   fulfilled order  a correction (orders.correct), see correctFulfilled()
 //   cancelled order  not editable
-export async function updateOrder({ db, tenant, FieldValue, business = null, orderId, input, expectedRevision = null, actor, canDiscount, canLinkCustomers = false, canCorrect = false, reason = null }) {
+export async function updateOrder({ db, tenant, FieldValue, business = null, orderId, input, expectedRevision = null, actor, canDiscount, canLinkCustomers = false, canCorrect = false, canResell = false, reason = null }) {
   const ref = orderRef(tenant, orderId);
   const data = validateOrderInput(input);
 
@@ -326,7 +434,7 @@ export async function updateOrder({ db, tenant, FieldValue, business = null, ord
     if (order.fulfillmentStatus !== "fulfilled" && !isOpenFulfillment(order.fulfillmentStatus)) throw new OrderError("not-pending", `A ${order.fulfillmentStatus} order can't be edited`);
     if (data.customerId && data.customerId !== (order.customerId ?? null) && !canLinkCustomers) throw new OrderError("customer-not-allowed", "You can't link orders to saved customers");
     const link = await customerLink(tx, { tenant, order, data });
-    if (order.fulfillmentStatus === "fulfilled") return correctFulfilled(tx, { tenant, FieldValue, business, ref, orderId, order, data: link.data, link, actor, canDiscount, reason });
+    if (order.fulfillmentStatus === "fulfilled") return correctFulfilled(tx, { tenant, FieldValue, business, ref, orderId, order, data: link.data, link, actor, canDiscount, canResell, reason });
     if (data.discount !== order.discount && !canDiscount) throw new OrderError("discount-not-allowed", "You don't have permission to change the discount");
 
     const oldLines = new Map(order.items.map((l) => [l.productId, l]));
@@ -350,7 +458,7 @@ export async function updateOrder({ db, tenant, FieldValue, business = null, ord
     const plan = moves.length ? await prepareMovements(tx, { tenant, items: moves }) : null;
     const fresh = new Map(plan ? plan.results.map((r) => [r.productId, r.product]) : []);
     const freshFlag = new Map(plan ? plan.results.map((r) => [r.productId, lineFlag(r)]) : []);
-    const special = order.resellerId ? new Map() : await specialPrices(tx, tenant, link.data.customerId, data.items.filter((i) => !oldLines.has(i.productId)).map((i) => i.productId));
+    const special = nextSellerOf(order, data) ? new Map() : await specialPrices(tx, tenant, link.data.customerId, data.items.filter((i) => !oldLines.has(i.productId)).map((i) => i.productId));
     let n = order.items.length;
     const lines = data.items.map((i) => {
       const prior = oldLines.get(i.productId);
@@ -360,14 +468,11 @@ export async function updateOrder({ db, tenant, FieldValue, business = null, ord
       n += 1;
       // New products are added at their current trusted price (the customer's special one first).
       for (const c of changes) if (c.productId === i.productId) c.sku = p.sku;
-      return { lineId: `L${n}`, productId: i.productId, sku: p.sku, name: p.name, unit: p.unit, quantity: i.quantity, ...priceOf(special, i.productId, p), ...(order.resellerId ? { basePrice: p.sellingPrice } : {}), ...(freshFlag.get(i.productId) || {}) };
+      return { lineId: `L${n}`, productId: i.productId, sku: p.sku, name: p.name, unit: p.unit, quantity: i.quantity, ...priceOf(special, i.productId, p), ...(freshFlag.get(i.productId) || {}) };
     });
-    const totals = computeTotals(lines, data.discount);
-    if (order.resellerId) totals.lines = withCommission(totals.lines);
+    const side = await sellerSide(tx, { tenant, FieldValue, order, data, lines, discount: data.discount, canResell });
+    const { totals, earned } = side;
     const amountPaid = order.amountPaid || 0;
-    if (totals.total < amountPaid) throw new OrderError("below-paid", "The new total would be less than what's already been paid");
-    const commission = recommission(order, totals.lines);
-    const earned = await prepareEarned(tx, tenant, commission ? [{ resellerId: order.resellerId, delta: earnedOf({ ...order, total: totals.total, commission }) - earnedOf(order) }] : [], FieldValue);
 
     const customerChanged = JSON.stringify(order.customer) !== JSON.stringify(link.data.customer) || (order.customerId ?? null) !== link.data.customerId;
     const entry = historyEntry("edited", actor, {
@@ -380,12 +485,12 @@ export async function updateOrder({ db, tenant, FieldValue, business = null, ord
         ...(customerChanged ? { customer: true } : {}),
         ...(data.source !== order.source ? { source: { from: order.source, to: data.source } } : {}),
         ...((order.deliveryAddress || null) !== (data.deliveryAddress || null) ? { deliveryAddress: true } : {}),
-        ...(commission && commission.calculated !== order.commission?.calculated ? { commission: { calculated: { from: order.commission?.calculated ?? 0, to: commission.calculated }, final: { from: order.commission?.final ?? 0, to: commission.final } } } : {}),
+        ...side.changes,
       },
     });
 
     tx.update(ref, {
-      ...(commission ? { commission } : {}),
+      ...side.fields,
       customer: link.data.customer,
       customerId: link.data.customerId,
       customerNameLower: link.data.customer.name.toLocaleLowerCase("en"),
@@ -408,8 +513,9 @@ export async function updateOrder({ db, tenant, FieldValue, business = null, ord
     adjustBalanceGauges(tx, { tenant, FieldValue, order, newTotal: totals.total });
     moveCustomerStats(tx, { tenant, FieldValue, order, newCustomerId: link.data.customerId, newTotal: totals.total });
     earned.apply();
+    sellerAudit(tx, { tenant, FieldValue, orderId, order, actor, changes: side.changes });
     if (plan) plan.commit({ actor, FieldValue });
-    return { orderId, revision: order.revision + 1, total: totals.total };
+    return { orderId, revision: order.revision + 1, total: totals.total, ...(side.commission ? { commission: side.commission } : {}) };
   }, TX_OPTIONS);
 }
 
@@ -422,9 +528,12 @@ export async function updateOrder({ db, tenant, FieldValue, business = null, ord
 // Prices on existing lines keep their snapshot. Sales, discount and COGS
 // deltas post to the ORIGINAL fulfillment day so that day becomes right.
 // Inventory history gets new correction movements; nothing is deleted.
-async function correctFulfilled(tx, { tenant, FieldValue, business, ref, orderId, order, data, link, actor, canDiscount, reason }) {
+async function correctFulfilled(tx, { tenant, FieldValue, business, ref, orderId, order, data, link, actor, canDiscount, canResell = false, reason }) {
   if (data.discount !== order.discount && !canDiscount) throw new OrderError("discount-not-allowed", "You don't have permission to change the discount");
-  const material = isMaterialChange({ before: order, after: data });
+  // A changed selling price moves the booked sales too (2026-11-03).
+  const priorPrice = new Map(order.items.map((l) => [l.productId, l.unitPrice]));
+  const repriced = data.items.some((i) => i.sellingPrice !== undefined && priorPrice.has(i.productId) && priorPrice.get(i.productId) !== i.sellingPrice);
+  const material = isMaterialChange({ before: order, after: data }) || repriced;
   const why = typeof reason === "string" ? reason.trim().replace(/\s+/g, " ") : "";
   if (material && (why.length < 3 || why.length > 300)) throw new OrderError("reason-required", "Say why this fulfilled order is being corrected (3-300 characters)");
 
@@ -470,7 +579,7 @@ async function correctFulfilled(tx, { tenant, FieldValue, business, ref, orderId
 
   const plan = moves.length ? await prepareMovements(tx, { tenant, items: moves }) : null;
   const results = new Map(plan ? plan.results.map((r) => [r.productId, r]) : []);
-  const special = order.resellerId ? new Map() : await specialPrices(tx, tenant, data.customerId, data.items.filter((i) => !oldLines.has(i.productId)).map((i) => i.productId));
+  const special = nextSellerOf(order, data) ? new Map() : await specialPrices(tx, tenant, data.customerId, data.items.filter((i) => !oldLines.has(i.productId)).map((i) => i.productId));
   let n = order.items.length;
   const lines = data.items.map((i) => {
     const prior = oldLines.get(i.productId);
@@ -479,14 +588,11 @@ async function correctFulfilled(tx, { tenant, FieldValue, business, ref, orderId
     if (!p || p.status !== "active") throw new OrderError("product-inactive", "A new product on the order is unavailable");
     n += 1;
     for (const c of changes) if (c.productId === i.productId) c.sku = p.sku;
-    return { lineId: `L${n}`, productId: i.productId, sku: p.sku, name: p.name, unit: p.unit, quantity: i.quantity, ...priceOf(special, i.productId, p), ...(order.resellerId ? { basePrice: p.sellingPrice } : {}), ...lineFlag(results.get(i.productId)) };
+    return { lineId: `L${n}`, productId: i.productId, sku: p.sku, name: p.name, unit: p.unit, quantity: i.quantity, ...priceOf(special, i.productId, p), ...lineFlag(results.get(i.productId)) };
   });
-  const totals = computeTotals(lines, data.discount);
-  if (order.resellerId) totals.lines = withCommission(totals.lines);
+  const side = await sellerSide(tx, { tenant, FieldValue, order, data, lines, discount: data.discount, canResell });
+  const { totals, earned } = side;
   const amountPaid = order.amountPaid || 0;
-  if (totals.total < amountPaid) throw new OrderError("below-paid", "The new total would be less than what's already been paid");
-  const commission = recommission(order, totals.lines);
-  const earned = await prepareEarned(tx, tenant, commission ? [{ resellerId: order.resellerId, delta: earnedOf({ ...order, total: totals.total, commission }) - earnedOf(order) }] : [], FieldValue);
 
   const costLines = totals.lines.map((l) => {
     // kept original cost + whatever extra units cost today (correction_out)
@@ -509,11 +615,12 @@ async function correctFulfilled(tx, { tenant, FieldValue, business, ref, orderId
       ...(customerChanged ? { customer: true } : {}),
       ...(data.source !== order.source ? { source: { from: order.source, to: data.source } } : {}),
       ...((order.deliveryAddress || null) !== (data.deliveryAddress || null) ? { deliveryAddress: true } : {}),
+      ...side.changes,
     },
   });
   const stamp = FieldValue.serverTimestamp();
   tx.update(ref, {
-    ...(commission ? { commission } : {}),
+    ...side.fields,
     customer: data.customer,
     customerId: data.customerId,
     customerNameLower: data.customer.name.toLocaleLowerCase("en"),
@@ -555,6 +662,7 @@ async function correctFulfilled(tx, { tenant, FieldValue, business, ref, orderId
   const rollupAfter = fulfilledOrderContribution({ ...order, items: totals.lines, discount: totals.discount, customerId: link.data.customerId }, costLines);
   applyRollup(tx, { tenant, FieldValue, day: order.fulfilledDay, delta: diffRollup(rollupAfter, rollupBefore) });
   earned.apply();
+  sellerAudit(tx, { tenant, FieldValue, orderId, order, actor, changes: side.changes });
   if (plan) plan.commit({ actor, FieldValue });
   return { orderId, revision: order.revision + 1, total: totals.total, corrected: true, delta };
 }
@@ -606,7 +714,7 @@ export async function editResellerSale({ db, tenant, FieldValue, orderId, resell
     let lines = order.items.map((l) => {
       const basePrice = Number.isSafeInteger(l.basePrice) ? l.basePrice : l.unitPrice;
       const unitPrice = prices && Object.hasOwn(prices, l.lineId) ? prices[l.lineId] : l.unitPrice;
-      return nextId ? { ...keepLine(l, l.quantity), unitPrice, basePrice } : keepLine(l, l.quantity);
+      return nextId ? { ...keepLine(l, l.quantity), unitPrice, basePrice } : directLine(keepLine(l, l.quantity));
     });
     const totals = computeTotals(lines, order.discount || 0);
     lines = nextId ? withCommission(totals.lines) : totals.lines;
@@ -618,9 +726,12 @@ export async function editResellerSale({ db, tenant, FieldValue, orderId, resell
       const calculated = orderCalculatedCommission(lines);
       const sameReseller = nextId === (order.resellerId ?? null);
       const previous = sameReseller ? order.commission : null;
-      if (finalCommission === undefined) commission = commissionFor(calculated, previous);
-      else if (finalCommission === null) commission = commissionFor(calculated);
-      else commission = { calculated, final: finalCommission, adjusted: finalCommission !== calculated, ...(finalCommission !== calculated ? { adjustedBy: { uid: actor.uid, name: actor.name ?? null }, adjustedAt: now } : {}) };
+      if (finalCommission === undefined) commission = orderCommission(lines, previous);
+      else if (finalCommission === null) {
+        // "Use calculated commission": line overrides go too.
+        lines = lines.map(({ finalCommission: _drop, ...l }) => l);
+        commission = orderCommission(lines);
+      } else commission = { calculated, final: finalCommission, adjusted: finalCommission !== calculated, ...(finalCommission !== calculated ? { adjustedBy: { uid: actor.uid, name: actor.name ?? null }, adjustedAt: now } : {}) };
       if (calculated < 0 && !(finalCommission !== undefined && finalCommission !== null) && !(commission.adjusted && previous?.adjusted)) {
         throw new OrderError("below-owner-price", "Selling price is below the owner price. Set the final commission yourself (₱0 or more) to accept it.");
       }
@@ -673,6 +784,11 @@ export async function deleteOrder({ db, tenant, FieldValue, orderId, reason = nu
     const order = snap.data();
     if (!isOpenFulfillment(order.fulfillmentStatus)) throw new OrderError("not-deletable", "Only open orders can be deleted; fulfilled orders stay in history");
     if ((order.amountPaid || 0) > 0) throw new OrderError("not-deletable", "An order with payments can't be deleted");
+    // 2026-11-03: anything with history is cancelled instead, never erased:
+    // a fulfillment (even one reversed since) or any payment record (voided too).
+    if ((order.statusHistory || []).some((h) => h.type === "fulfilled")) throw new OrderError("not-deletable", "This order was fulfilled before, so it stays in history. Cancel it instead");
+    const paid = await tx.get(tenant.collection("payments").where("orderId", "==", orderId).limit(1));
+    if ((order.paymentCount || 0) > 0 || !paid.empty) throw new OrderError("not-deletable", "This order has payment records, so it stays in history. Cancel it instead");
     const plan = await prepareMovements(tx, { tenant, items: movementsFor(order.items, "release", orderId, order.orderNumber, "order_deleted") });
     const earned = await prepareEarned(tx, tenant, [{ resellerId: order.resellerId, delta: -earnedOf(order) }], FieldValue);
 
@@ -732,6 +848,78 @@ export async function setFulfillmentStage({ db, tenant, FieldValue, orderId, sta
   }, TX_OPTIONS);
 }
 
+// ---------- Reverse a fulfillment (2026-11-03) ----------
+
+// Reads (call before any write) what a fulfilled order booked: its cost
+// snapshot, and the stock movements that bring its units back at that cost
+// (type "unfulfillment": back AND set aside again; "cancel_return": back,
+// free). Lines whose stock was never tracked move nothing. apply() writes:
+// the fulfillment day's sales / discount / COGS / fulfilled count and report
+// rollups reversed, the cost record marked reversed (its figures kept in
+// reversals[]), the movements. Payments, the customer's balance and reseller
+// commission are untouched here.
+async function prepareUnfulfill(tx, { tenant, orderId, order, type, reason }) {
+  const costsRef = tenant.doc("orderCosts", orderId);
+  const costsSnap = await tx.get(costsRef);
+  if (!costsSnap.exists) throw new OrderError("business-misconfigured", "This order's cost record is missing");
+  const costs = costsSnap.data();
+  const costByLine = new Map((costs.lines || []).map((l) => [l.lineId, l.costConsumed ?? 0]));
+  const plan = await prepareMovements(tx, {
+    tenant,
+    items: order.items.map((l) => ({ productId: l.productId, movement: { type, quantity: l.quantity, value: costByLine.get(l.lineId) ?? 0, referenceType: "order", referenceId: orderId, note: order.orderNumber, reason, ...untrackedOf(l) } })),
+  });
+  return {
+    apply({ FieldValue, business, actor, why, to }) {
+      const day = order.fulfilledDay ?? costs.fulfilledDay;
+      const booked = { grossSales: costs.grossSales ?? order.subtotal, discount: costs.discount ?? order.discount, netSales: costs.netSales ?? order.total, cogs: costs.cogs ?? 0 };
+      recordDailyMetrics({ tx, tenant, FieldValue, timezone: business?.timezone ?? null, day, operational: { fulfilledOrders: -1 }, financial: { grossSales: -booked.grossSales, discounts: -booked.discount, cogs: -booked.cogs } });
+      applyRollup(tx, { tenant, FieldValue, day, delta: diffRollup({}, fulfilledOrderContribution(order, costs.lines)) });
+      const reversals = Array.isArray(costs.reversals) ? costs.reversals : [];
+      tx.update(costsRef, {
+        reversed: true,
+        reversals: [...reversals, { at: new Date(), actor, reason: why, to, fulfilledDay: day, ...booked, lines: costs.lines || [], corrections: costs.corrections || [] }],
+        updatedAt: FieldValue.serverTimestamp(),
+      });
+      const moved = plan.commit({ actor, FieldValue });
+      return { day, booked, movements: moved.filter((m) => m.transactionId).map((m) => m.transactionId) };
+    },
+  };
+}
+
+// A fulfilled order back to an open stage ("marked fulfilled by mistake").
+// Stock: each tracked unit comes back and is set aside for the order again,
+// so fulfilling it later takes it once. Reason required; the order history,
+// the audit log, the movements and orderCosts.reversals keep what happened.
+export async function reopenOrder({ db, tenant, FieldValue, business = null, orderId, stage, reason, expectedRevision = null, actor }) {
+  if (!isOpenFulfillment(stage)) throw new OrderError("invalid-stage", "Choose Pending, Preparing or Ready");
+  const ref = orderRef(tenant, orderId);
+  const why = typeof reason === "string" ? reason.trim().replace(/\s+/g, " ") : "";
+  if (why.length < 3 || why.length > 300) throw new OrderError("reason-required", "Say why this fulfillment is being reversed (3-300 characters)");
+  return db.runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    if (!snap.exists) throw new OrderError("not-found", "Order not found");
+    const order = snap.data();
+    if (expectedRevision !== null && expectedRevision !== order.revision) throw new OrderError("stale-order", "This order was changed by someone else. Reload and try again");
+    if (order.fulfillmentStatus !== "fulfilled") throw new OrderError("not-fulfilled", isOpenFulfillment(order.fulfillmentStatus) ? "This order isn't fulfilled. Change its stage instead" : "A cancelled order can't be reopened");
+    const undo = await prepareUnfulfill(tx, { tenant, orderId, order, type: "unfulfillment", reason: "order_reopened" });
+    const stamp = FieldValue.serverTimestamp();
+    tx.update(ref, {
+      fulfillmentStatus: stage,
+      fulfilledBy: null,
+      fulfilledAt: null,
+      fulfilledDay: null,
+      statusHistory: appendHistory(order, historyEntry("reopened", actor, { from: "fulfilled", to: stage, reason: why })),
+      revision: order.revision + 1,
+      updatedBy: actor,
+      updatedAt: stamp,
+    });
+    const done = undo.apply({ FieldValue, business, actor, why, to: stage });
+    adjustCurrentMetrics({ tx, tenant, FieldValue, operational: { pendingFulfillment: 1 } });
+    tx.set(tenant.collection("auditLog").doc(), { type: "order.fulfillment_reversed", orderId, orderNumber: order.orderNumber, from: "fulfilled", to: stage, reason: why, fulfilledDay: done.day, movements: done.movements, actor, at: stamp });
+    return { orderId, fulfillmentStatus: stage, revision: order.revision + 1, reversedDay: done.day };
+  }, TX_OPTIONS);
+}
+
 // ---------- Fulfill ----------
 
 export async function fulfillOrder({ db, tenant, FieldValue, business, orderId, actor, now = new Date() }) {
@@ -744,6 +932,11 @@ export async function fulfillOrder({ db, tenant, FieldValue, business, orderId, 
     const order = snap.data();
     if (!isOpenFulfillment(order.fulfillmentStatus)) throw new OrderError("not-pending", `This order is already ${order.fulfillmentStatus}`);
 
+    // A fulfillment reversed before left its cost record (reversed: true);
+    // this fulfillment replaces it and carries its reversals[] forward.
+    const costsRef = tenant.doc("orderCosts", orderId);
+    const prior = await tx.get(costsRef);
+    if (prior.exists && prior.data().reversed !== true) throw new OrderError("business-misconfigured", "This order already has a cost record");
     const plan = await prepareMovements(tx, { tenant, items: movementsFor(order.items, "fulfillment", orderId, order.orderNumber, "order_fulfilled") });
     const consumed = new Map(plan.results.map((r) => [r.productId, r.costConsumed]));
     const costLines = order.items.map((l) => ({ lineId: l.lineId, productId: l.productId, quantity: l.quantity, lineSubtotal: l.lineSubtotal, costConsumed: consumed.get(l.productId) }));
@@ -761,7 +954,7 @@ export async function fulfillOrder({ db, tenant, FieldValue, business, orderId, 
       updatedAt: stamp,
     });
     // The cost snapshot IS this order's COGS forever; later cost changes can't reach it.
-    tx.create(tenant.doc("orderCosts", orderId), {
+    tx.set(costsRef, {
       schemaVersion: ORDER_SCHEMA_VERSION,
       orderId,
       orderNumber: order.orderNumber,
@@ -772,6 +965,7 @@ export async function fulfillOrder({ db, tenant, FieldValue, business, orderId, 
       netSales: order.total,
       cogs,
       grossProfit: order.total - cogs,
+      ...(prior.exists ? { reversals: prior.data().reversals || [] } : {}),
       createdAt: stamp,
     });
     recordDailyMetrics({ tx, tenant, FieldValue, timezone: business.timezone, at: now, operational: { fulfilledOrders: 1 }, financial: { grossSales: order.subtotal, discounts: order.discount, cogs } });
@@ -783,9 +977,14 @@ export async function fulfillOrder({ db, tenant, FieldValue, business, orderId, 
   }, TX_OPTIONS);
 }
 
-// ---------- Cancel (pending only) ----------
+// ---------- Cancel ----------
 
-export async function cancelOrder({ db, tenant, FieldValue, business, orderId, reason, actor, now = new Date() }) {
+// Open orders: reservations released. A fulfilled order (canCorrect,
+// 2026-11-03): its fulfillment is reversed first (prepareUnfulfill) and its
+// tracked units come back free. Either way an order with payments isn't
+// cancelled until they're voided (payment history is never deleted here),
+// and its reseller's earned commission follows (never below what's paid).
+export async function cancelOrder({ db, tenant, FieldValue, business, orderId, reason, actor, canCorrect = false, now = new Date() }) {
   const ref = orderRef(tenant, orderId);
   const why = typeof reason === "string" ? reason.trim().replace(/\s+/g, " ") : "";
   if (why.length < 3 || why.length > 300) throw new OrderError("invalid-input", "Give a cancellation reason (3-300 characters)");
@@ -794,11 +993,13 @@ export async function cancelOrder({ db, tenant, FieldValue, business, orderId, r
     const snap = await tx.get(ref);
     if (!snap.exists) throw new OrderError("not-found", "Order not found");
     const order = snap.data();
-    if (!isOpenFulfillment(order.fulfillmentStatus)) {
-      throw new OrderError("not-pending", order.fulfillmentStatus === "fulfilled" ? "A fulfilled order can't be cancelled (returns will handle reversals)" : "This order is already cancelled");
-    }
+    const fulfilled = order.fulfillmentStatus === "fulfilled";
+    if (order.fulfillmentStatus === "cancelled") throw new OrderError("not-pending", "This order is already cancelled");
+    if (fulfilled && !canCorrect) throw new OrderError("not-pending", "This order is fulfilled. Only authorized users can cancel it");
+    if (!fulfilled && !isOpenFulfillment(order.fulfillmentStatus)) throw new OrderError("not-pending", `A ${order.fulfillmentStatus} order can't be cancelled`);
     if ((order.amountPaid || 0) > 0) throw new OrderError("has-payments", "This order has payments. Void them first, then cancel the order");
-    const plan = await prepareMovements(tx, { tenant, items: movementsFor(order.items, "release", orderId, order.orderNumber, "order_cancelled") });
+    const undo = fulfilled ? await prepareUnfulfill(tx, { tenant, orderId, order, type: "cancel_return", reason: "order_cancelled" }) : null;
+    const plan = fulfilled ? null : await prepareMovements(tx, { tenant, items: movementsFor(order.items, "release", orderId, order.orderNumber, "order_cancelled") });
     const earned = await prepareEarned(tx, tenant, [{ resellerId: order.resellerId, delta: -earnedOf(order) }], FieldValue);
     const stamp = FieldValue.serverTimestamp();
 
@@ -808,7 +1009,8 @@ export async function cancelOrder({ db, tenant, FieldValue, business, orderId, r
       cancelledAt: stamp,
       cancellationReason: why,
       balance: 0,
-      statusHistory: appendHistory(order, historyEntry("cancelled", actor, { from: order.fulfillmentStatus, to: "cancelled", reason: why })),
+      ...(fulfilled ? { fulfilledBy: null, fulfilledAt: null, fulfilledDay: null } : {}),
+      statusHistory: appendHistory(order, historyEntry("cancelled", actor, { from: order.fulfillmentStatus, to: "cancelled", reason: why, ...(fulfilled ? { reversed: true } : {}) })),
       revision: order.revision + 1,
       updatedBy: actor,
       updatedAt: stamp,
@@ -820,13 +1022,17 @@ export async function cancelOrder({ db, tenant, FieldValue, business, orderId, r
       tx,
       tenant,
       FieldValue,
-      operational: { pendingFulfillment: -1, ...((order.balance || 0) > 0 ? { unpaidOrders: -1 } : {}) },
+      operational: { ...(fulfilled ? {} : { pendingFulfillment: -1 }), ...((order.balance || 0) > 0 ? { unpaidOrders: -1 } : {}) },
       financial: { receivablesOutstanding: -(order.balance || 0) },
     });
     // A cancelled order stops counting for its customer.
     applyCustomerStats(tx, { tenant, FieldValue, customerId: order.customerId, orders: -1, total: -order.total, balance: -(order.balance || 0) });
     earned.apply();
-    plan.commit({ actor, FieldValue });
-    return { orderId, cancelled: true };
+    if (plan) plan.commit({ actor, FieldValue });
+    if (undo) {
+      const done = undo.apply({ FieldValue, business, actor, why, to: "cancelled" });
+      tx.set(tenant.collection("auditLog").doc(), { type: "order.fulfillment_reversed", orderId, orderNumber: order.orderNumber, from: "fulfilled", to: "cancelled", reason: why, fulfilledDay: done.day, movements: done.movements, actor, at: stamp });
+    }
+    return { orderId, cancelled: true, ...(undo ? { reversed: true } : {}) };
   }, TX_OPTIONS);
 }
