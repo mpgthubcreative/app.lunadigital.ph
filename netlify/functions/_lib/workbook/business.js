@@ -11,8 +11,8 @@
 // Each sheet only with its module and view permission (COGS also needs
 // inventory.costs). No averages, stock value or profit: unit costs only.
 // Reseller Package (2026-10-31; Resellers module + resellers.view): Orders
-// gain Reseller, the prices (selling / owner), Owner Amount, Calculated and
-// Final Commission, Commission Earned (2026-11-01: the part the customer's
+// gain Reseller, the prices (selling / owner), Owner Amount, Commission per
+// Item (2026-11-03), Calculated and Final Commission, Commission Earned (2026-11-01: the part the customer's
 // verified payments cover), Commission Paid / Remaining / Status (payouts
 // settle the oldest earned commission first); plus Resellers and Commission
 // Payouts sheets.
@@ -27,7 +27,7 @@ import { UNITS, formatQuantity } from "../../../../shared/quantity.js";
 import { ROLE_TEMPLATES } from "../../../../shared/permissions.js";
 import { loginName } from "../activation.js";
 import { byText } from "./common.js";
-import { allocatePayouts, earnedOf, potentialOf, ownerAmountOf, commissionSummary, COMMISSION_STATUSES, PAYOUT_METHODS } from "../../../../shared/resellers.js";
+import { allocatePayouts, earnedOf, potentialOf, ownerAmountOf, commissionSummary, lineCommission, lineFinalCommission, COMMISSION_STATUSES, PAYOUT_METHODS } from "../../../../shared/resellers.js";
 
 const label = (map, key) => map[key]?.label ?? key ?? "";
 const unitText = (u) => (u && u !== "pcs" ? ` ${UNITS[u]?.label ?? u}` : "");
@@ -93,6 +93,16 @@ const COGS_COLUMNS = [
 // reseller order (oldest first), not only the range.
 const peso = (c) => `₱${(c / 100).toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const priceText = (items) => (Array.isArray(items) ? items.map((l) => `${l.name} @ ${peso(l.unitPrice)}${Number.isSafeInteger(l.basePrice) ? ` (owner ${peso(l.basePrice)})` : ""}`).join("; ") : "");
+// Commission per Item (2026-11-03): each line's final commission, "adjusted
+// from" its calculated one when the Owner set it ("Product A: ₱40.00
+// (adjusted from ₱50.00); Product B: ₱100.00"). A final set for the whole
+// order leaves the lines at their calculated figure, and says so.
+const lineCalc = (l) => Math.max(0, Number.isSafeInteger(l.commission) ? l.commission : lineCommission(l));
+function lineCommissionText(o) {
+  if (!Array.isArray(o.items)) return "";
+  if (o.commission?.adjusted === true && o.commission.scope !== "lines") return `${o.items.map((l) => `${l.name}: ${peso(lineCalc(l))}`).join("; ")} · final set for the whole order`;
+  return o.items.map((l) => `${l.name}: ${peso(lineFinalCommission(l))}${Number.isSafeInteger(l.finalCommission) && l.finalCommission !== lineCalc(l) ? ` (adjusted from ${peso(lineCalc(l))})` : ""}`).join("; ");
+}
 async function resellerOrderColumns(x, resellers) {
   const lists = await Promise.all(resellers.map((r) => x.tenant.collection("orders").where("resellerId", "==", r.id).limit(5000).get()));
   const all = lists.flatMap((snap) => snap.docs.map((d) => ({ id: d.id, ...d.data() })));
@@ -106,6 +116,7 @@ async function resellerOrderColumns(x, resellers) {
     { header: "Reseller", format: "text", width: 18, value: (o) => o.reseller?.name ?? "Direct sale" },
     { header: "Selling / Owner Price", format: "text", width: 40, value: (o) => (o.resellerId ? priceText(o.items) : "") },
     { header: "Owner Amount", format: "money", width: 14, total: true, value: (o) => (o.resellerId ? ownerAmountOf(o.items) : o.total) },
+    { header: "Commission per Item", format: "text", width: 40, value: (o) => (o.resellerId ? lineCommissionText(o) : "") },
     { header: "Calculated Commission", format: "money", width: 14, total: true, value: (o) => (o.resellerId ? o.commission?.calculated ?? 0 : 0) },
     { header: "Final Commission", format: "money", width: 14, total: true, value: (o) => potentialOf(o) },
     { header: "Commission Earned", format: "money", width: 14, total: true, value: (o) => earnedOf(o) },

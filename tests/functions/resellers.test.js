@@ -403,15 +403,33 @@ describe("Download Excel (Reseller workspace)", () => {
     expect(sheetNames(bytes)).toEqual(expect.arrayContaining(["Orders", "Resellers", "Commission Payouts"]));
     const orders = rows(bytes, "Orders");
     const head = orders[0];
-    for (const h of ["Reseller", "Selling / Owner Price", "Owner Amount", "Calculated Commission", "Final Commission", "Commission Earned", "Commission Paid", "Commission Remaining", "Commission Status"]) expect(head).toContain(h);
+    for (const h of ["Reseller", "Selling / Owner Price", "Owner Amount", "Commission per Item", "Calculated Commission", "Final Commission", "Commission Earned", "Commission Paid", "Commission Remaining", "Commission Status"]) expect(head).toContain(h);
     const line = orders.find((row) => row[0] === r.orderNumber);
     const col = (h) => line[head.indexOf(h)];
     expect(col("Reseller")).toBe("Riza");
     expect(col("Selling / Owner Price")).toBe("Product A @ ₱650.00 (owner ₱500.00)");
+    expect(col("Commission per Item")).toBe("Product A: ₱300.00 · final set for the whole order");
     expect([col("Owner Amount"), col("Calculated Commission"), col("Final Commission"), col("Commission Earned"), col("Commission Paid"), col("Commission Remaining")]).toEqual(["1000", "300", "250", "250", "100", "150"]);
     expect(col("Commission Status")).toBe("Partially Paid");
     expect(rows(bytes, "Resellers")[1]).toEqual(["Riza", "Active", "250", "100", "150", "Partially Paid"]);
     expect(rows(bytes, "Commission Payouts")[1].slice(1, 4)).toEqual(["Riza", "100", "GCash"]);
+  });
+
+  it("Commission per Item: each line's final commission, 'adjusted from' the calculated one; direct sales blank", async () => {
+    const a = await product("res-a", { sku: "A1", name: "Product A", price: 20000 });
+    const b = await product("res-a", { sku: "B1", name: "Product B", price: 15000 });
+    const riza = await reseller("Riza");
+    const tenant = tenantDb(world.db, "res-a");
+    const make = (input) => createOrder({ db: world.db, tenant, FieldValue, business: { timezone: "Asia/Manila" }, entitlements: docAt("businesses/res-a").entitlements, input: { customer: { name: "Walk-in", phone: "", notes: "" }, source: "phone", ...input }, idempotencyKey: key(), actor: setup, canDiscount: false, canResell: true, now: NOW });
+    const sale = await make({ resellerId: riza.id, items: [{ productId: a, quantity: Q(1), sellingPrice: 25000, finalCommission: 4000 }, { productId: b, quantity: Q(1), sellingPrice: 25000 }] });
+    const direct = await make({ items: [{ productId: a, quantity: Q(1) }] });
+    const bytes = await workbook(world.uids["owner-res-a"], "res-a");
+    const orders = rows(bytes, "Orders");
+    const head = orders[0];
+    const at = (orderId, h) => orders.find((row) => row[0] === docAt(`businesses/res-a/orders/${orderId}`).orderNumber)[head.indexOf(h)];
+    expect(at(sale.orderId, "Commission per Item")).toBe("Product A: ₱40.00 (adjusted from ₱50.00); Product B: ₱100.00");
+    expect([at(sale.orderId, "Calculated Commission"), at(sale.orderId, "Final Commission")]).toEqual(["150", "140"]);
+    expect(at(direct.orderId, "Commission per Item") ?? "").toBe("");
   });
 
   it("a Distributor workbook is unchanged (no reseller columns or sheets)", async () => {
