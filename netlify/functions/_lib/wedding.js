@@ -281,7 +281,9 @@ export async function updateSupplierPayment({ db, tenant, FieldValue, paymentId,
       const by = {};
       by[p.category] = (by[p.category] || 0) - p.amount;
       by[nextCat] = (by[nextCat] || 0) + nextAmount;
-      tx.set(budgetRef(tenant), { schemaVersion: WEDDING_SCHEMA_VERSION, upcoming: FieldValue.increment(nextAmount - p.amount), upcomingByCategory: Object.fromEntries(Object.entries(by).filter(([, v]) => v).map(([k, v]) => [k, FieldValue.increment(v)])), updatedAt: stamp }, { merge: true });
+      // Never an empty upcomingByCategory: with merge it would replace the stored one.
+      const changed = Object.entries(by).filter(([, v]) => v);
+      tx.set(budgetRef(tenant), { schemaVersion: WEDDING_SCHEMA_VERSION, upcoming: FieldValue.increment(nextAmount - p.amount), ...(changed.length ? { upcomingByCategory: Object.fromEntries(changed.map(([k, v]) => [k, FieldValue.increment(v)])) } : {}), updatedAt: stamp }, { merge: true });
     }
     if ("amount" in diff || nextDue !== undefined) tx.update(sRef, { ...("amount" in diff ? { upcoming: FieldValue.increment(nextAmount - p.amount) } : {}), ...(nextDue !== undefined ? { nextDue } : {}), updatedAt: stamp });
     return { paymentId, revision: p.revision + 1 };

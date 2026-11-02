@@ -357,7 +357,9 @@ const upcomingWrite = (FieldValue, parts) => {
     count += n;
     if (cat && amt) by[cat] = (by[cat] || 0) + amt;
   }
-  return { upcoming: FieldValue.increment(amount), upcomingCount: FieldValue.increment(count), upcomingByCategory: Object.fromEntries(Object.entries(by).filter(([, v]) => v).map(([k, v]) => [k, FieldValue.increment(v)])) };
+  // No upcomingByCategory when no category changes: an empty map with merge would replace it.
+  const changed = Object.entries(by).filter(([, v]) => v);
+  return { upcoming: FieldValue.increment(amount), upcomingCount: FieldValue.increment(count), ...(changed.length ? { upcomingByCategory: Object.fromEntries(changed.map(([k, v]) => [k, FieldValue.increment(v)])) } : {}) };
 };
 
 export async function createScheduledPayment({ db, tenant, FieldValue, input, actor }) {

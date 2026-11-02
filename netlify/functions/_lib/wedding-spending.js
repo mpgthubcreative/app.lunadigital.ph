@@ -162,23 +162,28 @@ export const weddingSpendingSink = {
         const inc = (n) => FieldValue.increment(n);
         const stamp = FieldValue.serverTimestamp();
         const incMap = (m) => Object.fromEntries(Object.entries(m).filter(([, v]) => v).map(([k, v]) => [k, inc(v)]));
+        // A map field only when something in it changes: an EMPTY map with
+        // merge REPLACES the stored one (it wiped the category totals on
+        // edits that moved no money, 2026-11-02).
+        const moved = (m) => Object.values(m).some(Boolean);
         tx.set(
           budgetRef(tenant),
           {
             schemaVersion: WEDDING_SCHEMA_VERSION,
             spent: inc(dSpent),
             expenseCount: inc(dCount),
-            spentByCategory: incMap(spentBy),
+            ...(moved(spentBy) ? { spentByCategory: incMap(spentBy) } : {}),
             ...(contractedPaid ? { contractedPaid: inc(contractedPaid) } : {}),
-            ...(up.amount || up.count ? { upcoming: inc(up.amount), upcomingCount: inc(up.count), upcomingByCategory: incMap(up.byCategory) } : {}),
+            ...(up.amount || up.count ? { upcoming: inc(up.amount), upcomingCount: inc(up.count), ...(moved(up.byCategory) ? { upcomingByCategory: incMap(up.byCategory) } : {}) } : {}),
             alerts,
             updatedAt: stamp,
           },
           { merge: true }
         );
         for (const [d, v] of Object.entries(days)) {
-          if (!v.spent && !v.count) continue;
-          const body = { spent: inc(v.spent), count: inc(v.count), supplierPaid: inc(v.supplierPaid), byCategory: incMap(v.byCategory), updatedAt: stamp };
+          // A same-day category move changes only byCategory.
+          if (!v.spent && !v.count && !moved(v.byCategory)) continue;
+          const body = { spent: inc(v.spent), count: inc(v.count), supplierPaid: inc(v.supplierPaid), ...(moved(v.byCategory) ? { byCategory: incMap(v.byCategory) } : {}), updatedAt: stamp };
           tx.set(tenant.doc("spendingMetrics", d), { schemaVersion: WEDDING_SCHEMA_VERSION, period: "day", id: d, ...body }, { merge: true });
           tx.set(tenant.doc("spendingMetrics", d.slice(0, 7)), { schemaVersion: WEDDING_SCHEMA_VERSION, period: "month", id: d.slice(0, 7), ...body }, { merge: true });
         }

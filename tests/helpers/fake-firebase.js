@@ -59,7 +59,9 @@ function getDotted(target, dottedKey) {
 function deepMerge(target, data) {
   for (const [k, v] of Object.entries(data)) {
     const plainMap = v && typeof v === "object" && !Array.isArray(v) && !(v instanceof Date) && !v[SERVER_TS] && !(INCREMENT in v) && !v[ARRAY_UNION];
-    if (plainMap && target[k] && typeof target[k] === "object" && !Array.isArray(target[k]) && !(target[k] instanceof Date)) target[k] = deepMerge(target[k], v);
+    // An EMPTY map is a value of its own (real Firestore: merge replaces the
+    // field with {}), not "nothing to merge".
+    if (plainMap && Object.keys(v).length && target[k] && typeof target[k] === "object" && !Array.isArray(target[k]) && !(target[k] instanceof Date)) target[k] = deepMerge(target[k], v);
     else target[k] = resolveValue(v, target[k]);
   }
   return target;
