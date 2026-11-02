@@ -1,10 +1,12 @@
 // Luna Household: the Download Excel sheets (shared/workbook.js).
-//   Expenses           Date | Category | Expense | Amount: every active
+//   Expenses           Date | Category | Expense | Amount | Paid By: every active
 //                      expense in the range, plus each PAID salary once,
 //                      under Household Staff ("Payroll · Loriza Ibanez", by
 //                      its paid date, the amount actually paid), exactly as
 //                      the Expenses screen counts it. Cash advances aren't
-//                      spending: never here.
+//                      spending: never here. Paid By is the expense's one
+//                      payer ("Not specified" on older expenses; blank on
+//                      salaries).
 //   Payroll            one row per employee and pay period (recorded
 //                      payrolls overlapping the range)
 //   Payroll Breakdown  each bonus / 13th month / deduction of those payrolls
@@ -15,6 +17,7 @@
 
 import { expensesQuery, categoriesQuery, payrollsQuery, attendanceQuery, advancesQuery } from "../../../../shared/list-queries.js";
 import { ATTENDANCE_STATUSES, ADVANCE_STATUSES, advanceRemaining } from "../../../../shared/payroll.js";
+import { HOUSEHOLD_PAYER_NOT_SET } from "../../../../shared/baby.js";
 import { periodText, dayOf, byText } from "./common.js";
 
 const int = (v) => (Number.isSafeInteger(v) ? v : 0);
@@ -26,6 +29,7 @@ const EXPENSE_COLUMNS = [
   { header: "Category", format: "text", width: 20, value: (r) => r.category },
   { header: "Expense", format: "text", width: 34, value: (r) => r.name },
   { header: "Amount", format: "money", width: 14, total: true, value: (r) => r.amount },
+  { header: "Paid By", format: "text", width: 16, value: (r) => r.paidBy },
 ];
 const PAYROLL_COLUMNS = [
   { header: "Period", format: "text", width: 18, value: (p) => periodText(p.periodStart, p.periodEnd) },
@@ -90,12 +94,12 @@ export async function householdSheets(x) {
     const bills = await x.readByIds("scheduledPayments", rows.filter((e) => e.scheduleId).map((e) => e.scheduleId));
     const items = rows.map((e) => {
       const category = names.get(e.category) ?? e.categoryName ?? "Other";
-      return { date: e.date, category, name: expenseName(e, e.scheduleId ? bills.get(e.scheduleId) : null, category), amount: e.amount };
+      return { date: e.date, category, name: expenseName(e, e.scheduleId ? bills.get(e.scheduleId) : null, category), amount: e.amount, paidBy: e.paidBy?.[0]?.name ?? HOUSEHOLD_PAYER_NOT_SET };
     });
     // A paid salary is household spending once, under Household Staff.
     if (x.can("payroll", "payroll.view")) {
       for (const p of await x.readRows("payrolls", payrollsQuery({ status: "released" }))) {
-        if (inRange(p.salary?.paidDate) && Number.isSafeInteger(p.salary?.amount)) items.push({ date: p.salary.paidDate, category: "Household Staff", name: `Payroll · ${p.staffName ?? ""}`.trim(), amount: p.salary.amount });
+        if (inRange(p.salary?.paidDate) && Number.isSafeInteger(p.salary?.amount)) items.push({ date: p.salary.paidDate, category: "Household Staff", name: `Payroll · ${p.staffName ?? ""}`.trim(), amount: p.salary.amount, paidBy: null });
       }
     }
     items.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : byText(a.category, b.category) || byText(a.name, b.name)));

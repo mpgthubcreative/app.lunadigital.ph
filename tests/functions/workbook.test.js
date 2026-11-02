@@ -183,15 +183,15 @@ describe("Luna Household workbook", () => {
     expect(wb.fileName).toBe("Luna-Household-Oct-2026.xlsx");
     expect(sheetNames(wb.bytes)).toEqual(["Expenses", "Payroll", "Payroll Breakdown", "Attendance", "Advances", "Grocery List"]);
 
-    expect(rowsOf(wb.bytes, "Expenses")[0]).toEqual(["Date", "Category", "Expense", "Amount"]);
+    expect(rowsOf(wb.bytes, "Expenses")[0]).toEqual(["Date", "Category", "Expense", "Amount", "Paid By"]);
     expect(dataOf(wb.bytes, "Expenses")).toEqual([
-      [serial("2026-10-11"), "Pets", "Scotty Food", "5450"],
-      [serial("2026-10-12"), "Utilities", "Meralco", "9238"],
-      [serial("2026-10-12"), "Utilities", "PLDT", "2000"],
-      [serial("2026-10-13"), "Household Staff", "Payroll · Loriza Ibanez", "733"],
+      [serial("2026-10-11"), "Pets", "Scotty Food", "5450", "Not specified"],
+      [serial("2026-10-12"), "Utilities", "Meralco", "9238", "Not specified"],
+      [serial("2026-10-12"), "Utilities", "PLDT", "2000", "Not specified"],
+      [serial("2026-10-13"), "Household Staff", "Payroll · Loriza Ibanez", "733", ""],
     ]);
     const total = rowsOf(wb.bytes, "Expenses").at(-1);
-    expect(total).toEqual(["Total", "", "", "17421"]);
+    expect(total).toEqual(["Total", "", "", "17421", ""]);
     // Luna's own month figure (Expenses screen) is the same money.
     const month = JSON.parse((await createHouseholdMoneyHandler(deps())({ ...request({ uid: u.carlo, businessId: H, method: "GET" }), queryStringParameters: {} })).body).month;
     expect(Number(total[3]) * 100).toBe(month.spent);
@@ -219,7 +219,7 @@ describe("Luna Household workbook", () => {
     await household();
     const sep = await workbook(u.carlo, H, { range: "custom", from: "2026-09-01", to: "2026-09-30" });
     expect(sep.fileName).toBe("Luna-Household-Sep-2026.xlsx");
-    expect(dataOf(sep.bytes, "Expenses")).toEqual([[serial("2026-09-20"), "Pets", "Vet", "100"]]);
+    expect(dataOf(sep.bytes, "Expenses")).toEqual([[serial("2026-09-20"), "Pets", "Vet", "100", "Not specified"]]);
     expect(dataOf(sep.bytes, "Payroll")).toEqual([]);
     expect(rowsOf(sep.bytes, "Payroll")[0][0]).toBe("Period"); // header still there
     const all = await workbook(u.carlo, H, { range: "all" });

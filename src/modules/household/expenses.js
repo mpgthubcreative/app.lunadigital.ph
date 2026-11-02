@@ -17,16 +17,21 @@
 // idempotent mark-paid (a repeating bill gets its next one once); "Mark
 // unpaid" removes that expense. Salaries are never expense records; advances
 // aren't shown here (Payroll / Advances).
-// + Add expense: Paid now (Amount, Category, Date paid) or Schedule for later
-// (Scheduled date instead); More details: payee / merchant, method,
-// reference, notes, receipt.
+// + Add expense: Paid now (Amount, Category, Paid by, Date paid) or Schedule
+// for later (Scheduled date instead); More details: payee / merchant,
+// method, reference, notes, receipt.
+// Paid by (2026-11-02): ONE payer per expense (Mom / Dad / Shared / Other;
+// shared/baby.js HOUSEHOLD_PAYERS), the same paidBy field the budget's
+// payer totals use. Rows show "Nov 2 · Mom"; filters Category and Paid by
+// work together with the month; "Paid by" totals for what's shown. Older
+// expenses without one: "Not specified" (never guessed).
 
 import { html, render } from "../../lib/html.js";
 import { pageHeader, emptyState, badge, skeleton } from "../../components/ui.js";
 import { formDialog } from "../../components/form-dialog.js";
 import { toast as defaultToast, confirmDialog } from "../../components/feedback.js";
 import { formatCentavos, formatDayId } from "../../lib/format.js";
-import { EXPENSE_METHODS, EXPENSE_METHOD_IDS, SUGGESTED_HOUSEHOLD_CATEGORIES, parseCentavos, businessDate } from "@shared/index.js";
+import { EXPENSE_METHODS, EXPENSE_METHOD_IDS, SUGGESTED_HOUSEHOLD_CATEGORIES, HOUSEHOLD_PAYERS, HOUSEHOLD_PAYER_NOT_SET, payerKey, parseCentavos, businessDate } from "@shared/index.js";
 import { categoryName, activityLines, detailsDialog } from "../baby/common.js";
 import { categoryField, categoryNameOf, resolveCategory } from "../wedding/categories.js";
 import { proofField, proofLine } from "../wedding/expenses.js";
@@ -60,7 +65,47 @@ export function parseHouseholdExpense(v) {
   const amount = parseCentavos(v.amount);
   if (!(amount > 0)) throw new Error("Enter an amount more than ₱0");
   if (!v.date) throw new Error("Choose the date paid");
-  return { date: v.date, amount, payee: (v.payee || "").trim() || null, method: v.method || "cash", reference: (v.reference || "").trim() || null, notes: (v.notes || "").trim() || null };
+  return { date: v.date, amount, payee: (v.payee || "").trim() || null, method: v.method || "cash", reference: (v.reference || "").trim() || null, notes: (v.notes || "").trim() || null, payer: (v.paidBy || "").trim() || null };
+}
+
+// Paid by: the expense's one payer, or null (not specified).
+export const UNSET_PAYER = "unset";
+export const payerOf = (e) => (Array.isArray(e?.paidBy) && e.paidBy[0]?.name ? { key: e.paidBy[0].key || payerKey(e.paidBy[0].name), name: e.paidBy[0].name } : null);
+// The filter's choices: the usual payers, any other name used this month,
+// then "Not specified" when some expense has none.
+export function payerChoices(expenses) {
+  const out = HOUSEHOLD_PAYERS.map((name) => ({ key: payerKey(name), name }));
+  let unset = false;
+  for (const e of expenses) {
+    const p = payerOf(e);
+    if (!p) unset = true;
+    else if (!out.some((o) => o.key === p.key)) out.push(p);
+  }
+  return unset ? [...out, { key: UNSET_PAYER, name: HOUSEHOLD_PAYER_NOT_SET }] : out;
+}
+// Rows that pass the filters. Paid by keeps only expense records (salaries
+// and unpaid bills have no payer); each expense has ONE payer, so Shared is
+// never counted under Mom or Dad.
+export function filterRows(rows, { category = "", payer = "" } = {}) {
+  return rows.filter((r) => {
+    if (category && r.key !== category) return false;
+    if (!payer) return true;
+    if (r.kind !== "expense" && r.kind !== "bill-paid") return false;
+    return (payerOf(r.record)?.key ?? UNSET_PAYER) === payer;
+  });
+}
+// "Paid by" totals of the expense records among these rows, biggest first
+// ("Not specified" last).
+export function payerTotalsOf(rows) {
+  const by = new Map();
+  for (const r of rows) {
+    if (r.kind !== "expense" && r.kind !== "bill-paid") continue;
+    const p = payerOf(r.record) ?? { key: UNSET_PAYER, name: HOUSEHOLD_PAYER_NOT_SET };
+    const t = by.get(p.key) || { ...p, amount: 0 };
+    t.amount += r.amount;
+    by.set(p.key, t);
+  }
+  return [...by.values()].sort((a, b) => (a.key === UNSET_PAYER) - (b.key === UNSET_PAYER) || b.amount - a.amount || a.name.localeCompare(b.name));
 }
 
 // How far ahead the month selector goes (future bills / scheduled expenses).
@@ -106,7 +151,8 @@ export function mount(container, session, { data = defaultData, toast = defaultT
   // From the Grocery List ("Record grocery expense"): open + Add expense
   // with Groceries and today; the Owner types the trip's real total.
   let groceryTrip = new URLSearchParams(loc?.search || "").get("add") === "groceries";
-  const state = { month: today().slice(0, 7), summary: null, expenses: [], categories: [], truncated: false, loading: true, error: null, busy: new Set() };
+  // Filters stay as chosen when the month changes.
+  const state = { month: today().slice(0, 7), summary: null, expenses: [], categories: [], truncated: false, loading: true, error: null, busy: new Set(), filter: { category: "", payer: "" } };
   let alive = true;
   const names = () => new Map(state.categories.map((c) => [c.id, c.name]));
   const money = (c) => formatCentavos(c ?? 0, currency);
@@ -166,7 +212,11 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     const n = daysLate(r.date);
     return r.record?.overdueFrom ? `Overdue from ${MONTHS[Number(r.date.slice(5, 7)) - 1]}${r.date.slice(0, 4) !== state.month.slice(0, 4) ? ` ${r.date.slice(0, 4)}` : ""} · ${n} day${n === 1 ? "" : "s"}` : `${n} day${n === 1 ? "" : "s"} overdue · ${short(r.date)}`;
   };
-  const quiet = (r) => (r.kind === "bill-due" || r.kind === "bill-next" ? html`<span class="hx-due${r.date < today() ? " is-over" : ""}" data-role="due">${dueText(r)}</span>` : r.kind === "scheduled" ? html`<span class="hx-due${r.date < today() ? " is-over" : ""}">Scheduled ${short(r.date)}</span>` : r.kind === "bill-paid" ? `Paid · ${short(r.date)}` : short(r.date));
+  const quiet = (r) => (r.kind === "bill-due" || r.kind === "bill-next" ? html`<span class="hx-due${r.date < today() ? " is-over" : ""}" data-role="due">${dueText(r)}</span>` : r.kind === "scheduled" ? html`<span class="hx-due${r.date < today() ? " is-over" : ""}">Scheduled ${short(r.date)}</span>` : r.kind === "bill-paid" ? `Paid · ${short(r.date)}${paidByText(r)}` : `${short(r.date)}${paidByText(r)}`);
+  const paidByText = (r) => {
+    const p = r.kind === "expense" || r.kind === "bill-paid" ? payerOf(r.record) : null;
+    return p ? ` · ${p.name}` : "";
+  };
   const row = (r) => html`<li class="wl-row hx-row" data-kind="${r.kind}" data-row="${r.id}">
     <span class="wl-main hx-main"><span class="wl-name">${r.title}</span><span class="wl-sub hx-sub">${quiet(r)}</span></span>
     <span class="wl-amt hx-amt">${money(r.amount)}</span>
@@ -177,7 +227,17 @@ export function mount(container, session, { data = defaultData, toast = defaultT
     if (!alive) return;
     const atEnd = state.month >= shiftMonth(today().slice(0, 7), MONTHS_AHEAD);
     const s = state.summary;
-    const groups = groupRows(monthRows({ expenses: state.expenses, payroll: s?.payroll ?? [], bills: s?.bills ?? [], categories: state.categories }));
+    const all = monthRows({ expenses: state.expenses, payroll: s?.payroll ?? [], bills: s?.bills ?? [], categories: state.categories });
+    const f = state.filter;
+    const catChoices = groupRows(all).map((g) => ({ key: g.key, name: g.name }));
+    if (f.category && !catChoices.some((c) => c.key === f.category)) catChoices.push({ key: f.category, name: names().get(f.category) ?? "This category" });
+    const payers = payerChoices(state.expenses);
+    if (f.payer && !payers.some((p) => p.key === f.payer)) payers.push({ key: f.payer, name: f.payer === UNSET_PAYER ? HOUSEHOLD_PAYER_NOT_SET : f.payer });
+    const shown = filterRows(all, f);
+    const groups = groupRows(shown);
+    const totals = payerTotalsOf(filterRows(all, { category: f.category }));
+    const filtered = Boolean(f.category || f.payer);
+    const shownTotal = shown.reduce((t, r) => t + r.amount, 0);
     render(
       container,
       html`
@@ -200,9 +260,17 @@ export function mount(container, session, { data = defaultData, toast = defaultT
           : html`
             ${s ? html`<div class="hx-sum" data-role="month-summary"><div class="hx-sum-item" data-widget="spent"><span class="kpi-label">Spent</span><b class="kpi-value">${money(s.spent)}</b></div><div class="hx-sum-item" data-widget="bills"><span class="kpi-label">Bills remaining</span><b class="kpi-value">${money(s.billsRemaining)}</b></div></div>` : state.loading ? skeleton(1) : ""}
             ${state.loading
+              ? ""
+              : html`<div class="hx-filters" data-role="filters">
+                  <label class="pick">Category <select class="select" data-role="f-category" aria-label="Category"><option value="">All</option>${catChoices.map((c) => html`<option value="${c.key}" ${c.key === f.category ? "selected" : ""}>${c.name}</option>`)}</select></label>
+                  <label class="pick">Paid by <select class="select" data-role="f-payer" aria-label="Paid by"><option value="">All</option>${payers.map((p) => html`<option value="${p.key}" ${p.key === f.payer ? "selected" : ""}>${p.name}</option>`)}</select></label>
+                </div>
+                ${totals.length ? html`<p class="hx-payers" data-role="payer-totals"><span class="kpi-label">Paid by</span> ${totals.map((t, i) => html`${i ? " · " : ""}<span data-payer="${t.key}">${t.name} <b>${money(t.amount)}</b></span>`)}</p>` : ""}
+                ${filtered ? html`<p class="stat-hint" data-role="filter-total">Showing ${money(shownTotal)} · ${shown.length} ${shown.length === 1 ? "item" : "items"}</p>` : ""}`}
+            ${state.loading
               ? skeleton(4)
               : !groups.length
-                ? html`<p class="stat-hint wl-none" data-role="none">No expenses this month yet.</p>`
+                ? html`<p class="stat-hint wl-none" data-role="none">${filtered ? "Nothing matches these filters this month." : "No expenses this month yet."}</p>`
                 : groups.map(
                     (g) => html`<section class="wl-section hx-group" data-group="${g.key}">
                       <h2 class="wl-cat-head hx-group-head"><span class="wl-group-title">${g.name}</span></h2>
@@ -232,6 +300,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
       ...(e ? [] : [{ name: "when", label: "When", type: "select", options: WHEN, value: "now" }]),
       { name: "amount", label: "Amount (₱)", value: e ? (e.amount / 100).toFixed(2) : "", inputmode: "decimal", required: true },
       householdCategoryField(state.categories, { value: e ? categoryNameOf(state.categories, e.category) || e.categoryName || "" : prefill.category || "" }),
+      paidByField(e),
       { name: "date", label: "Date paid", type: "date", value: e?.date ?? day, max: day, required: true },
       { name: "payee", label: "Payee / merchant", value: e?.payee ?? "", placeholder: "e.g. Puregold, Meralco, Insurance", more: true },
       { name: "method", label: "Payment method", type: "select", options: METHOD_OPTIONS, value: e?.method ?? "cash", more: true },
@@ -239,6 +308,13 @@ export function mount(container, session, { data = defaultData, toast = defaultT
       { name: "notes", label: "Notes", type: "textarea", value: e?.notes ?? "", more: true },
       ...(!e || e.status === "active" ? [proofField(e?.proof ? "Replace receipt / proof (photo or PDF)" : "Receipt / proof (photo or PDF, optional)")] : []),
     ];
+  };
+  // Paid by: one tap (Mom / Dad / Shared / Other). An older expense with a
+  // name outside these keeps it as a choice.
+  const paidByField = (e) => {
+    const cur = payerOf(e);
+    const list = cur && !HOUSEHOLD_PAYERS.some((n) => payerKey(n) === cur.key) ? [...HOUSEHOLD_PAYERS, cur.name] : HOUSEHOLD_PAYERS;
+    return { name: "paidBy", label: "Paid by", type: "radio", options: list.map((n) => ({ value: n, label: n })), value: cur ? list.find((n) => payerKey(n) === cur.key) : "" };
   };
   // "Schedule for later": Date paid becomes Scheduled date (today or later);
   // payment details (method, reference, receipt) wait for the payment.
@@ -260,6 +336,9 @@ export function mount(container, session, { data = defaultData, toast = defaultT
       const f = form.elements[n]?.closest(".field");
       if (f) f.hidden = later;
     }
+    // Who paid is chosen when it's paid.
+    const payer = form.querySelector('[data-field="paidBy"]');
+    if (payer) payer.hidden = later;
     const btn = form.querySelector('[data-action="submit"]');
     if (btn) btn.textContent = later ? "Schedule expense" : "Add expense";
   };
@@ -284,6 +363,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
         }
         const e = { date: p.date, amount: p.amount, method: p.method, category: cat };
         for (const k of ["payee", "reference", "notes"]) if (p[k]) e[k] = p[k];
+        if (p.payer) e.paidBy = [{ name: p.payer, amount: p.amount }];
         const r = await data.expensesApi({ action: "create", expense: e });
         await attachAfter(r, v.proof);
         return r;
@@ -297,10 +377,12 @@ export function mount(container, session, { data = defaultData, toast = defaultT
       moreLabel: "More details",
       submitLabel: "Save changes",
       onSubmit: async (v) => {
-        const p = parseHouseholdExpense(v);
+        const { payer, ...p } = parseHouseholdExpense(v);
         const next = { ...p, category: await category(v.category) };
         const changes = {};
         for (const [k, val] of Object.entries(next)) if ((e[k] ?? null) !== (val ?? null)) changes[k] = val;
+        // A new payer goes with the whole amount; the same payer follows an amount change on the server.
+        if (payer && payerKey(payer) !== payerOf(e)?.key) changes.paidBy = [{ name: payer, amount: p.amount }];
         const r = Object.keys(changes).length ? await data.expensesApi({ action: "update", expenseId: e.id, expectedRevision: e.revision, changes }) : null;
         if (v.proof) await sendProof(e.id, v.proof);
         return r || (v.proof ? { proof: true } : { unchanged: true });
@@ -351,6 +433,7 @@ export function mount(container, session, { data = defaultData, toast = defaultT
         ["Date paid", formatDayId(e.date)],
         ["Amount", money(e.amount)],
         ["Category", categoryName(names(), e)],
+        ["Paid by", payerOf(e)?.name ?? HOUSEHOLD_PAYER_NOT_SET],
         ["Payee / merchant", e.payee || "—"],
         ["Payment method", methodLabel(e.method)],
         ["Reference", e.reference || "—"],
@@ -459,10 +542,18 @@ export function mount(container, session, { data = defaultData, toast = defaultT
       state.busy.delete(key);
     }
   };
+  const onChange = (event) => {
+    const role = event.target?.dataset?.role;
+    if (role !== "f-category" && role !== "f-payer") return;
+    state.filter = { ...state.filter, [role === "f-category" ? "category" : "payer"]: event.target.value };
+    draw();
+  };
   container.addEventListener("click", onClick);
+  container.addEventListener("change", onChange);
   load();
   return () => {
     alive = false;
     container.removeEventListener("click", onClick);
+    container.removeEventListener("change", onChange);
   };
 }

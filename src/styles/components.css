@@ -3921,6 +3921,13 @@ button.wl-person-name:hover .wl-edit, button.wl-person-name:focus-visible .wl-ed
 .hx-sum-item { display: flex; flex-direction: column; justify-content: center; gap: 4px; min-height: 76px; padding: var(--space-3) var(--space-4); border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); min-width: 0; }
 .hx-sum-item .kpi-label { font-size: var(--text-sm); color: var(--text-muted); }
 .hx-sum-item .kpi-value { font-size: 1.35rem; font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* Household Expenses filters (2026-11-02): Category | Paid by side by side,
+   then one quiet "Paid by" totals line. */
+.hx-filters { display: flex; gap: var(--space-2); margin: 0 0 var(--space-2); }
+.hx-filters .pick { flex: 1 1 0; max-width: none; }
+.hx-payers { margin: 0 0 var(--space-3); font-size: var(--text-sm); color: var(--text-muted); line-height: 1.6; overflow-wrap: anywhere; }
+.hx-payers .kpi-label { margin-right: var(--space-1); }
+.hx-payers b { color: var(--text); font-variant-numeric: tabular-nums; white-space: nowrap; }
 /* Form dialogs (Add expense, Pay salary…): even spacing, footer pinned. */
 .modal.form.fd { gap: 0; }
 .fd .modal-body { display: flex; flex-direction: column; gap: var(--space-4); }

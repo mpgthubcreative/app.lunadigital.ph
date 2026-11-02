@@ -159,19 +159,21 @@ describe("Expenses (household statement)", () => {
     expect(data.expensesApi).toHaveBeenCalledWith({ action: "remove", expenseId: "expense0000002", reason: "Marked unpaid" });
   });
 
-  it("+ Add expense: Paid now (Amount, Category, Date paid) or Schedule for later (Scheduled date; creates a scheduled expense, not an expense)", async () => {
+  it("+ Add expense: Paid now (Amount, Category, Paid by, Date paid) or Schedule for later (Scheduled date; creates a scheduled expense, not an expense)", async () => {
     const data = await mountExp();
     $('[data-act="new"]').click();
     await flush();
     const form = lastForm();
     const visible = () => [...form.querySelectorAll("input, select, textarea")].filter((e) => !e.closest("details:not([open])") && !e.closest(".field[hidden]")).map((e) => e.name);
-    expect(visible()).toEqual(["when", "amount", "category", "date"]);
+    expect(visible()).toEqual(["when", "amount", "category", "paidBy", "paidBy", "paidBy", "paidBy", "date"]);
+    expect(form.querySelector('[data-field="paidBy"]').hidden).toBe(false);
     expect(form.querySelector(`label[for="${form.elements.date.id}"]`).textContent).toBe("Date paid *");
     form.elements.when.value = "later";
     form.elements.when.dispatchEvent(new Event("change", { bubbles: true }));
     expect(form.querySelector(`label[for="${form.elements.date.id}"]`).textContent).toBe("Scheduled date *");
     expect(form.elements.date.max).toBe("");
     expect(form.elements.method.closest(".field").hidden).toBe(true);
+    expect(form.querySelector('[data-field="paidBy"]').hidden).toBe(true);
     expect(form.querySelector('[data-action="submit"]').textContent).toBe("Schedule expense");
     form.elements.amount.value = "2500";
     form.elements.category.value = "Groceries";

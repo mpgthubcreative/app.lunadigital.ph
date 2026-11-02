@@ -82,9 +82,10 @@ export const EXPENSE_PROFILES = Object.freeze({
   // Phase 18.6: Baby expenses also record who paid (paidBy, split shares).
   "baby-expense": Object.freeze({ id: "baby-expense", categories: "tenant", fields: Object.freeze([...EXPENSE_FIELDS, "providerId", "paidBy"]), ref: "providerId", refLabel: "provider", link: "scheduleId", payers: true }),
   // Luna Household (household-payroll v3): household spending on the same
-  // budget primitive as Baby (no providers, no payers); bills come from the
-  // Payment Schedule ("Bills").
-  "household-payroll": Object.freeze({ id: "household-payroll", categories: "tenant", fields: EXPENSE_FIELDS, ref: null, link: "scheduleId" }),
+  // budget primitive as Baby (no providers); bills come from the Payment
+  // Schedule ("Bills"). 2026-11-02: "Paid by", one payer per expense
+  // (payers: "single"; shared/baby.js HOUSEHOLD_PAYERS).
+  "household-payroll": Object.freeze({ id: "household-payroll", categories: "tenant", fields: Object.freeze([...EXPENSE_FIELDS, "paidBy"]), ref: null, link: "scheduleId", payers: "single" }),
   // Phase 16: Wedding Expenses.
   "bridal-expense": Object.freeze({ id: "bridal-expense", categories: "tenant", fields: Object.freeze([...EXPENSE_FIELDS, "supplierId"]), ref: "supplierId", refLabel: "supplier", link: "supplierPaymentId" }),
 });
@@ -154,6 +155,7 @@ export function validateExpenseInput(input, { partial = false, today, profile = 
     } catch (err) {
       throw new ExpenseError(err.code || "invalid-input", err.message);
     }
+    if (profile.payers === "single" && out.paidBy && out.paidBy.length > 1) throw new ExpenseError("invalid-input", "Choose one payer (Shared counts as one)");
   }
   if (has("notes")) out.notes = text(input.notes, { field: "Notes", max: 500 });
   if (has("recurring")) {

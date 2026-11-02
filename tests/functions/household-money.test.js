@@ -64,14 +64,14 @@ const category = async (name) => ok(await api("budget", u.carlo, { action: "crea
 const spend = async (cat, amount, date = OCT(5), extra = {}) => ok(await api("expenses", u.carlo, { action: "create", expense: { date, category: cat, amount, method: "cash", ...extra } }), 201).expenseId;
 
 describe("Household Expenses (Household profile)", () => {
-  it("an expense needs only Amount, Category, Date (+ method); payee / reference / notes optional; no providers or payers", async () => {
+  it("an expense needs only Amount, Category, Date (+ method); payee / reference / notes optional; no providers; Paid by optional, one payer only", async () => {
     const groceries = await category("Groceries");
     const id = await spend(groceries, 250000, OCT(5), { payee: "SM Supermarket", reference: "OR-1", notes: "Weekly" });
     expect(docAt(`expenses/${id}`)).toMatchObject({ amount: 250000, category: groceries, payee: "SM Supermarket", reference: "OR-1", status: "active" });
     expect(docAt(`expenses/${id}`)).not.toHaveProperty("providerId");
-    expect(docAt(`expenses/${id}`)).not.toHaveProperty("paidBy");
+    expect(docAt(`expenses/${id}`).paidBy ?? null).toBeNull();
     expect((await api("expenses", u.carlo, { action: "create", expense: { date: OCT(5), category: groceries, amount: 100, method: "cash", providerId: "x1234567" } })).status).toBe(400);
-    expect((await api("expenses", u.carlo, { action: "create", expense: { date: OCT(5), category: groceries, amount: 100, method: "cash", paidBy: [{ name: "Mom", amount: 100 }] } })).status).toBe(400);
+    expect((await api("expenses", u.carlo, { action: "create", expense: { date: OCT(5), category: groceries, amount: 100, method: "cash", paidBy: [{ name: "Mom", amount: 50 }, { name: "Dad", amount: 50 }] } })).status).toBe(400);
   });
 
   it("setupCategories gives the household list (editable), not the Baby one", async () => {

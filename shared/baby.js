@@ -62,6 +62,13 @@ export const CATEGORY_STATUSES = Object.freeze({ active: { label: "Active" }, in
 // Luna Household (household-payroll v3): the household's own editable
 // categories. Baby and Pets are categories here, not separate products.
 export const SUGGESTED_HOUSEHOLD_CATEGORIES = Object.freeze(["Groceries", "Utilities", "Household Supplies", "Dining / Food", "Transportation", "Medical", "Baby", "Pets", "Household Staff", "Maintenance / Repairs", "Rent / Mortgage / Condo", "Subscriptions", "Education", "Personal", "Miscellaneous"]);
+// Luna Household "Paid by" (2026-11-02): ONE payer per expense, chosen from
+// these. Stored in the same paidBy field as Baby ([{ key, name, amount }],
+// here always one entry for the whole amount), so the budget's
+// spentByPayer totals count each expense once: Shared is its own payer,
+// never split into Mom and Dad. Older expenses without one: "Not specified".
+export const HOUSEHOLD_PAYERS = Object.freeze(["Mom", "Dad", "Shared", "Other"]);
+export const HOUSEHOLD_PAYER_NOT_SET = "Not specified";
 export const SUGGESTED_CATEGORIES = Object.freeze(["Medical", "Nursery / Furniture", "Clothing", "Feeding", "Diapers / Hygiene", "Gear / Equipment", "Transportation", "Documents", "Celebration", "Childcare", "Other"]);
 
 function text(value, { field, max, required = false }) {
